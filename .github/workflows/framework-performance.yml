@@ -23,8 +23,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: framework-performance-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded first-attempt PR runs. Non-PR runs and manual reruns get
+  # run-unique groups so a pending or newer run is never cancelled or replaced.
+  # Pinned by tests/integration/ci/workflow-concurrency.test.ts; see cicd.yml and
+  # veryfront-studio#5544.
+  group: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   profile:
@@ -86,7 +90,7 @@ jobs:
           cat .cache/perf/ci/summary.md >> "${GITHUB_STEP_SUMMARY}"
       - name: Upload profiles and reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: framework-performance
           path: |

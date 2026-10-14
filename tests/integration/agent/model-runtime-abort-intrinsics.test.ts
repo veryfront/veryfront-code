@@ -8,6 +8,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { ProviderOverloadedError } from "#veryfront/provider/runtime-loader.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import {
@@ -17,6 +18,29 @@ import {
   registerModelRuntimeResolverRevoker,
   revokeModelRuntimeResolver,
 } from "#veryfront/agent/runtime/model-transport.ts";
+
+function retryableProviderStreamFailure(): ProviderOverloadedError {
+  return new ProviderOverloadedError({
+    provider: "openai",
+    status: 503,
+    message: "OpenAI temporarily overloaded",
+    retryable: true,
+  });
+}
+
+function erroringRuntimeStream(error: unknown): ReadableStream<unknown> {
+  return new ReadableStream<unknown>({
+    pull(controller) {
+      controller.error(error);
+    },
+  });
+}
+
+async function consumeBytes(stream: ReadableStream<Uint8Array>): Promise<void> {
+  for await (const _chunk of stream) {
+    // Drain the body so provider dispatch and retry handling run.
+  }
+}
 
 function createModel(modelId: string): ModelRuntime {
   return {
@@ -36,6 +60,58 @@ function createModel(modelId: string): ModelRuntime {
 }
 
 describe("run-scoped model cancellation intrinsics", () => {
+  it("does not retry a retryable provider stream failure when the captured abort signal is aborted", async () => {
+    const abortController = new AbortController();
+    let attempts = 0;
+    const model: ModelRuntime = {
+      provider: "test",
+      modelId: "veryfront-cloud/openai/retry-aborted-intrinsic",
+      doGenerate() {
+        throw new Error("Expected stream path");
+      },
+      doStream() {
+        attempts += 1;
+        abortController.abort(new DOMException("caller aborted", "AbortError"));
+        return Promise.resolve({ stream: erroringRuntimeStream(retryableProviderStreamFailure()) });
+      },
+    };
+    const runtime = new AgentRuntime(
+      "retry-aborted-intrinsic-runtime",
+      {
+        model: "veryfront-cloud/openai/retry-aborted-intrinsic",
+        system: "retry abort intrinsic test",
+        maxSteps: 1,
+      },
+      { resolveModelRuntime: () => model },
+    );
+    const abortedDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted");
+    assert(abortedDescriptor, "AbortSignal.aborted must have a property descriptor");
+
+    try {
+      Object.defineProperty(AbortSignal.prototype, "aborted", {
+        ...abortedDescriptor,
+        get: () => false,
+      });
+      const stream = await runtime.stream(
+        [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Hello" }],
+        }],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        abortController.signal,
+      );
+      await consumeBytes(stream);
+    } finally {
+      Object.defineProperty(AbortSignal.prototype, "aborted", abortedDescriptor);
+    }
+
+    assertEquals(attempts, 1);
+  });
+
   it("uses the captured ReadableStream constructor for signed inference", async () => {
     const model = scriptedModel([
       { parts: [{ type: "text-delta", text: "complete" }] },

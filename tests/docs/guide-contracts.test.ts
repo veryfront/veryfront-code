@@ -1,5 +1,9 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  type GraphqlSchemaSnapshot,
+  validateGraphqlOperation,
+} from "../../scripts/docs/guide-snippets.ts";
 
 interface GuideContract {
   references: string[];
@@ -67,8 +71,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "createExternalAgentWorkerClient",
-      "`/conversations/${conversation.id}/messages`",
-      'parts: [{ type: "text", text: prompt }]',
+      'import { Conversation, createConversationsApiTransport } from "veryfront/conversations";',
+      "{ projectReference: projectId, title: \"Runtime connection demo\" }",
+      'await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });',
       "registerWorker",
       "claimRun",
       "ConversationRunEventEncoder",
@@ -109,7 +114,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "childCanonicalRunId",
       "EVENT_SCHEMA_BY_TYPE",
       "EVENT_TYPES",
-      "deno task generate",
+      "npm install veryfront @veryfront/ext-schema-zod",
+      "deno add npm:veryfront npm:@veryfront/ext-schema-zod",
+      "node verify-events.mjs",
+      "bun verify-events.mjs",
+      "deno run verify-events.mjs",
+      "assert.equal(invalid.success, false)",
+      "Event parsing verified.",
     ],
   },
   "guides/agents.md": {
@@ -704,7 +715,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agent source",
       "There is no project integration policy",
       "Make your first call",
-      "executeIntegrationTool",
+      "runIntegrationTool",
       "/projects/<PROJECT_SLUG>/mcp",
       "expected_connection_generation_id",
       "Connection inventory",
@@ -1019,7 +1030,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/sandbox.md",
       "../api-reference/veryfront/fs.md",
     ],
-    snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
+    snippets: ["Sandbox.create", "runCommand", "sandbox.close"],
   },
   "guides/security-headers.md": {
     references: [],
@@ -1135,9 +1146,34 @@ describe("Connect-runtime worker admission", () => {
     const beforeAdmission = guide.slice(prompt, admission);
     assertStringIncludes(
       beforeAdmission,
-      "await api(`/conversations/${conversation.id}/messages`, {",
+      'await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });',
     );
-    assertStringIncludes(beforeAdmission, 'role: "user"');
-    assertStringIncludes(beforeAdmission, 'parts: [{ type: "text", text: prompt }]');
+  });
+});
+
+describe("integration credentials guide GraphQL reference", () => {
+  it("names a tool schema operation that the GraphQL schema snapshot serves", async () => {
+    const root = new URL("../../", import.meta.url);
+    const snapshot = JSON.parse(
+      await Deno.readTextFile(
+        new URL("scripts/docs/fixtures/integrations-graphql-schema.json", root),
+      ),
+    ) as GraphqlSchemaSnapshot;
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/integrations/credentials.md", root),
+    );
+    const row = guide.split("\n").find((line) => line.startsWith("| GraphQL "));
+    const cell = row?.split("|").at(-2) ?? "";
+    const [field, property] = [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    assertEquals([field, property], ["integrationTools", "inputSchema"]);
+
+    const query = `query Tools($projectReference: String, $integration: String) {
+  ${field}(projectReference: $projectReference, integration: $integration) {
+    tools { name description ${property} }
+    total
+    pageInfo { next }
+  }
+}`;
+    assertEquals(validateGraphqlOperation(query, snapshot), []);
   });
 });

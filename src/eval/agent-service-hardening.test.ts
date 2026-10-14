@@ -577,21 +577,32 @@ describe("eval/agent-service hardening", () => {
 
   it("sets Node-compatible duplex mode for streamed project uploads", async () => {
     let uploadDuplex: string | undefined;
+    let createBody: unknown;
+    let uploadUrl = "";
     const client = createLiveEvalApiClient({
       apiUrl: "https://api.example.test",
       authToken: "token",
       projectId: "project_123",
-      fetch: async (_input, init) => {
+      fetch: async (input, init) => {
         if (init?.method === "POST") {
+          createBody = JSON.parse(String(init.body));
           return Response.json({
-            file_upload_url: "https://upload.example.test/fixture",
+            upload_url: "https://upload.example.test/fixture",
+            path: "fixture.txt",
+            status: "pending",
+            // Earlier spelling the route still serves; the client must not read it.
+            file_upload_url: "https://upload.example.test/earlier-spelling",
           });
         }
         if (init?.method === "PUT") {
+          uploadUrl = String(input);
           uploadDuplex = (init as RequestInit & { duplex?: string }).duplex;
           return new Response(null, { status: 204 });
         }
-        return Response.json({ data: [{ path: "fixture.txt" }] });
+        return Response.json({
+          data: [{ type: "file", path: "fixture.txt" }],
+          folders: [],
+        });
       },
     });
     const body = new ReadableStream<Uint8Array>({
@@ -612,6 +623,37 @@ describe("eval/agent-service hardening", () => {
     });
 
     assertEquals(uploadDuplex, "half");
+    assertEquals(createBody, { path: "fixture.txt", content_type: "text/plain", size_bytes: 7 });
+    assertEquals(uploadUrl, "https://upload.example.test/fixture");
+  });
+
+  it("does not confirm an upload fixture from a folder with the same path", async () => {
+    const client = createLiveEvalApiClient({
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      projectId: "project_123",
+      fetch: async (_input, init) => {
+        if (init?.method === "POST") {
+          return Response.json({ upload_url: "https://upload.example.test/fixture" });
+        }
+        if (init?.method === "PUT") return new Response(null, { status: 204 });
+        return Response.json({
+          data: [{ type: "folder", path: "fixtures" }],
+          folders: [{ path: "fixtures" }],
+        });
+      },
+    });
+
+    await assertRejects(() =>
+      client.createProjectUploadFixture({
+        filePath: "fixtures",
+        contentType: "text/plain",
+        body: "fixture",
+        requestTimeoutMs: 1_000,
+        pollIntervalMs: 0,
+        maxAttempts: 1,
+      })
+    );
   });
 
   it("rejects non-finite live input-response numbers before fetching", async () => {

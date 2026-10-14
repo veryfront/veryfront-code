@@ -1,3 +1,4 @@
+import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
   createPlatformMcpCatalogSource,
   platformMcpLegacyName,
@@ -573,6 +574,7 @@ async function withVeryfrontPlatformRemoteTools(input: {
   projectId?: string | null;
   availableToolNames?: string[];
   terminalAuthority?: { token: string; runId: string } | null;
+  fileWriterToken?: string | null;
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
   const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
@@ -593,12 +595,19 @@ async function withVeryfrontPlatformRemoteTools(input: {
     return input.agent;
   }
 
-  const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  const platformRemoteToolSource = createRunPlatformToolSource({
-    id: VERYFRONT_API_MCP_SOURCE_ID,
-    endpoint: `${apiUrl}/mcp`,
-    headers: { Authorization: `Bearer ${input.token}` },
-  }, input.terminalAuthority ?? null);
+  const apiUrl = input.fileWriterToken
+    ? resolveHostOwnedSourceApiBaseUrl()
+    : resolveVeryfrontApiBaseUrlFromHostEnv();
+  const platformRemoteToolSource = createRunPlatformToolSource(
+    {
+      id: VERYFRONT_API_MCP_SOURCE_ID,
+      endpoint: `${apiUrl}/mcp`,
+      headers: { Authorization: `Bearer ${input.token}` },
+    },
+    input.terminalAuthority ?? null,
+    undefined,
+    input.fileWriterToken ? { apiBaseUrl: apiUrl, token: input.fileWriterToken } : null,
+  );
   let platformToolDefinitions: ToolDefinition[] | null = null;
   try {
     platformToolDefinitions = await platformRemoteToolSource.listTools({
@@ -1210,7 +1219,6 @@ export class AgentStreamHandler extends BaseHandler {
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
-      const pauseSignal = req.signal;
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1431,6 +1439,9 @@ export class AgentStreamHandler extends BaseHandler {
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                           // The API binds the terminal token to the signed run-bound credential,
                           // never to the host proxy token this source would otherwise fall back to.
+                          fileWriterToken: payload.credentials?.authToken
+                            ? runEventAppendToken
+                            : null,
                           terminalAuthority: terminalToken && payload.credentials?.authToken
                             ? { token: terminalToken, runId: payload.runId }
                             : null,
@@ -1472,7 +1483,8 @@ export class AgentStreamHandler extends BaseHandler {
                             createHostOwnedAgentManualPause({
                               runId: payload.runId,
                               token: pauseToken,
-                              signal: pauseSignal,
+                              // The runtime binds its own lifetime when execution starts.
+                              signal: undefined,
                             }),
                           );
                         }

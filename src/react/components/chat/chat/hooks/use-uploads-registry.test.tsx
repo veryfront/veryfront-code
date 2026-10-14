@@ -141,7 +141,8 @@ function mountOptions(
 
 /** Run an async interaction, then flush the resulting render + passive effects. */
 async function flush(fn: () => void): Promise<void> {
-  fn();
+  // Put the interaction's updates inside React's synchronous flush boundary.
+  flushSync(fn);
   // Let the stubbed fetch promise chain settle so its setState is queued...
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
   // ...then force React to flush that update and its passive effects.

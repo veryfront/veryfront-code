@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Model provider registry and runtime resolution."
-order: 27
+order: 28
 ---
 
 ## Import
@@ -148,8 +148,8 @@ Shared plumbing consumed by the `@veryfront/ext-*` provider extensions. This bar
 ```ts
 import {
   buildProviderError,
+  closeSchemaForOutputConfig,
   createAnthropicRequestInit,
-  createGoogleRequestInit,
 } from "veryfront/provider/shared";
 ```
 
@@ -170,6 +170,7 @@ import {
 | Name                                | Description                                                                                                                                                                                                                                                                                                                                                                                     | Source                                                                                                                      |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `buildProviderError`                | Inspect a non-2xx response and build the most specific ProviderError subclass we can. Reads the response body as text (it's already dead on the wire by this point). Body classification handles the cases where HTTP status alone is ambiguous - notably OpenAI `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)                |
+| `closeSchemaForOutputConfig`        | Close every object in a schema bound for `output_config`.                                                                                                                                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/anthropic-output-schema.ts)              |
 | `createAnthropicRequestInit`        | Create Anthropic request init.                                                                                                                                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts)        |
 | `createGoogleRequestInit`           | Create Google request init.                                                                                                                                                                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts)        |
 | `createOpenAIRequestInit`           | Create request init options for OpenAI-compatible providers.                                                                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts)        |
@@ -219,6 +220,7 @@ import {
 | `ProviderQuotaError`           | Provider account quota is exhausted - non-retryable.                                                                                                                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)    |
 | `ProviderRateLimitError`       | Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After).                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)    |
 | `ProviderRequestError`         | Non-retryable 4xx/5xx that doesn't fit another bucket.                                                                                                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)    |
+| `ProviderStreamProtocolError`  | Provider answered with a successful status, but its response stream broke the provider's own event protocol, so the runtime could not read it.                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)    |
 | `StreamFragmentBuffer`         | Accumulates streamed string fragments with storage proportional to their content rather than to how many fragments the provider sent. Every `STREAM_FRAGMENT_COMPACTION_SIZE` fragments are joined into one string, so millions of one-byte deltas do not become millions of array entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/stream-retention.ts) |
 
 #### Types
@@ -276,3 +278,23 @@ import type {
 | `RuntimeReasoningOption`         | Provider-neutral reasoning controls accepted by model runtimes.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
 | `RuntimeResponseFormat`          | Provider-neutral structured-output request.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
 | `RuntimeStructuredOutputVariant` |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
+
+### `veryfront/provider/veryfront-cloud/cli-context`
+
+Narrow public boundary for first-party CLI operations that need to execute provider work inside a Veryfront Cloud request context.
+
+```ts
+import { runWithVeryfrontCloudContextAsync } from "veryfront/provider/veryfront-cloud/cli-context";
+```
+
+#### Functions
+
+| Name                                | Description                             | Source                                                                                                  |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `runWithVeryfrontCloudContextAsync` | Run with Veryfront Cloud context async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts) |
+
+#### Types
+
+| Name                    | Description                  | Source                                                                                                  |
+| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `VeryfrontCloudContext` | Context for Veryfront Cloud. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts) |

@@ -17,7 +17,7 @@ import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-looku
 import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
-import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getClassificationRequestHost } from "../utils/request-host.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { decodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 
@@ -86,7 +86,7 @@ function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): strin
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
   // upstream proxy. Honour it only after the operator opt-in; otherwise fall
   // back to Host. Signed application requests are not general proxy authority.
-  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
+  return getClassificationRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
 /**

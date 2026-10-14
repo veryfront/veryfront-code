@@ -1,17 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "@std/assert";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
 import {
   createMirroredToolChunkState,
   recordMirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
+import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
+  persistToolResultOwnershipCorrections,
 } from "./finalized-message.ts";
 
 Deno.test("buildFinalizedMessageState builds fallback parts for an empty finalized assistant message", () => {
@@ -453,6 +456,89 @@ Deno.test("finalized tool input adopts matching final-step output without duplic
     }),
     [{ type: "tool-output-available", toolCallId: "c", output: "ok" }],
   );
+});
+
+for (
+  const [label, partType, partInput, finalStep] of [
+    ["a different final-step tool name", "tool-bash", { command: "x" }, {
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: { url: "u" } }],
+      toolResults: [{ toolCallId: "c", toolName: "web_fetch", output: "fetched" }],
+    }],
+    ["final-step calls with conflicting tool names", "tool-web_fetch", {}, {
+      toolCalls: [
+        { toolCallId: "c", toolName: "web_fetch", input: { url: "u" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "web_fetch", output: "fetched" }],
+    }],
+    ["final-step calls with conflicting inputs", "tool-bash", {}, {
+      toolCalls: [
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "y" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+    }],
+  ] as const
+) {
+  Deno.test(`pending tool is not completed from ${label}`, () => {
+    const part = {
+      type: partType,
+      toolCallId: "c",
+      input: partInput,
+      state: "input-streaming" as const,
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(
+      state.sanitizedFinalizedMessage.parts.some((candidate) =>
+        "toolCallId" in candidate && candidate.toolCallId === "c" &&
+        candidate.state === "output-available"
+      ),
+      false,
+    );
+    assertEquals(state.hasIncompleteFinalizedToolParts, true);
+    const mirrored = createMirroredToolChunkState();
+    mirrored.startedToolCallIds.add("c");
+    const replay = buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    });
+    assertEquals(replay.some((chunk) => chunk.type === "tool-output-available"), false);
+  });
+}
+
+Deno.test("pending tool completes from agreeing duplicate final-step records", () => {
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{ type: "tool-bash", toolCallId: "c", input: {}, state: "input-streaming" }],
+    },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: { command: "x" },
+    state: "output-available",
+    output: "ok",
+  }]);
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
 });
 
 Deno.test("partially streamed tool input recovers complete arguments in terminal and replay", () => {
@@ -1603,6 +1689,7 @@ Deno.test("completed mirrored tool ownership recovery reaches durable version1 r
   assertEquals(corrections[0], {
     type: "CUSTOM",
     name: "veryfront.tool_result_ownership",
+    origin: "veryfront.finalization",
     value: {
       schemaVersion: 1,
       toolCallId: "completed",
@@ -1686,6 +1773,70 @@ Deno.test("ownership metadata requires missing ownership and a completed mirrore
   }
 });
 
+for (
+  const [label, finalStep] of [
+    ["conflicting duplicate calls", {
+      toolCalls: [
+        { toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: false },
+        { toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: true },
+      ],
+    }],
+    ["conflicting call and result", {
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: false }],
+      toolResults: [{
+        toolCallId: "c",
+        toolName: "web_fetch",
+        input: {},
+        output: "provider result",
+        providerExecuted: true,
+      }],
+    }],
+    ["repeated provider response messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: false,
+            }],
+          },
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: true,
+            }],
+          },
+        ],
+      },
+    }],
+  ] as const
+) {
+  Deno.test(`completed ownership is not promoted from ${label}`, () => {
+    const part = {
+      type: "tool-web_fetch" as const,
+      toolCallId: "c",
+      state: "output-available" as const,
+      input: {},
+      output: "actual result",
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
+  });
+}
+
 Deno.test("completed ownership requires the same final-step tool name", () => {
   const part = {
     type: "tool-web_fetch" as const,
@@ -1708,4 +1859,503 @@ Deno.test("completed ownership requires the same final-step tool name", () => {
     incompleteToolCallsPartErrorText: "tool error",
   });
   assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
+});
+
+for (const state of ["output-error", "output-denied", "completed", "error"] as const) {
+  Deno.test(`completed ${state} recovers provider ownership without changing verdict`, () => {
+    const isErrored = state === "output-error" || state === "error";
+    const isAvailable = state === "completed";
+    const part = {
+      type: "tool-web_fetch" as const,
+      toolCallId: "failed",
+      state,
+      input: { original: true },
+      ...(isErrored ? { errorText: "original failure" } : {}),
+      ...(isAvailable ? { output: "original result" } : {}),
+    };
+    const result = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep: {
+        toolCalls: [{
+          toolCallId: "failed",
+          toolName: "web_fetch",
+          input: {},
+          providerExecuted: true,
+        }],
+      },
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(result.sanitizedFinalizedMessage.parts, [{ ...part, providerExecuted: true }]);
+    const mirror = createMirroredToolChunkState();
+    (isAvailable
+      ? mirror.outputAvailableToolCallIds
+      : isErrored
+      ? mirror.outputErrorToolCallIds
+      : mirror.outputDeniedToolCallIds).add(
+        "failed",
+      );
+    const correction = buildToolResultOwnershipCorrectionEvents({
+      persistedMessage: result.persistedMessage,
+      finalizedMessage: result.sanitizedFinalizedMessage,
+      mirroredToolChunkState: mirror,
+      isAborted: false,
+    });
+    assertEquals(correction.length, 1);
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "m" });
+    const events = [
+      ...encoder.encode({ type: "tool-input-start", toolCallId: "failed", toolName: "web_fetch" }),
+      ...encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "failed",
+        toolName: "web_fetch",
+        input: part.input,
+      }),
+      ...encoder.encode(
+        isAvailable
+          ? { type: "tool-output-available", toolCallId: "failed", output: "original result" }
+          : isErrored
+          ? { type: "tool-output-error", toolCallId: "failed", errorText: "original failure" }
+          : { type: "tool-output-denied", toolCallId: "failed" },
+      ),
+      ...correction,
+    ];
+    const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      const semantic = replay.frames.filter((frame) => frame.class === "semantic").map((frame) =>
+        frame.event
+      );
+      assertEquals(semantic.filter((event) => event.type === "provider_tool_result").length, 1);
+      assertEquals(
+        semantic.some((event) => event.type === "custom" && event.name === "legacy-tool-result"),
+        false,
+      );
+    }
+    assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+    assertEquals(JSON.stringify(correction).includes("original"), false);
+    assertEquals(
+      buildToolResultOwnershipCorrectionEvents({
+        persistedMessage: result.persistedMessage,
+        finalizedMessage: result.sanitizedFinalizedMessage,
+        mirroredToolChunkState: mirror,
+        isAborted: true,
+      }),
+      [],
+    );
+  });
+}
+
+Deno.test("ownership metadata appends serialize three contenders without duplicate corrections", async () => {
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
+  const secondStarted = Promise.withResolvers<void>();
+  const appended: unknown[] = [];
+  const state = createMirroredToolChunkState();
+  const correction = (id: string) => [{
+    type: "CUSTOM",
+    name: "veryfront.tool_result_ownership",
+    origin: "veryfront.finalization",
+    value: {
+      schemaVersion: 1,
+      toolCallId: id,
+      toolName: "web_fetch",
+      parentMessageId: "m",
+      providerExecuted: true,
+    },
+  }];
+  const mirror = {
+    appendEvents: async (events: readonly unknown[]) => {
+      appended.push(...events);
+      if (appended.length === 1) await first.promise;
+      else {
+        secondStarted.resolve();
+        await second.promise;
+      }
+    },
+  };
+  const initial = persistToolResultOwnershipCorrections(correction("x"), mirror, state);
+  const following = [
+    persistToolResultOwnershipCorrections(correction("y"), mirror, state),
+    persistToolResultOwnershipCorrections(correction("y"), mirror, state),
+  ];
+  first.resolve();
+  await secondStarted.promise;
+  // Give the other first-append waiter a chance to contend for the second append.
+  for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+  try {
+    assertEquals(appended, [...correction("x"), ...correction("y")]);
+  } finally {
+    second.resolve();
+    await Promise.all([initial, ...following]);
+  }
+  assertEquals(appended, [...correction("x"), ...correction("y")]);
+  assertEquals([...state.ownershipCorrectedToolCallIds!].sort(), ["x", "y"]);
+});
+
+Deno.test("closed framework reasoning keeps end metadata so finalization does not duplicate it", async () => {
+  for (
+    const end of [
+      { text: "Thinking", signature: "sig-1" },
+      { text: "", redactedData: "redacted-1" },
+    ]
+  ) {
+    const { text, ...metadata } = end;
+    const events = [
+      { type: "message-start", messageId: "m" },
+      { type: "reasoning-start", id: "r" },
+      ...(text ? [{ type: "reasoning-delta", id: "r", delta: text }] : []),
+      { type: "reasoning-end", id: "r", ...metadata },
+      { type: "message-finish" },
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    });
+    let responseMessage: ChatUiMessage | undefined;
+    const emitted: unknown[] = [];
+    for await (
+      const chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+        sendReasoning: true,
+        generateMessageId: () => "m",
+        onFinish: (finish) => {
+          responseMessage = finish.responseMessage;
+        },
+      })
+    ) emitted.push(chunk);
+    if (!responseMessage) throw new Error("Expected a framework response message");
+    // End metadata stays out of the client chunks, as before.
+    assertEquals(JSON.stringify(emitted).includes(Object.values(metadata)[0]!), false);
+    const reasoning = { type: "reasoning" as const, text, ...metadata };
+    assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [reasoning]);
+
+    const state = buildFinalizedMessageState({
+      responseMessage,
+      finalStep: { response: { messages: [{ role: "assistant", content: [reasoning] }] } },
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(
+      state.sanitizedFinalizedMessage.parts.filter((part) => part.type === "reasoning"),
+      [reasoning],
+    );
+    assertEquals(state.recoveredFallbackParts, []);
+  }
+});
+
+Deno.test("open reasoning with trailing whitespace completes with end metadata only", () => {
+  // Projection-built open parts carry a streaming state beyond the base part type.
+  const open = { type: "reasoning" as const, text: "Thinking ", state: "streaming" as const };
+  const completed = { ...open, state: "done" as const, signature: "sig-1" };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "r" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "r", delta: "Thinking " });
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Thinking ", signature: "sig-1" }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [open],
+    },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [completed]);
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "reasoning-end", id: "r", signature: "sig-1" }],
+  );
+});
+
+for (
+  const [label, finalStep] of [
+    ["response tool messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c", toolName: "bash", input: {} }],
+          },
+          {
+            role: "tool",
+            content: [
+              { type: "tool-result", toolCallId: "c", toolName: "bash", output: "first" },
+              { type: "tool-result", toolCallId: "c", toolName: "bash", output: "second" },
+            ],
+          },
+        ],
+      },
+    }],
+    ["UI response messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "c", toolName: "bash", args: {} }],
+          },
+          {
+            role: "tool",
+            parts: [
+              { type: "tool-result", toolCallId: "c", result: "first" },
+              { type: "tool-result", toolCallId: "c", result: "second" },
+            ],
+          },
+        ],
+      },
+    }],
+    ["step tool results", {
+      toolCalls: [{ toolCallId: "c", toolName: "bash", input: {} }],
+      toolResults: [
+        { toolCallId: "c", toolName: "bash", output: "first" },
+        { toolCallId: "c", toolName: "bash", output: "second" },
+      ],
+    }],
+  ] as const
+) {
+  Deno.test(`pending tool does not complete from conflicting final-step results (${label})`, () => {
+    const part = {
+      type: "tool-bash" as const,
+      toolCallId: "c",
+      state: "input-available" as const,
+      input: {},
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.hasIncompleteFinalizedToolParts, true);
+    assertEquals(state.sanitizedFinalizedMessage.parts, [{
+      ...part,
+      state: "output-error",
+      errorText: "tool error",
+    }]);
+  });
+}
+
+Deno.test("pending tool completes from agreeing duplicate final-step results", () => {
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{ type: "tool-bash", toolCallId: "c", input: {}, state: "input-available" }],
+    },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [{ toolCallId: "c", toolName: "bash", input: {} }],
+      toolResults: [
+        { toolCallId: "c", toolName: "bash", output: { ok: true } },
+        { toolCallId: "c", toolName: "bash", output: { ok: true } },
+      ],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: {},
+    state: "output-available",
+    output: { ok: true },
+  }]);
+});
+
+Deno.test("the last final-step reasoning completes the open block over an earlier closed exact match", () => {
+  const closed = { type: "reasoning" as const, text: "think", state: "done" as const };
+  const open = { type: "reasoning" as const, text: "thi", state: "streaming" as const };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "a", delta: "think" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-end", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "b" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "b", delta: "thi" });
+  const finalStep = {
+    response: {
+      messages: [{ role: "assistant", content: [{ type: "reasoning", text: "think" }] }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [closed, open] },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [closed, {
+    ...open,
+    text: "think",
+    state: "done" as const,
+  }]);
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "reasoning-delta", id: "b", delta: "nk" }, { type: "reasoning-end", id: "b" }],
+  );
+});
+
+Deno.test("earlier final-step reasoning still takes its closed exact match before the open block", () => {
+  const closed = { type: "reasoning" as const, text: "think", state: "done" as const };
+  const open = { type: "reasoning" as const, text: "thi", state: "streaming" as const };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "a", delta: "think" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-end", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "b" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "b", delta: "thi" });
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "reasoning", text: "think" }, {
+          type: "reasoning",
+          text: "thinking more",
+        }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [closed, open] },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [closed, {
+    ...open,
+    text: "thinking more",
+    state: "done" as const,
+  }]);
+});
+
+Deno.test("a reused framework reasoning id starts a new open block that finalization completes", async () => {
+  const events = [
+    { type: "message-start", messageId: "m" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "Sec" },
+    { type: "message-finish" },
+  ];
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  let responseMessage: ChatUiMessage | undefined;
+  const mirrored = createMirroredToolChunkState();
+  const reasoningChunkIds: string[] = [];
+  for await (
+    const chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+      sendReasoning: true,
+      generateMessageId: () => "m",
+      onFinish: (finish) => {
+        responseMessage = finish.responseMessage;
+      },
+    })
+  ) {
+    if (chunk.type === "reasoning-start") reasoningChunkIds.push(chunk.id);
+    recordMirroredToolChunkState(mirrored, chunk);
+  }
+  if (!responseMessage) throw new Error("Expected a framework response message");
+  // The second span is emitted under a replacement id and stays a separate, open part.
+  assertEquals(reasoningChunkIds.length, 2);
+  assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [
+    { type: "reasoning", text: "First" },
+    { type: "reasoning", text: "Sec" },
+  ]);
+
+  const finalStep = {
+    response: {
+      messages: [{ role: "assistant", content: [{ type: "reasoning", text: "Second" }] }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(
+    state.sanitizedFinalizedMessage.parts.filter((part) => part.type === "reasoning"),
+    [{ type: "reasoning", text: "First" }, { type: "reasoning", text: "Second" }],
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [
+      { type: "reasoning-delta", id: reasoningChunkIds[1]!, delta: "ond" },
+      { type: "reasoning-end", id: reasoningChunkIds[1]! },
+    ],
+  );
+});
+
+Deno.test("a replayed framework reasoning id does not duplicate its block", async () => {
+  const events = [
+    { type: "message-start", messageId: "m" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "message-finish" },
+  ];
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  let responseMessage: ChatUiMessage | undefined;
+  for await (
+    const _chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+      sendReasoning: true,
+      generateMessageId: () => "m",
+      onFinish: (finish) => {
+        responseMessage = finish.responseMessage;
+      },
+    })
+  ) { /* drain */ }
+  if (!responseMessage) throw new Error("Expected a framework response message");
+  assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [
+    { type: "reasoning", text: "First" },
+  ]);
 });

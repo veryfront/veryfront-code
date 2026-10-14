@@ -13,6 +13,39 @@ const FORM_INPUT_IDEA =
   "Write a consolidated budget-planning plan to /plans/budget-planning.md that supersedes the existing plan.";
 const PLAN_SKILL_RESULT = { skillId: "plan", instructions: "Plan instructions" };
 
+Deno.test("canonical platform skill, form and delegation names retain artifact policy behavior", () => {
+  const calls = assistantMessage([
+    toolCall("canonical-load", "veryfront__load_skill", { skillId: "plan" }),
+    toolCall("canonical-form", "veryfront__form_input", { title: "Plan" }),
+  ]);
+  for (
+    const submitted of [
+      assistantMessage([formInputResultWithoutToolName("canonical-form")]),
+      toolRoleJsonStringMessage("canonical-form", JSON.stringify(formInputSubmission())),
+    ]
+  ) {
+    const messages = [userMessage(FORM_INPUT_PLAN_COMMAND), calls, submitted];
+    assertEquals(evaluateSlashCommandArtifactPolicy({ messages }), {
+      hasSlashCommand: true,
+      hasExactArtifactPath: true,
+      hasLoadSkill: true,
+      hasInvokeAgent: false,
+      shouldKeepReminder: true,
+    });
+    assertEquals(
+      evaluateSlashCommandArtifactPolicy({
+        messages: [
+          ...messages,
+          assistantMessage([
+            toolCall("canonical-child", "veryfront__invoke_agent", { task: "Write" }),
+          ]),
+        ],
+      }).shouldKeepReminder,
+      false,
+    );
+  }
+});
+
 function userMessage(content: string) {
   return { role: "user", content };
 }

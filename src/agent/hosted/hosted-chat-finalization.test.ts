@@ -1,3 +1,5 @@
+import { prepareConversationRunChunkEvents } from "../conversation/run-event-preparation.ts";
+import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -8,7 +10,12 @@ import {
   type MessageMetadata,
 } from "../../chat/types.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
-import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
+import {
+  type ConversationRunEvent,
+  ConversationRunEventEncoder,
+} from "#veryfront/agent/conversation/run-events.ts";
+import { createLifecycleRunEventAdapter } from "#veryfront/agent/conversation/lifecycle-run-event-adapter.ts";
+import { type StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
 import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
@@ -23,6 +30,13 @@ import {
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import { AgentRuntime } from "../runtime/index.ts";
+import type { ModelRuntime } from "#veryfront/provider";
+import { createHostedChatRuntimeAgentAdapter } from "./chat-runtime-agent-adapter.ts";
+import {
+  createHostedChatExecutionRuntime,
+  createHostedChatExecutionRuntimeBootstrap,
+} from "./chat-execution-runtime.ts";
 import {
   createRunBoundAgentManualPause,
   inheritHostedAgentPauseCapability,
@@ -187,6 +201,728 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(replay.status, "ok");
       if (replay.status === "ok") {
         assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+      }
+    }
+  });
+
+  it("mirrors detached recovered text suffixes beside tools and reasoning without repeating them", async () => {
+    for (const mixed of [false, true]) {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const state = createMirroredToolChunkState();
+      const first = { type: "reasoning" as const, text: "First", signature: "private-first" };
+      const second = { type: "reasoning" as const, text: "Second", signature: "private-second" };
+      const original: ChatUiMessage["parts"] = [{ type: "text", text: "Hel" }];
+      if (mixed) {
+        original.push(first, {
+          type: "tool-web_fetch",
+          toolCallId: "seen",
+          state: "output-available",
+          input: {},
+          output: "found",
+          providerExecuted: true,
+        });
+      }
+      const encoder = new ConversationRunEventEncoder();
+      encoder.encode({ type: "start", messageId: "assistant-message-1" });
+      const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+        { type: "text-start", id: "prefix" },
+        { type: "text-delta", id: "prefix", delta: "Hel" },
+        { type: "text-end", id: "prefix" },
+      ];
+      if (mixed) {
+        prior.push(
+          { type: "reasoning-start", id: "first" },
+          { type: "reasoning-delta", id: "first", delta: "First" },
+          { type: "reasoning-end", id: "first", signature: "private-first" },
+          {
+            type: "tool-input-start",
+            toolCallId: "seen",
+            toolName: "web_fetch",
+            providerExecuted: true,
+          },
+          {
+            type: "tool-input-available",
+            toolCallId: "seen",
+            toolName: "web_fetch",
+            input: {},
+            providerExecuted: true,
+          },
+          {
+            type: "tool-output-available",
+            toolCallId: "seen",
+            output: "found",
+            providerExecuted: true,
+          },
+        );
+      }
+      const events = prior.flatMap((chunk) => {
+        recordMirroredToolChunkState(state, chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish");
+        return encoder.encode(chunk);
+      });
+      const mirror = createDurableRunMirror({ calls, chunks });
+      const append = mirror.handleChunk;
+      mirror.handleChunk = async (chunk) => {
+        await append(chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish");
+        events.push(...encoder.encode(chunk));
+      };
+      const finalStep = mixed
+        ? {
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [
+                { type: "text", text: "Hello" },
+                first,
+                second,
+                {
+                  type: "tool-call",
+                  toolCallId: "seen",
+                  toolName: "web_fetch",
+                  input: {},
+                  providerExecuted: true,
+                },
+              ],
+            }, {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId: "seen",
+                toolName: "web_fetch",
+                output: "found",
+                providerExecuted: true,
+              }],
+            }],
+          },
+        }
+        : { text: "Hello" };
+      const common = {
+        kind: "detached" as const,
+        isAborted: false,
+        mirroredDurableOutput: true,
+        streamResult: createStreamResult(finalStep),
+        lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+        mirroredToolChunkState: state,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "incomplete",
+        cleanup: async () => {},
+        streamError: null,
+      };
+      await finalizeHostedChatRun({
+        ...common,
+        mirroredMessage: createResponseMessage({ parts: original }),
+      });
+      assertEquals(
+        chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
+        ["lo"],
+      );
+      const output = terminalStates[0]!.output as ChatUiMessage;
+      assertEquals(
+        output.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
+        "Hello",
+      );
+      const count = chunks.length;
+      await finalizeHostedChatRun({ ...common, mirroredMessage: output });
+      assertEquals(chunks.length, count);
+      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" && frame.event.type === "text_content"
+          )
+            .map((frame) => frame.event.type === "text_content" ? frame.event.delta : "").join(""),
+          "Hello",
+        );
+        assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+      }
+    }
+  });
+
+  it("recovers detached legacy terminal ownership without changing state or verdict", async () => {
+    for (const legacy of ["completed", "error"] as const) {
+      for (const mode of ["normal", "aborted", "explicit-false"] as const) {
+        const calls: string[] = [];
+        const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const state = createMirroredToolChunkState();
+        const output = { private: "do-not-copy" };
+        const part = {
+          type: "tool-web_fetch" as const,
+          toolCallId: "legacy",
+          state: legacy,
+          input: {},
+          output,
+          ...(legacy === "error" ? { errorText: "original failure" } : {}),
+          ...(mode === "explicit-false" ? { providerExecuted: false } : {}),
+        };
+        const encoder = new ConversationRunEventEncoder();
+        encoder.encode({ type: "start", messageId: "assistant-message-1" });
+        const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+          { type: "tool-input-start", toolCallId: "legacy", toolName: "web_fetch" },
+          { type: "tool-input-available", toolCallId: "legacy", toolName: "web_fetch", input: {} },
+          legacy === "completed"
+            ? { type: "tool-output-available", toolCallId: "legacy", output }
+            : { type: "tool-output-error", toolCallId: "legacy", errorText: "original failure" },
+        ];
+        const events: ConversationRunEvent[] = prior.flatMap((chunk) => {
+          recordMirroredToolChunkState(state, chunk);
+          if (chunk.type === "finish") throw new Error("Unexpected finish");
+          return encoder.encode(chunk);
+        });
+        const mirror = createDurableRunMirror({ calls, chunks });
+        mirror.appendEvents = async (corrections) => {
+          assertEquals(JSON.stringify(corrections).includes("do-not-copy"), false);
+          events.push(...corrections);
+        };
+        const finalStep = {
+          toolCalls: [{
+            toolCallId: "legacy",
+            toolName: "web_fetch",
+            input: {},
+          }],
+          toolResults: [{
+            toolCallId: "legacy",
+            toolName: "web_fetch",
+            output: "fallback result",
+            providerExecuted: true,
+          }],
+        };
+        await finalizeHostedChatRun({
+          kind: "detached",
+          isAborted: mode === "aborted",
+          mirroredDurableOutput: true,
+          mirroredMessage: createResponseMessage({ parts: [part] }),
+          streamResult: createStreamResult(finalStep),
+          lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+          mirroredToolChunkState: state,
+          capturedMessageId: "assistant-message-1",
+          incompleteToolCallsPartErrorText: "incomplete",
+          cleanup: async () => {},
+          streamError: null,
+        });
+        assertEquals(terminalStates[0]?.status, mode === "aborted" ? "cancelled" : "completed");
+        if (mode === "aborted") {
+          assertEquals(terminalStates[0]?.output, undefined);
+        } else {
+          const recovered = (terminalStates[0]!.output as ChatUiMessage).parts[0]!;
+          assertEquals(recovered, {
+            ...part,
+            ...(mode === "normal" ? { providerExecuted: true } : {}),
+          });
+        }
+        assertEquals(chunks, []);
+        const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+        assertEquals(replay.status, "ok");
+        if (replay.status === "ok") {
+          const providerResults = replay.frames.filter((frame) =>
+            frame.class === "semantic" && frame.event.type === "provider_tool_result"
+          );
+          if (mode === "normal") {
+            assertEquals(
+              providerResults[0]?.event.type === "provider_tool_result" &&
+                providerResults[0].event.isError,
+              legacy === "error",
+            );
+          }
+          assertEquals(
+            replay.frames.filter((frame) =>
+              frame.class === "semantic" &&
+              frame.event.type === "provider_tool_result"
+            ).length,
+            mode === "normal" ? 1 : 0,
+          );
+        }
+      }
+    }
+  });
+
+  it("never opens late detached fallback tools after abort", async () => {
+    for (const hasResult of [false, true]) {
+      for (const started of [false, true]) {
+        for (const captured of [false, true]) {
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const prior = {
+            type: "tool-input-start" as const,
+            toolCallId: "late",
+            toolName: "web_fetch",
+          };
+          if (started) recordMirroredToolChunkState(state, prior);
+          const events: ConversationRunEvent[] = started
+            ? prepareConversationRunChunkEvents([prior], encoder)
+            : [];
+          const mirror = createDurableRunMirror({ calls, chunks });
+          const handle = mirror.handleChunk;
+          mirror.handleChunk = async (chunk) => {
+            await handle(chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            events.push(...prepareConversationRunChunkEvents([chunk], encoder));
+          };
+          await finalizeHostedChatRun({
+            kind: "detached",
+            isAborted: true,
+            mirroredDurableOutput: false,
+            ...(captured ? { mirroredMessage: createResponseMessage({ parts: [] }) } : {}),
+            streamResult: createStreamResult({
+              text: "Recovered text",
+              toolCalls: [{ toolCallId: "late", toolName: "web_fetch", input: {} }],
+              ...(hasResult
+                ? {
+                  toolResults: [{
+                    toolCallId: "late",
+                    toolName: "web_fetch",
+                    output: "late output",
+                  }],
+                }
+                : {}),
+            }),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          });
+          assertEquals(terminalStates[0]?.status, "cancelled");
+          assertEquals(
+            chunks.filter((chunk) => chunk.type.startsWith("tool-")),
+            started
+              ? [{
+                type: "tool-input-error",
+                toolCallId: "late",
+                toolName: "web_fetch",
+                input: {},
+                errorText: "Stopped by user",
+              }]
+              : [],
+          );
+          assertEquals(
+            chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
+            ["Recovered text"],
+          );
+          const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+          assertEquals(
+            replay.status,
+            "ok",
+            JSON.stringify({ started, captured, hasResult, replay }),
+          );
+          if (replay.status === "ok") {
+            assertEquals(JSON.stringify(replay.frames).includes("late"), started);
+            assertEquals(
+              replay.frames.some((frame) =>
+                frame.class === "semantic" &&
+                (frame.event.type === "provider_tool_result" && !frame.event.isError)
+              ),
+              false,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("stops mirrored unfinished tools consistently after response or detached abort", async () => {
+    for (const kind of ["response", "detached"] as const) {
+      for (const explicitFalse of [false, true]) {
+        const calls: string[] = [];
+        const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const state = createMirroredToolChunkState();
+        const message = createResponseMessage({
+          parts: [{
+            type: "tool-web_fetch",
+            toolCallId: "seen",
+            state: "input-available",
+            input: {},
+            ...(explicitFalse ? { providerExecuted: false } : {}),
+          }],
+        });
+        const encoder = new ConversationRunEventEncoder();
+        encoder.encode({ type: "start", messageId: "assistant-message-1" });
+        const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+          { type: "tool-input-start", toolCallId: "seen", toolName: "web_fetch" },
+          { type: "tool-input-available", toolCallId: "seen", toolName: "web_fetch", input: {} },
+        ];
+        const events = prior.flatMap((chunk) => {
+          recordMirroredToolChunkState(state, chunk);
+          if (chunk.type === "finish") throw new Error("Unexpected finish");
+          return encoder.encode(chunk);
+        });
+        const mirror = createDurableRunMirror({ calls, chunks });
+        const append = mirror.handleChunk;
+        mirror.handleChunk = async (chunk) => {
+          await append(chunk);
+          if (chunk.type === "finish") throw new Error("Unexpected finish");
+          events.push(...encoder.encode(chunk));
+        };
+        const common = {
+          isAborted: true,
+          streamResult: createStreamResult({
+            toolCalls: [{
+              toolCallId: "seen",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: true,
+            }],
+            toolResults: [{
+              toolCallId: "seen",
+              toolName: "web_fetch",
+              output: "late output",
+              providerExecuted: true,
+            }],
+          }),
+          lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+          mirroredToolChunkState: state,
+          capturedMessageId: "assistant-message-1",
+          incompleteToolCallsPartErrorText: "incomplete",
+          cleanup: async () => {},
+          streamError: null,
+        };
+        await finalizeHostedChatRun(
+          kind === "response"
+            ? { ...common, kind, responseMessage: message }
+            : { ...common, kind, mirroredMessage: message, mirroredDurableOutput: true },
+        );
+        assertEquals(terminalStates[0]?.status, "cancelled");
+        assertEquals(chunks.filter((chunk) => chunk.type === "tool-output-available"), []);
+        assertEquals(chunks.filter((chunk) => chunk.type === "tool-output-error"), [{
+          type: "tool-output-error",
+          toolCallId: "seen",
+          errorText: "Stopped by user",
+          ...(explicitFalse ? { providerExecuted: false } : {}),
+        }]);
+        const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+        assertEquals(replay.status, "ok");
+        if (replay.status === "ok") {
+          assertEquals(
+            replay.frames.filter((frame) =>
+              frame.class === "semantic" &&
+              frame.event.type === "provider_tool_result"
+            ),
+            [],
+          );
+        }
+      }
+    }
+  });
+
+  it("requires unique consistent raw final-step ownership evidence before durable promotion", async () => {
+    for (const source of ["content", "parts", "extracted"] as const) {
+      for (const kind of ["response", "detached"] as const) {
+        for (
+          const scenario of [
+            "pair",
+            "result-only-marker",
+            "duplicate-calls",
+            "duplicate-identical-calls",
+            "duplicate-results",
+            "conflicting-pair",
+            "wrong-name",
+          ] as const
+        ) {
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const output = { stored: "private-original-payload" };
+          const original = createResponseMessage({
+            parts: [{
+              type: "tool-web_fetch",
+              toolCallId: "owned",
+              state: "output-available",
+              input: {},
+              output,
+            }],
+          });
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+            { type: "tool-input-start", toolCallId: "owned", toolName: "web_fetch" },
+            { type: "tool-input-available", toolCallId: "owned", toolName: "web_fetch", input: {} },
+            { type: "tool-output-available", toolCallId: "owned", output },
+          ];
+          const events: ConversationRunEvent[] = prior.flatMap((chunk) => {
+            recordMirroredToolChunkState(state, chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            return encoder.encode(chunk);
+          });
+          const toolCall = {
+            type: "tool-call",
+            toolCallId: "owned",
+            toolName: "web_fetch",
+            input: {},
+            ...(scenario === "result-only-marker" || scenario === "duplicate-results"
+              ? {}
+              : { providerExecuted: true }),
+          };
+          const toolResult = {
+            type: "tool-result",
+            toolCallId: "owned",
+            toolName: scenario === "wrong-name" ? "other_tool" : "web_fetch",
+            output: "fallback",
+            providerExecuted: scenario !== "conflicting-pair",
+          };
+          const toolCalls = scenario === "duplicate-calls"
+            ? [{ ...toolCall, providerExecuted: false }, toolCall]
+            : scenario === "duplicate-identical-calls"
+            ? [toolCall, { ...toolCall }]
+            : [toolCall];
+          const toolResults = scenario === "duplicate-results"
+            ? [{ ...toolResult, providerExecuted: false }, toolResult]
+            : [toolResult];
+          const finalStep = source === "extracted" ? { toolCalls, toolResults } : {
+            response: {
+              messages: source === "content"
+                ? [
+                  { role: "assistant", content: toolCalls },
+                  { role: "tool", content: toolResults },
+                ]
+                : [{ role: "assistant", parts: toolCalls }, {
+                  role: "tool",
+                  parts: toolResults.map((result) => ({ ...result, result: result.output })),
+                }],
+            },
+          };
+          const mirror = createDurableRunMirror({ calls, chunks });
+          mirror.appendEvents = async (corrections) => {
+            assertEquals(JSON.stringify(corrections).includes("private-original-payload"), false);
+            events.push(...corrections);
+          };
+          const common = {
+            isAborted: false,
+            streamResult: createStreamResult(finalStep),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          };
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: original }
+              : { ...common, kind, mirroredMessage: original, mirroredDurableOutput: true },
+          );
+          const promoted = scenario === "pair" || scenario === "result-only-marker";
+          assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [{
+            ...original.parts[0]!,
+            ...(promoted ? { providerExecuted: true } : {}),
+          }], `${source}/${kind}/${scenario}`);
+          assertEquals(chunks, []);
+          assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+          const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+          assertEquals(replay.status, "ok");
+          if (replay.status === "ok") {
+            assertEquals(
+              replay.frames.filter((frame) =>
+                frame.class === "semantic" &&
+                frame.event.type === "provider_tool_result"
+              ).length,
+              promoted ? 1 : 0,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("completes only the currently open reasoning block with its missing suffix and end metadata", async () => {
+    for (const kind of ["response", "detached"] as const) {
+      for (const producer of ["projection", "framework"] as const) {
+        for (const prefix of ["Thi", "Thinking", ""]) {
+          if (producer === "framework" && prefix === "") continue;
+          const finalText = prefix === "" ? "" : "Thinking";
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const projection = createChatStreamMessageProjection("assistant-message-1");
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const canonicalEvents: ConversationRunEvent[] = [];
+          const writer = createLifecycleRunEventAdapter({
+            runId: "run-r",
+            attemptId: "attempt-r",
+            attemptIndex: 0,
+            messageId: "assistant-message-1",
+            onEvents: (events) => canonicalEvents.push(...events),
+            setTimer: () => 1,
+            clearTimer: () => {},
+          });
+          let sequence = 0;
+          const projectCanonical = (chunk: ChatUiMessageChunk<MessageMetadata>) => {
+            if (
+              chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
+              chunk.type !== "reasoning-end"
+            ) return;
+            const event: StreamLifecycleFrame["event"] = chunk.type === "reasoning-start"
+              ? { type: "reasoning_start", id: chunk.id }
+              : chunk.type === "reasoning-delta"
+              ? { type: "reasoning_content", id: chunk.id, delta: chunk.delta }
+              : {
+                type: "reasoning_end",
+                id: chunk.id,
+                signature: chunk.signature,
+                redactedData: chunk.redactedData,
+              };
+            writer.handleFrame({ class: "semantic", event, sequence: ++sequence, elapsedMs: 0 });
+          };
+          const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+            { type: "reasoning-start", id: "closed-r" },
+            { type: "reasoning-delta", id: "closed-r", delta: "Thi" },
+            { type: "reasoning-end", id: "closed-r" },
+            { type: "reasoning-start", id: "live-r" },
+            ...(prefix ? [{ type: "reasoning-delta" as const, id: "live-r", delta: prefix }] : []),
+          ];
+          const events: ConversationRunEvent[] = prior.flatMap((chunk) => {
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            projection.append(chunk);
+            projectCanonical(chunk);
+            recordMirroredToolChunkState(state, chunk);
+            return encoder.encode(chunk);
+          });
+          let original: ChatUiMessage = createResponseMessage({
+            parts: projection.snapshot().parts.filter((part) => part.type === "reasoning"),
+          });
+          if (producer === "framework") {
+            const inputEvents = [
+              { type: "message-start", messageId: "assistant-message-1" },
+              ...prior,
+              { type: "message-finish" },
+            ];
+            const stream = new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const event of inputEvents) {
+                  controller.enqueue(
+                    new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
+                  );
+                }
+                controller.close();
+              },
+            });
+            for await (
+              const _chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+                sendReasoning: true,
+                generateMessageId: () => "assistant-message-1",
+                onFinish: (finish) => {
+                  original = finish.responseMessage;
+                },
+              })
+            ) { /* Consume the actual framework producer before finalization. */ }
+          }
+          const mirror = createDurableRunMirror({ calls, chunks });
+          const append = mirror.handleChunk;
+          mirror.handleChunk = async (chunk) => {
+            await append(chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            projection.append(chunk);
+            projectCanonical(chunk);
+            events.push(...encoder.encode(chunk));
+          };
+          const finalStep = {
+            response: {
+              messages: [{
+                role: "assistant",
+                content: [
+                  { type: "reasoning", text: "Thi" },
+                  {
+                    type: "reasoning",
+                    text: finalText,
+                    signature: "private-final",
+                    redactedData: "private-redacted",
+                  },
+                ],
+              }],
+            },
+          };
+          const common = {
+            isAborted: false,
+            streamResult: createStreamResult(finalStep),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          };
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: original }
+              : { ...common, kind, mirroredMessage: original, mirroredDurableOutput: true },
+          );
+          const expected = [
+            { type: "reasoning", text: "Thi", state: "done" },
+            {
+              type: "reasoning",
+              text: finalText,
+              signature: "private-final",
+              redactedData: "private-redacted",
+              state: "done",
+            },
+          ] as const;
+          assertEquals(
+            (terminalStates[0]!.output as ChatUiMessage).parts,
+            producer === "projection"
+              ? [...expected]
+              : expected.map(({ state: _state, ...part }) => part),
+          );
+          assertEquals(projection.snapshot().parts, [...expected]);
+          const expectedChunks: ChatUiMessageChunk<MessageMetadata>[] = [
+            ...(prefix === "Thi"
+              ? [{ type: "reasoning-delta" as const, id: "live-r", delta: "nking" }]
+              : []),
+            {
+              type: "reasoning-end",
+              id: "live-r",
+              signature: "private-final",
+              redactedData: "private-redacted",
+            },
+          ];
+          assertEquals(chunks, expectedChunks);
+          const count = chunks.length;
+          const completed = createResponseMessage({
+            parts: projection.snapshot().parts.filter((part) => part.type === "reasoning"),
+          });
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: completed }
+              : { ...common, kind, mirroredMessage: completed, mirroredDurableOutput: true },
+          );
+          assertEquals(chunks.length, count);
+          writer.dispose();
+          for (const version of [1, 2] as const) {
+            const replay = readConversationRunLifecycleFrames({
+              streamProtocolVersion: version,
+              events: version === 1 ? events : canonicalEvents,
+            });
+            assertEquals(replay.status, "ok", JSON.stringify({ version, replay, canonicalEvents }));
+            if (replay.status === "ok") {
+              assertEquals(
+                replay.frames.filter((frame) =>
+                  frame.class === "semantic" && frame.event.type === "reasoning_start"
+                ).length,
+                2,
+              );
+              assertEquals(
+                replay.frames.filter((frame) =>
+                  frame.class === "semantic" && frame.event.type === "reasoning_content"
+                )
+                  .map((frame) => frame.event.type === "reasoning_content" ? frame.event.delta : "")
+                  .join(""),
+                `Thi${finalText}`,
+              );
+              assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+            }
+          }
+        }
       }
     }
   });
@@ -587,6 +1323,153 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
     });
   }
+
+  for (
+    const boundary of [
+      "middleware",
+      "pause",
+      "provider",
+      "caller",
+      "caller-drain",
+      "caller-first",
+      "root-first",
+    ] as const
+  ) {
+    const cancellation = boundary.startsWith("caller") || boundary === "root-first";
+    const callerCancellation = cancellation && boundary !== "root-first";
+    it(
+      boundary === "root-first" || boundary === "caller-first"
+        ? `preserves ${boundary} ordering while the hosted consumer continues draining`
+        : boundary === "caller-drain"
+        ? "keeps a caller-aborted hosted run cancelled while the consumer continues draining"
+        : boundary === "caller"
+        ? "keeps a cancelled hosted consumer cancelled after a pre-step caller abort"
+        : `preserves an independent ${boundary} AbortError as a hosted failure, not EMPTY_RESPONSE`,
+      async () => {
+        const caller = new AbortController();
+        const root = new AbortController();
+        const executionSignal = AbortSignal.any([caller.signal, root.signal]);
+        let providerCalls = 0;
+        const model: ModelRuntime = {
+          provider: "anthropic",
+          modelId: "abort-boundary",
+          doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+          doStream: () => {
+            providerCalls++;
+            return Promise.resolve({
+              stream: new ReadableStream({
+                pull(controller) {
+                  controller.error(new DOMException("Independent provider abort", "AbortError"));
+                },
+              }),
+            });
+          },
+        };
+        const runtime = new AgentRuntime("abort-boundary", {
+          model: "veryfront-cloud/anthropic/abort-boundary",
+          system: "Synthetic instructions",
+          maxSteps: 1,
+          middleware: cancellation
+            ? [() =>
+              new Promise((_, reject) => {
+                if (executionSignal.aborted) reject(executionSignal.reason);
+                else {
+                  executionSignal.addEventListener("abort", () => reject(executionSignal.reason), {
+                    once: true,
+                  });
+                }
+              })]
+            : boundary === "middleware"
+            ? [async () => {
+              throw new DOMException("Independent operation aborted", "AbortError");
+            }]
+            : [],
+        }, {
+          resolveModelRuntime: () => model,
+          ...(boundary === "pause"
+            ? {
+              manualPause: {
+                load: async () => {
+                  throw new DOMException("Independent checkpoint abort", "AbortError");
+                },
+                acknowledge: async () => false,
+              },
+            }
+            : {}),
+        });
+        const adapter = createHostedChatRuntimeAgentAdapter({
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          runtimeAgent: {
+            async stream(input) {
+              const stream = await runtime.stream(
+                input.messages ?? [],
+                input.context,
+                undefined,
+                undefined,
+                undefined,
+                input.context?.abortSignal as AbortSignal,
+              );
+              return { toDataStreamResponse: () => new Response(stream) };
+            },
+          },
+        });
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const chunks: ChatUiMessageChunk[] = [];
+        const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+          agent: adapter,
+          lifecycleAdapter: createLifecycleAdapter({ calls: [], terminalStates }),
+          durableRunEventMirror: createDurableRunMirror({ calls: [] }),
+          finalMessages: [{
+            id: "input",
+            role: "user",
+            timestamp: 0,
+            parts: [{ type: "text", text: "Synthetic input" }],
+          }],
+          abortSignal: caller.signal,
+          conversationId: "conversation-1",
+          cleanup: async () => {},
+          createRootStreamWatchdog: () => ({
+            signal: root.signal,
+            lastTimeoutState: null,
+            keepAlive: () => {},
+            observe: () => {},
+            dispose: () => {},
+          }),
+        });
+        const hosted = createHostedChatExecutionRuntime({
+          agentId: "abort-boundary",
+          modelId: "veryfront-cloud/anthropic/abort-boundary",
+          originalMessages: [],
+          runContext: { withContext: (operation) => operation() },
+          abortSignal: caller.signal,
+          bootstrap,
+        });
+        for await (const chunk of hosted.agentUIStream) {
+          chunks.push(chunk);
+          if (cancellation && chunk.type === "data-veryfront.runtime_context") {
+            const reason = new DOMException("Stream timeout", "AbortError");
+            if (boundary === "root-first") root.abort(reason);
+            caller.abort(reason);
+            if (boundary === "caller-first") root.abort(reason);
+            if (boundary === "caller") break;
+          }
+        }
+        await hosted.waitForFinish();
+        assertEquals(caller.signal.aborted, cancellation);
+        assertEquals(providerCalls, boundary === "provider" ? 1 : 0);
+        assertEquals(chunks.some((chunk) => chunk.type === "start-step"), boundary === "provider");
+        assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [
+          callerCancellation
+            ? ["cancelled", "ABORTED"]
+            : boundary === "root-first"
+            ? ["failed", "STREAM_TIMEOUT"]
+            : ["failed", "STREAM_ERROR"],
+        ]);
+        assertEquals(chunks.some((chunk) => chunk.type === "error"), !cancellation);
+      },
+    );
+  }
+
   it("appends response fallback chunks, flushes, dispatches completed, then cleanup", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
@@ -1332,7 +2215,13 @@ describe("agent/hosted-chat-finalization", () => {
             const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
             const finalInput = { query: "final" };
             const streamedInput = { query: "streamed" };
-            const ownership = callOwnership === undefined ? resultOwnership : callOwnership;
+            // Unknown streamed ownership cannot be promoted from contradictory final records.
+            const ownership =
+              streamed === "absent" && callOwnership === true && resultOwnership === false
+                ? undefined
+                : callOwnership === undefined
+                ? resultOwnership
+                : callOwnership;
             const mirrored = createMirroredToolChunkState();
             const projection = createChatStreamMessageProjection("assistant-message-1");
             const parts: ChatUiMessage["parts"] = [metadata];
@@ -1444,7 +2333,7 @@ describe("agent/hosted-chat-finalization", () => {
               type: "tool-output-available",
               toolCallId: "result-owned",
               output: "found",
-              providerExecuted: ownership,
+              ...(ownership === undefined ? {} : { providerExecuted: ownership }),
             }]);
             if (kind === "response" && streamed === "input-available") {
               const encoder = new ConversationRunEventEncoder();
@@ -1703,6 +2592,43 @@ describe("agent/hosted-chat-finalization", () => {
     );
     assertEquals(terminalStates.at(0)!.status, "failed");
     assertEquals(terminalStates.at(0)!.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+  });
+
+  it("fails a response whose only part is the runtime context instead of completing", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: {
+            currentDateUtc: "2026-10-08",
+            currentTimeUtc: "2026-10-08T00:00:00Z",
+            runStartedAtUtc: "2026-10-08T00:00:00Z",
+          },
+        }],
+      }),
+      isAborted: false,
+      streamResult: { steps: Promise.resolve([]) },
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals("output" in terminalStates[0]!, false);
   });
 
   it("preserves response metadata on terminal states", async () => {
@@ -2025,6 +2951,66 @@ describe("agent/hosted-chat-finalization", () => {
       ]);
     });
   }
+
+  it("does not complete a detached tool from a final-step record for another tool with its call id", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const state = createMirroredToolChunkState();
+    for (
+      const chunk of [
+        { type: "tool-input-start", toolCallId: "c", toolName: "bash" },
+        { type: "tool-input-available", toolCallId: "c", toolName: "bash", input: {} },
+      ] as ChatUiMessageChunk<MessageMetadata>[]
+    ) recordMirroredToolChunkState(state, chunk);
+
+    await finalizeHostedChatRun({
+      kind: "detached",
+      isAborted: false,
+      mirroredDurableOutput: true,
+      mirroredMessage: createResponseMessage({
+        parts: [{ type: "tool-bash", toolCallId: "c", state: "input-available", input: {} }],
+      }),
+      // The final step reuses the call id for a different tool.
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c", toolName: "web_fetch", input: {} }],
+          }, {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              output: "fetched",
+            }],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: state,
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {},
+      streamError: null,
+    });
+
+    // The mirrored tool gets no output from the other tool; it ends as incomplete.
+    assertEquals(JSON.stringify(terminalStates).includes("fetched"), false);
+    assertEquals(JSON.stringify(chunks).includes("fetched"), false);
+    assertEquals(
+      chunks.some((chunk) => chunk.type === "tool-output-available" && chunk.toolCallId === "c"),
+      false,
+    );
+    assertEquals(getToolOutputErrorChunks(chunks, "c"), [
+      { type: "tool-output-error", toolCallId: "c", errorText: "Tool call did not complete" },
+    ]);
+  });
 
   it("emits one output-error chunk for detached unfinished fallback tools", async () => {
     const calls: string[] = [];
@@ -2746,6 +3732,51 @@ describe("agent/hosted-chat-finalization", () => {
     );
   });
 
+  it("never opens final-step tools in durable history after an empty response abort", async () => {
+    for (const text of ["", "Recovered text"]) {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({ parts: [] }),
+        isAborted: true,
+        streamResult: createStreamResult({
+          text,
+          toolCalls: [{ toolCallId: "not-started", toolName: "web_fetch", input: {} }],
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {},
+        streamError: new Error("aborted"),
+      });
+      assertEquals(terminalStates[0]?.status, "cancelled");
+      assertEquals(chunks.filter((chunk) => chunk.type.startsWith("tool-")), []);
+      const encoder = new ConversationRunEventEncoder();
+      const replay = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 1,
+        events: chunks.flatMap((chunk) => {
+          if (chunk.type === "finish") throw new Error("Unexpected finish in recovered content");
+          return encoder.encode(chunk);
+        }),
+      });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(JSON.stringify(replay.frames).includes("not-started"), false);
+      }
+      assertEquals(
+        chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
+        text ? [text] : [],
+      );
+    }
+  });
+
   it("resolves an aborted empty detached run to cancelled instead of a failure", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
@@ -3001,6 +4032,7 @@ for (const kind of ["response", "detached"] as const) {
     assertEquals(corrections, [{
       type: "CUSTOM",
       name: "veryfront.tool_result_ownership",
+      origin: "veryfront.finalization",
       value: {
         schemaVersion: 1,
         toolCallId: "completed",

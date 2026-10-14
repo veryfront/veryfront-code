@@ -4,8 +4,8 @@ echo "Running pre-push checks..."
 
 # Format check
 echo "Checking formatting..."
-deno fmt --check || {
-  echo "❌ Format check failed. Run 'deno fmt' to fix."
+deno task fmt:check || {
+  echo "❌ Format check failed. Run 'deno task fmt' to fix."
   exit 1
 }
 

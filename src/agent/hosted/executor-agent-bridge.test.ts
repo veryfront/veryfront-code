@@ -16,6 +16,8 @@ import {
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { resolveConversationHostedStreamErrorState } from "#veryfront/agent/conversation/hosted-terminal.ts";
 
 const handle = "prepared-synthetic-runtime";
 const sourceIntegrationPolicy = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -162,6 +164,37 @@ describe("executor hosted agent bridge", () => {
       assertEquals(remoteReceived?.context?.projectId, "project-1");
       assertEquals(remoteReceived?.maxOutputTokens, 100);
       assertEquals(cleaned, 1);
+      assertEquals(channels.broker.signal.aborted, false);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("completes snapshot-marked output through the executor bridge", async () => {
+    const channels = pair(createExecutorAgentOperations({
+      preparedRuntimeHandle: handle,
+      startStream: () =>
+        Promise.resolve(sse([
+          { type: "text-delta", id: "text-1", delta: "{}" },
+          {
+            type: "message-finish",
+            objectEncoding: "snapshot",
+            object: {
+              captureStatus: "unsupported",
+              reasons: ["unsupported_bigint"],
+              value: "[unsupported bigint]",
+            },
+          },
+        ])),
+    }));
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      const chunks = await collect(runtime.toUIMessageStream());
+      assertEquals(chunks.at(-1)?.type, "finish");
+      assertEquals(chunks.some((chunk) => chunk.type === "error"), false);
       assertEquals(channels.broker.signal.aborted, false);
     } finally {
       await channels.close();
@@ -573,6 +606,46 @@ describe("executor hosted agent bridge", () => {
         assertEquals(error.status, 401);
         assertEquals(error.message, "Agent provider authentication failed");
         assertEquals(error.title, "Agent provider authentication failed");
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("preserves private provider authentication causes through startup transport and terminal classification", async () => {
+    for (const status of [401, 403]) {
+      const channels = pair(createExecutorAgentOperations({
+        preparedRuntimeHandle: handle,
+        startStream: () =>
+          Promise.reject(
+            createRuntimeProviderStreamFailure(
+              new ProviderRequestError({
+                provider: "anthropic",
+                status,
+                retryable: false,
+                message: "synthetic-private-diagnostic",
+              }),
+            ),
+          ),
+        cleanup: () => Promise.resolve(),
+      }));
+      try {
+        const error = await assertRejects(() =>
+          createExecutorHostedChatRuntimeAgent({
+            channel: channels.broker,
+            preparedRuntimeHandle: handle,
+          }).stream({ messages, abortSignal: new AbortController().signal }), ExecutorAgentError);
+        assert(error instanceof ExecutorAgentError);
+        assertEquals(error.code, "agent-provider-auth-error");
+        // The executor code maps to a fixed 401 for both 401 and 403 native refusals.
+        assertEquals(error.status, 401);
+        assertEquals(error.message, "Agent provider authentication failed");
+        assertEquals(error.title, "Agent provider authentication failed");
+        assertEquals(resolveConversationHostedStreamErrorState(error), {
+          status: "failed",
+          terminalErrorCode: "agent-provider-auth-error",
+          terminalErrorMessage: "Agent provider authentication failed",
+        });
       } finally {
         await channels.close();
       }

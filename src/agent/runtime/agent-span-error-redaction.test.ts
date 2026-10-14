@@ -72,6 +72,27 @@ class DeferredInMemorySpanExporter implements SpanExporter {
  * double cannot show what actually reaches an exporter, which is the only thing
  * this file is about.
  */
+class SynchronousMemorySpanExporter implements SpanExporter {
+  private readonly spans: ReadableSpan[] = [];
+
+  export(
+    spans: ReadableSpan[],
+    resultCallback: (result: { code: ExportResultCode }) => void,
+  ): void {
+    this.spans.push(...spans);
+    resultCallback({ code: ExportResultCode.SUCCESS });
+  }
+
+  getFinishedSpans(): ReadableSpan[] {
+    return this.spans;
+  }
+
+  shutdown(): Promise<void> {
+    this.spans.length = 0;
+    return Promise.resolve();
+  }
+}
+
 function installRealTracingWithExporter<TExporter extends SpanExporter>(exporter: TExporter) {
   const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
   const contextManager = new AsyncLocalStorageContextManager();
@@ -92,8 +113,11 @@ function installRealTracingWithExporter<TExporter extends SpanExporter>(exporter
   };
 }
 
-function installRealTracing() {
-  return installRealTracingWithExporter(new InMemorySpanExporter());
+function installRealTracing(options: { synchronousExporter?: boolean } = {}) {
+  const exporter = options.synchronousExporter
+    ? new SynchronousMemorySpanExporter()
+    : new InMemorySpanExporter();
+  return installRealTracingWithExporter(exporter);
 }
 
 function installRealTracingWithDeferredInMemoryExporter() {
@@ -420,7 +444,7 @@ describe("agent span error redaction", () => {
   });
 
   it("keeps an unmapped span error bounded when application code replaces Error", async () => {
-    const tracing = installRealTracing();
+    const tracing = installRealTracing({ synchronousExporter: true });
     const NativeError = Error;
     const previousError = Object.getOwnPropertyDescriptor(globalThis, "Error");
     try {

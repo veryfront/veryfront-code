@@ -63,6 +63,7 @@ export function createWorkflowAgentNodeRunner(binding: {
         "Content-Type": "application/json",
         "Idempotency-Key": `workflow-child:${key}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
+        Accept: "application/vnd.veryfront.inherited-run+json",
         "X-Veryfront-Run-Event-Token": binding.eventToken!,
       },
       body: stringify({

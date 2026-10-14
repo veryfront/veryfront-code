@@ -1,12 +1,12 @@
 /**
- * Ephemeral compute environments for isolated execution.
+ * Isolated workspaces for commands and files.
  *
  * @example
  * ```ts
  * import { Sandbox } from "veryfront/sandbox";
  *
  * const sandbox = await Sandbox.create();
- * const result = await sandbox.executeCommand("echo hello");
+ * const result = await sandbox.runCommand("echo hello");
  * console.log(result.stdout); // "hello\n"
  * await sandbox.close();
  * ```
@@ -19,15 +19,27 @@ export {
   type BackgroundCommandHeartbeatStatus,
   type BackgroundCommandOutput,
   type BackgroundCommandStatus,
-  type ExecOptions,
-  type ExecResult,
-  type ExecStreamEvent,
+  type CommandOptions,
+  type CommandResult,
+  type CommandStreamEvent,
   Sandbox,
+  type SandboxAccessScope,
   type SandboxAttachment,
+  type SandboxCapabilities,
+  type SandboxClientOptions,
+  type SandboxDetails,
+  type SandboxEnvironment,
+  type SandboxFileEntry,
+  type SandboxFileListOptions,
+  type SandboxFileListResult,
+  type SandboxLifetimeInput,
+  type SandboxLifetimeMode,
   type SandboxListOptions,
   type SandboxListResult,
   type SandboxOptions,
-  type SandboxSession,
+  type SandboxRuntimeCheck,
+  type SandboxStatus,
+  type SandboxWorkspaceStorage,
 } from "./sandbox.ts";
 export {
   LazySandbox,
@@ -53,7 +65,6 @@ export {
   createAgentServiceSandboxTools,
   createHostedSandboxClient,
   createHostedSandboxTools,
-  createProjectScopedExecOptions,
   type HostedSandboxBackgroundCommandClient,
   type HostedSandboxClient,
   type HostedSandboxClientOptions,

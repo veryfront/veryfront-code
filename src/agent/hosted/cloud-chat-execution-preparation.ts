@@ -117,6 +117,9 @@ export async function prepareVeryfrontCloudHostedChatExecution<
 
   return await prepareHostedChatExecution({
     ...preparationInput,
+    // A current registry cannot establish ownership of an old legacy tool name.
+    // Restore legacy history through its authenticated per-result sidecar instead.
+    legacyLoadSkillReplayAllowed: false,
     rootRun: createVeryfrontCloudHostedChatExecutionRootRunOptions({
       rootRun,
       logger,

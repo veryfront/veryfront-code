@@ -2,6 +2,9 @@ import { isRecord } from "#veryfront/chat/conversation.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
 import { nativeRunEventStoredTypesByWireName, nativeRunEventTypes } from "./native-run-events.ts";
 
+const reflectApply = Reflect.apply;
+const nativeMapPrototypeGet = Map.prototype.get;
+
 /** AG-UI runtime event type constants normalized from legacy SSE event names. */
 export const agUiSseEventTypes = {
   custom: "CUSTOM",
@@ -88,6 +91,13 @@ function serializeToolResult(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function getNativeRunEventStoredType(eventName: string): string | null {
+  const nativeType = reflectApply(nativeMapPrototypeGet, nativeRunEventStoredTypesByWireName, [
+    eventName,
+  ]);
+  return typeof nativeType === "string" ? nativeType : null;
 }
 
 function createEmptyParsedRun(responseStatus: number): ParsedAgUiSseRun {
@@ -197,7 +207,7 @@ export function coerceWireEvent(
     case "RunFinished":
       return { type: agUiSseEventTypes.runFinished, ...payload };
     default: {
-      const nativeType = nativeRunEventStoredTypesByWireName.get(eventName);
+      const nativeType = getNativeRunEventStoredType(eventName);
       return nativeType ? { type: nativeType, ...payload } : { type: eventName, ...payload };
     }
   }

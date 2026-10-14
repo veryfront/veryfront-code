@@ -13,6 +13,7 @@ import {
   assertEquals,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import {
@@ -25,9 +26,13 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
 import { withLocalChildExecution } from "./local-child-execution.ts";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
+import { AgentRuntime } from "../runtime/index.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -485,6 +490,280 @@ describe("agentAsTool", () => {
       Error,
       "Veryfront API MCP is unavailable",
     );
+  });
+
+  it("observes generated-turn finish metadata from a custom provider", async () => {
+    const model = scriptedModel([{ text: "generated answer", finishReason: "stop" }], {
+      only: "generate",
+      provider: "custom",
+      modelId: "custom/generated-turn-observer",
+      usage: {
+        inputTokens: 2,
+        outputTokens: 3,
+        totalTokens: 5,
+        reasoningTokens: 1,
+        usageCaptureStatus: "complete",
+      },
+    });
+    const runtime = new AgentRuntime("generated-turn-observer", {
+      model: "custom/generated-turn-observer",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => runtime.generate("Synthetic input"),
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.text, "generated answer");
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+    assertEquals(finish.totalUsage, {
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+      reasoningTokens: 1,
+      usageCaptureStatus: "complete",
+    });
+  });
+
+  it("observes parsed outputSchema objects in generated-turn finish metadata", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel([{ text: '{"title":"Done","count":2}', finishReason: "stop" }], {
+      only: "generate",
+      provider: "custom",
+      modelId: "custom/generated-turn-observer-structured",
+    });
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-structured", {
+      model: "custom/generated-turn-observer-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => runtime.generate("Synthetic input"),
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, { title: "Done", count: 2 });
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.type, "message-finish");
+    assertEquals(finish.object, { title: "Done", count: 2 });
+  });
+
+  it("observes raw generated-turn finish metadata and a sanitized error before rethrowing outputSchema parse errors", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-invalid-structured",
+        usage: {
+          inputTokens: 4,
+          outputTokens: 6,
+          totalTokens: 10,
+          usageCaptureStatus: "complete",
+        },
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-invalid-structured", {
+      model: "custom/generated-turn-observer-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected outputSchema parse failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error instanceof Error, true);
+    assertStringIncludes((error as Error).message, "failed outputSchema validation");
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+      "error",
+    ]);
+    const finish = observed.at(-2) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+    assertEquals(finish.totalUsage, {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete",
+    });
+    assertEquals(Object.hasOwn(finish, "object"), false);
+    assertEquals(
+      observed.filter((event) => (event as { type?: string }).type === "error").length,
+      1,
+    );
+    const errorEvent = observed.at(-1) as Record<string, unknown>;
+    assertEquals(errorEvent.type, "error");
+    assertStringIncludes(String(errorEvent.error), "failed outputSchema validation");
+    assertEquals(Object.hasOwn(errorEvent, "object"), false);
+    assertEquals(Object.hasOwn(errorEvent, "totalUsage"), false);
+  });
+
+  it("propagates observer failures during outputSchema rejection handling", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-rejects-invalid-structured",
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-rejects-invalid-structured", {
+      model: "custom/generated-turn-observer-rejects-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observerFailure = new Error("observer rejected synthetic schema failure event");
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected outputSchema parse failure");
+      },
+      (event) => {
+        observed.push(event);
+        if ((event as { type?: string }).type === "error") return Promise.reject(observerFailure);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, observerFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+      "error",
+    ]);
+  });
+
+  it("propagates durable observation failures during outputSchema rejection handling", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-durable-rejects-invalid-structured",
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-durable-rejects-invalid-structured", {
+      model: "custom/generated-turn-observer-durable-rejects-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const durableFailure = new DurableRunEventPersistenceError(
+      "durable generated-turn observation failed",
+    );
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected durable observation failure");
+      },
+      (event) => {
+        observed.push(event);
+        if ((event as { type?: string }).type === "message-finish") {
+          return Promise.reject(durableFailure);
+        }
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, durableFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
   });
 
   it("routes the real generic delegation through its request-scoped owner exactly once", async () => {

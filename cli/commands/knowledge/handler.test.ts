@@ -36,6 +36,30 @@ describe("Knowledge Handler", () => {
       assertEquals(result.data.all, false);
     });
 
+    it("parses an explicit branch target", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: ["knowledge", "ingest"],
+        path: "/workspace/okf-bundle",
+        all: true,
+        branch: "chore/context-knowledge-proof-20261007",
+      } as ParsedArgs);
+
+      assertSuccess(result);
+      assertEquals(result.data.branch, "chore/context-knowledge-proof-20261007");
+    });
+
+    it("rejects an explicitly empty branch target", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: ["knowledge", "ingest"],
+        path: "/workspace/okf-bundle",
+        all: true,
+        branch: "",
+        __explicit: { branch: true },
+      } as ParsedArgs);
+
+      assertEquals(result.success, false);
+    });
+
     it("parses multiple explicit source paths", () => {
       const result = parseKnowledgeIngestArgs({
         _: [

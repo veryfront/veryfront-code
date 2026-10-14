@@ -45,11 +45,20 @@ export function restoreTimers(): void {
   Date.now = originalDateNow;
 }
 
+const jsonFixtureBodies = new WeakMap<Response, unknown>();
+
+/** Inspect fixture metadata without teeing a stream or altering fake-timer scheduling. */
+export function jsonFixtureBody(response: Response): unknown {
+  return jsonFixtureBodies.get(response);
+}
+
 export function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
+  const response = new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
+  jsonFixtureBodies.set(response, body);
+  return response;
 }
 
 export function textResponse(body: string, status = 200): Response {
@@ -90,4 +99,21 @@ export function clearSandboxEnv(): void {
       // expected: env may already be unset
     }
   }
+}
+
+/** Build a typed synchronous result from command output fixtures. */
+export function commandResponse(events: Array<Record<string, unknown>>): Response {
+  let stdout = "";
+  let stderr = "";
+  let exitCode: unknown;
+  for (const event of events) {
+    if (event.type === "stdout") stdout += event.data ?? "";
+    if (event.type === "stderr") stderr += event.data ?? "";
+    if (event.type === "exit") exitCode = event.exitCode;
+  }
+  return jsonResponse({
+    stdout,
+    stderr,
+    ...(exitCode !== undefined ? { exit_code: exitCode } : {}),
+  });
 }

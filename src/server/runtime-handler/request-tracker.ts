@@ -27,6 +27,17 @@ interface TrackedRequest {
   verySlowTimer?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * Only a request that ran at least this long can explain a reportable stall
+ * (the detector's threshold is 2s), so fast traffic never enters the ring and
+ * cannot evict the culprit before the overdue sampler runs.
+ */
+const RECENTLY_COMPLETED_MIN_DURATION_MS = 1_000;
+/** Long enough to outlive any delayed sampler tick. */
+const RECENTLY_COMPLETED_RETENTION_MS = 5 * 60_000;
+/** Memory bound only; reached only by sustained slow traffic. */
+const RECENTLY_COMPLETED_CAP = 1_024;
+
 /** Threshold in ms before logging a warning about a slow request */
 const SLOW_REQUEST_THRESHOLD_MS = 10_000; // 10 seconds
 
@@ -104,8 +115,11 @@ function logRequestCompletion(
 
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
+  /** Recently completed requests, kept so a stall sampled after a synchronous handler returns still names it. */
+  private recentlyCompleted: Array<TrackedRequest & { endTime: number }> = [];
   private statusInterval: ReturnType<typeof setInterval> | undefined;
   private totalRequests = 0;
+  private duplicateKeySeq = 0;
   private totalCompleted = 0;
   private totalTimedOut = 0;
 
@@ -153,8 +167,15 @@ class RequestTracker {
     env?: string,
     releaseId?: string,
     productionRuntime = false,
-  ): void {
+  ): string {
     this.startStatusLogging();
+    // Clients may reuse x-request-id across overlapping requests; give each its
+    // own key so completing one never removes or reports the other.
+    // A client id may itself look like a generated key, so probe until free.
+    let trackingKey = requestId;
+    while (this.inFlight.has(trackingKey)) {
+      trackingKey = `${requestId}#${++this.duplicateKeySeq}`;
+    }
 
     const startTime = performance.now();
     this.totalRequests++;
@@ -204,7 +225,7 @@ class RequestTracker {
       if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
     }
 
-    this.inFlight.set(requestId, tracked);
+    this.inFlight.set(trackingKey, tracked);
 
     logger.debug("Request started", {
       requestId,
@@ -213,24 +234,29 @@ class RequestTracker {
       method,
       inFlightCount: this.inFlight.size,
     });
+    return trackingKey;
   }
 
+  /** `trackingKey` is the value returned by start(). */
   complete(
-    requestId: string,
+    trackingKey: string,
     statusCode: number,
     timedOut = false,
     profile?: RequestProfileRecord | null,
   ): void {
-    const tracked = this.inFlight.get(requestId);
+    const tracked = this.inFlight.get(trackingKey);
     if (!tracked) return;
 
     if (tracked.slowTimer) clearTimeout(tracked.slowTimer);
     if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
 
-    this.inFlight.delete(requestId);
+    this.inFlight.delete(trackingKey);
     if (this.inFlight.size === 0) this.stopStatusLogging();
 
-    const durationMs = Math.round(performance.now() - tracked.startTime);
+    const endTime = performance.now();
+    this.rememberCompletion(tracked, endTime);
+
+    const durationMs = Math.round(endTime - tracked.startTime);
 
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
@@ -264,8 +290,8 @@ class RequestTracker {
     );
   }
 
-  markLongLived(requestId: string): void {
-    const tracked = this.inFlight.get(requestId);
+  markLongLived(trackingKey: string): void {
+    const tracked = this.inFlight.get(trackingKey);
     if (!tracked) return;
 
     if (tracked.slowTimer) {
@@ -284,6 +310,21 @@ class RequestTracker {
 
   getInFlightRequests(): TrackedRequest[] {
     return Array.from(this.inFlight.values());
+  }
+
+  private rememberCompletion(tracked: TrackedRequest, endTime: number): void {
+    const cutoff = endTime - RECENTLY_COMPLETED_RETENTION_MS;
+    while (this.recentlyCompleted.length > 0 && this.recentlyCompleted[0]!.endTime < cutoff) {
+      this.recentlyCompleted.shift();
+    }
+    if (endTime - tracked.startTime < RECENTLY_COMPLETED_MIN_DURATION_MS) return;
+    this.recentlyCompleted.push({ ...tracked, endTime });
+    if (this.recentlyCompleted.length > RECENTLY_COMPLETED_CAP) this.recentlyCompleted.shift();
+  }
+
+  /** Requests completed at or after `sinceMs` (performance.now() clock), newest last. */
+  getRecentlyCompletedRequests(sinceMs: number): Array<TrackedRequest & { endTime: number }> {
+    return this.recentlyCompleted.filter((r) => r.endTime >= sinceMs);
   }
 
   getStats(): { inFlight: number; total: number; completed: number; timedOut: number } {

@@ -13,7 +13,11 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
-import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  guardedExactHttpLoopbackOutboundFetch,
+  guardedOutboundFetch,
+} from "#cli/outbound-fetch";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -31,7 +35,11 @@ import {
 } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { getHostSecret } from "#cli/process-env";
-import { requireHostPrivateApiHttps, resolveHostOwnedApiBaseUrl } from "#cli/host-api-base";
+import {
+  isHostHttpApiOrigin,
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#cli/host-api-base";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -62,10 +70,14 @@ function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> 
   const protocol = readUrl(endpoint, urlProtocolGetter);
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" ||
     hostname === "[::1]" || hostname === "::1";
-  if (protocol !== "https:" && !(protocol === "http:" && loopback)) {
+  if (
+    protocol !== "https:" && !(protocol === "http:" && loopback) &&
+    !isHostHttpApiOrigin(readUrl(endpoint, urlHrefGetter))
+  ) {
     return {
       ok: false,
-      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
+      error:
+        "The API endpoint must use HTTPS. HTTP requires a loopback endpoint or an operator-configured API origin.",
       status: 400,
     };
   }
@@ -89,10 +101,11 @@ async function sendApiRequest<T>(
     // the global, and a direct call would hand its replacement the
     // `Authorization` header to read.
     //
-    // Endpoint validation allows HTTP only for exact loopback hosts with an
-    // explicit credential. Keep that supported local API route constrained by
-    // the loopback guard, including on redirects.
-    const fetchEndpoint = readUrl(endpoint, urlProtocolGetter) === "http:"
+    // Boot-configured HTTP APIs use the exact origin-bound exception.
+    // Preserve the explicit-token loopback route for other local endpoints.
+    const fetchEndpoint = isHostHttpApiOrigin(endpointHref)
+      ? createVeryfrontApiOriginBoundOutboundFetch(endpointHref)
+      : readUrl(endpoint, urlProtocolGetter) === "http:"
       ? guardedExactHttpLoopbackOutboundFetch
       : guardedOutboundFetch;
     const response = await fetchEndpoint(url, {
@@ -181,9 +194,16 @@ interface RemoteFile {
   id?: string;
   path: string;
   content: string;
-  size: number;
+  /** File size in bytes. */
+  size_bytes?: number;
+  /** Earlier spelling of `size_bytes`; the only size field on branch file routes. */
+  size?: number;
   type: string;
   updated_at: string;
+}
+
+function remoteFileSize(file: RemoteFile): number {
+  return (file.size_bytes ?? file.size) as number;
 }
 
 interface FileListResponse {
@@ -202,8 +222,12 @@ interface SearchResult {
 }
 
 interface SearchResponse {
-  results: SearchResult[];
-  total_files: number;
+  /** Matching files and their count, as the project text search answers them. */
+  data?: SearchResult[];
+  total_matches?: number;
+  /** Earlier spellings of `data` and `total_matches`; the only ones on the branch search route. */
+  results?: SearchResult[];
+  total_files?: number;
 }
 
 interface Branch {
@@ -298,7 +322,9 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const params = new URLSearchParams();
         if (input.pattern) params.set("pattern", input.pattern);
         params.set("limit", String(input.limit));
-        params.set("fields", "(path,type,size)");
+        // The branch file route answers `size` only; the project route answers
+        // `size_bytes` beside it.
+        params.set("fields", input.branch ? "(path,type,size)" : "(path,type,size_bytes,size)");
 
         const apiPath = `${
           buildProjectApiPath(input.project, "files", input.branch)
@@ -309,7 +335,7 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const files = result.data?.data ?? [];
         return {
           success: true,
-          files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
+          files: files.map((f) => ({ path: f.path, type: f.type, size: remoteFileSize(f) })),
           total: files.length,
         };
       },
@@ -358,7 +384,12 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
 
         return {
           success: true,
-          file: { path: file.path, content: file.content, size: file.size, type: file.type },
+          file: {
+            path: file.path,
+            content: file.content,
+            size: remoteFileSize(file),
+            type: file.type,
+          },
         };
       },
       { "tool.project": input.project, "tool.path": input.path },
@@ -508,7 +539,9 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
             pattern: input.pattern,
             is_regex: input.is_regex,
             case_sensitive: input.case_sensitive,
-            max_results: input.max_results,
+            // The project text search takes `limit`. The branch search route
+            // takes only `max_results`.
+            ...(input.branch ? { max_results: input.max_results } : { limit: input.max_results }),
           },
         });
 
@@ -516,8 +549,8 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
 
         return {
           success: true,
-          results: result.data?.results ?? [],
-          total_files: result.data?.total_files ?? 0,
+          results: result.data?.data ?? result.data?.results ?? [],
+          total_files: result.data?.total_matches ?? result.data?.total_files ?? 0,
         };
       },
       { "tool.project": input.project, "tool.query": input.query },

@@ -160,6 +160,32 @@ describe("schemas", () => {
       });
       assertEquals(result.success, true);
     });
+
+    it("reads the size from size_bytes and falls back to size", () => {
+      const file = {
+        path: "pages/index.tsx",
+        type: "page",
+        updated_at: "2024-01-01T00:00:00Z",
+        content: "export default function Home() {}",
+      };
+      const both = getBranchFileListItemSchema().safeParse({ ...file, size_bytes: 512, size: 1 });
+      const canonical = getBranchFileListItemSchema().safeParse({ ...file, size_bytes: 512 });
+      const earlier = getBranchFileListItemSchema().safeParse({ ...file, size: 256 });
+
+      assertEquals(both.success && both.data.size, 512);
+      assertEquals(canonical.success && canonical.data.size, 512);
+      assertEquals(earlier.success && earlier.data.size, 256);
+    });
+
+    it("rejects a branch file without a size", () => {
+      const result = getBranchFileListItemSchema().safeParse({
+        path: "pages/index.tsx",
+        type: "page",
+        updated_at: "2024-01-01T00:00:00Z",
+        content: "export default function Home() {}",
+      });
+      assertEquals(result.success, false);
+    });
   });
 
   describe("ListBranchFilesResponseSchema", () => {
@@ -263,8 +289,11 @@ describe("schemas", () => {
         "listReleaseFiles",
         "getReleaseFile",
         "lookupDomain",
-        "resolveStyleArtifact",
-        "ensureStyleArtifactBuild",
+        "getStyleArtifact",
+        "updateStyleArtifact",
+        "startStyleArtifactBuild",
+        "getDependencyHistory",
+        "resolveDependencies",
       ] as const;
 
       for (const key of expectedKeys) {
@@ -284,13 +313,43 @@ describe("schemas", () => {
 
     it("should use supported HTTP methods for all endpoints", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
-        assertEquals(["GET", "POST"].includes(endpoint.method), true);
+        assertEquals(["GET", "POST", "PUT"].includes(endpoint.method), true);
       }
     });
 
+    it("keeps the legacy dependency history key as an alias", () => {
+      assertEquals(
+        API_ENDPOINTS.readDependencyMetadataHistory,
+        API_ENDPOINTS.getDependencyHistory,
+      );
+      assertEquals(API_ENDPOINTS.getDependencyHistory.method, "GET");
+      assertEquals(API_ENDPOINTS.resolveDependencies.method, "POST");
+      assertEquals(
+        API_ENDPOINTS.resolveDependencies.path,
+        "/projects/{projectRef}/dependencies/resolve",
+      );
+    });
+
     it("should use the expected methods for style artifact endpoints", () => {
-      assertEquals(API_ENDPOINTS.resolveStyleArtifact.method, "GET");
-      assertEquals(API_ENDPOINTS.ensureStyleArtifactBuild.method, "POST");
+      assertEquals(API_ENDPOINTS.getStyleArtifact.method, "GET");
+      assertEquals(API_ENDPOINTS.updateStyleArtifact.method, "PUT");
+      assertEquals(API_ENDPOINTS.startStyleArtifactBuild.method, "POST");
+      assertEquals(
+        API_ENDPOINTS.updateStyleArtifact.path,
+        API_ENDPOINTS.getStyleArtifact.path,
+      );
+      assertEquals(
+        API_ENDPOINTS.startStyleArtifactBuild.path,
+        "/projects/{projectRef}/style-artifacts/current/builds",
+      );
+    });
+
+    it("keeps the legacy style artifact keys as aliases", () => {
+      assertEquals(API_ENDPOINTS.resolveStyleArtifact, API_ENDPOINTS.getStyleArtifact);
+      assertEquals(
+        API_ENDPOINTS.ensureStyleArtifactBuild,
+        API_ENDPOINTS.startStyleArtifactBuild,
+      );
     });
 
     it("should have paths starting with /", () => {

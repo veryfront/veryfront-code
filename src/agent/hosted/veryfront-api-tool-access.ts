@@ -47,6 +47,9 @@ type FilterMode = "open" | "closed";
 const TOOL_ACCESS_PROFILE_TOOL_NAME = "get_tool_access_profile";
 
 const toolAccessRules = new Map<string, VeryfrontApiToolAccessRule>([
+  ["create_project_invitation", { family: "collaboration", action: "create_invite" }],
+  // The API still lists the deprecated create_invite tool. Gate it like its replacement so a
+  // hidden create_invite action cannot leak through the alias. Inert once the API drops it.
   ["create_invite", { family: "collaboration", action: "create_invite" }],
   ["delete_member", { family: "collaboration", action: "delete_member" }],
   ["create_server", { family: "runtime", action: "create_server" }],

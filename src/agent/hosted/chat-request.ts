@@ -507,6 +507,7 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
     allowDelegation: v.boolean().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional(),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
     runtimeOverrides: getHostedChatRuntimeOverridesSchema().optional(),
     durableRootRun: getHostedDurableRootRunDescriptorSchema().optional(),
@@ -536,6 +537,7 @@ export type HostedChatRequestInput = {
   allowDelegation?: boolean;
   forwardedProps?: Record<string, unknown>;
   serverResolvedProviderReplayCheckpoints?: unknown;
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   runtimeOverrides?: ChatRuntimeOverrides;
   durableRootRun?: DurableRootRunDescriptor;
 };
@@ -659,6 +661,12 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
     forwardedProps: buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(input),
     ...(input.serverResolvedProviderReplayCheckpoints !== undefined
       ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
+      : {}),
+    ...(input.serverResolvedTrustedHostedHistoryMessageIds !== undefined
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          input.serverResolvedTrustedHostedHistoryMessageIds,
+      }
       : {}),
     durableRootRun: {
       runId: input.run.runId,

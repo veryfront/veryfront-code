@@ -252,6 +252,9 @@ function createBrowserModuleSourceReader(
   const snapshot = captureSnapshotReadCapability(
     adapter.fs,
     "Browser module filesystem",
+    // FSAdapterWrapper publishes absent optional capabilities as `undefined`
+    // own properties; treat that as unsupported, not malformed (#5109).
+    true,
   );
   if (snapshot) {
     return async (path: string, maximumBytes: number): Promise<AdmittedText> => {

@@ -236,6 +236,7 @@ describe("private tool-call admission", () => {
       }> = [];
       let sequence = 0;
       const fetch: HostedRequestFetch = async (_url, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
         assert(!JSON.stringify(body).includes("privateObservedToolResult"));
@@ -316,7 +317,11 @@ describe("private tool-call admission", () => {
         );
         assertEquals(
           storedStarts[0]?.providerExecuted,
-          scenario === "configured-provider" ? true : undefined,
+          scenario === "configured-provider"
+            ? true
+            : scenario === "explicit-false"
+            ? false
+            : undefined,
         );
         assert(
           !JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"),
@@ -386,6 +391,7 @@ describe("private tool-call admission", () => {
     const privateRequests: Request[] = [];
     const configuredRequests: Request[] = [];
     const responseFor: HostedRequestFetch = async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       const body = JSON.parse(String(init?.body));
       return Response.json({
         jsonrpc: "2.0",
@@ -680,11 +686,12 @@ describe("private tool-call admission", () => {
     let appendCount = 0;
     let mcpCalls = 0;
     const fetch: HostedRequestFetch = async (url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;
-        assertEquals(init?.redirect, "error");
-        const headers = new Headers(init?.headers);
+        assertEquals(init && "redirect" in init ? init.redirect : undefined, "error");
+        const headers = new Headers(init && "headers" in init ? init.headers : undefined);
         assertEquals(headers.get("Authorization"), "Bearer synthetic-application-token");
         assertEquals(headers.get("X-Veryfront-Run-Event-Writer-Token"), "synthetic-append-token");
         assertEquals(body.params._meta, {

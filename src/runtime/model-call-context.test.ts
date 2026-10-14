@@ -1,11 +1,18 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
+  AgentRunEvent,
   AgentRunModelCallContextEvent,
   ModelCallMessage,
   ModelCallTool,
 } from "./model-call-context.ts";
 import { createTimedAgentRunEventSink } from "./model-call-context.ts";
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent,
+): asserts event is AgentRunModelCallContextEvent {
+  assertEquals(event.type, "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+}
 
 describe("model-call-context", () => {
   it("describes only the direct provider-agnostic event", () => {
@@ -62,6 +69,7 @@ describe("model-call-context", () => {
     let now = 100;
     const sink = createTimedAgentRunEventSink(
       (event) => {
+        assertModelCallContextEvent(event);
         events.push(event);
       },
       { nowMs: () => now, epochMs: () => 1_786_866_357_364.4, startedMs: 100 },

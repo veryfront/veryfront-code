@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createManagedBrokerProjectState } from "veryfront/agent/managed-broker";
 
@@ -11,8 +16,26 @@ const definition = {
   skills: false as const,
 };
 
+function createLargeSkillCatalog(count = 128) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `skill-${index.toString().padStart(4, "0")}-${"x".repeat(210)}`,
+    name: `Skill ${index}`,
+    description: "A bounded hosted catalog entry with a deliberately long identifier.",
+    instructions: "Help.",
+    allowedTools: [],
+  }));
+}
+
 describe("managed broker project state", () => {
-  for (const availableToolNames of [undefined, [], ["read_file"], ["load_skill"]]) {
+  for (
+    const availableToolNames of [
+      undefined,
+      [],
+      ["read_file"],
+      ["load_skill"],
+      ["veryfront__load_skill"],
+    ]
+  ) {
     it(`keeps refreshed skills gated by the effective tool selection: ${availableToolNames}`, async () => {
       const marker = "Synthetic selected skill catalog marker";
       const state = createManagedBrokerProjectState({
@@ -27,7 +50,7 @@ describe("managed broker project state", () => {
           instructions: "Help.",
           allowedTools: [],
         }],
-        fetch: (value) =>
+        fetch: (value: string) =>
           Promise.resolve(
             new URL(value).pathname.endsWith("/AGENTS.md")
               ? Response.json({ path: "AGENTS.md", content: "Current project instructions" })
@@ -47,10 +70,40 @@ describe("managed broker project state", () => {
       assertEquals(JSON.stringify(refreshed).includes("Current project instructions"), true);
       assertEquals(
         JSON.stringify(refreshed).includes(marker),
-        availableToolNames?.includes("load_skill") ?? false,
+        availableToolNames?.some((name) =>
+          name === "load_skill" || name === "veryfront__load_skill"
+        ) ?? false,
       );
     });
   }
+
+  it("uses the canonical hosted skill loader in refreshed bounded discovery guidance", async () => {
+    const state = createManagedBrokerProjectState({
+      apiUrl: "https://api.example.test",
+      authToken: "broker-token",
+      agentId: "coder",
+      projectId: "project-1",
+      builtinSkills: createLargeSkillCatalog(),
+      fetch: (value: string) =>
+        Promise.resolve(
+          new URL(value).pathname.endsWith("/AGENTS.md")
+            ? Response.json({ path: "AGENTS.md", content: "Current project instructions" })
+            : Response.json({ data: [], page_info: { next: null } }),
+        ),
+    });
+    await state.prepareProjectSteering({
+      definition: { ...definition, skills: true },
+      projectId: "project-1",
+      signal: new AbortController().signal,
+    });
+    const refreshed = await state.refreshProjectSteering(
+      new AbortController().signal,
+      ["tool_search", "veryfront__load_skill"],
+    );
+    const text = JSON.stringify(refreshed);
+    assertStringIncludes(text, "Call veryfront__load_skill({ inventory:");
+    assertEquals(text.includes("Call load_skill({ inventory:"), false);
+  });
 
   it("joins the original catalog lookup before propagating an instruction failure", async () => {
     const failure = new Error("synthetic instruction failure");
@@ -61,7 +114,7 @@ describe("managed broker project state", () => {
       authToken: "broker-token",
       agentId: "coder",
       projectId: "project-1",
-      fetch: (value) => {
+      fetch: (value: string) => {
         const url = new URL(value);
         if (url.pathname.endsWith("/AGENTS.md")) return Promise.reject(failure);
         listingCalls++;
@@ -75,7 +128,7 @@ describe("managed broker project state", () => {
       definition,
       projectId: "project-1",
       signal: new AbortController().signal,
-    }).catch((error) => {
+    }).catch((error: unknown) => {
       rejected = true;
       throw error;
     });
@@ -142,7 +195,7 @@ describe("managed broker project state", () => {
         fetches++;
         return Promise.reject(new Error("must not fetch"));
       },
-      latestConversationUserText: (signal) => {
+      latestConversationUserText: (signal: AbortSignal) => {
         conversationSignal = signal;
         return Promise.resolve(null);
       },
@@ -168,7 +221,7 @@ describe("managed broker project state", () => {
       authToken: "broker-token",
       agentId: "coder",
       projectId: "project-1",
-      fetch: (_url, init) => {
+      fetch: (_url: string, init: RequestInit) => {
         const signal = init.signal!;
         entered.resolve(signal);
         return new Promise((_resolve, reject) => {

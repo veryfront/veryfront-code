@@ -27,6 +27,7 @@ import {
   VERYFRONT_API_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   sealIngressCredentials,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -1528,6 +1529,130 @@ describe("server/handlers/request/agent-stream.handler", () => {
           { runId: "run_1", authorization, terminal: expected },
           { runId: "run_other", authorization, terminal: null },
           { runId: "run_1", authorization, terminal: null },
+        ]);
+      } finally {
+        restoreMockFetch();
+        if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+        else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+    });
+    it(`retains signed ingress authority for canonical MCP mutations: ${name}`, async () => {
+      const authorization = `Bearer ${authToken ?? "host-proxy-token"}`;
+      const finalizeCalls: Array<
+        { name: unknown; authorization: string | null; writer: string | null }
+      > = [];
+      let platformSources: RemoteToolSource[] = [];
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      installMockFetch(
+        ((url, init) => {
+          if (String(url) !== `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+            return Promise.resolve(Response.json({ data: [] }));
+          }
+          const requestInit = observeFetchRequestInit(init);
+          const headers = new Headers(requestInit.headers);
+          const request = JSON.parse(String(requestInit.body));
+          if (request.method === "tools/call") {
+            finalizeCalls.push({
+              name: request.params?.name,
+              authorization: headers.get("authorization"),
+              writer: headers.get(INGRESS_RUN_EVENT_TOKEN_HEADER),
+            });
+            return Promise.resolve(
+              Response.json({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            );
+          }
+          assertEquals(headers.get(INGRESS_RUN_EVENT_TOKEN_HEADER), null);
+          return Promise.resolve(Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              tools: [{
+                name: "veryfront__update_file",
+                description: "Finalize the current run",
+                inputSchema: { type: "object", properties: {} },
+              }, {
+                name: "veryfront__get_file",
+                description: "Read file",
+                inputSchema: { type: "object", properties: {} },
+              }],
+            },
+          }));
+        }) as typeof fetch,
+      );
+
+      try {
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            platformSources = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfRemoteToolSources ?? [];
+            return {
+              stream: () =>
+                Promise.resolve(
+                  new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.close();
+                    },
+                  }),
+                ),
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          ...(authToken ? { credentials: { authToken } } : {}),
+          agentConfig: {
+            id: "assistant-1",
+            name: "Project Assistant",
+            description: "Ends its own run.",
+            instructions: "Fail the run.",
+            skills: [],
+            tools: ["update_file", "get_file"],
+          },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          requestId: "run_1",
+        });
+        const request = sealIngressCredentials(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+              [INGRESS_RUN_EVENT_TOKEN_HEADER]: "retained-event-authority",
+            },
+            body,
+          }),
+        );
+        assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+        const ctx = createCtx(publicKeyPem);
+        ctx.proxyToken = "host-proxy-token";
+        const result = await handler.handle(request, ctx);
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        const source = platformSources.find((entry) => entry.id === VERYFRONT_API_MCP_SOURCE_ID);
+        assertExists(source);
+        await source.listTools({ runId: "run_1" });
+        await source.executeTool("veryfront__update_file", { path: "knowledge/current.md" }, {
+          runId: "run_1",
+        });
+        await source.executeTool("veryfront__get_file", { path: "knowledge/current.md" }, {
+          runId: "run_1",
+        });
+        assertEquals(finalizeCalls, [
+          {
+            name: "veryfront__update_file",
+            authorization,
+            writer: authToken ? "retained-event-authority" : null,
+          },
+          { name: "veryfront__get_file", authorization, writer: null },
         ]);
       } finally {
         restoreMockFetch();

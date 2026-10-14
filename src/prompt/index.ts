@@ -1,5 +1,7 @@
 /**
- * Declare and register prompts exposable over MCP.
+ * Declare and register prompts exposable over MCP. `promptRegistry` is the
+ * local registry. To manage the prompts of a hosted project, use the prompts
+ * operations of the Veryfront API.
  *
  * @module prompt
  *

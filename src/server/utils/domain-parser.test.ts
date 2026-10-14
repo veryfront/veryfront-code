@@ -5,6 +5,7 @@ import {
   getEffectiveProjectSlug,
   HOSTED_ENVIRONMENT_NAMES,
   isHostedEnvironmentName,
+  isHostedVeryfrontDomain,
   isLocalDevHost,
   isVeryfrontDomain,
   parseConfiguredPlatformRoots,
@@ -528,5 +529,63 @@ describe("domain-parser", () => {
         "the caller's spelling is not one of the hosted labels",
       );
     });
+  });
+});
+
+describe("host classification security boundaries", () => {
+  it("does not classify URL syntax or malformed labels as hosted domains", () => {
+    for (
+      const host of [
+        "https://evil.example/path.veryfront.com",
+        "evil.example?redirect=.veryfront.org",
+        "user@app.veryfront.com",
+        ".veryfront.com",
+        "app..veryfront.org",
+        "app.veryfront.com\n",
+        "app.veryfront.org:443\n",
+        "app.veryfront.com.evil.test",
+        "app.notveryfront.org",
+      ]
+    ) {
+      assertEquals(isHostedVeryfrontDomain(host), false, host);
+    }
+    for (const host of ["veryfront.com", "veryfront.org:443", "App.Preview.Veryfront.COM:443"]) {
+      assertEquals(isHostedVeryfrontDomain(host), true, host);
+    }
+  });
+
+  it("rejects trailing line terminators on every project and iframe classification path", () => {
+    for (
+      const host of [
+        "app.preview.veryfront.com",
+        "app.production.veryfront.org",
+        "preview.veryfront.com",
+        "app.preview.localhost",
+        "app.localhost:3000",
+        "test.xip.io",
+        "test.zip.io",
+      ]
+    ) {
+      for (const ending of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+        const invalid = host + ending;
+        const parsed = parseProjectDomain(invalid);
+        assertEquals(parsed.isVeryfrontDomain, false, invalid);
+        assertEquals(parsed.allowIframeEmbed, false, invalid);
+        assertEquals(parsed.slug, null, invalid);
+        assertEquals(isVeryfrontDomain(invalid), false, invalid);
+        assertEquals(isLocalDevHost(invalid), false, invalid);
+      }
+    }
+  });
+
+  it("does not permit a line terminator inside an operator-root project prefix", () => {
+    for (const ending of ["\n", "\r", "\u2028", "\u2029"]) {
+      assertEquals(
+        parseConfiguredProjectDomain(`app.preview${ending}.customer.example.test`, [
+          "customer.example.test",
+        ]),
+        null,
+      );
+    }
   });
 });

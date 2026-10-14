@@ -18,8 +18,12 @@ import {
   createNoneSkillSelectorSnapshot,
 } from "#veryfront/skill/selector.ts";
 import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
-import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  buildInteractiveVeryfrontCloudRuntimeInstructions,
+  resolveHostedRuntimeSkillLoaderToolName,
+} from "./cloud-runtime-system-messages.ts";
 import type { HostedChatRuntimeProjectSteering } from "./chat-runtime-contract.ts";
+import { isLoadSkillToolName } from "../platform-tool-names.ts";
 
 type Scope = { projectId: string | null; branchId?: string | null };
 
@@ -133,8 +137,9 @@ export function createManagedBrokerProjectState(
         projectId,
         branchId,
         instructions: loaded.instructions,
-        skills: availableToolNames.includes("load_skill") ? selected.definitions : [],
+        skills: availableToolNames.some(isLoadSkillToolName) ? selected.definitions : [],
         availableToolNames,
+        skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(availableToolNames),
         environmentContext: options.environmentContext,
       });
     },

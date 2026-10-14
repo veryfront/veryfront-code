@@ -28,7 +28,7 @@
     {
       "id": "fathom__list_meetings",
       "name": "List Meetings",
-      "description": "List recorded meetings, optionally including summaries and action items",
+      "description": "List meetings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -90,7 +90,7 @@
     {
       "id": "fathom__get_transcript",
       "name": "Get Transcript",
-      "description": "Get the transcript of a recording",
+      "description": "Get transcript",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -108,7 +108,7 @@
     {
       "id": "fathom__get_summary",
       "name": "Get Summary",
-      "description": "Get the AI summary of a recording",
+      "description": "Get summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "fathom__list_teams",
       "name": "List Teams",
-      "description": "List teams in the Fathom workspace",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -143,7 +143,7 @@
     {
       "id": "fathom__list_team_members",
       "name": "List Team Members",
-      "description": "List team members in the Fathom workspace",
+      "description": "List team members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

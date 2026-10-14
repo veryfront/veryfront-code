@@ -5,7 +5,7 @@ import {
   recordHostedAgentPauseMirrorSnapshot,
 } from "./manual-pause-settlement.ts";
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
-import { isRecord, isToolUiPart } from "../../chat/conversation.ts";
+import { isToolUiPart } from "../../chat/conversation.ts";
 import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import {
@@ -22,12 +22,16 @@ import { DurableRunEventPersistenceError } from "../conversation/private-run-eve
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
+  findUnambiguousFallbackRecord,
+  persistToolResultOwnershipCorrections,
+  terminalToolOutputState,
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
@@ -35,6 +39,8 @@ import {
   getEmptyHostedFinalizedMessageTerminalError,
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
+
+const pauseLogger = getBaseLogger("Agent pause");
 
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
 
@@ -53,6 +59,11 @@ export type HostedChatFinalizationCommon = {
   streamError?: unknown | null;
 };
 
+type HostedDetachedTerminalContext = {
+  isAborted: boolean;
+  streamError?: unknown | null;
+};
+
 export type FinalizeHostedChatRunInput =
   & HostedChatFinalizationCommon
   & (
@@ -62,6 +73,7 @@ export type FinalizeHostedChatRunInput =
       isAborted: boolean;
       mirroredDurableOutput: boolean;
       mirroredMessage?: ChatUiMessage;
+      resolveTerminalContext?: () => HostedDetachedTerminalContext;
     }
   );
 
@@ -91,6 +103,7 @@ function createHostedChatFinalizeResponseBuildState(
       recoveredFallbackParts,
     } = buildFinalizedMessageState({
       responseMessage: input.responseMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
       isAborted: input.isAborted,
       finalStep,
       incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
@@ -151,14 +164,13 @@ function createHostedChatFinalizeDetachedBuildState(
       );
       const recoveredParts = input.mirroredMessage.parts.map((part) => {
         if (!isToolUiPart(part)) return part;
-        const fallback = fallbackTools.get(part.toolCallId);
+        // A final-step record completes this part only when it is for the same tool and
+        // unambiguous; a call id reused for another tool must not lend it an output.
+        const fallback = findUnambiguousFallbackRecord(recoveredFallback, part);
         fallbackTools.delete(part.toolCallId);
+        if (input.isAborted || terminalToolOutputState(part.state) !== undefined) return part;
         if (
-          part.state === "output-available" || part.state === "output-error" ||
-          part.state === "output-denied"
-        ) return part;
-        if (
-          !fallback ||
+          !fallback || !isToolUiPart(fallback) ||
           (fallback.state !== "output-available" && fallback.state !== "output-error" &&
             fallback.state !== "output-denied")
         ) return part;
@@ -177,6 +189,7 @@ function createHostedChatFinalizeDetachedBuildState(
         };
       });
       const mirrored = buildFinalizedMessageState({
+        mirroredToolChunkState: input.mirroredToolChunkState,
         responseMessage: {
           ...input.mirroredMessage,
           parts: [
@@ -194,12 +207,34 @@ function createHostedChatFinalizeDetachedBuildState(
       finalizedFallbackMessage = mirrored.sanitizedFinalizedMessage;
       hasIncompleteFallbackToolParts = mirrored.hasIncompleteFinalizedToolParts;
     }
+    if (input.isAborted && !input.mirroredMessage?.parts.length) {
+      finalizedFallbackMessage = {
+        ...finalizedFallbackMessage,
+        parts: [
+          ...finalizedFallbackMessage.parts.filter((part) => !isToolUiPart(part)),
+          ...[...input.mirroredToolChunkState.startedToolCallIds].filter((toolCallId) =>
+            !!input.mirroredToolChunkState.toolCallNames.get(toolCallId) &&
+            !input.mirroredToolChunkState.outputAvailableToolCallIds.has(toolCallId) &&
+            !input.mirroredToolChunkState.outputErrorToolCallIds.has(toolCallId) &&
+            !input.mirroredToolChunkState.outputDeniedToolCallIds.has(toolCallId)
+          ).map((toolCallId) => ({
+            type: "dynamic-tool" as const,
+            toolCallId,
+            toolName: input.mirroredToolChunkState.toolCallNames.get(toolCallId) ?? "unknown",
+            state: "output-error" as const,
+            input: {},
+            errorText: "Stopped by user",
+          })),
+        ],
+      };
+    }
     const fallbackParts = finalizedFallbackMessage.parts;
 
     const fallbackChunks = fallbackParts.length > 0 && input.lifecycleAdapter.durableRunMirror &&
         input.capturedMessageId
       ? (() => {
         const primaryChunks = buildDetachedFallbackChunks({
+          isAborted: input.isAborted,
           fallbackParts,
           mirroredParts: input.mirroredMessage?.parts,
           finalStep,
@@ -212,6 +247,7 @@ function createHostedChatFinalizeDetachedBuildState(
         return [
           ...primaryChunks,
           ...buildMissingToolOutputErrorChunksFromParts({
+            closeStartedInput: input.isAborted && !input.mirroredMessage?.parts.length,
             parts: fallbackParts,
             mirroredToolChunkState: input.mirroredToolChunkState,
             primaryChunks,
@@ -234,6 +270,7 @@ function createHostedChatFinalizeDetachedBuildState(
 }
 
 function buildMissingToolOutputErrorChunksFromParts(input: {
+  closeStartedInput?: boolean;
   parts: ChatUiMessage["parts"];
   mirroredToolChunkState: MirroredToolChunkState;
   primaryChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
@@ -271,11 +308,25 @@ function buildMissingToolOutputErrorChunksFromParts(input: {
       continue;
     }
 
-    chunks.push({
-      type: "tool-output-error",
-      toolCallId: part.toolCallId,
-      errorText: typeof part.errorText === "string" ? part.errorText : "Tool execution failed",
-    });
+    const errorText = typeof part.errorText === "string" ? part.errorText : "Tool execution failed";
+    if (
+      input.closeStartedInput &&
+      input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId) &&
+      !input.mirroredToolChunkState.inputAvailableToolCallIds.has(part.toolCallId) &&
+      !input.primaryChunks.some((chunk) =>
+        chunk.type === "tool-input-available" && chunk.toolCallId === part.toolCallId
+      )
+    ) {
+      chunks.push({
+        type: "tool-input-error",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName ?? "unknown",
+        input: part.input,
+        errorText,
+      });
+    } else {
+      chunks.push({ type: "tool-output-error", toolCallId: part.toolCallId, errorText });
+    }
     outputErrorToolCallIds.add(part.toolCallId);
   }
 
@@ -425,6 +476,7 @@ export async function finalizeHostedChatRun(
   input: FinalizeHostedChatRunInput,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    pauseLogger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
     if (input.streamError) {
       invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, input.streamError);
     }
@@ -440,6 +492,28 @@ export async function finalizeHostedChatRun(
     return;
   }
   const finalStep = await getLastStreamStep(input.streamResult);
+  const terminalContext = input.kind === "detached" && input.resolveTerminalContext
+    ? input.resolveTerminalContext()
+    : { isAborted: input.isAborted, streamError: input.streamError };
+  const isAborted = terminalContext.isAborted;
+  const streamError = terminalContext.streamError;
+
+  if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    pauseLogger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
+    if (streamError) {
+      invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, streamError);
+    }
+    try {
+      const snapshot = await input.lifecycleAdapter.durableRunMirror?.flush();
+      recordHostedAgentPauseMirrorSnapshot(input.lifecycleAdapter, snapshot);
+    } catch (error) {
+      recordHostedAgentPauseFlush(input.lifecycleAdapter, false);
+      input.logger?.error("Paused agent output could not be flushed", { error: String(error) });
+    } finally {
+      await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
+    }
+    return;
+  }
 
   let ownershipCorrections: ConversationRunEvent[] = [];
   let fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
@@ -457,14 +531,14 @@ export async function finalizeHostedChatRun(
       persistedMessage: state.persistedMessage,
       finalizedMessage: state.finalizedMessage,
       mirroredToolChunkState: input.mirroredToolChunkState,
-      isAborted: input.isAborted,
+      isAborted,
     });
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
     emptyFailure = state.fallbackChunks.length === 0 &&
       shouldFailEmptyHostedFinalizedMessage({
-        isAborted: input.isAborted,
+        isAborted,
         message: state.finalizedMessage,
       });
     hasOutput = true;
@@ -476,6 +550,7 @@ export async function finalizeHostedChatRun(
       : input.mirroredDurableOutput;
     const state = createHostedChatFinalizeDetachedBuildState({
       ...input,
+      isAborted,
       mirroredDurableOutput: hasMirroredContent,
     })(finalStep);
 
@@ -489,13 +564,13 @@ export async function finalizeHostedChatRun(
         persistedMessage: input.mirroredMessage,
         finalizedMessage: state.finalizedMessage,
         mirroredToolChunkState: input.mirroredToolChunkState,
-        isAborted: input.isAborted,
+        isAborted,
       });
     }
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
-    emptyFailure = !input.isAborted && !hasMirroredContent && !state.hasContent;
+    emptyFailure = !isAborted && !hasMirroredContent && !state.hasContent;
     hasOutput = hasMirroredContent || state.hasContent;
   }
 
@@ -504,7 +579,7 @@ export async function finalizeHostedChatRun(
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
-      streamError: input.streamError,
+      streamError,
       metadata,
     });
     await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
@@ -516,20 +591,14 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
   });
-  if (ownershipCorrections.length > 0 && input.lifecycleAdapter.durableRunMirror) {
-    await input.lifecycleAdapter.durableRunMirror.appendEvents(ownershipCorrections);
-    const corrected = input.mirroredToolChunkState.ownershipCorrectedToolCallIds ??= new Set<
-      string
-    >();
-    for (const event of ownershipCorrections) {
-      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
-        corrected.add(event.value.toolCallId);
-      }
-    }
-  }
+  await persistToolResultOwnershipCorrections(
+    ownershipCorrections,
+    input.lifecycleAdapter.durableRunMirror,
+    input.mirroredToolChunkState,
+  );
   const mirrorDrained = await flushMirror(input.lifecycleAdapter);
 
-  if (!input.isAborted && !mirrorDrained) {
+  if (!isAborted && !mirrorDrained) {
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
@@ -545,16 +614,16 @@ export async function finalizeHostedChatRun(
 
   if (
     shouldFailStreamError({
-      isAborted: input.isAborted,
+      isAborted,
       hasOutput,
       finalStep,
-      streamError: input.streamError,
+      streamError,
     })
   ) {
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
-      streamError: input.streamError,
+      streamError,
       metadata,
     });
     await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
@@ -562,7 +631,7 @@ export async function finalizeHostedChatRun(
   }
 
   const terminalState = resolveTerminalState({
-    isAborted: input.isAborted,
+    isAborted,
     hasIncompleteToolParts,
   });
   await dispatchTerminalState({

@@ -1,6 +1,6 @@
 import {
   mergeUsage,
-  ProviderRequestError,
+  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
@@ -46,9 +46,9 @@ export const MAX_OPENAI_STREAM_TOOL_CALLS = 1_024;
 function invalidOpenAIStream(
   context: OpenAIChatStreamContext,
   issue: string,
-): ProviderRequestError {
+): ProviderStreamProtocolError {
   const providerKind = context.providerKind ?? "openai";
-  return new ProviderRequestError({
+  return new ProviderStreamProtocolError({
     provider: providerKind,
     status: 200,
     message: `${

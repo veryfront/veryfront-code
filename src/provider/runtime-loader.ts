@@ -39,6 +39,7 @@ export {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
 } from "./runtime-loader/provider-http.ts";
 export {
   notifyProviderRequestRetry,

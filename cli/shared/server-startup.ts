@@ -1,9 +1,10 @@
-import { getHostSecret } from "#cli/process-env";
+import { getHostEnvExcludingEnvFile, getHostSecret } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import {
   type DevServerOptions,
   type DiscoveryOptions,
+  isHostedHttpIsolationEnabled,
   startDevServer,
   startProductionServer,
   type StartProductionServerOptions,
@@ -20,6 +21,7 @@ import {
   registerManifestFetcherForRelease,
 } from "veryfront/release-assets";
 import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
+import type { HostedHttpComposition } from "veryfront/server/http-host";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -137,8 +139,78 @@ export interface StartCliProductionServerOptions {
   onMemoryRecycle?: StartProductionServerOptions["onMemoryRecycle"];
 }
 
+type HostedHttpHostModule = Pick<
+  typeof import("veryfront/server/http-host"),
+  "createHostedHttpComposition" | "readHostedHttpCompositionConfig"
+>;
+
+interface StartCliProductionServerDependencies {
+  startServer?: typeof startProductionServer;
+  isHostedHttpEnabled?: () => boolean;
+  readProxyMode?: () => string | undefined;
+  loadHostedHttp?: () => Promise<HostedHttpHostModule>;
+  ensureContentProcessor?: () => Promise<void>;
+}
+
+/** Compose hosted HTTP only when the host flag is on; the Node-only module loads only then. */
+async function composeHostedHttp(
+  dependencies: StartCliProductionServerDependencies,
+): Promise<HostedHttpComposition | undefined> {
+  if (!(dependencies.isHostedHttpEnabled ?? isHostedHttpIsolationEnabled)()) return undefined;
+  const proxyMode =
+    (dependencies.readProxyMode ?? (() => getHostEnvExcludingEnvFile("PROXY_MODE")))();
+  if (proxyMode?.trim() !== "1") {
+    throw new TypeError("VERYFRONT_HOSTED_HTTP_ISOLATION requires PROXY_MODE=1");
+  }
+  const host =
+    await (dependencies.loadHostedHttp ?? (() => import("veryfront/server/http-host")))();
+  const config = host.readHostedHttpCompositionConfig();
+  if (!config) throw new TypeError("VERYFRONT_HOSTED_HTTP_ISOLATION changed during startup");
+  return await host.createHostedHttpComposition(config);
+}
+
 export async function startCliProductionServer(
   options: StartCliProductionServerOptions,
+  dependencies: StartCliProductionServerDependencies = {},
+): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
+  // Host-only and default off. Read before bootstrap loads any project code.
+  const hostedHttp = await composeHostedHttp(dependencies);
+  try {
+    return await startCliProductionServerWithHostedHttp(
+      options,
+      hostedHttp,
+      dependencies.startServer ?? startProductionServer,
+      dependencies.ensureContentProcessor ?? ensureBuiltinContentProcessor,
+    );
+  } catch (error) {
+    await hostedHttp?.shutdown();
+    throw error;
+  }
+}
+
+/** Settle with `operation`, or reject with the abort reason as soon as `signal` aborts. */
+async function untilAborted<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return await operation;
+  // An operation abandoned on abort still settles; its outcome is no longer reported.
+  operation.catch(() => {});
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function startCliProductionServerWithHostedHttp(
+  options: StartCliProductionServerOptions,
+  hostedHttp: HostedHttpComposition | undefined,
+  startServer: typeof startProductionServer,
+  ensureContentProcessor: () => Promise<void>,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
   const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
@@ -177,6 +249,7 @@ export async function startCliProductionServer(
     defaultReleaseId: localReleaseId,
     defaultEnvironment: "production",
     onMemoryRecycle: options.onMemoryRecycle,
+    ...(hostedHttp ? { hostedHttp: hostedHttp.ingress } : {}),
     // Do NOT register a `localProjects` mapping here. `vf serve` and the
     // compiled binary are production deployments, and `isLocalProject: true`
     // flips `isDev` on in security headers (suppressing CSP) and in the SSR
@@ -187,16 +260,39 @@ export async function startCliProductionServer(
     // `localProjects` entry is required for the compiled binary to work.
   };
   prefetchBuiltinContentProcessor();
-  const result = await startProductionServer(serverOptions);
-  await ensureBuiltinContentProcessor();
+  const result = await startServer(serverOptions);
+  try {
+    // The caller holds no server handle until this function returns, so a shutdown
+    // signal during content loading must end startup here to release the broker.
+    await untilAborted(ensureContentProcessor(), options.signal);
+  } catch (error) {
+    // Do not leave a listener running after a failed startup. Start broker
+    // shutdown at the same time, so a hung listener stop cannot hold allocations.
+    const [stopped] = await Promise.allSettled([result.stop(), hostedHttp?.shutdown()]);
+    if (stopped.status === "rejected") {
+      throw new AggregateError([error, stopped.reason], "Server startup failed and did not stop");
+    }
+    throw error;
+  }
   return {
     ...result,
     stop: async () => {
-      if (unregisterLocalManifest) {
-        unregisterLocalManifest();
-        clearReleaseAssetManifestCache();
+      // Requests have drained when the process owner calls stop. Start broker
+      // shutdown with the listener stop so allocator release gets its own
+      // bounded window inside the process cleanup deadline.
+      const outcomes = await Promise.allSettled([
+        (async () => {
+          if (unregisterLocalManifest) {
+            unregisterLocalManifest();
+            clearReleaseAssetManifestCache();
+          }
+          await result.stop();
+        })(),
+        hostedHttp?.shutdown(),
+      ]);
+      for (const outcome of outcomes) {
+        if (outcome.status === "rejected") throw outcome.reason;
       }
-      await result.stop();
     },
   };
 }

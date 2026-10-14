@@ -10,14 +10,15 @@ import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-co
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createHostInternalOriginBoundOutboundFetch,
-  createOriginBoundOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import type { SandboxOptions } from "./types.ts";
+import type { SandboxClientOptions } from "./types.ts";
 
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
@@ -45,7 +46,7 @@ export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Respon
   if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin)) {
     return guardedExactHttpLoopbackOutboundFetch(url, { ...init, redirect: "error" });
   }
-  return createOriginBoundOutboundFetch(url)(url, init);
+  return createVeryfrontApiOriginBoundOutboundFetch(url)(url, init);
 }
 
 /** @internal Fetch a host-selected sandbox runtime route, including private Kubernetes DNS. */
@@ -53,10 +54,10 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
   return createHostInternalOriginBoundOutboundFetch(url)(url, init);
 }
 
-export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
+export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string {
   const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
     getHostEnv("VERYFRONT_API_URL");
-  if (url) return url;
+  if (url) return applyIntrinsic(stringReplace, url, [/\/+$/, ""]) as string;
 
   // Fail closed: never silently default to the production API while attaching an
   // ambient auth token — a missing VERYFRONT_API_URL in staging/CI would
@@ -66,7 +67,7 @@ export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
   });
 }
 
-export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
+export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): string {
   const explicitToken = trimString(options.authToken);
   if (explicitToken) return explicitToken;
 

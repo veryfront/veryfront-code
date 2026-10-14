@@ -53,7 +53,7 @@ describe("selected readiness client", () => {
       let reads = 0;
       await withMockFetch(async (url, init) => {
         const path = new URL(String(url));
-        if (path.pathname.endsWith("/tools/list")) {
+        if (path.pathname.endsWith("/integration-tools")) {
           return Response.json({ tools: [] }, {
             headers: { "x-veryfront-project-id": project.id },
           });
@@ -61,7 +61,7 @@ describe("selected readiness client", () => {
         if (!path.pathname.includes("/integrations/")) return Response.json(project);
         reads++;
         assertEquals(init?.method, "GET");
-        assertEquals(path.pathname, `/projects/${project.id}/integrations/github`);
+        assertEquals(path.pathname, `/projects/${project.id}/integrations/github/readiness`);
         assertEquals(path.searchParams.get("tool_name"), "github__get_current_user");
         assertEquals(path.searchParams.get("expected_connection_generation_id"), generation);
         const data = response();
@@ -87,7 +87,8 @@ describe("selected readiness client", () => {
           data.local_eligibility.blockers = [];
         }
         if (scenario === "provider-claim") data.provider_verification.state = "verified";
-        return Response.json(scenario === "absent" ? {} : { selected_readiness: data });
+        // The readiness route returns the object itself. The legacy wrapper must not validate.
+        return Response.json(scenario === "absent" ? { selected_readiness: data } : data);
       }, async () => {
         const client = await createIntegrationClient({
           apiBaseUrl: "https://api.example.test",
@@ -95,7 +96,7 @@ describe("selected readiness client", () => {
           projectReference: project.id,
         });
         const read = () =>
-          client.readiness("github__get_current_user", {
+          client.checkReadiness("github__get_current_user", {
             connectionId,
             expectedConnectionGenerationId: generation,
           });
@@ -127,21 +128,19 @@ for (const scope of ["user", "project"] as const) {
     } as const;
     await withMockFetch(async (url) => {
       const path = new URL(String(url));
-      if (path.pathname.endsWith("/tools/list")) {
+      if (path.pathname.endsWith("/integration-tools")) {
         return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
       }
       if (!path.pathname.includes("/integrations/")) return Response.json(project);
       const data = response();
-      return Response.json({
-        selected_readiness: { ...data, selection: { ...data.selection, scope }, account },
-      });
+      return Response.json({ ...data, selection: { ...data.selection, scope }, account });
     }, async () => {
       const client = await createIntegrationClient({
         apiBaseUrl: "https://api.example.test",
         authToken: "synthetic-token",
         projectReference: project.id,
       });
-      const readiness = await client.readiness("github__get_current_user", {
+      const readiness = await client.checkReadiness("github__get_current_user", {
         connectionId,
         expectedConnectionGenerationId: generation,
       });
@@ -162,7 +161,7 @@ it("keeps out-of-order readiness reads isolated by project and credential", asyn
     const url = new URL(String(input));
     const token = new Headers(init?.headers).get("authorization");
     const owner = token === "Bearer synthetic-first" ? project : second;
-    if (url.pathname.endsWith("/tools/list")) {
+    if (url.pathname.endsWith("/integration-tools")) {
       assertEquals(new Headers(init?.headers).get("x-veryfront-expected-project-id"), owner.id);
       return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": owner.id } });
     }
@@ -170,7 +169,7 @@ it("keeps out-of-order readiness reads isolated by project and credential", asyn
       assertEquals(url.pathname, `/projects/${owner.id}`);
       return Response.json(owner);
     }
-    assertEquals(url.pathname, `/projects/${owner.id}/integrations/github`);
+    assertEquals(url.pathname, `/projects/${owner.id}/integrations/github/readiness`);
     if (owner === project) {
       started.resolve();
       await release.promise;
@@ -180,7 +179,7 @@ it("keeps out-of-order readiness reads isolated by project and credential", asyn
     result.selection.connection_id = owner === project ? connectionId : secondConnection;
     result.selection.requested_connection_id = result.selection.connection_id;
     seen.push(owner.id);
-    return Response.json({ selected_readiness: result });
+    return Response.json(result);
   }, async () => {
     const firstClient = await createIntegrationClient({
       apiBaseUrl: "https://api.example.test",
@@ -192,10 +191,10 @@ it("keeps out-of-order readiness reads isolated by project and credential", asyn
       authToken: "synthetic-second",
       projectReference: second.id,
     });
-    const pendingFirst = firstClient.readiness("github__get_current_user", { connectionId });
+    const pendingFirst = firstClient.checkReadiness("github__get_current_user", { connectionId });
     await started.promise;
     try {
-      const secondResult = await secondClient.readiness("github__get_current_user", {
+      const secondResult = await secondClient.checkReadiness("github__get_current_user", {
         connectionId: secondConnection,
       });
       assertEquals(secondResult.selection.project_id, second.id);
@@ -216,7 +215,7 @@ it("validates the selection sent even when caller options change during the requ
   const options = { connectionId, expectedConnectionGenerationId: generation };
   await withMockFetch(async (input) => {
     const url = new URL(String(input));
-    if (url.pathname.endsWith("/tools/list")) {
+    if (url.pathname.endsWith("/integration-tools")) {
       return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
     }
     if (!url.pathname.includes("/integrations/")) return Response.json(project);
@@ -224,14 +223,14 @@ it("validates the selection sent even when caller options change during the requ
     assertEquals(url.searchParams.get("expected_connection_generation_id"), generation);
     started.resolve();
     await release.promise;
-    return Response.json({ selected_readiness: response() });
+    return Response.json(response());
   }, async () => {
     const client = await createIntegrationClient({
       apiBaseUrl: "https://api.example.test",
       authToken: "synthetic-token",
       projectReference: project.id,
     });
-    const pending = client.readiness("github__get_current_user", options);
+    const pending = client.checkReadiness("github__get_current_user", options);
     await started.promise;
     options.connectionId = "44444444-4444-4444-8444-444444444444";
     options.expectedConnectionGenerationId = "55555555-5555-4555-8555-555555555555";
@@ -245,7 +244,7 @@ it("validates the selection sent even when caller options change during the requ
 it("rejects a selected result that drops an explicit connection without a generation", async () => {
   await withMockFetch(async (input) => {
     const url = new URL(String(input));
-    if (url.pathname.endsWith("/tools/list")) {
+    if (url.pathname.endsWith("/integration-tools")) {
       return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
     }
     if (!url.pathname.includes("/integrations/")) return Response.json(project);
@@ -253,14 +252,12 @@ it("rejects a selected result that drops an explicit connection without a genera
     assertEquals(url.searchParams.has("expected_connection_generation_id"), false);
     const data = response();
     return Response.json({
-      selected_readiness: {
-        ...data,
-        selection: {
-          ...data.selection,
-          mode: "project_credentials",
-          connection_id: null,
-          connection_generation_id: null,
-        },
+      ...data,
+      selection: {
+        ...data.selection,
+        mode: "project_credentials",
+        connection_id: null,
+        connection_generation_id: null,
       },
     });
   }, async () => {
@@ -270,7 +267,7 @@ it("rejects a selected result that drops an explicit connection without a genera
       projectReference: project.id,
     });
     const error = await assertRejects(
-      () => client.readiness("github__get_current_user", { connectionId }),
+      () => client.checkReadiness("github__get_current_user", { connectionId }),
       IntegrationApiError,
     );
     assertInstanceOf(error, IntegrationApiError);

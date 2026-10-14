@@ -39,7 +39,7 @@
     {
       "id": "wix__query_products",
       "name": "Query Products",
-      "description": "Query Wix Stores catalog products with filtering, sorting, and paging",
+      "description": "Query products",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -62,7 +62,7 @@
     {
       "id": "wix__search_orders",
       "name": "Search Orders",
-      "description": "Search Wix eCommerce orders with filtering, sorting, and cursor paging",
+      "description": "Search orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -81,7 +81,7 @@
     {
       "id": "wix__get_order",
       "name": "Get Order",
-      "description": "Get full details of a single eCommerce order, including line items, totals, and buyer info",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -102,7 +102,7 @@
     {
       "id": "wix__query_contacts",
       "name": "Query Contacts",
-      "description": "Query CRM contacts with filtering, sorting, and paging (up to 1000 per request)",
+      "description": "Query contacts (1000 maximum per request)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -110,7 +110,7 @@
         "body": {
           "query": {
             "type": "object",
-            "description": "Query options, e.g. {\"filter\":{\"info.name.last\":{\"$eq\":\"Smith\"}},\"paging\":{\"limit\":25,\"offset\":0}}"
+            "description": "Query options, e.g. {\"filter\":{\"info.name.last\":{\"$eq\":\"Smith\"}},\"paging\":{\"limit\":25,\"offset\":0}}. query.paging.limit must not exceed 1000 contacts per request."
           }
         },
         "response": {
@@ -121,7 +121,7 @@
     {
       "id": "wix__create_fulfillment",
       "name": "Create Fulfillment",
-      "description": "Mark eCommerce order line items as fulfilled, optionally with shipping tracking info",
+      "description": "Mark order items as fulfilled",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -137,7 +137,7 @@
         "body": {
           "fulfillment": {
             "type": "object",
-            "description": "Fulfillment to create, e.g. {\"lineItems\":[{\"id\":\"<line item id>\",\"quantity\":1}],\"trackingInfo\":{\"trackingNumber\":\"...\",\"shippingProvider\":\"ups\"}} (lineItems required; line item IDs come from Get Order)",
+            "description": "Fulfillment to create, e.g. {\"lineItems\":[{\"id\":\"<line item id>\",\"quantity\":1}],\"trackingInfo\":{\"trackingNumber\":\"...\",\"shippingProvider\":\"ups\"}} (lineItems required; line item IDs come from Get Order). Creating this fulfillment marks the included order line items as fulfilled.",
             "required": true
           }
         }
@@ -146,7 +146,7 @@
     {
       "id": "wix__create_contact",
       "name": "Create Contact",
-      "description": "Create a new CRM contact with at least a name, email address, or phone number",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -170,7 +170,7 @@
     {
       "id": "wix__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the Wix Stores catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

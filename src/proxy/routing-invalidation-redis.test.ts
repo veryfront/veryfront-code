@@ -1136,7 +1136,7 @@ describe("proxy routing invalidation Redis bus", () => {
     try {
       const result = await settleWithin(
         publish,
-        "draining replica invalidation",
+        "remaining replica acknowledgement after drain",
         () => time.runMicrotasks(),
       );
 

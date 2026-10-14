@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
   appendConversationRunEvents,
@@ -209,6 +209,7 @@ it("recovers authenticated cursor mismatch by append hints without any event rea
     maxCursorResyncsPerFlush: 2,
     events: [{ type: "STATE_SNAPSHOT", snapshot: {} }],
     fetch: (_input, init) => {
+      assert(init && "method" in init, "fetch must receive request options");
       methods.push(init?.method ?? "GET");
       if (methods.length === 1) {
         return Promise.resolve(
@@ -674,6 +675,7 @@ it("stores queue tool call admissions by occurrence id and preserves sidecar ind
     latestExternalEventSequence: 4,
     maxEventsPerBatch: 100,
     fetch: (_input, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(
         Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
@@ -710,6 +712,7 @@ it("preserves queue runtime observation indexes across prior pending events", as
     latestExternalEventSequence: 4,
     maxEventsPerBatch: 100,
     fetch: (_input, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(Response.json(appendResponse({ appendedCount: 2 })));
     },

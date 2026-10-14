@@ -6,6 +6,14 @@ export type HostedRuntimeAllowedToolNames = readonly string[] | ReadonlySet<stri
 export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
+  /**
+   * Local tools carrying trusted framework ownership. Hosted production
+   * assemblers that mix project and platform tools must pass this explicitly
+   * so runtime-essential preservation cannot re-add a project collision. When
+   * omitted, the resolver keeps the legacy standalone behavior and treats every
+   * local name as trusted.
+   */
+  trustedLocalToolNames?: Iterable<string>;
   availableSkillIds?: readonly string[];
   /**
    * Provenance marker: the selector was built from the agent's own trusted
@@ -22,9 +30,17 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
 // Script execution is intentionally not runtime-essential under allowlists:
 // loading skill instructions is framework infrastructure, while running a
 // project-provided script remains a direct execution capability.
-const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
-const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
-const SKILL_SCRIPT_TOOL_NAMES = ["execute_skill_script"] as const;
+const SKILL_RUNTIME_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+] as const;
+const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent", "veryfront__invoke_agent"] as const;
+const SKILL_SCRIPT_TOOL_NAMES = [
+  "execute_skill_script",
+  "veryfront__execute_skill_script",
+] as const;
 const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
   ...SKILL_RUNTIME_TOOL_NAMES,
   ...SKILL_SCRIPT_TOOL_NAMES,
@@ -47,6 +63,9 @@ export function resolveHostedRuntimeAllowedToolNames(
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const localToolNames = createPrivateSet(input.localToolNames);
+  const trustedLocalToolNames = input.trustedLocalToolNames === undefined
+    ? localToolNames
+    : createPrivateSet(input.trustedLocalToolNames);
   const hasKnownSkillManifest = input.availableSkillIds !== undefined;
   const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
 
@@ -58,7 +77,7 @@ export function resolveHostedRuntimeAllowedToolNames(
     const resolvedToolNames = createPrivateSet(localToolNames);
     for (let index = 0; index < EMPTY_SKILL_MANIFEST_TOOL_NAMES.length; index++) {
       const toolName = EMPTY_SKILL_MANIFEST_TOOL_NAMES[index]!;
-      resolvedToolNames.delete(toolName);
+      if (trustedLocalToolNames.has(toolName)) resolvedToolNames.delete(toolName);
     }
     return resolvedToolNames;
   }
@@ -72,7 +91,7 @@ export function resolveHostedRuntimeAllowedToolNames(
   if (hasKnownSkillManifest && !hasAuthorizedSkills) {
     for (let index = 0; index < EMPTY_SKILL_MANIFEST_TOOL_NAMES.length; index++) {
       const toolName = EMPTY_SKILL_MANIFEST_TOOL_NAMES[index]!;
-      resolvedToolNames.delete(toolName);
+      if (trustedLocalToolNames.has(toolName)) resolvedToolNames.delete(toolName);
     }
   }
 
@@ -86,7 +105,7 @@ export function resolveHostedRuntimeAllowedToolNames(
   ) {
     for (let index = 0; index < SKILL_RUNTIME_TOOL_NAMES.length; index++) {
       const toolName = SKILL_RUNTIME_TOOL_NAMES[index]!;
-      if (localToolNames.has(toolName)) {
+      if (trustedLocalToolNames.has(toolName)) {
         resolvedToolNames.add(toolName);
       }
     }
@@ -99,7 +118,7 @@ export function resolveHostedRuntimeAllowedToolNames(
   if (input.configDerivedSelector && hasAuthorizedSkills) {
     for (let index = 0; index < SKILL_DELEGATION_TOOL_NAMES.length; index++) {
       const toolName = SKILL_DELEGATION_TOOL_NAMES[index]!;
-      if (localToolNames.has(toolName)) {
+      if (trustedLocalToolNames.has(toolName)) {
         resolvedToolNames.add(toolName);
       }
     }

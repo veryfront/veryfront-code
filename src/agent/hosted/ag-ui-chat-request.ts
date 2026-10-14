@@ -85,9 +85,9 @@ async function verifyHostedAgUiProjectAccess(input: {
   verifyProjectAccess?: (
     input: { projectId: string; authToken: string },
   ) => Promise<HostedChatProjectAccessResult>;
-}): Promise<Response | undefined> {
+}): Promise<{ projectSlug?: string } | Response> {
   if (!input.projectId || !input.verifyProjectAccess) {
-    return undefined;
+    return {};
   }
 
   const access = await input.verifyProjectAccess({
@@ -95,7 +95,8 @@ async function verifyHostedAgUiProjectAccess(input: {
     authToken: input.authToken,
   });
   if (access.success) {
-    return undefined;
+    const projectSlug = access.projectSlug?.trim();
+    return projectSlug ? { projectSlug } : {};
   }
 
   return Response.json(
@@ -183,13 +184,13 @@ export async function buildParsedHostedAgUiRequest(
     forwardedConfigNamespace: input.forwardedConfigNamespace,
   });
 
-  const accessError = await verifyHostedAgUiProjectAccess({
+  const access = await verifyHostedAgUiProjectAccess({
     projectId: chatContext.projectId,
     authToken: input.authToken,
     verifyProjectAccess: input.verifyProjectAccess,
   });
-  if (accessError) {
-    return accessError;
+  if (access instanceof Response) {
+    return access;
   }
 
   return {
@@ -197,8 +198,9 @@ export async function buildParsedHostedAgUiRequest(
     userId: input.userId,
     authToken: input.authToken,
     messages: mapAgUiRuntimeMessagesToChatUiMessages(input.agUiInput.messages),
-    validatedContext: chatContext.validatedContext,
+    validatedContext: { ...chatContext.validatedContext, ...access },
     projectId: chatContext.projectId,
+    ...access,
     conversationId: chatContext.conversationId,
     parentRunId: input.agUiInput.parentRunId,
     agentId: undefined,

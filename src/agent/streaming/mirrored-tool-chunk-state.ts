@@ -42,6 +42,8 @@ export interface MirroredToolChunkState {
   toolCallNames: Map<string, string>;
   /** Actual durable reasoning content IDs, reserved during final-step recovery. */
   reasoningContentIds?: Set<string>;
+  /** Reasoning spans that started but have not ended, with their exact mirrored text. */
+  openReasoningParts?: Map<string, string>;
   /** Ownership corrections already appended by trusted finalization. */
   ownershipCorrectedToolCallIds?: Set<string>;
 }
@@ -56,6 +58,7 @@ export function createMirroredToolChunkState(): MirroredToolChunkState {
     outputDeniedToolCallIds: new Set<string>(),
     toolCallNames: new Map<string, string>(),
     reasoningContentIds: new Set<string>(),
+    openReasoningParts: new Map<string, string>(),
     ownershipCorrectedToolCallIds: new Set<string>(),
   };
 }
@@ -72,6 +75,7 @@ export function cloneMirroredToolChunkState(
     outputDeniedToolCallIds: new Set(state.outputDeniedToolCallIds),
     toolCallNames: new Map(state.toolCallNames),
     reasoningContentIds: new Set(state.reasoningContentIds),
+    openReasoningParts: new Map(state.openReasoningParts),
     ownershipCorrectedToolCallIds: new Set(state.ownershipCorrectedToolCallIds),
   };
 }
@@ -84,9 +88,16 @@ export function recordMirroredToolChunkState(
   switch (chunk.type) {
     case "reasoning-start":
     case "reasoning-delta":
-    case "reasoning-end":
+    case "reasoning-end": {
       (state.reasoningContentIds ??= new Set<string>()).add(chunk.id);
+      const open = state.openReasoningParts ??= new Map<string, string>();
+      if (chunk.type === "reasoning-start" && !open.has(chunk.id)) open.set(chunk.id, "");
+      if (chunk.type === "reasoning-delta" && open.has(chunk.id)) {
+        open.set(chunk.id, open.get(chunk.id)! + chunk.delta);
+      }
+      if (chunk.type === "reasoning-end") open.delete(chunk.id);
       break;
+    }
 
     case "tool-input-start":
       state.startedToolCallIds.add(chunk.toolCallId);

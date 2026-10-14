@@ -1,5 +1,11 @@
 /** Trusted finalization metadata. External data chunks cannot use this name. */
 export const TOOL_RESULT_OWNERSHIP_CORRECTION = "veryfront.tool_result_ownership";
+/**
+ * Top-level marker that finalization sets beside `name` and `value`. A data chunk can
+ * only supply a name and a value, also in runs stored before the name was reserved, so an
+ * event that has the name without this marker is ordinary custom data, not a correction.
+ */
+export const TOOL_RESULT_OWNERSHIP_ORIGIN = "veryfront.finalization";
 
 type StoredEvent = Readonly<Record<string, unknown>>;
 interface Correction {
@@ -13,7 +19,7 @@ function readCorrection(value: unknown): Correction | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
-    Object.keys(record).sort().join(",") !==
+    Object.keys(record).sort((left, right) => left.localeCompare(right)).join(",") !==
       "parentMessageId,providerExecuted,schemaVersion,toolCallId,toolName"
   ) return null;
   if (record.schemaVersion !== 1 || record.providerExecuted !== true) return null;
@@ -59,7 +65,10 @@ export function resolveToolResultOwnershipCorrections(
   const correctionCounts = new Map<string, number>();
   const corrections = new Map<string, { index: number; value: Correction }[]>();
   for (const [index, event] of events.entries()) {
-    if (event.type === "CUSTOM" && event.name === TOOL_RESULT_OWNERSHIP_CORRECTION) {
+    if (
+      event.type === "CUSTOM" && event.name === TOOL_RESULT_OWNERSHIP_CORRECTION &&
+      event.origin === TOOL_RESULT_OWNERSHIP_ORIGIN
+    ) {
       invalid.add(index);
       if (event.value && typeof event.value === "object" && !Array.isArray(event.value)) {
         const id = (event.value as Record<string, unknown>).toolCallId;

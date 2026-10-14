@@ -1,7 +1,17 @@
-import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "../conversation/tool-result-ownership.ts";
+import {
+  bindReasoningPartIdentity,
+  readReasoningPartIdentity,
+} from "#veryfront/chat/reasoning-part-identity.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import {
+  TOOL_RESULT_OWNERSHIP_CORRECTION,
+  TOOL_RESULT_OWNERSHIP_ORIGIN,
+} from "../conversation/tool-result-ownership.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
+  isRecord,
   isToolUiPart,
   markIncompleteToolPartsAsErrored,
   markIncompleteToolPartsAsStopped,
@@ -32,6 +42,24 @@ function toolPartName(part: ChatUiMessage["parts"][number]): string {
     : "";
 }
 
+/** Match legacy terminal aliases to the output state already used by mirrored chunks. */
+export function terminalToolOutputState(
+  state: string,
+): "available" | "error" | "denied" | undefined {
+  switch (state) {
+    case "output-available":
+    case "completed":
+      return "available";
+    case "output-error":
+    case "error":
+      return "error";
+    case "output-denied":
+      return "denied";
+    default:
+      return undefined;
+  }
+}
+
 function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
   return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
     (part.redactedData?.length ?? 0) > 0;
@@ -40,6 +68,33 @@ function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
 function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boolean {
   return left.text.trim() === right.text.trim() && left.signature === right.signature &&
     left.redactedData === right.redactedData;
+}
+
+const reasoningCompletions = createPrivateWeakStore<
+  ReasoningPart,
+  { id: string; prefix: string }
+>();
+
+function openReasoningId(part: ReasoningPart, state?: MirroredToolChunkState): string | undefined {
+  if (!state?.openReasoningParts) return undefined;
+  const identity = readReasoningPartIdentity(part);
+  if (identity) {
+    return identity.open && state.openReasoningParts.get(identity.id) === part.text
+      ? identity.id
+      : undefined;
+  }
+  if (!("state" in part) || part.state !== "streaming") return undefined;
+  const matches = [...state.openReasoningParts].filter(([, text]) => text === part.text);
+  return matches.length === 1 ? matches[0]![0] : undefined;
+}
+
+function compatibleReasoningCompletion(part: ReasoningPart, fallback: ReasoningPart): boolean {
+  // Final-step text is trimmed, so an open block ending in whitespace may only lack end metadata.
+  return (fallback.text.startsWith(part.text) || fallback.text === part.text.trim()) &&
+    (part.signature === undefined || fallback.signature === undefined ||
+      part.signature === fallback.signature) &&
+    (part.redactedData === undefined || fallback.redactedData === undefined ||
+      part.redactedData === fallback.redactedData);
 }
 
 type TextMatch = { indexes: number[]; length: number };
@@ -174,6 +229,7 @@ function assignFallbackTextOccurrences(
 
 /** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
+  mirroredToolChunkState?: MirroredToolChunkState;
   responseMessage: ChatUiMessage;
   isAborted: boolean;
   finalStep: unknown;
@@ -217,6 +273,7 @@ export interface BuildFinalizedMessageFallbackChunksInput {
 
 /** Input payload for build detached fallback chunks. */
 export interface BuildDetachedFallbackChunksInput {
+  isAborted?: boolean;
   fallbackParts: ChatUiMessage["parts"];
   mirroredParts?: readonly ChatUiMessage["parts"][number][];
   finalStep: unknown;
@@ -224,6 +281,91 @@ export interface BuildDetachedFallbackChunksInput {
   mirroredDurableOutput: boolean;
   capturedMessageId: string;
   hasIncompleteFallbackToolParts: boolean;
+}
+
+/**
+ * Ownership evidence is promoted only from exactly one final-step record for the call:
+ * duplicate or conflicting records for the same tool call id are ambiguous and never promote.
+ */
+function hasUniqueProviderOwnedFallback(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): boolean {
+  if (!isToolUiPart(part)) return false;
+  const matches = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  if (matches.length !== 1) return false;
+  const [match] = matches;
+  return match !== undefined && isToolUiPart(match) &&
+    toolPartName(match) === toolPartName(part) && match.providerExecuted === true;
+}
+
+function sameFallbackRecord(
+  left: ChatUiMessage["parts"][number],
+  right: ChatUiMessage["parts"][number],
+): boolean {
+  if (!isToolUiPart(left) || !isToolUiPart(right)) return false;
+  try {
+    return left.state === right.state && left.providerExecuted === right.providerExecuted &&
+      JSON.stringify(left.input) === JSON.stringify(right.input) &&
+      JSON.stringify("output" in left ? left.output : undefined) ===
+        JSON.stringify("output" in right ? right.output : undefined);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A pending tool part is completed only from final-step records that all carry its tool
+ * name and agree with each other. Mismatched names or conflicting duplicates for the same
+ * tool call id are ambiguous, so the part stays incomplete.
+ */
+function findUnambiguousCompletingFallback(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): ChatUiMessage["parts"][number] | undefined {
+  if (!isToolUiPart(part)) return undefined;
+  const sameCall = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  if (sameCall.some((fallback) => toolPartName(fallback) !== toolPartName(part))) {
+    return undefined;
+  }
+  const candidates = sameCall.filter((fallback) =>
+    isToolUiPart(fallback) &&
+    (fallback.state === "output-available" ||
+      (fallback.state === "input-available" && fallback.providerExecuted === true &&
+        part.providerExecuted !== false))
+  );
+  const [completed] = candidates;
+  if (!completed || candidates.some((candidate) => !sameFallbackRecord(candidate, completed))) {
+    return undefined;
+  }
+  return completed;
+}
+
+/**
+ * The final-step record for a tool part's call id, in any state, when every record with
+ * that id carries the part's tool name and they all agree. A reused call id for another
+ * tool, or conflicting duplicates, yields nothing.
+ */
+export function findUnambiguousFallbackRecord(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): ChatUiMessage["parts"][number] | undefined {
+  if (!isToolUiPart(part)) return undefined;
+  const sameCall = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  const [record] = sameCall;
+  if (
+    !record ||
+    sameCall.some((fallback) =>
+      toolPartName(fallback) !== toolPartName(part) || !sameFallbackRecord(fallback, record)
+    )
+  ) return undefined;
+  return record;
 }
 
 /** State for build finalized message. */
@@ -236,11 +378,10 @@ export function buildFinalizedMessageState(
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
   const completedParts = persistedMessage.parts.map((part) => {
     if (
-      !input.isAborted && isToolUiPart(part) && part.state === "output-available" &&
-      part.providerExecuted === undefined && finalStepFallbackParts.some((fallback) =>
-        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-        toolPartName(fallback) === toolPartName(part) && fallback.providerExecuted === true
-      )
+      !input.isAborted && isToolUiPart(part) &&
+      terminalToolOutputState(part.state) !== undefined &&
+      part.providerExecuted === undefined &&
+      hasUniqueProviderOwnedFallback(finalStepFallbackParts, part)
     ) {
       return { ...part, providerExecuted: true };
     }
@@ -252,12 +393,7 @@ export function buildFinalizedMessageState(
       return part;
     }
     const partialInput = part.state === "input-streaming" || part.state === "pending";
-    const completed = finalStepFallbackParts.find((fallback) =>
-      isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-      (fallback.state === "output-available" ||
-        (fallback.state === "input-available" && fallback.providerExecuted === true &&
-          part.providerExecuted !== false))
-    );
+    const completed = findUnambiguousCompletingFallback(finalStepFallbackParts, part);
     if (!completed || !isToolUiPart(completed)) {
       return part;
     }
@@ -284,7 +420,10 @@ export function buildFinalizedMessageState(
   const finalStepStart = persistedMessage.parts.findLastIndex((part) => part.type === "step-start");
   const persistedFinalStepParts = persistedMessage.parts.slice(finalStepStart + 1);
   const unmatchedPersistedReasoningParts = persistedFinalStepParts.filter(
-    (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
+    (part): part is ReasoningPart =>
+      part.type === "reasoning" &&
+      (isSubstantiveReasoningPart(part) ||
+        openReasoningId(part, input.mirroredToolChunkState) !== undefined),
   );
   const persistedTextParts = persistedFinalStepParts.filter((part) => part.type === "text")
     .filter((part) => part.text.trim().length > 0);
@@ -297,6 +436,8 @@ export function buildFinalizedMessageState(
     ? assignFallbackTextOccurrences(persistedTextParts, fallbackTextParts, consumeSearchStep)
     : [];
   let fallbackTextIndex = 0;
+  let remainingFallbackReasoning =
+    finalStepFallbackParts.filter((part) => part.type === "reasoning").length;
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
@@ -361,14 +502,46 @@ export function buildFinalizedMessageState(
       return missingTextParts;
     }
     if (fallbackPart.type === "reasoning") {
-      const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
-        hasSameReasoningContent(part, fallbackPart)
+      remainingFallbackReasoning -= 1;
+      const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
+        openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
+          compatibleReasoningCompletion(part, fallbackPart)
+          ? [index]
+          : []
       );
+      // The last final-step reasoning belongs to the latest block. Complete the
+      // open one before an earlier closed block that merely has the same content.
+      let matchingIndex = remainingFallbackReasoning === 0 && compatible.length === 1
+        ? compatible[0]!
+        : unmatchedPersistedReasoningParts.findIndex((part) =>
+          hasSameReasoningContent(part, fallbackPart)
+        );
+      if (matchingIndex < 0 && compatible.length === 1) matchingIndex = compatible[0]!;
       if (matchingIndex < 0) {
         recoveredFallbackParts.push(fallbackPart);
         return [fallbackPart];
       }
-      unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
+      const original = unmatchedPersistedReasoningParts.splice(matchingIndex, 1)[0]!;
+      const id = openReasoningId(original, input.mirroredToolChunkState);
+      if (id !== undefined && compatibleReasoningCompletion(original, fallbackPart)) {
+        const updated: ReasoningPart = bindReasoningPartIdentity(
+          {
+            ...original,
+            // Keep the mirrored prefix when the final step adds no text beyond it.
+            text: fallbackPart.text.startsWith(original.text) ? fallbackPart.text : original.text,
+            ...("state" in original ? { state: "done" as const } : {}),
+            ...(fallbackPart.signature === undefined ? {} : { signature: fallbackPart.signature }),
+            ...(fallbackPart.redactedData === undefined
+              ? {}
+              : { redactedData: fallbackPart.redactedData }),
+          },
+          id,
+          true,
+        );
+        completedParts[completedParts.indexOf(original)] = updated;
+        reasoningCompletions.set(updated, { id, prefix: original.text });
+        recoveredFallbackParts.push(updated);
+      }
       return [];
     }
     if (isToolUiPart(fallbackPart)) {
@@ -387,7 +560,7 @@ export function buildFinalizedMessageState(
   });
   // Durable content is append-only; recovery cannot move an already emitted part.
   const fallbackParts = persistedMessage.parts.length === 0
-    ? finalStepFallbackParts
+    ? finalStepFallbackParts.filter((part) => !input.isAborted || !isToolUiPart(part))
     : hasPlacedMissingText
     ? [...completedParts, ...missingFallbackParts]
     : appendMissingFallbackTextPart([...completedParts, ...missingFallbackParts], input.finalStep);
@@ -456,21 +629,41 @@ function buildOrderedFallbackChunks(
 ): ChatUiMessageChunk<MessageMetadata>[] {
   const usedIds = new Set(state.reasoningContentIds);
   const replacements = new Map<string, string>();
-  return buildFallbackUiMessageChunksFromParts(parts, messageId, state).map((chunk) => {
-    if (
-      chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
-      chunk.type !== "reasoning-end"
-    ) return chunk;
-    let id = replacements.get(chunk.id);
-    if (id === undefined) {
-      id = chunk.id;
-      let suffix = 2;
-      while (usedIds.has(id)) id = `${chunk.id}:recovered:${suffix++}`;
-      replacements.set(chunk.id, id);
-      usedIds.add(id);
-    }
-    return id === chunk.id ? chunk : { ...chunk, id };
-  });
+  const reasoningParts = parts.filter((part): part is ReasoningPart => part.type === "reasoning");
+  let reasoningIndex = 0;
+  const completions = new Map<string, { id: string; prefix: string }>();
+  return buildFallbackUiMessageChunksFromParts(parts, messageId, state).flatMap(
+    (chunk): ChatUiMessageChunk<MessageMetadata>[] => {
+      if (chunk.type === "reasoning-start") {
+        const completion = reasoningCompletions.get(reasoningParts[reasoningIndex++]!);
+        if (completion && state.openReasoningParts?.get(completion.id) === completion.prefix) {
+          completions.set(chunk.id, completion);
+          return [];
+        }
+      }
+      if (chunk.type === "reasoning-delta" || chunk.type === "reasoning-end") {
+        const completion = completions.get(chunk.id);
+        if (completion) {
+          if (chunk.type === "reasoning-end") return [{ ...chunk, id: completion.id }];
+          const delta = chunk.delta.slice(completion.prefix.length);
+          return delta ? [{ ...chunk, id: completion.id, delta }] : [];
+        }
+      }
+      if (
+        chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
+        chunk.type !== "reasoning-end"
+      ) return [chunk];
+      let id = replacements.get(chunk.id);
+      if (id === undefined) {
+        id = chunk.id;
+        let suffix = 2;
+        while (usedIds.has(id)) id = `${chunk.id}:recovered:${suffix++}`;
+        replacements.set(chunk.id, id);
+        usedIds.add(id);
+      }
+      return [id === chunk.id ? chunk : { ...chunk, id }];
+    },
+  );
 }
 
 /** Builds finalized message fallback chunks. */
@@ -503,6 +696,7 @@ export function buildFinalizedMessageFallbackChunks(
   // text suffixes that may also occur in an already streamed earlier block.
   const recoveryOrder = input.recoveredFallbackParts ?? buildFinalizedMessageState({
     responseMessage: input.persistedMessage,
+    mirroredToolChunkState: input.mirroredToolChunkState,
     isAborted: input.isAborted,
     finalStep: input.finalStep,
     incompleteToolCallsPartErrorText: "",
@@ -573,12 +767,17 @@ export function buildDetachedFallbackChunks(
   input: BuildDetachedFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {
   const orderedParts = input.fallbackParts.filter((part) => {
-    if (part.type === "reasoning") {
+    if (
+      input.isAborted && isToolUiPart(part) &&
+      (!input.mirroredParts?.length ||
+        !input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId))
+    ) return false;
+    if (part.type === "reasoning" || part.type === "text") {
       return input.mirroredParts !== undefined
         ? !input.mirroredParts.includes(part)
         : !input.mirroredDurableOutput;
     }
-    return part.type !== "text" || !input.mirroredDurableOutput;
+    return true;
   });
   const primaryChunks = buildOrderedFallbackChunks(
     orderedParts,
@@ -590,10 +789,12 @@ export function buildDetachedFallbackChunks(
 
   return [
     ...primaryChunks,
-    ...(input.hasIncompleteFallbackToolParts ? [] : buildMissingFallbackToolChunks(
-      input.finalStep,
-      reconciledToolState,
-    )),
+    ...(input.isAborted || input.hasIncompleteFallbackToolParts
+      ? []
+      : buildMissingFallbackToolChunks(
+        input.finalStep,
+        reconciledToolState,
+      )),
     ...(input.mirroredDurableOutput || orderedParts.some((part) => part.type === "text")
       ? []
       : buildMissingFallbackTextChunks([], input.finalStep, input.capturedMessageId)),
@@ -609,9 +810,16 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
 }): ConversationRunEvent[] {
   if (input.isAborted || !input.persistedMessage.id) return [];
   return input.finalizedMessage.parts.flatMap((part) => {
+    if (!isToolUiPart(part)) return [];
+    const outputState = terminalToolOutputState(part.state);
     if (
-      !isToolUiPart(part) || part.state !== "output-available" || part.providerExecuted !== true ||
-      !input.mirroredToolChunkState.outputAvailableToolCallIds.has(part.toolCallId) ||
+      outputState === undefined ||
+      part.providerExecuted !== true ||
+      !(outputState === "available"
+        ? input.mirroredToolChunkState.outputAvailableToolCallIds
+        : outputState === "error"
+        ? input.mirroredToolChunkState.outputErrorToolCallIds
+        : input.mirroredToolChunkState.outputDeniedToolCallIds).has(part.toolCallId) ||
       input.mirroredToolChunkState.ownershipCorrectedToolCallIds?.has(part.toolCallId)
     ) return [];
     const persisted = input.persistedMessage.parts.filter((candidate) =>
@@ -620,15 +828,16 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
     if (persisted.length !== 1) return [];
     const original = persisted[0]!;
     if (
-      !isToolUiPart(original) || original.state !== "output-available" ||
+      !isToolUiPart(original) || original.state !== part.state ||
       original.providerExecuted !== undefined || original.output !== part.output ||
-      original.input !== part.input
+      original.errorText !== part.errorText || original.input !== part.input
     ) return [];
     const toolName = toolPartName(part);
     if (!toolName) return [];
     return [{
       type: "CUSTOM",
       name: TOOL_RESULT_OWNERSHIP_CORRECTION,
+      origin: TOOL_RESULT_OWNERSHIP_ORIGIN,
       value: {
         schemaVersion: 1,
         toolCallId: part.toolCallId,
@@ -638,4 +847,43 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
       },
     }];
   });
+}
+
+const ownershipAppends = createPrivateWeakStore<
+  MirroredToolChunkState,
+  Promise<void> | undefined
+>();
+
+/** Internal persistence seam shared by hosted entrypoints; never exported by veryfront/agent. */
+export async function persistToolResultOwnershipCorrections(
+  events: readonly ConversationRunEvent[],
+  mirror: Pick<ConversationRunChunkMirror, "appendEvents"> | null,
+  state: MirroredToolChunkState,
+): Promise<void> {
+  if (!mirror || events.length === 0) return;
+  let inFlight: Promise<void> | undefined;
+  while ((inFlight = ownershipAppends.get(state)) !== undefined) {
+    await inFlight;
+  }
+  const remaining = events.filter((event) =>
+    isRecord(event.value) && typeof event.value.toolCallId === "string" &&
+    !state.ownershipCorrectedToolCallIds?.has(event.value.toolCallId)
+  );
+  if (remaining.length === 0) return;
+  const append = (async () => {
+    await mirror.appendEvents(remaining);
+    const corrected = state.ownershipCorrectedToolCallIds ??= new Set<string>();
+    for (const event of remaining) {
+      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
+        corrected.add(event.value.toolCallId);
+      }
+    }
+  })();
+  ownershipAppends.set(state, append);
+  try {
+    await append;
+  } finally {
+    // append was awaited above; compare promise identity so only its owning writer clears the slot.
+    if (ownershipAppends.get(state) === append) ownershipAppends.set(state, undefined);
+  }
 }

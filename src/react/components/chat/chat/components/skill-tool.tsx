@@ -82,6 +82,29 @@ export function SkillTool({
   );
 }
 
+function readOwnDataField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return descriptor.value;
+}
+
+function readSkillToolLabel(input: unknown): string {
+  const skillId = readOwnDataField(input, "skillId");
+  if (typeof skillId === "string") return skillId;
+
+  const nestedSkillId = readOwnDataField(readOwnDataField(input, "load"), "skillId");
+  if (typeof nestedSkillId === "string") return nestedSkillId;
+
+  const reference = readOwnDataField(input, "reference");
+  if (typeof reference === "string") return reference;
+
+  const script = readOwnDataField(input, "script");
+  if (typeof script === "string") return script;
+
+  return "unknown";
+}
+
 /**
  * Derive `SkillTool` props from a skill tool-call part (`load_skill`,
  * `load_skill_reference`, `execute_skill_script`). Lets the message list route
@@ -90,11 +113,8 @@ export function SkillTool({
 export function getSkillToolProps(
   tool: ChatToolPart | ChatDynamicToolPart,
 ): SkillToolProps {
-  const input = tool.input as Record<string, unknown> | undefined;
-  const skill = (input?.skillId ?? input?.reference ?? input?.script ??
-    "unknown") as string;
   return {
-    skill,
+    skill: readSkillToolLabel(tool.input),
     state: tool.state === "output-available"
       ? "loaded"
       : (tool.state as string) === CHILD_TOOL_STOPPED_STATE

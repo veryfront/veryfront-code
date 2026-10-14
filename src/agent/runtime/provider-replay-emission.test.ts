@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -10,10 +11,12 @@ import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
-import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
+import { agent, type AgentConfig, type AgentMessage, AgentRuntime } from "#veryfront/agent";
+import type { Memory } from "#veryfront/agent/memory/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import {
   captureProviderReplayCheckpoint,
   createProviderReplayCheckpointEmissionState,
@@ -21,12 +24,28 @@ import {
 } from "./provider-replay.ts";
 import type { ProviderReplayTurnFailure, RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
+import { RuntimeEmptyResponseError } from "./empty-response-recovery.ts";
 
 const MESSAGE_ID = "assistant-message-1";
 const SIGNATURE = "test-signature";
 
 function metadata(...rawAssistantMessages: Record<string, unknown>[][]) {
   return { anthropic: { rawAssistantMessages } };
+}
+
+function observedEventType(event: unknown): string {
+  if (typeof event !== "object" || event === null || !("type" in event)) return "unknown";
+  const type = event.type;
+  return typeof type === "string" ? type : "unknown";
+}
+
+function isMessageFinishEvent(event: unknown): event is {
+  type: "message-finish";
+  finishReason?: unknown;
+  totalUsage?: unknown;
+} {
+  return observedEventType(event) === "message-finish";
 }
 
 function lookupTool(onExecute: () => void = () => {}) {
@@ -61,7 +80,7 @@ function skillDelegationTools(callbacks: {
   onInvoke?: (task: string) => void;
 } = {}) {
   return {
-    load_skill: tool({
+    load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -78,7 +97,7 @@ function skillDelegationTools(callbacks: {
           maxSteps: 6,
         };
       },
-    }),
+    }))),
     invoke_agent: tool({
       id: "invoke_agent",
       description: "Invoke a child agent",
@@ -260,6 +279,255 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(String(error).includes("xxxxx"), false);
   });
 
+  it("observes an accepted generated turn before assistant message persistence rejection", async () => {
+    const observed: unknown[] = [];
+    const persistenceFailure = new Error("assistant message persistence rejected");
+    const model = scriptedModel([{
+      text: "accepted text",
+      finishReason: "stop",
+    }], {
+      modelId: "anthropic/message-persist-reject-after-accepted-turn",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const runtime = new AgentRuntime("message-persist-reject-after-accepted-turn", {
+      model: "anthropic/message-persist-reject-after-accepted-turn",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const memory: Memory<AgentMessage> = {
+      add(message) {
+        if (message.role === "assistant") return Promise.reject(persistenceFailure);
+        return Promise.resolve();
+      },
+      getMessages: () => Promise.resolve([]),
+      clear: () => Promise.resolve(),
+      getStats: () => Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "test" }),
+    };
+    Reflect.set(runtime, "memory", memory);
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Answer");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected assistant message persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, persistenceFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+  });
+
+  it("preserves the accepted replay checkpoint when provider-executed tool-result persistence rejects", async () => {
+    const observed: unknown[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const toolResultPersistenceFailure = new Error("tool-result persistence rejected");
+    const model = scriptedModel([{
+      content: [
+        { type: "text", text: "accepted text" },
+        {
+          type: "tool-result",
+          toolCallId: "server-1",
+          toolName: "server_search",
+          result: { value: "found" },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/provider-executed-tool-result-persist-reject",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const agentId = "provider-executed-tool-result-persist-reject";
+    const config = {
+      id: agentId,
+      model: "anthropic/provider-executed-tool-result-persist-reject",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+    const runtime = new AgentRuntime(agentId, config);
+    const memory: Memory<AgentMessage> = {
+      add(message) {
+        if (message.role === "tool") return Promise.reject(toolResultPersistenceFailure);
+        return Promise.resolve();
+      },
+      getMessages: () => Promise.resolve([]),
+      clear: () => Promise.resolve(),
+      getStats: () => Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "test" }),
+    };
+    Reflect.set(runtime, "memory", memory);
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Answer");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected tool-result persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, toolResultPersistenceFailure);
+    assertEquals(checkpoints.length, 1);
+    assertEquals(checkpoints[0]?.providerBlocks[0]?.block, {
+      type: "thinking",
+      thinking: "",
+      signature: SIGNATURE,
+    });
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+  });
+
+  it("observes provider-executed tool-result turns before mandatory checkpoint rejection", async () => {
+    const observed: unknown[] = [];
+    const checkpointFailure = new Error("checkpoint persistence rejected");
+    const model = scriptedModel([{
+      content: [
+        { type: "text", text: "accepted text" },
+        {
+          type: "tool-result",
+          toolCallId: "server-1",
+          toolName: "server_search",
+          result: { value: "found" },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/provider-executed-tool-result-checkpoint-reject",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "provider-executed-tool-result-checkpoint-reject",
+      model: "anthropic/provider-executed-tool-result-checkpoint-reject",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw checkpointFailure;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Answer" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected checkpoint persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, checkpointFailure);
+    const observedTypes = observed.map((event) => (event as { type?: string }).type);
+    assertEquals(observedTypes.includes("message-start"), true);
+    assertEquals(observedTypes.includes("text-start"), true);
+    assertEquals(observedTypes.includes("text-delta"), true);
+    assertEquals(observedTypes.includes("text-end"), true);
+    assertEquals(observedTypes.filter((type) => type === "message-finish").length, 1);
+  });
+
+  it("observes an accepted generated turn before a replay checkpoint rejection", async () => {
+    const observed: unknown[] = [];
+    const checkpointFailure = new Error("checkpoint persistence rejected");
+    const model = scriptedModel([{
+      text: "accepted text",
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/checkpoint-reject-after-accepted-turn",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "checkpoint-reject-after-accepted-turn",
+      model: "anthropic/checkpoint-reject-after-accepted-turn",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw checkpointFailure;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Answer" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected checkpoint persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, checkpointFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+  });
+
   for (const mode of ["generate", "stream"] as const) {
     it(`${mode} durably emits cumulative replay state before the next model step`, async () => {
       const operations: string[] = [];
@@ -336,6 +604,214 @@ describe("provider replay checkpoint emission", () => {
       ]);
     });
   }
+
+  it("observes and persists replay checkpoints before generate empty-response recovery", async () => {
+    const operations: string[] = [];
+    const observed: unknown[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const rawToolUse = {
+      type: "tool_use",
+      id: "lookup-1",
+      name: "lookup",
+      input: { query: "value" },
+    };
+    const emptyReasoning = {
+      type: "thinking",
+      thinking: "",
+      signature: "empty-response-signature",
+    };
+    const model = scriptedModel([
+      () => {
+        operations.push("model:1");
+        return {
+          toolCalls: [{ id: "lookup-1", name: "lookup", input: { query: "value" } }],
+          providerMetadata: metadata([{
+            type: "thinking",
+            thinking: "",
+            signature: SIGNATURE,
+          }, rawToolUse]),
+        };
+      },
+      () => {
+        operations.push("model:2");
+        return {
+          text: "",
+          finishReason: "stop",
+          providerMetadata: metadata([emptyReasoning]),
+        };
+      },
+      () => {
+        operations.push("model:3");
+        return {
+          text: "done",
+          providerMetadata: metadata([{ type: "text", text: "done" }]),
+        };
+      },
+    ], {
+      modelId: "anthropic/generate-provider-replay-empty-response-recovery",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "generate-provider-replay-empty-response-recovery",
+      model: "anthropic/generate-provider-replay-empty-response-recovery",
+      system: "Use tools.",
+      skills: false,
+      tools: { lookup: lookupTool(() => operations.push("tool")) },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+        operations.push("persist");
+      },
+      __vfProviderReplayCheckpointTurnComplete: () => {
+        operations.push("turn:complete");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => agent(config).generate({ input: "Look it up" }),
+      (event) => {
+        operations.push(`observe:${observedEventType(event)}`);
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    const responseText = typeof response === "object" && response !== null && "text" in response
+      ? response.text
+      : undefined;
+    assertEquals(responseText, "done");
+    assertEquals(operations.filter((operation) => operation === "persist").length, 3);
+    assertEquals(operations.filter((operation) => operation === "turn:complete").length, 3);
+    const emptyTurnStart = operations.indexOf(
+      "observe:message-start",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnFinish = operations.indexOf(
+      "observe:message-finish",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnPersist = operations.indexOf("persist", operations.indexOf("model:2"));
+    assertEquals(emptyTurnStart >= 0, true);
+    assertEquals(emptyTurnStart < emptyTurnFinish, true);
+    assertEquals(emptyTurnFinish < emptyTurnPersist, true);
+    assertEquals(emptyTurnPersist < operations.indexOf("model:3"), true);
+    assertEquals(checkpoints.length, 3);
+    assertEquals(checkpoints[1]?.providerBlocks.map((entry) => entry.block), [
+      { type: "thinking", thinking: "", signature: SIGNATURE },
+      rawToolUse,
+      emptyReasoning,
+    ]);
+    const messageFinishes = observed.filter(isMessageFinishEvent);
+    const emptyFinish = messageFinishes[1];
+    assertEquals(emptyFinish?.finishReason, "stop");
+    assertEquals(emptyFinish?.totalUsage, { inputTokens: 1, outputTokens: 1, totalTokens: 2 });
+  });
+
+  it("observes a terminal generate empty-response turn before replay checkpoint recovery fails", async () => {
+    const operations: string[] = [];
+    const observed: unknown[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const rawToolUse = {
+      type: "tool_use",
+      id: "lookup-1",
+      name: "lookup",
+      input: { query: "value" },
+    };
+    const emptyReasoning = {
+      type: "thinking",
+      thinking: "",
+      signature: "terminal-empty-response-signature",
+    };
+    const model = scriptedModel([
+      () => {
+        operations.push("model:1");
+        return {
+          toolCalls: [{ id: "lookup-1", name: "lookup", input: { query: "value" } }],
+          providerMetadata: metadata([{
+            type: "thinking",
+            thinking: "",
+            signature: SIGNATURE,
+          }, rawToolUse]),
+        };
+      },
+      () => {
+        operations.push("model:2");
+        return {
+          text: "",
+          finishReason: "stop",
+          providerMetadata: metadata([emptyReasoning]),
+        };
+      },
+    ], {
+      modelId: "anthropic/generate-provider-replay-terminal-empty-response",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "generate-provider-replay-terminal-empty-response",
+      model: "anthropic/generate-provider-replay-terminal-empty-response",
+      system: "Use tools.",
+      skills: false,
+      tools: { lookup: lookupTool(() => operations.push("tool")) },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+        operations.push("persist");
+      },
+      __vfProviderReplayCheckpointTurnComplete: () => {
+        operations.push("turn:complete");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Look it up" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected terminal empty response failure");
+      },
+      (event) => {
+        operations.push(`observe:${observedEventType(event)}`);
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertInstanceOf(error, RuntimeEmptyResponseError);
+    const emptyTurnStart = operations.indexOf(
+      "observe:message-start",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnFinish = operations.indexOf(
+      "observe:message-finish",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnPersist = operations.indexOf("persist", operations.indexOf("model:2"));
+    assertEquals(emptyTurnStart >= 0, true);
+    assertEquals(emptyTurnStart < emptyTurnFinish, true);
+    assertEquals(emptyTurnFinish < emptyTurnPersist, true);
+    assertEquals(checkpoints.length, 2);
+    assertEquals(checkpoints[1]?.providerBlocks.map((entry) => entry.block), [
+      { type: "thinking", thinking: "", signature: SIGNATURE },
+      rawToolUse,
+      emptyReasoning,
+    ]);
+    const messageFinishes = observed.filter(isMessageFinishEvent);
+    const emptyFinish = messageFinishes[1];
+    assertEquals(emptyFinish?.finishReason, "stop");
+    assertEquals(emptyFinish?.totalUsage, { inputTokens: 1, outputTokens: 1, totalTokens: 2 });
+  });
 
   for (const mode of ["generate", "stream"] as const) {
     it(`does not publish hidden invoke_agent calls in the ${mode} delegation batch`, async () => {
@@ -592,7 +1068,7 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("publishes a completed same-turn streamed skill result in a parallel batch", async () => {
+  it("ignores unexecuted same-turn streamed skill results in a parallel batch", async () => {
     const operations: string[] = [];
     const executedInputs: unknown[] = [];
     let completedBatch: unknown;
@@ -665,21 +1141,21 @@ describe("provider replay checkpoint emission", () => {
     await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
       .text();
 
-    const effectiveArgs = [
-      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
-      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    const untrustedArgs = [
+      { task: "first" },
+      { task: "second" },
     ];
-    assertEquals(executedInputs, effectiveArgs);
+    assertEquals(executedInputs, untrustedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[0]),
+        toolArgsJson: JSON.stringify(untrustedArgs[0]),
       },
       {
         toolCallId: "child-2",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[1]),
+        toolArgsJson: JSON.stringify(untrustedArgs[1]),
       },
     ]);
     assertEquals(operations, ["turn:complete", "invoke:first", "invoke:second"]);
@@ -871,9 +1347,12 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("uses the trusted aliased control-plane name for a parallel batch", async () => {
+  it("uses effective skill delegation args for the trusted aliased control-plane name", async () => {
     let completedBatch: unknown;
+    const executedInputs: unknown[] = [];
     const model = scriptedModel([{
+      toolCalls: [{ id: "load-1", name: "load_skill", input: { skillId: "delegate" } }],
+    }, {
       toolCalls: [
         { id: "child-1", name: "veryfront__invoke_agent", input: { task: "first" } },
         { id: "child-2", name: "veryfront__invoke_agent", input: { task: "second" } },
@@ -887,14 +1366,18 @@ describe("provider replay checkpoint emission", () => {
       id: "aliased-parallel-invoke-agent-replay-boundary",
       model: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
       system: "Delegate twice.",
-      skills: false,
+      skills: true,
       tools: {
+        load_skill: skillDelegationTools().load_skill,
         veryfront__invoke_agent: markTrustedHostToolProvenance(
           invokeAgentTool(undefined, "veryfront__invoke_agent"),
         ),
       },
-      maxSteps: 1,
+      maxSteps: 2,
       resolveModelTransport: () => ({ model }),
+      onToolResult: (request: { toolName: string; input: unknown }) => {
+        if (request.toolName === "veryfront__invoke_agent") executedInputs.push(request.input);
+      },
       __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
       __vfProviderReplayInvokeAgentToolNames: ["veryfront__invoke_agent"],
       __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
@@ -906,17 +1389,24 @@ describe("provider replay checkpoint emission", () => {
 
     await new AgentRuntime(config.id!, config).generate("Delegate both tasks");
 
-    assertEquals(model.toolNames(0).includes("veryfront__invoke_agent"), true);
+    const expectedArgs = [
+      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    ];
+    assertEquals(model.toolNames(1).includes("veryfront__invoke_agent"), true);
+    assertEquals(executedInputs, expectedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"first"}',
+        toolArgsJson:
+          '{"task":"first","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
       {
         toolCallId: "child-2",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"second"}',
+        toolArgsJson:
+          '{"task":"second","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
     ]);
   });

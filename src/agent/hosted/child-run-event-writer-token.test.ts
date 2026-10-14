@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -234,6 +234,7 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
   const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
     [];
   const trustedFetch: typeof fetch = (input, init) => {
+    assert(init && "headers" in init, "fetch must receive request options");
     const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
     trusted.push({
       url: String(input),
@@ -659,6 +660,8 @@ Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classi
           const signal = new Request(input, init).signal;
           return new Promise<Response>((_resolve, reject) => {
             signal.addEventListener("abort", () => {
+              // Observe the exchange timeout before triggering caller cancellation.
+              // Both cancellations occur before the transport rejects.
               controller.abort("parent-writer-token-must-not-leak");
               reject(signal.reason);
             }, { once: true });
@@ -672,6 +675,7 @@ Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classi
     "Unable to initialize durable child event persistence",
   );
 
+  assertEquals(controller.signal.aborted, true);
   assertEquals(
     error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
     "timeout",
@@ -1022,6 +1026,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       return {} as never;
     },
     fetch: (async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       await acknowledgement;
       if (timeoutOnce && attempts++ === 0) {
         throw TIMEOUT_ERROR.create({ detail: "Synthetic retryable append timeout" });
@@ -1029,7 +1034,8 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
-      const count = JSON.parse(String(init?.body)).events.length;
+      const count =
+        JSON.parse(String(init && "body" in init ? init.body : undefined)).events.length;
       cursor += count;
       return Response.json({
         run_id: runId,

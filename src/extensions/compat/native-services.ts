@@ -58,6 +58,7 @@ export type DocumentExtractionProgress = (
 ) => void | Promise<void>;
 
 export interface DocumentExtractionOptions {
+  signal?: AbortSignal;
   onProgress?: DocumentExtractionProgress;
   idleTimeoutMs?: number;
   hardTimeoutMs?: number;

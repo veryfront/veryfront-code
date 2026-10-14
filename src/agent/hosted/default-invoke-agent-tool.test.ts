@@ -1,3 +1,4 @@
+import { registerModelProvider } from "#veryfront/provider";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -645,7 +646,7 @@ describe("default hosted invoke agent", () => {
     );
 
     assertEquals("success" in result && result.success, true);
-    assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+    assertEquals(capturedForkToolNames, ["lookup_job", "sleep", "veryfront__sleep"]);
   });
 });
 
@@ -1092,6 +1093,24 @@ it("child denials apply to both platform spellings without denying a colliding p
   }
 });
 
+it("child denials preserve an explicitly selected platform loader alias", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        load_skill: platform,
+        veryfront__load_skill: platform,
+      },
+    },
+    ["load_skill"],
+    ["veryfront__load_skill"],
+  );
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["veryfront__load_skill"]);
+});
+
 it("child platform denials respect owner-qualified project short names", () => {
   const platform = markTrustedHostToolProvenance({ description: "Platform" });
   const project = { description: "Project", ownerAgentId: "researcher", shortName: "update_file" };
@@ -1108,5 +1127,80 @@ it("child platform denials respect owner-qualified project short names", () => {
     assertEquals(Object.keys(filtered.forkTools), [
       denied === "update_file" ? "veryfront__update_file" : "researcher--update_file",
     ]);
+  }
+});
+
+it("invoke_agent retains authored child batching controls through actual provider dispatch", async () => {
+  const provider = "child-batching-fixture";
+  const seen: Array<{ value: unknown; present: boolean; toolChoice: unknown }> = [];
+  const unregister = registerModelProvider(
+    provider,
+    () => ({
+      provider,
+      modelId: `${provider}/model`,
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options: unknown) {
+        if (!options || typeof options !== "object") throw new Error("Expected model options");
+        seen.push({
+          value: "parallelToolCalls" in options ? options.parallelToolCalls : undefined,
+          present: Object.hasOwn(options, "parallelToolCalls"),
+          toolChoice: "toolChoice" in options ? options.toolChoice : undefined,
+        });
+        return Promise.resolve({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", text: "Done." });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+              controller.close();
+            },
+          }),
+        });
+      },
+    }),
+  );
+  try {
+    for (const value of [false, true, undefined]) {
+      const result = await executeDefaultHostedInvokeAgentTool(
+        createTestOptions({
+          enableDurableInvokeAgent: false,
+          config: { mcpServers: [], studioMcpUrl: undefined },
+          options: {
+            resolveModelId: (model) => model,
+            resolveProvider: () => provider,
+            resolveChildAgentExecutionConfig: () =>
+              Promise.resolve({
+                system: "Child instructions.",
+                model: `${provider}/model`,
+                parallelToolCalls: value,
+                toolNames: [],
+                availableSkillIds: [],
+              }),
+            createRemoteToolSource: () => ({
+              id: "empty",
+              listTools: () => Promise.resolve([]),
+              executeTool: () => Promise.reject(new Error("No remote tools")),
+            }),
+            createAgentServiceSandboxTools: () =>
+              Promise.resolve({
+                tools: {},
+                sandbox: {} as never,
+                closeSandbox: () => Promise.resolve(),
+              }),
+          },
+        }),
+        { description: "child fixture", prompt: "Fixture", context: {}, agent_id: "child-fixture" },
+        "child-fixture",
+        { toolCallId: "fixture-call" },
+      );
+      assertEquals("success" in result && result.success, true);
+      assertEquals(seen.at(-1), { value, present: value !== undefined, toolChoice: undefined });
+    }
+    assertEquals(seen.length, 3);
+  } finally {
+    unregister();
   }
 });

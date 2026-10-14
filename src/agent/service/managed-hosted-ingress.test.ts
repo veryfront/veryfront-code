@@ -72,6 +72,71 @@ describe("managed agent ingress", () => {
     }
   });
 
+  it("rejects caller history provenance even with a valid run-event writer token", async () => {
+    const trustedHistoryMessageIds = [
+      "assistant-load-skill",
+      "assistant-load-skill:tool:load-plan",
+    ];
+    const result = await parseManagedDurableAgentIngress(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-secret",
+        },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId: "branch-1" },
+          durableRootRun: { runId: "run_root_1", messageId },
+          serverResolvedTrustedHostedHistoryMessageIds: trustedHistoryMessageIds,
+        }),
+      }),
+      {
+        authenticate,
+        verifyProjectAccess,
+        verifyRunEventAppendToken: () => Promise.resolve({ verified: true }),
+      },
+    );
+
+    if (result instanceof Response) throw new Error("Expected managed durable ingress");
+    assertEquals(
+      Object.hasOwn(result.executor, "serverResolvedTrustedHostedHistoryMessageIds"),
+      false,
+    );
+    assertEquals(
+      result.broker.getParsedRequest().serverResolvedTrustedHostedHistoryMessageIds,
+      undefined,
+    );
+    assertEquals(result.executor.serverEnvelopeVerified, false);
+    assertEquals(JSON.stringify(result.executor).includes("run-event-secret"), false);
+  });
+
+  it("keeps caller-supplied trusted hosted history ids out of the executor without writer verification", async () => {
+    const result = await parseManagedDurableAgentIngress(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId: "branch-1" },
+          durableRootRun: { runId: "run_root_1", messageId },
+          serverResolvedTrustedHostedHistoryMessageIds: [
+            "caller-assistant",
+            "caller-assistant:tool:load-plan",
+          ],
+        }),
+      }),
+      { authenticate, verifyProjectAccess },
+    );
+
+    if (result instanceof Response) throw new Error("Expected managed durable ingress");
+    assertEquals(
+      Object.hasOwn(result.executor, "serverResolvedTrustedHostedHistoryMessageIds"),
+      false,
+    );
+    assertEquals(result.executor.serverEnvelopeVerified, false);
+  });
+
   for (const kind of ["durable", "ag-ui"] as const) {
     for (
       const credential of [
