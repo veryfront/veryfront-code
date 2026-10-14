@@ -19,6 +19,13 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   // A newer search step supersedes schemas the model already skipped once.
   let modelStepSinceSearch = false;
   for (const message of messages) {
+    if (message.role === "user") {
+      // A newer user turn ends the previous tool opportunity, so its
+      // just-called and just-searched schemas no longer need protection.
+      latestCallNames = new Set();
+      awaitingFirstUse.clear();
+      modelStepSinceSearch = false;
+    }
     const names = new Set<string>();
     for (const part of message.parts) {
       if (part.type === "tool-result") {

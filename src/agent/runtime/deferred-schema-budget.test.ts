@@ -188,6 +188,45 @@ function searchTurn(id: string, loaded: readonly string[]): Message[] {
   }];
 }
 
+it("stops protecting turn-local schemas once a newer user message ends the tool turn", () => {
+  const state = createToolExposureState(["searched", "called"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("searched", 6_000), definition("called", 6_000)],
+    mode: "deferred",
+    state,
+  });
+  const inspect = (candidate: typeof plan) => {
+    const remaining =
+      candidate.visible.filter((tool) => tool.name === "searched" || tool.name === "called").length;
+    return {
+      fits: remaining === 0,
+      outputExceeded: false,
+      estimatedInputTokens: 10_000 + remaining * 1_500,
+    };
+  };
+  const endOfTurn = (id: string): Message[] => [{
+    id: `${id}-answer`,
+    role: "assistant",
+    parts: [{ type: "text", text: "Done." }],
+  }, {
+    id: `${id}-user`,
+    role: "user",
+    parts: [{ type: "text", text: "Thanks, something else now." }],
+  }];
+  const searched = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [...searchTurn("search", ["searched"]), ...endOfTurn("a")],
+    inspect,
+  });
+  assertEquals(searched.evictedNames.includes("searched"), true);
+  const called = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [...toolTurn("called", "call"), ...endOfTurn("b")],
+    inspect,
+  });
+  assertEquals(called.evictedNames.includes("called"), true);
+});
+
 it("stops protecting a searched schema once a newer search step supersedes it", () => {
   const state = createToolExposureState(["stale", "fresh"]);
   const plan = createToolExposurePlan({
