@@ -210,6 +210,23 @@ describe("provider-tool-compat", () => {
     assertEquals(Object.hasOwn(result, "enum"), false);
     assertEquals(result.properties?.mode, { type: "string", enum: ["a", "b"] });
   });
+  it("accepts large unchanged Anthropic schemas without spending expansion allowance", () => {
+    for (const length of [260_000, 1024 * 1024]) {
+      const budget = createRootSchemaExpansionBudget();
+      const schema = {
+        type: "object",
+        description: "d".repeat(length),
+        properties: { value: { type: "string" } },
+      };
+      const normalized = sanitizeProviderToolSchema(schema as never, {
+        model: "anthropic/claude-opus-4-6",
+        rootExpansionBudget: budget,
+      });
+      assertEquals(normalized.description, schema.description);
+      assertEquals(budget.remainingNodes, 200_000);
+      assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
+    }
+  });
   it("keeps the shared expansion allowance for a large reference-free Anthropic catalog", () => {
     const budget = createRootSchemaExpansionBudget();
     const schema = {

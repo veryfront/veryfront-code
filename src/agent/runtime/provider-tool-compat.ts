@@ -1,3 +1,4 @@
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import {
   resolveVeryfrontCloudModelSurface,
   type VeryfrontCloudSurfaceId,
@@ -763,7 +764,16 @@ function normalizeObjectSchemaRoot(
   budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
   depth = 0,
 ): Record<string, unknown> {
-  chargeRootNormalization(schema, budget, depth, depth > 0);
+  if (depth === 0 && isPlainRecord(schema)) {
+    // Admit the input once under the same bounded contract as public raw schemas.
+    // The smaller normalization allowance applies only to introduced material.
+    const accepted = snapshotJsonSchemaObject(schema);
+    if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
+    if (rootSchema === schema) rootSchema = accepted;
+    schema = accepted;
+  } else if (depth > 0) {
+    chargeRootNormalization(schema, budget, depth, true);
+  }
   if (!isPlainRecord(schema)) {
     return createPermissiveToolInputSchema();
   }
@@ -825,7 +835,7 @@ function normalizeObjectSchemaRoot(
     };
   }
 
-  chargeRootNormalization(sanitized, budget, depth, depth > 0);
+  if (depth > 0) chargeRootNormalization(sanitized, budget, depth, true);
   return sanitized;
 }
 
