@@ -76,13 +76,64 @@ Deno.test("startup resolves an agent-owned skill short name to its canonical ID"
   });
   try {
     const response = await assistant.generate({ input: "Cite the sources" });
-    assertEquals(response.toolCalls?.[0]?.args, { skillId: "cite" });
+    assertEquals(response.toolCalls?.[0]?.args, { skillId: "researcher--cite" });
     assertEquals(response.toolCalls?.[0]?.result, {
       skillId: "researcher--cite",
       instructions: "# Citation guidance",
       references: [],
       scripts: [],
     });
+    assertEquals(model.callCount, 1);
+  } finally {
+    skillRegistryInternal.clearAll();
+  }
+});
+
+Deno.test("startup passes the canonical skill ID to an operation-shaped loader for a short name", async () => {
+  clearMCPRegistry();
+  skillRegistryInternal.clearAll();
+  registerSkill("researcher--cite", {
+    id: "researcher--cite",
+    ownerAgentId: "researcher",
+    shortName: "cite",
+    rootPath: "/skills/researcher--cite",
+    metadata: { name: "cite", description: "Citation guidance" },
+    fsAdapter: createSkillTestAdapter({
+      "/skills/researcher--cite/SKILL.md": "# Citation guidance",
+    }),
+  });
+  const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+    context: { authToken: "fixture-token", availableSkillIds: ["researcher--cite"] },
+    skillsDir: "/skills",
+    builtinSkillIds: ["researcher--cite"],
+    projectSkillLoader: {
+      loadProjectSkill: async () => null,
+      listProjectSkillReferences: async () => [],
+      loadProjectSkillReference: async () => null,
+    },
+    builtinStore: {
+      readSkill: async () => "# Canonical citation guidance",
+      listReferences: async () => [],
+      readReferenceFile: async () => null,
+    },
+  }));
+  const model = scriptedModel([(options) => {
+    assertStringIncludes(JSON.stringify(options.prompt), "Canonical citation guidance");
+    return { text: "Ready" };
+  }], { only: "generate" });
+  const assistant = agent({
+    id: "researcher",
+    system: "Help with the task.",
+    model: model.modelId,
+    bootstrapSkill: "cite",
+    skills: ["cite"],
+    tools: createToolsFromHostDefinitions({ load_skill: loader }),
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+  try {
+    const response = await assistant.generate({ input: "Cite the sources" });
+    assertEquals(response.toolCalls?.[0]?.args, { load: { skillId: "researcher--cite" } });
     assertEquals(model.callCount, 1);
   } finally {
     skillRegistryInternal.clearAll();

@@ -2601,11 +2601,13 @@ async function executeStartupSkill(input: {
     (entry) => isLoadSkillToolName(entry.name) && hasTrustedPlatformPolicyToolDefinition(entry),
   )[0];
   const loader = definition ? input.resolveLoader(definition.name) : undefined;
-  const args = definition ? prepareFrameworkSkillBootstrap(loader, input.skillId) : undefined;
+  // Both loader shapes accept the canonical ID, while the runtime loader only
+  // authorizes canonical IDs, so execution and validation use the same one.
+  const skillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
+  const args = definition ? prepareFrameworkSkillBootstrap(loader, skillId) : undefined;
   if (!definition || !args) {
     throw new Error("bootstrapSkill requires an authorized framework skill loader");
   }
-  const expectedSkillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
   const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
   const message: Message = {
     id: generateMessageId(),
@@ -2629,7 +2631,7 @@ async function executeStartupSkill(input: {
       loader,
       () => input.execute(definition.name, toolCallId, args, admittedTurn),
     );
-    validateRuntimeSkillBootstrapResult(result, expectedSkillId);
+    validateRuntimeSkillBootstrapResult(result, skillId);
   } catch (error) {
     toolCall.status = "error";
     toolCall.error = "Startup skill preparation failed";
