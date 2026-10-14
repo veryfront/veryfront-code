@@ -402,3 +402,25 @@ it("previews delegated child results through their provider projection", () => {
   assertEquals(JSON.stringify(reference).includes("RAW_CHILD_TRACE"), false);
   assertStrictEquals(context.getOriginalResult(reference.ref), value);
 });
+
+it("projects a completed tool turn once a newer user message follows it", () => {
+  const call: Message = {
+    id: "call",
+    role: "assistant",
+    parts: [{ type: "tool-call", toolCallId: "done", toolName: "read_data", args: {} }],
+  };
+  const done = toolMessage("done", "read_data", "completed data".repeat(200));
+  const user: Message = { id: "user", role: "user", parts: [{ type: "text", text: "Next" }] };
+  const source = [call, done, user];
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: source,
+    modelMessages: source,
+    context: createToolResultContext(),
+    inspect: (messages) => {
+      const referenced = typeof result(messages[1]!) === "object";
+      return { fits: referenced, outputExceeded: false, estimatedInputTokens: referenced ? 1 : 9 };
+    },
+  });
+  assertEquals((result(fitted[1]!) as { type: string }).type, "tool_result_reference");
+  assertStrictEquals(fitted[2], user);
+});

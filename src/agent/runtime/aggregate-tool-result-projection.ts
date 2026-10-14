@@ -70,8 +70,12 @@ export function projectHistoricalToolResultsForBudget(input: {
       latestToolResult = index;
     }
   }
-  // The most recent call and all its results are the active tool turn.
-  const protectedToolTurnStart = latestToolCall >= 0 ? latestToolCall : latestToolResult;
+  // The most recent call and all its results are the active tool turn. A turn
+  // completed before the latest user message is history and can be projected.
+  const latestToolTurnStart = latestToolCall >= 0 ? latestToolCall : latestToolResult;
+  const protectedToolTurnStart = latestToolTurnStart > latestUser
+    ? latestToolTurnStart
+    : input.sourceMessages.length;
 
   for (let messageIndex = 0; messageIndex < input.sourceMessages.length; messageIndex++) {
     if (
