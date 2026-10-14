@@ -6,6 +6,7 @@ export interface ProviderErrorDiagnostic {
 }
 
 const apply = Reflect.apply;
+const freeze = Object.freeze;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 const setHas = Set.prototype.has;
@@ -71,7 +72,10 @@ export function recordProviderErrorDiagnostic(
     ...(safeCode !== undefined ? { code: safeCode } : {}),
     ...(safeParam !== undefined ? { param: safeParam } : {}),
   };
-  apply(weakMapSet, diagnostics, [error, Object.freeze(diagnostic)]);
+  // Freeze through the load-time intrinsic and store the validated object itself,
+  // never a value returned by a replaced global.
+  apply(freeze, Object, [diagnostic]);
+  apply(weakMapSet, diagnostics, [error, diagnostic]);
 }
 
 /** Return the trusted diagnostic captured when the provider error was built. */
