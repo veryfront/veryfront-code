@@ -327,8 +327,13 @@ function loadNativeBrandCheckModule(): unknown {
 
   const hostProcess = (globalThis as typeof globalThis & { process?: HostProcess }).process;
   if (hostProcess) {
-    const getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule");
-    if (getBuiltinModule) {
+    const descriptor = getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    // Capture the host loader during trusted bootstrap. Deno lazy-loads this
+    // own property through a getter; candidate and predicate reads still use
+    // own data properties only, and later checks never revisit this loader.
+    const getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule") ??
+      (typeof descriptor?.get === "function" ? apply(descriptor.get, hostProcess, []) : undefined);
+    if (typeof getBuiltinModule === "function") {
       return apply(getBuiltinModule, hostProcess, ["node:util/types"]);
     }
   }
