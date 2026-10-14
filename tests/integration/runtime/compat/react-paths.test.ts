@@ -50,6 +50,78 @@ function overrideInstalledVersion(
 }
 
 describe("react-paths", () => {
+  for (const transport of ["single", "batch"] as const) {
+    it(`keeps ${transport} module SSR on captured peers after dependency replacement`, async () => {
+      if (!isNode) return;
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const { serveModule } = await import("#veryfront/modules/server/module-server.ts");
+      const { handleModuleBatch, clearBatchCache } = await import(
+        "#veryfront/modules/server/module-batch-handler.ts"
+      );
+      const { getHostEnv, setEnv, deleteEnv } = await import(
+        "#veryfront/platform/compat/process.ts"
+      );
+      const { DEPENDENCY_PINNING_ENV_FLAG } = await import(
+        "#veryfront/release-assets/constants.ts"
+      );
+      const previous = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const restores: Array<() => void> = [];
+      const adapter = createMockAdapter();
+      const projectDir = `/peer-snapshot-${transport}`;
+      adapter.fs.files.set(
+        `${projectDir}/page.tsx`,
+        'import React from "react"; export const value = React.version;',
+      );
+      const config = {
+        react: { version: "^19.2.0" },
+        get build() {
+          // Replace dependencies between version selection and transformation.
+          if (restores.length === 0) {
+            restores.push(overrideInstalledVersion("react", "19.2.5"));
+            restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
+          }
+          return {};
+        },
+      };
+      const peers = captureLocalReactPeers();
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "false");
+        clearBatchCache();
+        const response = transport === "single"
+          ? await serveModule(new Request("http://localhost/_vf_modules/page.js?ssr=true"), {
+            projectDir,
+            adapter,
+            projectId: projectDir,
+            dev: true,
+            config,
+            isLocalProject: true,
+            allowSSRModuleMode: true,
+          })
+          : await handleModuleBatch(
+            new Request("http://localhost/_vf_modules/_batch?paths=page.js&ssr=true"),
+            {
+              projectDir,
+              adapter,
+              projectId: projectDir,
+              dev: true,
+              config,
+              isLocalProject: true,
+            },
+          );
+        const body = await response.text();
+        assertEquals(response.status, 200, body);
+        assertExists(peers.paths.react);
+        assertEquals(body.includes(peers.paths.react), true, body);
+        assertEquals(restores.length, 2, "the dependency replacement must have occurred");
+      } finally {
+        for (const restore of restores.reverse()) restore();
+        if (previous === undefined) deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        else setEnv(DEPENDENCY_PINNING_ENV_FLAG, previous);
+        clearBatchCache();
+      }
+    });
+  }
+
   it("keeps the default HTTP version on the peers captured before dependency replacement", async () => {
     if (!isNode) return;
     const { prepareHttpCacheRequestOptions } = await import(

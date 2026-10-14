@@ -32,6 +32,24 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     describe("buildBatchTransformCacheKey", () => {
+      it("isolates SSR cache entries when installed peer paths change", () => {
+        const key = (ssr: boolean, peers: string) =>
+          buildBatchTransformCacheKey(
+            "project",
+            "page.js",
+            ssr,
+            "off",
+            "release",
+            "source",
+            "https://app.example",
+            undefined,
+            peers,
+          );
+        assertEquals(key(true, "old-peers") === key(true, "new-peers"), false);
+        assertEquals(key(false, "old-peers"), key(false, "new-peers"));
+        assertEquals(key(true, "old-peers").startsWith("project:"), true);
+      });
+
       it("isolates transforms by dependency, content source, source bytes, and origin", () => {
         const flagOff = buildBatchTransformCacheKey(
           "project",

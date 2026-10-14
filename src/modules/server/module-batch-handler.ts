@@ -1,3 +1,10 @@
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Module Batch Handler
@@ -124,13 +131,17 @@ export function buildBatchTransformCacheKey(
   sourceContentHash: string,
   moduleServerOrigin: string,
   serverExternalPackages?: readonly string[],
+  reactRuntimeScope?: string,
 ): string {
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
     serverExternalPackages,
   );
-  const scopedProjectKey = serverExternalPackagesIdentity
+  let scopedProjectKey = serverExternalPackagesIdentity
     ? `${projectKey}:server-externals:${hashString(serverExternalPackagesIdentity)}`
     : projectKey;
+  if (isSSR && reactRuntimeScope) {
+    scopedProjectKey += `:react-runtime:${reactRuntimeScope}`;
+  }
   const cacheVariant = buildDependencyPinningCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
@@ -280,11 +291,20 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
           headers: { "Cache-Control": "no-store" },
         });
       }
+      const userAgent = req.headers.get("user-agent") ?? "";
+      const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+      const reactPeers = isSSR && (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+        ? captureLocalReactPeers()
+        : undefined;
+      const reactRuntimeScope = reactPeers
+        ? await getSSRReactRuntimeCacheScope(reactPeers)
+        : undefined;
       const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
       const snapshotReactVersion = await resolveProjectReactVersion({
         adapter: adapter,
         projectDir,
         config,
+        reactPeers,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
         dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
@@ -298,9 +318,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       // so only immutable release sources may reuse transformed code.
       const canUseTransformCache = !dev &&
         isImmutableBatchContentSource(options);
-
-      const userAgent = req.headers.get("user-agent") ?? "";
-      const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -345,6 +362,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               sourceContentHash,
               url.origin,
               config?.build?.serverExternalPackages,
+              reactRuntimeScope,
             );
             if (canUseTransformCache) {
               const cachedCode = transformCache.get(cacheKey);
@@ -372,6 +390,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
                 branch,
                 projectId,
                 reactVersion,
+                reactPeers,
                 dependencyPinningCacheKey,
                 dependencyPinningDependencies: dependencySnapshot.dependencies,
                 dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
@@ -536,6 +555,7 @@ async function transformModule(
     branch?: string | null;
     projectId?: string;
     reactVersion?: string;
+    reactPeers?: LocalReactPeerSnapshot;
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
@@ -559,6 +579,7 @@ async function transformModule(
         : undefined,
       moduleServerOrigin: options.moduleServerOrigin,
       reactVersion: options.reactVersion,
+      reactPeers: options.reactPeers,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
       dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
@@ -568,6 +589,8 @@ async function transformModule(
     isSSR: options.ssr,
     ssrRewriteOptions: options.ssr
       ? {
+        reactVersion: options.reactVersion,
+        reactPeers: options.reactPeers,
         projectSlug: options.projectSlug,
         branch: options.branch,
         projectDir,

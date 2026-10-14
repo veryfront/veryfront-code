@@ -138,6 +138,7 @@ describe("project runtime delegation", () => {
           ["--branch", "dev", "-d", f.project, "pull"],
           ["--environment", "start", "--dir", f.project, "deploy"],
           ["--debug", "dev", "--project", f.project],
+          ["projects", "delete", "-d", f.project],
         ]
       ) {
         const result = await new Deno.Command("node", {
@@ -379,4 +380,41 @@ describe("project runtime delegation", () => {
       await Deno.remove(f.root, { recursive: true });
     }
   });
+  for (const command of ["project", "projects"]) {
+    for (const delegated of [false, true]) {
+      it(`preserves NDJSON launcher failures for ${command} with delegated import ${delegated}`, async () => {
+        const f = await fixture(true);
+        try {
+          if (delegated) {
+            await Deno.writeTextFile(
+              join(f.project, "node_modules", "veryfront", "esm", "cli", "main.js"),
+              'import "./missing-dependency.js";',
+            );
+          } else {
+            const manifest = join(f.project, "node_modules", "veryfront", "package.json");
+            const pkg = JSON.parse(await Deno.readTextFile(manifest));
+            pkg.name = "unexpected-package";
+            await Deno.writeTextFile(manifest, JSON.stringify(pkg));
+          }
+          const output = await new Deno.Command("node", {
+            args: [join(f.global, "bin", "veryfront.js"), command, "runs", "list", "--ndjson"],
+            cwd: f.project,
+            stdout: "piped",
+            stderr: "piped",
+          }).output();
+          const stdout = new TextDecoder().decode(output.stdout);
+          const result = JSON.parse(stdout);
+          assertEquals(output.code, 1);
+          assertEquals(result.success, false);
+          assertEquals(result.command, command);
+          assertEquals(result.error.slug, "command-failed");
+          assertEquals(stdout.trim().split("\n").length, 1);
+          assertEquals(new TextDecoder().decode(output.stderr), "");
+          assertEquals(stdout.includes(f.root), false);
+        } finally {
+          await Deno.remove(f.root, { recursive: true });
+        }
+      });
+    }
+  }
 });

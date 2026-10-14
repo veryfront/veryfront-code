@@ -71,6 +71,7 @@ function selectedProjectDirectory() {
     "integration",
     "knowledge",
     "project",
+    "projects",
     "pull",
     "push",
     "routes",
@@ -288,15 +289,20 @@ function prepareProjectLaunch() {
 }
 function launcherJsonMode() {
   let enabled = false;
+  let ndjsonEnabled = false;
   for (const arg of process.argv.slice(2)) {
     if (arg === "--") break;
-    if (arg === "--json" || arg === "-j") enabled = true;
+    if (arg === "--ndjson") ndjsonEnabled = true;
+    else if (arg.startsWith("--ndjson=")) {
+      const value = arg.slice("--ndjson=".length).trim().toLowerCase();
+      ndjsonEnabled = !["false", "0", "no", "off", ""].includes(value);
+    } else if (arg === "--json" || arg === "-j") enabled = true;
     else if (arg.startsWith("--json=")) {
       const value = arg.slice("--json=".length).trim().toLowerCase();
       enabled = !["false", "0", "no", "off", ""].includes(value);
     }
   }
-  return enabled;
+  return enabled || ndjsonEnabled;
 }
 
 function failProjectLaunch(error) {
@@ -373,15 +379,9 @@ if (launch.pnpStartup) {
       });
       child.on("close", (code) => process.exit(code ?? 0));
       child.on("error", () =>
-        runJsFallback().catch((err) => {
-          console.error(err);
-          process.exit(1);
-        }));
+        runJsFallback().catch(failProjectLaunch));
     } else {
-      runJsFallback().catch((err) => {
-        console.error(err);
-        process.exit(1);
-      });
+      runJsFallback().catch(failProjectLaunch);
     }
   }
 }
