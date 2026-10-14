@@ -39,6 +39,12 @@ import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 // Mock fetch for testing
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
@@ -2797,12 +2803,12 @@ describe("Sandbox", () => {
     });
 
     it("keeps an active sandbox session heartbeating until close", async () => {
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -2811,12 +2817,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -2853,8 +2859,8 @@ describe("Sandbox", () => {
         assertEquals(fetchCalls.length, callsAfterClose);
         assertEquals(intervalCallbacks.size, 0);
       } finally {
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 
@@ -4099,12 +4105,12 @@ describe("Sandbox", () => {
     });
 
     it("keeps client heartbeats active while proxy-routed async commands run", async () => {
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -4113,12 +4119,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -4184,19 +4190,19 @@ describe("Sandbox", () => {
         );
       } finally {
         await sandbox.close();
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 
     it("pauses client heartbeats while internal-routed async commands run", async () => {
       setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -4205,12 +4211,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -4278,8 +4284,8 @@ describe("Sandbox", () => {
         );
       } finally {
         await sandbox.close();
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 

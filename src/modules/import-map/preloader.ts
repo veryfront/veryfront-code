@@ -426,7 +426,8 @@ export class ImportMapPreloader {
     // preloader as its receiver, and Deno's timers reject any receiver that is
     // not the global object, so `setTimer: setTimeout` would throw
     // `Illegal invocation` at the first load.
-    const setTimer = options.setTimer ?? SetTimeout;
+    const setTimer = options.setTimer ??
+      ((callback: () => void, delayMs: number) => SetTimeout(callback, delayMs));
     const cancelTimer = options.cancelTimer ?? ClearTimeout;
     const monotonic = options.monotonicNow ?? monotonicNow;
     this.setTimer = (callback, delayMs) => setTimer(callback, delayMs);

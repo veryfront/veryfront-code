@@ -126,7 +126,9 @@ export function createLocalScheduleTimeout(
     throw new TypeError("Local schedule timer chunk must be a positive safe integer.");
   }
 
-  const setTimer = options.setTimer ?? globalThis.setTimeout;
+  const defaultSetTimer = globalThis.setTimeout;
+  const setTimer = options.setTimer ??
+    ((callback: () => void, delayMs: number) => defaultSetTimer(callback, delayMs));
   const clearTimer = options.clearTimer ?? globalThis.clearTimeout;
   const controller = new AbortController();
   let remainingSeconds = timeoutSeconds;

@@ -1133,7 +1133,7 @@ describe("agent/middleware/chain", () => {
         return continuation!;
       },
     ]);
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timeoutId = setTimeout(
         () => reject(new Error("eager continuation cycle did not settle")),
@@ -1165,7 +1165,7 @@ describe("agent/middleware/chain", () => {
       },
       (_context, next) => next(),
     ]);
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timeoutId = setTimeout(
         () => reject(new Error("pass-through continuation cycle did not settle")),

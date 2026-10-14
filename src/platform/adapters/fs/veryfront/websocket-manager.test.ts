@@ -26,6 +26,12 @@ import {
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 import { clearAllPendingInvalidations, isPrefixBeingInvalidated } from "./invalidation-state.ts";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 interface TimerEntry {
   delay: number;
   callback: () => void;
@@ -275,12 +281,12 @@ describe("WebSocketManager", () => {
     });
   });
   let originalWebSocket: typeof WebSocket;
-  let originalSetTimeout: typeof setTimeout;
-  let originalClearTimeout: typeof clearTimeout;
-  let originalSetInterval: typeof setInterval;
+  let originalSetTimeout: Window["setTimeout"];
+  let originalClearTimeout: Window["clearTimeout"];
+  let originalSetInterval: Window["setInterval"];
   let heartbeatCallback: (() => void) | undefined;
   let nextTimerId = 1;
-  let scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
+  let scheduledTimers = new Map<ReturnType<Window["setTimeout"]>, TimerEntry>();
 
   const runOnlyScheduledTimer = (): number => {
     assertEquals(scheduledTimers.size, 1);
@@ -298,25 +304,25 @@ describe("WebSocketManager", () => {
     clearAllPendingInvalidations();
     MockWebSocket.instances = [];
     nextTimerId = 1;
-    scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
+    scheduledTimers = new Map<ReturnType<Window["setTimeout"]>, TimerEntry>();
 
     originalWebSocket = globalThis.WebSocket;
-    originalSetTimeout = globalThis.setTimeout;
-    originalClearTimeout = globalThis.clearTimeout;
-    originalSetInterval = globalThis.setInterval;
+    originalSetTimeout = webTimers.setTimeout;
+    originalClearTimeout = webTimers.clearTimeout;
+    originalSetInterval = webTimers.setInterval;
     heartbeatCallback = undefined;
 
-    globalThis.setInterval = ((handler: TimerHandler): ReturnType<typeof setInterval> => {
+    webTimers.setInterval = ((handler: TimerHandler): ReturnType<Window["setInterval"]> => {
       heartbeatCallback = typeof handler === "function" ? handler as () => void : () => {};
-      return 999 as unknown as ReturnType<typeof setInterval>;
-    }) as typeof setInterval;
+      return 999 as unknown as ReturnType<Window["setInterval"]>;
+    }) as Window["setInterval"];
 
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       MockWebSocket as unknown as typeof WebSocket;
 
-    globalThis.setTimeout =
-      ((handler: TimerHandler, timeout?: number): ReturnType<typeof setTimeout> => {
-        const id = nextTimerId as ReturnType<typeof setTimeout>;
+    webTimers.setTimeout =
+      ((handler: TimerHandler, timeout?: number): ReturnType<Window["setTimeout"]> => {
+        const id = nextTimerId as ReturnType<Window["setTimeout"]>;
         nextTimerId++;
 
         const callback = typeof handler === "function"
@@ -327,20 +333,20 @@ describe("WebSocketManager", () => {
 
         scheduledTimers.set(id, { delay: timeout ?? 0, callback });
         return id;
-      }) as typeof setTimeout;
+      }) as Window["setTimeout"];
 
-    globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>): void => {
+    webTimers.clearTimeout = ((id?: ReturnType<Window["setTimeout"]>): void => {
       if (id !== undefined) scheduledTimers.delete(id);
-    }) as typeof clearTimeout;
+    }) as Window["clearTimeout"];
   });
 
   afterEach(() => {
     clearAllPendingInvalidations();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       originalWebSocket;
-    globalThis.setTimeout = originalSetTimeout;
-    globalThis.clearTimeout = originalClearTimeout;
-    globalThis.setInterval = originalSetInterval;
+    webTimers.setTimeout = originalSetTimeout;
+    webTimers.clearTimeout = originalClearTimeout;
+    webTimers.setInterval = originalSetInterval;
   });
 
   it("should not add an extra retry delay after reaching reconnect failure cap", () => {

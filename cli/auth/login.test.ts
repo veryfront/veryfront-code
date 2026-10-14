@@ -2698,7 +2698,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           })) as typeof fetch;
 
         const { login } = await import("./login.ts");
-        let timer: number | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const outcome = await Promise.race([
             login(undefined, testEnv),

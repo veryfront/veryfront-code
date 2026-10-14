@@ -145,7 +145,7 @@ export function installComponentDom(
 
   const pendingFrames = new Set<number>();
   writeGlobal("requestAnimationFrame", (callback: (time: number) => void): number => {
-    const id = setTimeout(() => {
+    const id = (globalThis as Pick<Window, "setTimeout">).setTimeout(() => {
       pendingFrames.delete(id);
       callback(0);
     }, 0);

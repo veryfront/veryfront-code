@@ -228,7 +228,7 @@ describe("platform error introspection", () => {
       if (previousFormatter) {
         Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previousFormatter);
       } else {
-        delete ErrorWithStackFormatter.prepareStackTrace;
+        Reflect.deleteProperty(ErrorWithStackFormatter, "prepareStackTrace");
       }
     }
 

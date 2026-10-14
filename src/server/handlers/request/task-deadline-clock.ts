@@ -1,8 +1,8 @@
 /** Host-owned deadline operations; project code cannot replace the captured defaults. */
 export interface TaskDeadlineClock {
   now(): number;
-  setTimer(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
-  clearTimer(handle: ReturnType<typeof setTimeout> | undefined): void;
+  setTimer(callback: () => void, delayMs: number): number | ReturnType<typeof setTimeout>;
+  clearTimer(handle: number | ReturnType<typeof setTimeout> | undefined): void;
 }
 
 const IntrinsicFreeze = Object.freeze;
@@ -14,7 +14,8 @@ const IntrinsicClearTimeout = globalThis.clearTimeout;
 export const systemTaskDeadlineClock: TaskDeadlineClock = IntrinsicFreeze({
   now: () => IntrinsicNow(),
   setTimer: (callback: () => void, delayMs: number) => IntrinsicSetTimeout(callback, delayMs),
-  clearTimer: (handle: ReturnType<typeof setTimeout> | undefined) => IntrinsicClearTimeout(handle),
+  clearTimer: (handle: number | ReturnType<typeof setTimeout> | undefined) =>
+    IntrinsicClearTimeout(handle),
 });
 
 /** Snapshot the trusted constructor dependency before any project operation executes. */
@@ -26,7 +27,7 @@ export function snapshotTaskDeadlineClock(clock: TaskDeadlineClock): TaskDeadlin
     now: () => IntrinsicApply(now, clock, []),
     setTimer: (callback: () => void, delayMs: number) =>
       IntrinsicApply(setTimer, clock, [callback, delayMs]),
-    clearTimer: (handle: ReturnType<typeof setTimeout> | undefined) =>
+    clearTimer: (handle: number | ReturnType<typeof setTimeout> | undefined) =>
       IntrinsicApply(clearTimer, clock, [handle]),
   });
 }

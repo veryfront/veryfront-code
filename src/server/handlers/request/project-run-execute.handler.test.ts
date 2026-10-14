@@ -18128,9 +18128,9 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       globalThis.Promise = function () {
         throw new Error("Project Promise constructor used by host backoff");
       } as unknown as typeof Promise;
-      globalThis.setTimeout = (() => {
+      (globalThis as Pick<Window, "setTimeout">).setTimeout = () => {
         throw new Error("Project timer used by host backoff");
-      }) as typeof setTimeout;
+      };
       await sleep(0);
     } finally {
       globalThis.Promise = hostPromise;

@@ -96,15 +96,18 @@ async function withTimeoutUnrefProbe<T>(run: () => Promise<T>): Promise<{
   const originalClearTimeout = runtime.clearTimeout;
   let unrefCalls = 0;
 
-  runtime.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    const inner = originalSetTimeout(handler, timeout, ...args);
-    return {
-      inner,
-      unref() {
-        unrefCalls++;
-      },
-    } as unknown as ReturnType<typeof setTimeout>;
-  }) as typeof setTimeout;
+  runtime.setTimeout = Object.assign(
+    (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      const inner = originalSetTimeout(handler, timeout, ...args);
+      return {
+        inner,
+        unref() {
+          unrefCalls++;
+        },
+      } as unknown as ReturnType<typeof setTimeout>;
+    },
+    originalSetTimeout,
+  );
   runtime.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
     const inner = (id as unknown as { inner?: ReturnType<typeof setTimeout> } | undefined)
       ?.inner;

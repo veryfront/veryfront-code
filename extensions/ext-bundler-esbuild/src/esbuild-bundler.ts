@@ -657,7 +657,7 @@ function invokeEsbuild<T extends Promise<unknown>>(operation: () => T): T {
 }
 
 async function waitForServiceClose(service: EsbuildService): Promise<void> {
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => {
       reject(
