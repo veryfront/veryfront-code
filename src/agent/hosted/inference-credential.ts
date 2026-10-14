@@ -5,6 +5,7 @@ import {
   type AgentModelRuntimeResolver,
   registerModelRuntimeResolverRevoker,
 } from "../runtime/model-transport.ts";
+import type { ModelStreamTimeouts } from "../types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type {
   DefaultHostedChatRuntimeCreationOptions,
@@ -31,6 +32,7 @@ export type HostedInferenceAuthorityOwner =
 const inferenceCredentials = createPrivateWeakStore<object, string>();
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectFreeze = Object.freeze;
 const StringStartsWith = String.prototype.startsWith;
 const EventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -129,11 +131,42 @@ export function bindHostedChildInferenceAuthority(
   };
 }
 
+const inheritedModelStreamTimeouts = createPrivateWeakStore<
+  HostedInferenceAuthorityOwner,
+  Readonly<ModelStreamTimeouts>
+>();
+
+/** @internal Bind host-owned model stream budgets so delegated child runtimes inherit them. */
+export function bindHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  timeouts: ModelStreamTimeouts | undefined,
+): void {
+  if (!timeouts) return;
+  inheritedModelStreamTimeouts.set(target, ObjectFreeze({ ...timeouts }));
+}
+
+/** @internal Read the host-owned model stream budgets inherited by a child runtime owner. */
+export function readHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+): ModelStreamTimeouts | undefined {
+  const timeouts = inheritedModelStreamTimeouts.get(target);
+  return timeouts ? { ...timeouts } : undefined;
+}
+
+function inheritHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  source: HostedInferenceAuthorityOwner,
+): void {
+  const timeouts = inheritedModelStreamTimeouts.get(source);
+  if (timeouts) inheritedModelStreamTimeouts.set(target, timeouts);
+}
+
 /** @internal Preserve private inference authority across owned context copies. */
 export function inheritHostedChildInferenceAuthority(
   target: HostedInferenceAuthorityOwner,
   source: HostedInferenceAuthorityOwner,
 ): void {
+  inheritHostedChildModelStreamTimeouts(target, source);
   const factory = inheritedInferenceFactories.get(source);
   if (factory) inheritedInferenceFactories.set(target, factory);
 }
@@ -151,6 +184,7 @@ export function scopeHostedChildInferenceAuthority(
   source: HostedInferenceAuthorityOwner,
   signal?: AbortSignal,
 ): () => void {
+  inheritHostedChildModelStreamTimeouts(target, source);
   const factory = inheritedInferenceFactories.get(source);
   if (!factory) return () => {};
   let active = true;
