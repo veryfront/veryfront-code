@@ -104,6 +104,20 @@ describe("Node SSR local React graph", () => {
     );
   });
 
+  it("preserves literal configured-version specifiers in the import-map overload", async () => {
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    const imports = {
+      dependencyPinningConfiguredVersions: "https://example.invalid/configured-version.js",
+      other: "https://example.invalid/other.js",
+    };
+    assertEquals(JSON.parse((await buildImportMap(imports)).json).imports, imports);
+    const objectOptions = await buildImportMap({ dependencyPinningConfiguredVersions: {} });
+    assertEquals(
+      JSON.parse(objectOptions.json).imports.dependencyPinningConfiguredVersions,
+      undefined,
+    );
+  });
+
   it("preserves a prepared adapter through public HTML schema parsing without hydrating it", async () => {
     const { HTMLGenerationOptionsSchema, HydrationDataSchema } = await import(
       "#veryfront/html/schemas/html.schema.ts"

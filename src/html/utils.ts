@@ -424,7 +424,8 @@ function isImportMapOnlyOptions(
     !("moduleServerOrigin" in options) &&
     !("dependencyPinningCacheKey" in options) &&
     !("dependencyPinningDependencies" in options) &&
-    !("dependencyPinningConfiguredVersions" in options) &&
+    (!("dependencyPinningConfiguredVersions" in options) ||
+      typeof options.dependencyPinningConfiguredVersions === "string") &&
     !("dependencyPinningSource" in options) &&
     !("customImports" in options) &&
     !("releaseAssetManifest" in options) &&
