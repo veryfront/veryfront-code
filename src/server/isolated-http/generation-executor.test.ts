@@ -687,6 +687,33 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("releases an invalid installation acknowledgement as canceled without dispatch", async () => {
+    let served = 0;
+    const f = fixture(
+      () => {
+        served++;
+        return new Response("must not dispatch");
+      },
+      undefined,
+      "project-a",
+      { installed: false },
+    );
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example"), f.input),
+        Error,
+        "acknowledgement is invalid",
+      );
+      await f.releaseEntered.promise;
+      assertEquals(f.calls, ["allocate", "install", "release:canceled"]);
+      assertEquals(served, 0);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("bounds executor preparation by the allocation deadline", async () => {
     const f = fixture(() => new Response("unreachable"), () => new Promise<void>(() => {}));
     f.input.session.request.prepareDeadlineAt = Date.now() + 100;
@@ -1255,6 +1282,41 @@ describe("hosted HTTP generation broker", () => {
       );
       assertEquals(f.calls, ["allocate", "install"]);
     } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("preserves the current generation's order when a newer generation is refused at capacity", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const current = fixture(async () => {
+      entered.resolve();
+      await release.promise;
+      return new Response("current");
+    });
+    current.input.session.request.requestedAt -= 1_000;
+    const next = fixture(() => new Response("next"));
+    next.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    const first = broker.fetch(new Request("https://app.example/first"), current.input);
+    first.catch(() => {});
+    try {
+      await entered.promise;
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example/next"), next.input),
+        Error,
+        "capacity",
+      );
+      const again = broker.fetch(new Request("https://app.example/again"), current.input);
+      again.catch(() => {});
+      release.resolve();
+      assertEquals(await (await first).text(), "current");
+      assertEquals(await (await again).text(), "current");
+      assertEquals(next.calls, []);
+      assertEquals(current.calls, ["allocate", "install"]);
+    } finally {
+      release.resolve();
       await broker.shutdown();
       await broker.settled;
     }

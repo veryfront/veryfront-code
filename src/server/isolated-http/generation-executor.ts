@@ -198,6 +198,7 @@ export function createHostedHttpGenerationExecutor(
   let channel: ExecutorChannel | undefined;
   let client: ReturnType<typeof createExecutorHttpClient> | undefined;
   let ready: Promise<void> | undefined;
+  let installed = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelDeadlineTimer: (() => void) | undefined;
   let active = 0;
@@ -280,6 +281,7 @@ export function createHostedHttpGenerationExecutor(
       }
       // The generation, not any one request, owns the installed executor.
       started.accept({ kind: "execution", signal: lifetime.signal });
+      installed = true;
     })();
   }
 
@@ -297,7 +299,7 @@ export function createHostedHttpGenerationExecutor(
       return;
     }
     // Requests still in flight here were cut short by a forced stop.
-    const result = await session.close(active > 0 ? "canceled" : "completed");
+    const result = await session.close(!installed || active > 0 ? "canceled" : "completed");
     lifetime.abort();
     if (result.release !== "reaper-required") return;
     // The session's bounded release attempt was not acknowledged. Ask the allocator.

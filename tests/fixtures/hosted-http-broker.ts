@@ -10,6 +10,7 @@ export function createHostedHttpFixture(
   handle: (request: Request) => Promise<Response> | Response,
   onInstall?: (peer: ExecutorChannel, installation: ExecutorHttpInstall) => Promise<void>,
   projectId = "project-a",
+  installationAcknowledgement?: { installed: boolean },
 ) {
   const now = Date.now();
   const owner = { scopeKind: "project" as const, projectId };
@@ -104,10 +105,22 @@ export function createHostedHttpFixture(
           };
         },
       });
+      const operations = new Map(installation.operations);
+      if (installationAcknowledgement) {
+        const install = operations.get("runtime.install");
+        if (install?.mode !== "unary") throw new Error("Fixture installation operation is missing");
+        operations.set("runtime.install", {
+          mode: "unary",
+          async handle(value, context) {
+            await install.handle(value, context);
+            return installationAcknowledgement;
+          },
+        });
+      }
       peer = createExecutorChannel({
         binding: input.binding,
         transport: { readable: forward.readable, writable: backward.writable },
-        operations: installation.operations,
+        operations,
       });
       void peer.closed.then(() => installation.close());
       return Promise.resolve({

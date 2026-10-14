@@ -342,6 +342,12 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         detail: "A newer generation serves this project environment",
       });
     }
+  }
+
+  /** Remember ordering only after the broker successfully reserves a generation. */
+  function rememberOrder(identity: Readonly<WorkerGenerationIdentity>, requestedAt: number): void {
+    const mark = watermarks.get(identity.scopeId);
+    const same = mark?.generationId === identity.generationId;
     watermarks.delete(identity.scopeId);
     watermarks.set(identity.scopeId, {
       generationId: identity.generationId,
@@ -362,6 +368,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     signal: AbortSignal,
   ) {
     for (let attempt = 0;; attempt++) {
+      signal.throwIfAborted();
       order(identity, requestedAt);
       const current = scopes.get(identity.scopeId);
       if (current?.generationId.startsWith(`${identity.generationId}:`)) {
@@ -370,6 +377,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
           slot.active++;
           slot.usedAt = ++clock;
         }
+        rememberOrder(identity, requestedAt);
         return current;
       }
       const room = makeRoom(projectId, current);
@@ -407,6 +415,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         retiring: false,
         predecessor: false,
       });
+      rememberOrder(identity, requestedAt);
       return key;
     }
   }
