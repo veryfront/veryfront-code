@@ -3172,6 +3172,103 @@ describe("VeryfrontFSAdapter", () => {
       }
     });
 
+    it("does not certify config absence from an older warmup carrying a newer authority receipt", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const warmStarted = Promise.withResolvers<void>();
+      const warmListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const warmInternals = adapter as unknown as {
+        scheduleFileListWarmup: (reason: string) => void;
+        fileListWarmupPromise: Promise<unknown>;
+      };
+      const initialFiles = [{ path: "veryfront.config.js", content: "initial config" }];
+      let ownLists = 0;
+      const ownStarted = Promise.withResolvers<void>();
+      const ownListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        const token = getCurrentRequestContext()?.token;
+        if (token === "other-token") {
+          warmStarted.resolve();
+          return warmListing.promise;
+        }
+        if (token === "own-token" && ++ownLists === 1) {
+          ownStarted.resolve();
+          return ownListing.promise;
+        }
+        return Promise.resolve(initialFiles);
+      };
+      let ownReads = 0;
+      client.getFileContent = () => {
+        if (getCurrentRequestContext()?.token === "own-token" && ++ownReads > 1) {
+          return Promise.resolve("export default { title: 'own authority' };");
+        }
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        await runWithRequestContext(
+          { projectSlug: "test-project", token: "other-token", branch: "main" },
+          () => {
+            warmInternals.scheduleFileListWarmup("authority-race");
+            return Promise.resolve();
+          },
+        );
+        await warmStarted.promise;
+        const ownRead = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "own-token",
+          branch: "main",
+        }, () => adapter.readTextFile("/veryfront.config.js"));
+        // Attach rejection handling before releasing the concurrent listings.
+        const ownResult = ownRead.then((content) => ({ content }), (error) => ({ error }));
+        await ownStarted.promise;
+        await runWithRequestContext(
+          { projectSlug: "test-project", token: "own-token", branch: "main" },
+          () => adapter.refreshSourceSnapshot("newer unchanged listing"),
+        );
+        warmListing.resolve([]);
+        await warmInternals.fileListWarmupPromise;
+        ownListing.resolve([{ path: "veryfront.config.js", content: "export default {};" }]);
+        assertEquals(await ownResult, { content: "export default { title: 'own authority' };" });
+        assertEquals(ownReads, 2);
+      } finally {
+        ownListing.resolve([]);
+        warmListing.resolve([]);
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
+
     it("does not refresh for any absent root config candidate in a fresh complete snapshot", async () => {
       const adapter = createAdapter();
       const client = adapter as unknown as {

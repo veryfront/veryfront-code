@@ -2070,9 +2070,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   #noteListingApplied(listing: SourceListingStart): void {
+    // An older warmup may publish without lowering the read high-water mark.
+    // Its files must not inherit the newer listing's absence authority.
+    this.#appliedListingRecoveryScope = listing.readSequence < this.#appliedListingReadSequence
+      ? undefined
+      : listing.recoveryScope;
     if (listing.readSequence > this.#appliedListingReadSequence) {
       this.#appliedListingReadSequence = listing.readSequence;
-      this.#appliedListingRecoveryScope = listing.recoveryScope;
     }
   }
 
