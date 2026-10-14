@@ -489,3 +489,26 @@ Deno.test("active-turn compaction rejects ambiguous preserved request identifier
     ContextCompactionError,
   );
 });
+
+Deno.test("active-turn compaction rejects ambiguous durable tail anchors", async () => {
+  const messages: AgentRuntimeMessage[] = [
+    message("request", "user", "Original request"),
+    ...Array.from(
+      { length: 30 },
+      (_, index) => message(`stage-${index}`, "assistant", "fixture ".repeat(1000)),
+    ),
+    message("checkpoint", "assistant", "Recent checkpoint ".repeat(100)),
+    message("checkpoint", "assistant", "Continuation checkpoint ".repeat(100)),
+  ];
+  await assertRejects(
+    () =>
+      applyContextBudget(messages, {
+        tokenBudget: 10000,
+        reserveTokens: 1000,
+        recentTailTokens: 1000,
+        atomicMessageIds: ["checkpoint"],
+        summaryGenerator: () => ({ text: "Older steps" }),
+      }),
+    ContextCompactionError,
+  );
+});

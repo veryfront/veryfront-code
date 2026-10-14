@@ -459,6 +459,13 @@ export async function applyContextBudget(
     throw new ContextCompactionError("Context compaction could not select a retained tail");
   }
 
+  if (
+    preservedRequest &&
+    messages.filter((message) => message.id === firstKeptEntryId).length !== 1
+  ) {
+    throw new ContextCompactionError("Context compaction retained tail anchor is ambiguous");
+  }
+
   let summary: ContextCompactionSummary;
   try {
     summary = getContextCompactionSummarySchema().parse(
