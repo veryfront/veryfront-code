@@ -17,9 +17,16 @@ import {
   buildChildRunExecutionSnapshot,
   buildChildRunSuccessResult,
   type ChildRunExecutionUsage,
+  type ChildRunToolCallSnapshot,
+  type ChildRunToolResultSnapshot,
 } from "../child-run/execution-snapshot.ts";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
+import {
+  finalizeHostedChildForkCompletion,
+  handleHostedChildForkStreamPart,
+} from "../hosted/child-fork-stream-execution.ts";
+import { summarizeChildRunResultValue } from "../child-run/result-summary.ts";
 import { buildHostedDurableChildInvokeSuccessResult } from "../hosted/durable-child-fork-execution.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "./message-adapter.ts";
 import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
@@ -185,12 +192,15 @@ Deno.test("accepted scalar child outputs replace conflicting prose on both provi
   }
 });
 
-function durableChildResult(usage?: ChildRunExecutionUsage) {
+function durableChildResult(usage?: ChildRunExecutionUsage, telemetry?: {
+  toolCalls: ChildRunToolCallSnapshot[];
+  toolResults: ChildRunToolResultSnapshot[];
+}) {
   const result = buildChildRunSuccessResult({
     description: "Synthetic durable child",
     steps: 1,
-    toolCalls: [],
-    toolResults: [],
+    toolCalls: telemetry?.toolCalls ?? [],
+    toolResults: telemetry?.toolResults ?? [],
     durationMs: 1,
     ...(usage === undefined ? {} : { usage }),
   }, buildChildRunResultSummary("durable child response"));
@@ -398,3 +408,137 @@ for (const mode of ["generate", "stream"] as const) {
     assertEquals(prompt.includes("trace prose"), false);
   });
 }
+
+Deno.test("actual child telemetry capture admits undefined values without changing raw events", async () => {
+  const large = Array.from({ length: 10_001 }, (_, index) => index);
+  const cases = [
+    { output: undefined, expected: null },
+    {
+      output: { nested: { value: undefined }, values: [undefined, 42] },
+      expected: { nested: { value: null }, values: [null, 42] },
+    },
+    {
+      output: { optional: undefined, payload: large },
+      expected: { optional: null, payload: large },
+    },
+  ];
+  for (const { output, expected } of cases) {
+    const toolCalls: ChildRunToolCallSnapshot[] = [];
+    const toolResults: ChildRunToolResultSnapshot[] = [];
+    const chunks: unknown[] = [];
+    const input = { optional: undefined, valid: large };
+    const hooks = {
+      description: "Synthetic telemetry",
+      durableMessageId: null,
+      durableReasoningMessageId: null,
+      durableMirrorState: { reasoningStarted: false, textStarted: false },
+      appendDurableMirrorChunk: (chunk: unknown) => {
+        chunks.push(chunk);
+        return Promise.resolve();
+      },
+      closeDurableMirrorReasoning: () => Promise.resolve(),
+      closeDurableMirrorText: () => Promise.resolve(),
+      pendingToolLifecycle: {
+        emitToolInputStartIfNeeded: () => undefined,
+        upsertPendingToolCall: () => undefined,
+        deletePendingToolCall: () => undefined,
+        closePendingToolCalls: () => undefined,
+      },
+      toolCalls,
+      toolResults,
+      state: { activeToolCallId: null, finalText: "", shouldSeparateNextTextBlock: false },
+    };
+    const state = await handleHostedChildForkStreamPart({
+      ...hooks,
+      part: { type: "tool-call", toolName: "example", toolCallId: "telemetry", input },
+    });
+    await handleHostedChildForkStreamPart({
+      ...hooks,
+      state,
+      part: { type: "tool-result", toolName: "example", toolCallId: "telemetry", input, output },
+    });
+    assertEquals(
+      (chunks.at(-1) as { output: unknown }).output,
+      summarizeChildRunResultValue(output),
+    );
+    const message = resultMessage(false);
+    const part = message.parts[0] as ToolResultPart;
+    part.result = durableChildResult(undefined, { toolCalls, toolResults });
+    markTrustedPlatformPolicyToolResultPart(part);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+    assertEquals(toolCalls[0]?.input, { optional: null, valid: large });
+    assertEquals(toolResults[0]?.input, { optional: null, valid: large });
+    assertEquals(toolResults[0]?.output, expected);
+
+    const replayed = JSON.parse(
+      JSON.stringify(prepareTrustedPlatformPolicyMessageForPersistence(message)),
+    ) as Message;
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart), true);
+    for (const admitted of [message, replayed]) {
+      for (
+        const converted of [
+          convertAgentRuntimeMessagesToProviderMessages([admitted]),
+          convertToTextGenerationRuntimeMessages([admitted]),
+        ]
+      ) {
+        const serialized = JSON.stringify(converted);
+        assertEquals(serialized.split("durable child response").length - 1, 1);
+        assertEquals(serialized.includes("suggestedText"), false);
+        assertEquals(serialized.includes("[Truncated]"), false);
+      }
+    }
+  }
+});
+
+Deno.test("final-step child telemetry admits undefined output when the stream omitted tool parts", async () => {
+  const input = { optional: undefined };
+  const local = await finalizeHostedChildForkCompletion({
+    streamResult: {
+      fullStream: (async function* () {})(),
+      steps: Promise.resolve([{
+        text: "durable child response",
+        finishReason: "stop",
+        messages: [],
+        toolCalls: [{ toolName: "example", toolCallId: "fallback", input }],
+        toolResults: [{ toolName: "example", toolCallId: "fallback", input, output: undefined }],
+      }]),
+      totalUsage: Promise.resolve(undefined),
+    },
+    finalText: "durable child response",
+    description: "Synthetic fallback",
+    kind: "invoke_agent",
+    maxSteps: 2,
+    toolCalls: [],
+    toolResults: [],
+    startTime: Date.now(),
+    durableMessageId: null,
+    durableMirrorHasEmittedProgress: true,
+    appendDurableMirrorChunk: () => Promise.resolve(),
+    finalizationTimeoutMs: 100,
+  });
+  assertEquals(local.success, true);
+  const message = resultMessage(false);
+  const part = message.parts[0] as ToolResultPart;
+  part.result = durableChildResult(undefined, local);
+  markTrustedPlatformPolicyToolResultPart(part);
+  assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+  assertEquals(local.toolCalls[0]?.input, { optional: null });
+  assertEquals(local.toolResults[0]?.input, { optional: null });
+  assertEquals(local.toolResults[0]?.output, null);
+  const replayed = JSON.parse(
+    JSON.stringify(prepareTrustedPlatformPolicyMessageForPersistence(message)),
+  ) as Message;
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+  assertEquals(hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart), true);
+  for (const admitted of [message, replayed]) {
+    for (
+      const converted of [
+        convertAgentRuntimeMessagesToProviderMessages([admitted]),
+        convertToTextGenerationRuntimeMessages([admitted]),
+      ]
+    ) {
+      assertEquals(JSON.stringify(converted).split("durable child response").length - 1, 1);
+    }
+  }
+});
