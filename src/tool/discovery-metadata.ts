@@ -64,7 +64,10 @@ export function readToolDiscoveryMetadata(value: unknown): ToolDiscoveryMetadata
 }
 
 /** Copy navigation hints as own data without dispatching inherited setters. */
-export function copyToolDiscoveryMetadata(source: unknown, target: object): void {
+export function copyToolDiscoveryMetadata(
+  source: unknown,
+  target: { discovery?: ToolDiscoveryMetadata },
+): void {
   const discovery = readToolDiscoveryMetadata(source);
   if (discovery) {
     defineOwnDataProperty(target, "discovery", discovery, {
