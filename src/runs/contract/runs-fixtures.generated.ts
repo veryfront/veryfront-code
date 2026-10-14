@@ -159,7 +159,12 @@ export const RUNS_OPERATION_FIXTURES: { [K in RunsOperationId]: RunsOperationFix
       },
     },
     url: "/runs/11111111-1111-4111-8111-111111111111",
-    response: { status: 204, body: undefined },
+    response: {
+      status: 200,
+      body: {
+        "ok": true,
+      },
+    },
   },
   "cancelRun": {
     input: {
