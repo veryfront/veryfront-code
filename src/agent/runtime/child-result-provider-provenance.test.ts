@@ -592,3 +592,48 @@ Deno.test("complete child handoffs bound multibyte telemetry before provenance a
     assertEquals(JSON.stringify(telemetry), raw);
   }
 });
+
+Deno.test("actual child handoffs preserve the existing envelope byte allowance", () => {
+  const input = Object.fromEntries(
+    Array.from({ length: 4 }, (_, index) => [String(index), "x".repeat(1_048_576)]),
+  );
+  const telemetry = {
+    toolCalls: [{ toolName: "example", toolCallId: "call", input }],
+    toolResults: [],
+  };
+  const local = buildChildRunSuccessResult({
+    description: "fixture",
+    steps: 1,
+    durationMs: 1,
+    ...telemetry,
+  }, buildChildRunResultSummary("accepted"));
+  for (
+    const result of [
+      local,
+      withRootOwnedChildResultHint(local),
+      durableChildResult(undefined, telemetry),
+    ]
+  ) {
+    assertStrictEquals(result.toolCalls?.[0]?.input, input);
+    const message = resultMessage(false);
+    const part = message.parts[0] as ToolResultPart;
+    part.result = result;
+    markTrustedPlatformPolicyToolResultPart(part);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+    const replayed = JSON.parse(JSON.stringify(
+      prepareTrustedPlatformPolicyMessageForPersistence(message),
+    )) as Message;
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart), true);
+    for (const admitted of [message, replayed]) {
+      for (
+        const converted of [
+          convertAgentRuntimeMessagesToProviderMessages([admitted]),
+          convertToTextGenerationRuntimeMessages([admitted]),
+        ]
+      ) {
+        assertEquals(JSON.stringify(converted).includes("[Truncated child telemetry]"), false);
+      }
+    }
+  }
+});

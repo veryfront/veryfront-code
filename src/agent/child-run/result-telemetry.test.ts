@@ -12,6 +12,21 @@ describe("child result telemetry budget", () => {
     };
     assertStrictEquals(boundChildResultTelemetry(result), result);
   });
+  it("retains telemetry inside the provenance envelope byte allowance", () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 4 }, (_, index) => [String(index), "x".repeat(1_048_576)]),
+    );
+    const result = {
+      success: true,
+      description: "fixture",
+      summary: { text: "accepted" },
+      steps: 1,
+      durationMs: 1,
+      toolCalls: [{ toolName: "example", toolCallId: "call", input }],
+      toolResults: [],
+    };
+    assertStrictEquals(boundChildResultTelemetry(result), result);
+  });
   it("does not admit an oversized accepted response by dropping telemetry", () => {
     const result = { output: "界".repeat(2_000_000), toolCalls: [], toolResults: [] };
     assertStrictEquals(boundChildResultTelemetry(result), result);

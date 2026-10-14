@@ -1,3 +1,4 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import { inheritToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import {
   appendPrivateArray,
@@ -12,7 +13,6 @@ import { hasTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforceme
 import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import {
-  JSON_VALUE_MAX_SERIALIZED_BYTES,
   JSON_VALUE_MAX_STRING_BYTES,
   snapshotBoundedJsonValue,
 } from "#veryfront/schemas/json-value.ts";
@@ -486,7 +486,7 @@ export function isProviderChildToolResult(
 }
 
 function snapshotProviderChildValue(value: unknown) {
-  const maxJsonBytes = JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+  const maxJsonBytes = PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES;
   const encoded = typeof value === "string";
   return snapshotBoundedJsonValue(
     value,

@@ -1,5 +1,9 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import type { ChildRunToolCallSnapshot, ChildRunToolResultSnapshot } from "./execution-snapshot.ts";
 
 const hasOwn = Object.hasOwn;
@@ -14,7 +18,11 @@ interface ChildResultTelemetry {
 type BoundedChildResult<T> = Omit<T, "toolCalls" | "toolResults"> & ChildResultTelemetry;
 
 function isAdmitted(value: unknown): boolean {
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = snapshotBoundedJsonValue(
+    value,
+    JSON_VALUE_MAX_STRING_BYTES,
+    PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES,
+  );
   if (!snapshot.success) return false;
   try {
     // Provenance serializes this enclosing identity record, not the result alone.
