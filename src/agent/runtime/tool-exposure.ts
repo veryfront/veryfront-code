@@ -405,9 +405,12 @@ function collectSearchCandidates(input: {
   authorized: readonly ToolDefinition[];
   includeParameterDescriptions?: boolean;
   include?: (tool: ToolDefinition) => boolean;
+  /** Metadata-only inventory reads every authorized tool; ranked search stays bounded. */
+  candidateLimit?: number;
 }): SearchableTool[] {
   const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
   const candidates: SearchableTool[] = [];
+  const candidateLimit = input.candidateLimit ?? TOOL_SEARCH_CANDIDATE_LIMIT;
   let examinedCandidates = 0;
   const append = (tools: readonly ToolDefinition[], status: ToolSearchMatch["status"]): void => {
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
@@ -415,7 +418,7 @@ function collectSearchCandidates(input: {
       const tool = tools[toolIndex]!;
       if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
       if (input.include && !input.include(tool)) continue;
-      if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
+      if (examinedCandidates >= candidateLimit) return;
       examinedCandidates += 1;
       const snapshot = snapshotSearchableTool(
         tool,
@@ -561,6 +564,9 @@ export function listToolExposure(input: {
     available: input.available ?? [],
     includeParameterDescriptions: false,
     include: input.scope === "platform" ? isPlatformInventoryTool : undefined,
+    // Filters and pagination cover the complete authorized catalog. Each entry
+    // reads only bounded name, description, and discovery metadata.
+    candidateLimit: Number.POSITIVE_INFINITY,
   });
   const seen = createPrivateSet<string>([]);
   const entries: ToolMetadataMatch[] = [];

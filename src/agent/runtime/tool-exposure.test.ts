@@ -716,6 +716,19 @@ it("filters inventory by discovery domain and resource before pagination", () =>
   );
 });
 
+it("filters and pages inventory past the ranked search candidate limit", () => {
+  const authorized = Array.from(
+    { length: 4_100 },
+    (_, index) => definition(`tool_${String(index).padStart(4, "0")}`, "Bulk tool"),
+  );
+  authorized.push({ ...definition("zz_late", "Late tool"), discovery: platform("late", "Late") });
+  const filtered = listToolExposure({ authorized, domain: "late" });
+  assertEquals(filtered.invalidFilter, undefined);
+  assertEquals(filtered.matches.map((entry) => entry.name), ["zz_late"]);
+  const last = listToolExposure({ authorized, cursor: "4100", limit: 5 });
+  assertEquals(last.matches.map((entry) => entry.name), ["zz_late"]);
+});
+
 it("reports advertised values for an unknown inventory filter", () => {
   const authorized = [
     { ...definition("list_agents", "List agents"), discovery: platform("agents", "Agents") },
