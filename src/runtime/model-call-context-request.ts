@@ -1774,6 +1774,49 @@ function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | und
   return resolveModelCallProvider(model);
 }
 
+/**
+ * Thinking tokens an Anthropic budget adds on top of `maxOutputTokens`, or
+ * `undefined` when the effective budget is invalid. Adaptive thinking stays
+ * within `maxOutputTokens` and adds nothing.
+ */
+export function resolveAdditiveReasoningOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: Pick<ModelCallRequestSource, "reasoning"> & { providerOptions?: unknown },
+): number | undefined {
+  if (resolveModelCallProvider(model) !== "anthropic") return 0;
+  const reasoning = buildModelCallContextRequest(model, options)?.reasoning;
+  if (options.reasoning?.enabled === true) {
+    const budget = reasoning?.budgetTokens ??
+      (reasoning?.effort === "low"
+        ? 1024
+        : reasoning?.effort === "high"
+        ? 16384
+        : reasoning?.effort === "max"
+        ? 32768
+        : 4096);
+    // Match the first-party Anthropic builder; its offline contract matrix guards drift.
+    return numberIsSafeInteger(budget) && budget >= 1024 ? budget : undefined;
+  }
+  // Canonical native thinking has precedence when neutral reasoning does not enable it.
+  const providerOptions = options.providerOptions;
+  const anthropic = providerOptions && typeof providerOptions === "object"
+    ? (providerOptions as Record<string, unknown>).anthropic
+    : undefined;
+  const thinking = anthropic && typeof anthropic === "object" && !Array.isArray(anthropic)
+    ? (anthropic as Record<string, unknown>).thinking
+    : undefined;
+  if (
+    thinking && typeof thinking === "object" && !Array.isArray(thinking) &&
+    (thinking as Record<string, unknown>).type === "enabled"
+  ) {
+    const budget = reasoning?.budgetTokens;
+    return budget !== undefined && numberIsSafeInteger(budget) && budget >= 1024
+      ? budget
+      : undefined;
+  }
+  return 0;
+}
+
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;

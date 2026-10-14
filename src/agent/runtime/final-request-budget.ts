@@ -10,18 +10,39 @@ function own(value: unknown, key: string): unknown {
     : undefined;
 }
 
-function hasNativeMedia(messages: readonly unknown[]): boolean {
+/**
+ * Replace native user media with its part type. Media cost depends on the
+ * provider's media tokenizer and encoded bytes cannot be estimated as text,
+ * so the remaining request is a lower bound on the input cost.
+ */
+function withoutNativeMediaPayloads(
+  messages: readonly unknown[],
+): { messages: readonly unknown[]; hasMedia: boolean } {
+  let hasMedia = false;
+  const measured: unknown[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = own(messages, String(index));
-    if (own(message, "role") !== "user") continue;
     const content = own(message, "content");
-    if (!isArray(content)) continue;
-    for (let partIndex = 0; partIndex < content.length; partIndex++) {
-      const type = own(own(content, String(partIndex)), "type");
-      if (type === "image" || type === "file") return true;
+    if (own(message, "role") !== "user" || !isArray(content)) {
+      measured.push(message);
+      continue;
     }
+    const parts: unknown[] = [];
+    let replaced = false;
+    for (let partIndex = 0; partIndex < content.length; partIndex++) {
+      const part = own(content, String(partIndex));
+      const type = own(part, "type");
+      if (type === "image" || type === "file") {
+        parts.push({ type });
+        replaced = true;
+      } else {
+        parts.push(part);
+      }
+    }
+    hasMedia ||= replaced;
+    measured.push(replaced ? { role: "user", content: parts } : message);
   }
-  return false;
+  return { messages: hasMedia ? measured : messages, hasMedia };
 }
 
 /**
@@ -44,10 +65,14 @@ export type FinalRequestBudgetInput = {
   limit?: ServedRequestLimit;
   requestedOutputTokens: number;
   explicitOutputTokens?: boolean;
+  /** Tokens the provider adds on top of the output request, such as a thinking budget. */
+  additionalOutputTokens?: number;
 };
 
 /** Result of measuring one assembled request against the served limits. */
 export type FinalRequestBudgetInspection = {
+  /** False when native media makes `estimatedInputTokens` a lower bound. */
+  inputCostKnown: boolean;
   /** Output tokens to send: the requested output, capped to the served limits. */
   maxOutputTokens: number;
   /** Output tokens the request must keep free in the context window. */
@@ -70,13 +95,16 @@ export function enforceFinalRequestBudget(
   }
   if (!estimate.fits) {
     throw AGENT_CONTEXT_WINDOW_EXCEEDED.create({
-      detail:
-        `Estimated final request of ${estimate.estimatedInputTokens} input tokens plus ${estimate.reservedOutputTokens} output tokens exceeds the served context window ${input.limit?.context}`,
+      detail: `Estimated final request of ${
+        estimate.inputCostKnown ? "" : "at least "
+      }${estimate.estimatedInputTokens} input tokens plus ${
+        estimate.reservedOutputTokens + (input.additionalOutputTokens ?? 0)
+      } output tokens exceeds the served context window ${input.limit?.context}`,
     });
   }
   return {
     maxOutputTokens: estimate.maxOutputTokens,
-    estimatedInputTokens: estimate.estimatedInputTokens,
+    estimatedInputTokens: estimate.inputCostKnown ? estimate.estimatedInputTokens : null,
   };
 }
 
@@ -96,10 +124,9 @@ export function inspectFinalRequestBudget(
   const reservedOutputTokens = input.explicitOutputTokens === true
     ? cappedOutputTokens
     : Math.min(cappedOutputTokens, MIN_IMPLICIT_OUTPUT_TOKENS);
-  // Native media cost depends on the provider's media tokenizer. Encoded bytes
-  // cannot be estimated as text; keep the input cost unknown, as for a missing limit.
-  if (input.limit?.context === undefined || hasNativeMedia(input.messages)) {
+  if (input.limit?.context === undefined) {
     return {
+      inputCostKnown: false,
       maxOutputTokens: cappedOutputTokens,
       reservedOutputTokens,
       estimatedInputTokens: null,
@@ -107,6 +134,9 @@ export function inspectFinalRequestBudget(
       outputExceeded,
     };
   }
+  // With native media the remaining measurable request is still enforced: if
+  // it alone cannot fit, the whole request cannot either.
+  const measured = withoutNativeMediaPayloads(input.messages);
   const toolSchemas = Object.entries(input.tools ?? {}).map(([name, value]) => {
     const definition = value as Record<string, unknown> | null;
     if (!definition || typeof definition !== "object") return { name, definition };
@@ -131,19 +161,23 @@ export function inspectFinalRequestBudget(
     };
   });
   const rawInputTokens = estimateTokens(input.system) +
-    estimateTokens(input.messages) + estimateTokens(toolSchemas) +
+    estimateTokens(measured.messages) + estimateTokens(toolSchemas) +
     (input.responseFormat === undefined ? 0 : estimateTokens(input.responseFormat));
   // This heuristic margin is not a tokenizer upper bound: Unicode, media and
   // provider-specific framing can use more tokens than this estimate.
   const estimatedInputTokens = Math.ceil(rawInputTokens * 1.1) + 16;
-  const availableOutputTokens = input.limit.context - estimatedInputTokens;
+  const additionalOutputTokens = input.additionalOutputTokens ?? 0;
+  const availableOutputTokens = input.limit.context - estimatedInputTokens -
+    additionalOutputTokens;
   return {
+    inputCostKnown: !measured.hasMedia,
     maxOutputTokens: input.explicitOutputTokens === true
       ? cappedOutputTokens
       : Math.max(reservedOutputTokens, Math.min(cappedOutputTokens, availableOutputTokens)),
     reservedOutputTokens,
     estimatedInputTokens,
-    fits: estimatedInputTokens + reservedOutputTokens <= input.limit.context,
+    fits: estimatedInputTokens + reservedOutputTokens + additionalOutputTokens <=
+      input.limit.context,
     outputExceeded,
   };
 }

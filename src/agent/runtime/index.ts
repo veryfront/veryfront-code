@@ -459,6 +459,7 @@ import {
 } from "./final-request-budget.ts";
 import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
 import { fitDeferredToolSchemasToBudget } from "./deferred-schema-budget.ts";
+import { resolveAdditiveReasoningOutputTokens } from "#veryfront/runtime/model-call-context-request.ts";
 import {
   currentVeryfrontCloudCatalogScopeKey,
   readServedVeryfrontCloudCatalogModel,
@@ -2350,6 +2351,7 @@ async function fitRuntimeStepRequestToServedBudget(input: {
   responseFormat: unknown;
   requestedOutputTokens: number;
   explicitOutputTokens: boolean;
+  additionalOutputTokens: number;
   toolExposureState: ToolExposureState;
   persistToolExposureCheckpoint: Parameters<
     typeof persistToolExposureCheckpointBeforeContinuation
@@ -2374,6 +2376,7 @@ async function fitRuntimeStepRequestToServedBudget(input: {
       limit: servedLimit,
       requestedOutputTokens: input.requestedOutputTokens,
       explicitOutputTokens: input.explicitOutputTokens,
+      additionalOutputTokens: input.additionalOutputTokens,
     });
   };
   if (input.supportsToolCalling && input.toolResultContext) {
@@ -4535,6 +4538,11 @@ export class AgentRuntime {
           effectiveModel,
           maxOutputTokensOverride,
         );
+        // An invalid thinking budget is left for the provider path to reject.
+        const additionalOutputTokens = resolveAdditiveReasoningOutputTokens(languageModel, {
+          reasoning,
+          providerOptions,
+        }) ?? 0;
         const fittedRequest = await fitRuntimeStepRequestToServedBudget({
           sourceMessages: currentMessages,
           modelMessages: toolResultContext
@@ -4550,6 +4558,7 @@ export class AgentRuntime {
           responseFormat: outputSchema?.responseFormat,
           requestedOutputTokens,
           explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+          additionalOutputTokens,
           toolExposureState,
           persistToolExposureCheckpoint,
           requireToolExposureCheckpointPersistence,
@@ -4577,10 +4586,8 @@ export class AgentRuntime {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          await validateProviderRequest(
-            providerSystemPrompt,
-            modelMessages,
-          );
+          // Reject an over-budget request before the turn is accepted, so a
+          // rejected input is rolled back instead of committed to memory.
           const { maxOutputTokens } = enforceFinalRequestBudget({
             system: providerSystemPrompt,
             messages: providerMessages,
@@ -4589,7 +4596,12 @@ export class AgentRuntime {
             limit: fittedRequest.servedLimit,
             requestedOutputTokens,
             explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+            additionalOutputTokens,
           });
+          await validateProviderRequest(
+            providerSystemPrompt,
+            modelMessages,
+          );
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
@@ -5872,6 +5884,11 @@ export class AgentRuntime {
         effectiveModel,
         maxOutputTokensOverride,
       );
+      // An invalid thinking budget is left for the provider path to reject.
+      const additionalOutputTokens = resolveAdditiveReasoningOutputTokens(languageModel, {
+        reasoning,
+        providerOptions,
+      }) ?? 0;
       const fittedRequest = await fitRuntimeStepRequestToServedBudget({
         sourceMessages: currentMessages,
         modelMessages: toolResultContext
@@ -5887,6 +5904,7 @@ export class AgentRuntime {
         responseFormat: outputSchema?.responseFormat,
         requestedOutputTokens,
         explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+        additionalOutputTokens,
         toolExposureState,
         persistToolExposureCheckpoint,
         requireToolExposureCheckpointPersistence,
@@ -5915,10 +5933,8 @@ export class AgentRuntime {
         providerOptions,
       );
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
-      await validateProviderRequest(
-        providerSystemPrompt,
-        modelMessages,
-      );
+      // Reject an over-budget request before the turn is accepted, so a
+      // rejected input is rolled back instead of committed to memory.
       const { maxOutputTokens } = enforceFinalRequestBudget({
         system: providerSystemPrompt,
         messages: providerMessages,
@@ -5927,7 +5943,12 @@ export class AgentRuntime {
         limit: fittedRequest.servedLimit,
         requestedOutputTokens,
         explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+        additionalOutputTokens,
       });
+      await validateProviderRequest(
+        providerSystemPrompt,
+        modelMessages,
+      );
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
       const streamSource = createRuntimeStreamSource((streamSignal) =>
@@ -7287,9 +7308,13 @@ export class AgentRuntime {
     const memoryMaxTokens = this.config.memory?.enabled === false
       ? undefined
       : this.config.memory?.maxTokens;
-    return memoryMaxTokens ??
+    const defaultOutputTokens = memoryMaxTokens ??
       (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
       DEFAULT_MAX_TOKENS;
+    const ceiling = (this.config as RuntimeToolFilterConfig).__vfMaxOutputTokensCeiling;
+    return isMaxOutputTokensOverride(ceiling)
+      ? Math.min(defaultOutputTokens, Math.floor(ceiling))
+      : defaultOutputTokens;
   }
 
   /**

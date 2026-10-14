@@ -262,6 +262,37 @@ describe("final model request budget", () => {
     assertEquals(model.callCount, 0);
   });
 
+  it("rolls back a stateful turn rejected by the budget before provider validation", async () => {
+    const { registerTurnProviderRequestValidator } = await import(
+      "../middleware/turn-validation.ts"
+    );
+    const model = servedModel("generate", 256, [{ text: "unexpected" }]);
+    let validations = 0;
+    const runtime = new AgentRuntime("stateful-budget-agent", {
+      model: model.modelId,
+      system: "Short system",
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+      memory: { type: "buffer", maxMessages: 10 },
+      middleware: [async (context, next) => {
+        registerTurnProviderRequestValidator(context, () => {
+          validations++;
+          return Promise.resolve();
+        });
+        return await next();
+      }],
+    }, { resolveModelRuntime: () => model });
+    await assertRejects(
+      () => runtime.generate("Oversized request ".repeat(200)),
+      VeryfrontError,
+    );
+    assertEquals(model.callCount, 0);
+    assertEquals(validations, 0);
+    const remembered = await runtime.getMemory().getMessages();
+    assertEquals(JSON.stringify(remembered).includes("Oversized request"), false);
+  });
+
   it("reads a managed proxy's limits from the received catalog its run scope carries", async () => {
     const key = rememberReceivedVeryfrontCloudCatalog([{
       id: "small",
@@ -778,6 +809,25 @@ for (const type of ["image", "file"] as const) {
     assertEquals(result, { maxOutputTokens: 4096, estimatedInputTokens: null });
   });
 }
+it("still rejects a media request whose measurable text alone exceeds the window", () => {
+  assertThrows(
+    () =>
+      enforceFinalRequestBudget({
+        system: "Describe the attachment",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", url: "data:image/png;base64,aaaa", mediaType: "image/png" },
+            { type: "text", text: "Context ".repeat(80_000) },
+          ],
+        }],
+        limit: { context: 128_000, output: 4096 },
+        requestedOutputTokens: 4096,
+      }),
+    VeryfrontError,
+    "at least",
+  );
+});
 it("still rejects oversized ordinary text that contains a data URL", () => {
   assertThrows(
     () =>
@@ -953,6 +1003,122 @@ describe("invoke_agent child request budget", () => {
       Error,
       "plus 64000 output tokens",
     );
+  });
+
+  it("keeps a hosted grant allowance implicit and caps it to the remaining window", async () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "claude-haiku-4-5",
+        modelId: "anthropic/claude-haiku-4-5",
+        provider: "anthropic",
+        surface: "anthropic",
+        aliases: [],
+        operations: ["messages"],
+        capabilities: { limit: { context: 200_000, output: 64_000 } },
+      }],
+    });
+    const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
+    const model = scriptedModel([{ text: "hosted reply" }], { modelId, only: "stream" });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "test-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "anthropic",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    const config: AgentConfig & RuntimeToolFilterConfig = {
+      model: modelId,
+      system: "Hosted guidance",
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+      __vfMaxOutputTokensCeiling: 48_000,
+    };
+    const runtime = new AgentRuntime("hosted-grant", config, { resolveModelRuntime: () => model });
+    const stream = await runtime.stream([{
+      id: "hosted-user",
+      role: "user",
+      parts: [{ type: "text", text: "Review this section. ".repeat(29_000) }],
+    }]);
+    const wire = await new Response(stream).text();
+    assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), false);
+    assertEquals(model.callCount, 1);
+    const sentOutput = model.calls[0]?.maxOutputTokens ?? 0;
+    assert(sentOutput >= 4_096 && sentOutput < 48_000, `sent output ${sentOutput}`);
+  });
+
+  it("reserves additive thinking tokens on top of the output request", () => {
+    const input = {
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(600_000) }],
+      limit: { context: 200_000, output: 64_000 },
+      requestedOutputTokens: 48_000,
+    };
+    const plain = enforceFinalRequestBudget(input);
+    const thinking = enforceFinalRequestBudget({ ...input, additionalOutputTokens: 16_384 });
+    assertEquals(plain.maxOutputTokens - thinking.maxOutputTokens, 16_384);
+    assertEquals(
+      (thinking.estimatedInputTokens ?? 0) + thinking.maxOutputTokens + 16_384,
+      200_000,
+    );
+    assertThrows(
+      () =>
+        enforceFinalRequestBudget({
+          ...input,
+          requestedOutputTokens: 4_096,
+          additionalOutputTokens: 40_000,
+        }),
+      Error,
+      "context window",
+    );
+  });
+
+  it("leaves room for an additive Anthropic thinking budget in the dispatched request", async () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "claude-haiku-4-5",
+        modelId: "anthropic/claude-haiku-4-5",
+        provider: "anthropic",
+        surface: "anthropic",
+        aliases: [],
+        operations: ["messages"],
+        capabilities: { limit: { context: 40_000, output: 64_000 } },
+      }],
+    });
+    const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
+    const model = scriptedModel([{ text: "thought through" }], {
+      modelId,
+      provider: "anthropic",
+      only: "generate",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "test-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "anthropic",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    const runtime = new AgentRuntime("thinking-budget", {
+      model: modelId,
+      system: "Think",
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+      resolveModelTransport: () => ({
+        model,
+        reasoning: { enabled: true, budgetTokens: 16_384 },
+      }),
+    });
+    await runtime.generate("Plan this ".repeat(4_000));
+    assertEquals(model.callCount, 1);
+    assertEquals(model.calls[0]?.reasoning?.budgetTokens, 16_384);
+    const sent = model.calls[0]?.maxOutputTokens ?? 0;
+    const promptTokens = JSON.stringify(model.calls[0]?.prompt).length / 4;
+    assert(promptTokens + sent + 16_384 <= 40_000, `sent ${sent} for ${promptTokens}`);
   });
 
   it("still rejects a child whose input leaves less than the bounded output reserve", async () => {
