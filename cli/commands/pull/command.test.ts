@@ -282,7 +282,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/files?branch=feature-x",
+      "/projects/my-project/files?ref=branch%3Afeature-x",
     );
   });
 
@@ -290,7 +290,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature/new stuff" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/files?branch=feature%2Fnew%20stuff",
+      "/projects/my-project/files?ref=branch%3Afeature%2Fnew%20stuff",
     );
   });
 
@@ -340,7 +340,7 @@ describe("buildFileContentUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFileContentUrl("my-project", "pages/index.tsx", source),
-      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
+      "/projects/my-project/files/pages%2Findex.tsx?ref=branch%3Afeature-x",
     );
   });
 
@@ -396,7 +396,7 @@ describe("listAllFiles", () => {
   it("should fetch files from branch", async () => {
     await testListAllFiles(
       { type: "branch", name: "feature-x" },
-      "/projects/my-project/files?branch=feature-x",
+      "/projects/my-project/files?ref=branch%3Afeature-x",
     );
   });
 
@@ -463,7 +463,7 @@ describe("getFileContent", () => {
   it("should fetch file content from branch", async () => {
     await testGetFileContent(
       { type: "branch", name: "feature-x" },
-      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
+      "/projects/my-project/files/pages%2Findex.tsx?ref=branch%3Afeature-x",
     );
   });
 
@@ -1547,7 +1547,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             new Response(
@@ -1628,7 +1628,7 @@ describe("pullCommand", () => {
           }
           if (
             url.pathname === "/projects/alpha/files" &&
-            url.searchParams.get("branch") === "studio-change"
+            url.searchParams.get("ref") === "branch:studio-change"
           ) {
             return Promise.resolve(Response.json({
               data: [
@@ -1699,7 +1699,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             Response.json({
@@ -1754,7 +1754,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             Response.json({
@@ -2063,7 +2063,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             new Response(

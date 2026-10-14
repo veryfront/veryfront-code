@@ -13,9 +13,11 @@ import {
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
-import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
+import { isRetriableConnectFailure } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import {
   fetchSandboxRuntimeUrl,
   fetchSandboxUrl,
@@ -38,6 +40,10 @@ import {
   type CommandStreamEvent,
   type SandboxOptions,
 } from "./types.ts";
+
+type CommandFetchAttempt<T> =
+  | { kind: "result"; result: T }
+  | { kind: "fetch-failure"; error: unknown };
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -93,14 +99,13 @@ const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
 const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
 const DATA_PLANE_READINESS_FAILURE_PREFIX = "Sandbox data plane did not become ready:";
 const RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES = new Set([404, 502, 503, 504]);
-const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "EHOSTUNREACH",
-]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const getOwnDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+const failedSessionLookups = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
@@ -264,36 +269,33 @@ export class LazySandbox {
     const route = this.#resolveDataPlaneRoute();
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
-        try {
-          return await withSandboxRequestDeadline(
-            sandboxCommandRequestTimeoutMs(options),
-            async (signal) => {
-              const response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, {
-                method: "POST",
-                headers: this.#jsonHeaders(),
-                signal,
-                body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
-              });
-              if (!response.ok) {
-                throw REQUEST_ERROR.create({
-                  detail: `Sandbox command failed: ${response.status}`,
-                });
-              }
-              return parseSandboxCommandResult(await response.json());
-            },
-          );
-        } catch (error) {
-          const cause = error instanceof Error ? error.cause : undefined;
-          const code = cause && typeof cause === "object" && "code" in cause
-            ? cause.code
-            : undefined;
-          // These failures occur before dispatch. Other failures may have executed the command.
-          if (
-            attempt >= this.execStartMaxAttempts ||
-            !["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EAI_AGAIN"].includes(String(code))
-          ) throw error;
-          await this.waitForExecStartRetry();
+        const outcome = await withSandboxRequestDeadline<CommandFetchAttempt<CommandResult>>(
+          sandboxCommandRequestTimeoutMs(options),
+          async (signal) => {
+            const init: RequestInit = {
+              method: "POST",
+              headers: this.#jsonHeaders(),
+              signal,
+              body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+            };
+            let response: Response;
+            try {
+              response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, init);
+            } catch (error) {
+              return { kind: "fetch-failure", error };
+            }
+            // A received response ends retry admission, including later body/decoder failures.
+            if (!response.ok) {
+              throw await createSandboxHttpError(response, "Sandbox command failed", signal);
+            }
+            return { kind: "result", result: parseSandboxCommandResult(await response.json()) };
+          },
+        );
+        if (outcome.kind === "result") return outcome.result;
+        if (attempt >= this.execStartMaxAttempts || !isPreDispatchExecStartFailure(outcome.error)) {
+          throw outcome.error;
         }
+        await this.waitForExecStartRetry();
       }
     }
     let stdout = "";
@@ -322,18 +324,16 @@ export class LazySandbox {
     options?: CommandOptions,
   ): AsyncGenerator<CommandStreamEvent> {
     await this.touchSession();
-    let res: Response;
-    try {
-      res = await this.startExec(command, options);
-    } catch (error) {
-      if (!shouldReprovisionAfterExecStartFailure(error)) {
-        throw error;
-      }
-
+    let outcome = await this.startExec(command, options);
+    if (outcome.kind === "fetch-failure") {
+      if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
       await this.reprovisionAfterExecStartFailure();
       await this.touchSession();
-      res = await this.startExec(command, options);
+      outcome = await this.startExec(command, options);
+      if (outcome.kind === "fetch-failure") throw outcome.error;
     }
+    const res = outcome.result;
+    if (!res.ok) throw await createSandboxHttpError(res, "Exec failed");
 
     if (!res.body) {
       throw new Error("Exec response has no body");
@@ -355,7 +355,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Read file failed");
     }
 
     return await readSandboxFileContent(res);
@@ -376,9 +376,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Write files failed");
     }
     const result = await res.json();
     const paths = files.map((file) => file.path);
@@ -405,9 +403,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Start background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.kind);
@@ -430,9 +426,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -452,9 +446,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command output failed");
     }
 
     const json = await res.json();
@@ -482,7 +474,7 @@ export class LazySandbox {
       }`;
       const res = await this.#fetchControl(url, { headers: this.#authHeaders() }, route.kind);
       if (!res.ok) {
-        throw REQUEST_ERROR.create({ detail: `List background commands failed: ${res.status}` });
+        throw await createSandboxHttpError(res, "List background commands failed");
       }
       return res.json();
     };
@@ -510,9 +502,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Cancel background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -559,7 +549,7 @@ export class LazySandbox {
             }
           }
 
-          throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
+          throw await createSandboxHttpError(res, "Sandbox heartbeat failed");
         }
 
         this.lastHeartbeatAt = Date.now();
@@ -695,9 +685,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to create sandbox");
     }
 
     const session = await res.json();
@@ -772,9 +760,9 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      const error = await createSandboxHttpError(res, "Failed to get sandbox");
+      applyIntrinsic(weakSetAdd, failedSessionLookups, [error]);
+      throw error;
     }
 
     return await res.json() as SandboxSessionRecord;
@@ -833,7 +821,7 @@ export class LazySandbox {
           return;
         }
 
-        lastFailure = `${res.status} ${await res.text()}`;
+        lastFailure = (await createSandboxHttpError(res, "Runtime readiness failed")).message;
         if (!RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES.has(res.status)) {
           break;
         }
@@ -953,7 +941,7 @@ export class LazySandbox {
     // A 404 means no sandbox is available to this client; cleanup is idempotent.
     // Other denials and server failures must preserve the handle for retry.
     if (!response.ok && response.status !== 404) {
-      throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
+      throw await createSandboxHttpError(response, "Delete sandbox failed");
     }
   }
 
@@ -1044,41 +1032,24 @@ export class LazySandbox {
     return active;
   }
 
-  private async startExec(command: string, options?: CommandOptions): Promise<Response> {
+  private async startExec(
+    command: string,
+    options?: CommandOptions,
+  ): Promise<CommandFetchAttempt<Response>> {
     const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) });
-
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
-      try {
-        const res = await this.#fetchExecStart(
-          commandStreamUrl(route),
-          {
-            method: "POST",
-            headers: this.#jsonHeaders(),
-            body,
-          },
-          route.kind,
-        );
-
-        if (res.ok) {
-          return res;
-        }
-
-        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
-          await this.waitForExecStartRetry();
-          continue;
-        }
-
-        throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
-      } catch (error) {
-        if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
-          throw error;
-        }
-
-        await this.waitForExecStartRetry();
+      const outcome = await this.#fetchExecStart(
+        commandStreamUrl(route),
+        { method: "POST", headers: this.#jsonHeaders(), body },
+        route.kind,
+      );
+      if (outcome.kind === "result") return outcome;
+      if (!isPreDispatchExecStartFailure(outcome.error) || attempt >= this.execStartMaxAttempts) {
+        return outcome;
       }
+      await this.waitForExecStartRetry();
     }
-
     throw new Error("Sandbox exec failed before a request was made");
   }
 
@@ -1086,8 +1057,19 @@ export class LazySandbox {
     url: string,
     init: RequestInit,
     routeKind: DataPlaneRoute["kind"],
-  ): Promise<Response> {
-    return fetchWithTimeout(url, this.execStartTimeoutMs, init, routeKind === "internal");
+  ): Promise<CommandFetchAttempt<Response>> {
+    const fetchUrl = routeKind === "internal" ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
+    return await withSandboxRequestDeadline<CommandFetchAttempt<Response>>(
+      this.execStartTimeoutMs,
+      async (signal) => {
+        try {
+          const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+          return { kind: "result", result: response };
+        } catch (error) {
+          return { kind: "fetch-failure", error };
+        }
+      },
+    );
   }
 
   async #fetchControl(
@@ -1200,10 +1182,6 @@ export class LazySandbox {
   }
 }
 
-function isRetryableExecStartStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504;
-}
-
 function commandStreamUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands/stream" : "/exec"}`;
 }
@@ -1212,23 +1190,9 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands" : "/exec/commands"}`;
 }
 
-/**
- * Heuristic: Deno's fetch throws an `Error` with message "fetch failed" (case-
- * insensitive) when the TCP connection is refused or the host is unreachable.
- * If Deno changes this wording the check stops matching, causing exec failures
- * to be treated as non-retryable — fail-safe (agent surfaces an error) but
- * requires a code update to restore automatic retry.
- */
-function isRetryableExecStartError(error: unknown): boolean {
-  return error instanceof Error && /fetch failed/i.test(error.message);
-}
-
 function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
-  if (!(error instanceof Error)) return false;
-  const detail = "detail" in error && typeof error.detail === "string"
-    ? error.detail
-    : error.message;
-  return detail.startsWith(`Failed to get sandbox: ${status} `);
+  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status &&
+    applyIntrinsic(weakSetHas, failedSessionLookups, [error]);
 }
 
 /**
@@ -1246,24 +1210,41 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
     detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
-/**
- * Heuristic: reprovisioning is triggered by known Node.js/Deno error codes on
- * the error's `cause` (ECONNREFUSED, ECONNRESET, ENOTFOUND, EHOSTUNREACH).
- * These codes are stable across Deno versions and represent network-layer
- * failures where the sandbox pod is no longer reachable.
- */
-function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) {
+function ownTransportData(value: unknown, key: string): unknown {
+  const descriptor = getOwnDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!hasOwn(descriptor, "value")) throw new TypeError("Unsupported transport metadata");
+  return descriptor.value;
+}
+
+/** Admit retries/replacement only when native data identifies failed connection setup. */
+function isPreDispatchExecStartFailure(error: unknown): boolean {
+  try {
+    if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
+    if (!(error instanceof Error)) return false;
+    let code = ownTransportData(error, "code");
+    let syscall = ownTransportData(error, "syscall");
+    // Pinned Node/Bun transports preserve the native error directly. Native
+    // fetch instead wraps it in cause. Direct metadata must not be overridden
+    // by an inner cause that claims a different phase.
+    if (code === undefined && syscall === undefined) {
+      const cause = ownTransportData(error, "cause");
+      if (typeof cause !== "object" || cause === null) return false;
+      code = ownTransportData(cause, "code");
+      syscall = ownTransportData(cause, "syscall");
+    }
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+      return syscall === undefined || syscall === "getaddrinfo";
+    }
+    if (
+      syscall !== undefined && syscall !== "connect" &&
+      !(code === "EADDRNOTAVAIL" && syscall === "bind")
+    ) return false;
+    return isRetriableConnectFailure({ code, syscall });
+  } catch {
+    // Uninspectable metadata cannot authorize replay; callers retain the original failure.
     return false;
   }
-
-  const cause = error.cause;
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
-    return false;
-  }
-
-  return typeof cause.code === "string" &&
-    REPROVISIONABLE_EXEC_START_ERROR_CODES.has(cause.code);
 }
 
 async function fetchWithTimeout(

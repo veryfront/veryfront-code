@@ -28,7 +28,7 @@
     {
       "id": "folk__list_people",
       "name": "List People",
-      "description": "List people in the folk workspace with optional filters",
+      "description": "List people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -68,7 +68,7 @@
     {
       "id": "folk__get_person",
       "name": "Get Person",
-      "description": "Get details of a person in folk",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -89,7 +89,7 @@
     {
       "id": "folk__create_person",
       "name": "Create Person",
-      "description": "Create a new person in folk",
+      "description": "Create person",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -128,7 +128,7 @@
     {
       "id": "folk__update_person",
       "name": "Update Person",
-      "description": "Update fields on an existing person in folk",
+      "description": "Update person",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -171,7 +171,7 @@
     {
       "id": "folk__list_companies",
       "name": "List Companies",
-      "description": "List companies in the folk workspace",
+      "description": "List companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -197,7 +197,7 @@
     {
       "id": "folk__create_company",
       "name": "Create Company",
-      "description": "Create a new company in folk",
+      "description": "Create company",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -229,7 +229,7 @@
     {
       "id": "folk__list_groups",
       "name": "List Groups",
-      "description": "List groups (pipelines/segments) in the folk workspace",
+      "description": "List groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

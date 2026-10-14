@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
@@ -757,15 +758,7 @@ describe("getEntityBySlug", () => {
 
   it("reports active deadlines while retaining permits until adapter work settles", async () => {
     const readReleases: Array<(bytes: Uint8Array) => void> = [];
-    let resolveFourActive!: () => void;
-    const fourActive = new Promise<void>((resolve) => {
-      resolveFourActive = resolve;
-    });
     let fifthStarted = false;
-    let resolveFifthStarted!: () => void;
-    const fifthStartedSignal = new Promise<void>((resolve) => {
-      resolveFifthStarted = resolve;
-    });
     let activeReads = 0;
     const adapter = {
       fs: {
@@ -778,20 +771,29 @@ describe("getEntityBySlug", () => {
           new Promise<Uint8Array>((resolve) => {
             readReleases.push(resolve);
             activeReads++;
-            if (activeReads === 4) resolveFourActive();
             if (activeReads === 5) {
               fifthStarted = true;
-              resolveFifthStarted();
             }
           }),
       },
     } as unknown as RuntimeAdapter;
 
+    // Capture the real resolver's clock in a fresh module instance. Admission
+    // must finish before advancing the unchanged deadline, regardless of load.
+    using time = new FakeTime(1_000);
+    const deadlineModule: typeof import("../../../src/types/entities/getEntityInfo.ts") =
+      await import(
+        new URL(
+          "../../../src/types/entities/getEntityInfo.ts?active-deadline-fixture",
+          import.meta.url,
+        )
+          .href
+      );
     const deadline = Date.now() + 50;
     const active = Array.from(
       { length: 4 },
       () =>
-        getEntityBySlug("/project", "about", adapter, "pages", {
+        deadlineModule.getEntityBySlug("/project", "about", adapter, "pages", {
           deadline,
           scopeKey: "deadline-project",
         }),
@@ -799,21 +801,28 @@ describe("getEntityBySlug", () => {
     const timeoutAssertions = active.map((request) =>
       assertRejects(() => request, Error, "deadline")
     );
-    await fourActive;
+    for (let turns = 0; activeReads < 4 && turns < 100; turns++) {
+      await time.runMicrotasks();
+    }
+    assertEquals(activeReads, 4, "All four reads must enter before the deadline advances");
+    await time.tickAsync(51);
     await Promise.all(timeoutAssertions);
 
-    const fifth = getEntityBySlug("/project", "about", adapter, "pages", {
+    const fifth = deadlineModule.getEntityBySlug("/project", "about", adapter, "pages", {
       deadline: Date.now() + 2_000,
       scopeKey: "deadline-project",
     });
     const originalReadCount = activeReads;
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await time.runMicrotasks();
     assertEquals(fifthStarted, false);
     assertEquals(activeReads, originalReadCount);
 
     readReleases.shift()!(new TextEncoder().encode("# Page"));
-    await fifthStartedSignal;
+    for (let turns = 0; !fifthStarted && turns < 100; turns++) {
+      await time.runMicrotasks();
+    }
+    assertEquals(fifthStarted, true, "Releasing one read must admit the fifth request");
     for (const release of readReleases.splice(0)) {
       release(new TextEncoder().encode("# Page"));
     }

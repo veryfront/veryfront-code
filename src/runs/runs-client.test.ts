@@ -463,7 +463,7 @@ describe("VeryfrontRunsClient", () => {
   it("creates schedule runs by resolving the source trigger id", async () => {
     mockFetch([
       jsonResponse({
-        schedules: [{
+        data: [{
           id: scheduleId,
           project_id: projectId,
           name: "Process job submissions",
@@ -628,6 +628,7 @@ describe("VeryfrontRunsClient", () => {
   it("does not create a run when the pushed source schedule is missing", async () => {
     mockFetch([
       jsonResponse({
+        data: [],
         schedules: [],
         source_schedules: [],
       }),
@@ -650,7 +651,7 @@ describe("VeryfrontRunsClient", () => {
     );
   });
 
-  it("creates the matching source schedule when it is not the first listed schedule", async () => {
+  it("reads the legacy schedules key and matches a schedule that is not listed first", async () => {
     const matchingScheduleId = "44444444-4444-4444-8444-444444444444";
     mockFetch([
       jsonResponse({
@@ -697,10 +698,34 @@ describe("VeryfrontRunsClient", () => {
     );
   });
 
+  it("reads data when a response carries both data and the legacy schedules key", async () => {
+    const listedSchedule = {
+      id: scheduleId,
+      name: "Process job submissions",
+      status: "active",
+      target: { kind: "agent", id: "job-submission-orchestrator" },
+      definition_source: "source",
+      source_trigger_id: "process-job-submissions",
+      timeout_seconds: 1800,
+    };
+    mockFetch([
+      jsonResponse({ data: [listedSchedule], schedules: [], source_schedules: [] }),
+      jsonResponse({ id: projectId, slug: "dreamy-haven", name: "Project" }),
+      jsonResponse(makeRun(), 202),
+    ]);
+    const client = createTestClient();
+
+    const response = await client.createScheduleRunFromSource({
+      sourceTriggerId: "process-job-submissions",
+    });
+
+    assertEquals(response.scheduleRun.schedule_id, scheduleId);
+  });
+
   it("does not trust a non-active schedule returned by the active filter", async () => {
     mockFetch([
       jsonResponse({
-        schedules: [{
+        data: [{
           id: scheduleId,
           name: "Process job submissions",
           status: "paused",
@@ -731,7 +756,7 @@ describe("VeryfrontRunsClient", () => {
   it("does not trust a manually defined schedule returned by the source filter", async () => {
     mockFetch([
       jsonResponse({
-        schedules: [{
+        data: [{
           id: scheduleId,
           name: "Process job submissions",
           status: "active",

@@ -264,6 +264,10 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(String(run.run), "planIntegrationShard({ index, total: 3 })");
     assertStringIncludes(String(run.run), "DENO_SUITE_PROFILES[suite]");
     assertStringIncludes(String(run.run), "buildDenoSuiteCommandArgs(suite, files");
+    // The shard must execute the reviewed dependency graph, not resolve new
+    // transitive versions that can conflict with the dependency-age policy.
+    assertStringIncludes(String(run.run), 'passthroughArgs: ["--frozen"]');
+    assertEquals(String(run.run).includes("--no-lock"), false);
     assertStringIncludes(String(run.run), "buildTestProcessEnv(Deno.env.toObject(), profile.env)");
     assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
     const aggregate = asRecord(jobs.tests, "integration aggregate");
@@ -814,6 +818,56 @@ done
     assertEquals(config.exclude, ["node_modules", "dist", ".cache", "npm"]);
   });
 
+  it("collects context ownership coverage in the head-owned Sonar job while keeping the pool trusted", async () => {
+    const jobs = asRecord(
+      asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow").jobs,
+      "jobs",
+    );
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards");
+    assertEquals(shards.uses, "veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main");
+    const sonar = asRecord(jobs["sonar-coverage"], "Sonar coverage");
+    assert(Array.isArray(sonar.steps));
+    const steps = sonar.steps.map((step) => asRecord(step, "Sonar coverage step"));
+    const collectorIndex = steps.findIndex((step) =>
+      step.name === "Collect context ownership coverage from checked-out source"
+    );
+    const mergeIndex = steps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
+    assert(
+      collectorIndex >= 0 && collectorIndex < mergeIndex,
+      "Head-owned tests must produce raw coverage before the final merge",
+    );
+    const collector = steps[collectorIndex];
+    const merge = steps[mergeIndex];
+    assert(collector);
+    assert(merge);
+    const command = String(collector.run);
+    assertStringIncludes(
+      command,
+      "deno task test:file --coverage=coverage-profiles/coverage-context-ownership",
+    );
+    for (
+      const target of [
+        "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+        "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+      ]
+    ) assertStringIncludes(command, target);
+    assertStringIncludes(
+      command,
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(command.includes("coverage:ci:merge"), false);
+    assertStringIncludes(
+      String(merge.run),
+      "coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(
+      steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
+      1,
+    );
+  });
+
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
@@ -824,6 +878,14 @@ done
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+    );
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+    );
     assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
     assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
     const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
@@ -1404,7 +1466,8 @@ it("binary e2e cancellation stops signal-ignoring descendants and preserves exit
 import os, pathlib, select, signal, subprocess, sys, tempfile, time
 
 step_script = sys.argv[1]
-with tempfile.TemporaryDirectory() as directory:
+temp_parent = "/private/tmp" if sys.platform == "darwin" and pathlib.Path("/private/tmp").is_dir() else None
+with tempfile.TemporaryDirectory(dir=temp_parent) as directory:
     deno = pathlib.Path(directory) / "deno"
     env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
     def fixture(body):

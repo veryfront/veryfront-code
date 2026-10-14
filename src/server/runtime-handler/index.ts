@@ -652,6 +652,7 @@ export function createVeryfrontHandler(
         requestId: lifecycle.requestId,
         request_url: req.url,
         domain: preparedRequest.loggerFacts.domain,
+        environment: preparedRequest.loggerFacts.environment,
         project_slug: preparedRequest.loggerFacts.projectSlug,
         project_id: preparedRequest.loggerFacts.projectId,
         release_id: preparedRequest.loggerFacts.releaseId,
@@ -667,7 +668,12 @@ export function createVeryfrontHandler(
 
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
-      setRequestAttributes(spanInfo.span, req, url);
+      setRequestAttributes(
+        spanInfo.span,
+        req,
+        url,
+        preparedRequest.proxyTrust.forwardedHeadersTrusted,
+      );
 
       // Reject untrusted/malformed proxy identity before any project-keyed
       // accounting is touched. In particular, isolation creates per-slug
@@ -689,7 +695,7 @@ export function createVeryfrontHandler(
         }
       }
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         lifecycle.requestId,
         preparedRequest.trackingFacts.projectSlug,
         preparedRequest.trackingFacts.pathname,
@@ -713,7 +719,7 @@ export function createVeryfrontHandler(
           pathname: url.pathname,
           mode: "isolation",
         });
-        completeRequestTracking(lifecycle.requestId, 503, false);
+        completeRequestTracking(trackingKey, 503, false);
         const response = createIsolationErrorResponse(isolationCheck);
         endRequestTracing(spanInfo.span, response.status);
         return response;
@@ -766,6 +772,12 @@ export function createVeryfrontHandler(
           // release lookup. Missing release/environment identity is an ingress
           // refusal, not permission to resolve a mutable release on the host.
           if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            setProjectAttributes(
+              spanInfo.span,
+              headers.projectSlug,
+              parseProxyEnvironment(headers.environment ?? null),
+              preparedRequest.loggerFacts.environment,
+            );
             if (!requestMetricsIncremented) {
               await incrementRequestMetrics();
               requestMetricsIncremented = true;
@@ -777,6 +789,7 @@ export function createVeryfrontHandler(
               environmentId: headers.environmentId,
               environmentName: headers.environmentName,
               mode: parseProxyEnvironment(headers.environment ?? null),
+              hostMode: reqCtx.mode,
               proxyTrusted,
               sourceToken: reqCtx.token,
             });
@@ -802,7 +815,12 @@ export function createVeryfrontHandler(
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
-          setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
+          setProjectAttributes(
+            spanInfo.span,
+            projectRes.projectSlug,
+            isProxyMode ? projectRes.proxyEnv : undefined,
+            preparedRequest.loggerFacts.environment,
+          );
 
           // Handle projects discovery UI
           if (
@@ -850,6 +868,14 @@ export function createVeryfrontHandler(
             profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
             onEnvironmentResolved: (envRes) => {
               updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
+              loggerContext.logger = loggerContext.logger.child({
+                environment: envRes.resolvedEnvironment,
+              });
+              setProjectAttributes(
+                spanInfo.span,
+                projectRes.projectSlug,
+                envRes.resolvedEnvironment,
+              );
             },
             logDebug,
           });
@@ -1120,7 +1146,7 @@ export function createVeryfrontHandler(
         );
 
         return completeRequestTrackingOnResponseEnd(
-          lifecycle.requestId,
+          trackingKey,
           withServerTimingHeader(response, requestProfileRecord),
           isTimeout,
           requestProfileRecord,

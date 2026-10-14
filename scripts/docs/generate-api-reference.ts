@@ -745,6 +745,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
       "List integration tools with a typed available or unavailable status",
     getRemoteIntegrationToolDefinitions:
       "List integration tool definitions, returning an empty list when discovery is unavailable",
+    runRemoteIntegrationTool: "Run a remote integration tool through the API",
+    executeRemoteIntegrationTool: "Deprecated. Use `runRemoteIntegrationTool`",
     listConnectors: "Return readonly array of all connectors",
     registerIntegrationMCP:
       "Register integration tools into the MCP tool registry",
@@ -797,6 +799,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/chat": "Chat components and hooks.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
+  "veryfront/conversations": "Conversations, messages, branches, participants, and read state.",
   "veryfront/embedding": "Embedding and retrieval helpers.",
   "veryfront/extensions": "Extension contracts and loader helpers.",
   "veryfront/fonts": "Font components.",
@@ -1622,6 +1625,15 @@ const API_DOCS: Record<string, APIDocs> = {
     functions: { resource: { configType: "ResourceConfig" } },
     expandTypes: ["ResourceConfig"],
   },
+  "veryfront/conversations": {
+    methods: { Conversation: "Conversation client" },
+    expandTypes: [
+      "ConversationClientOptions",
+      "CreateConversationInput",
+      "ConversationDetails",
+      "ConversationMessage",
+    ],
+  },
   "veryfront/sandbox": {
     methods: { Sandbox: "Sandbox session client" },
     expandTypes: ["SandboxOptions", "CommandResult", "CommandStreamEvent"],
@@ -2306,6 +2318,12 @@ const CATEGORY_LABELS: Record<CommandCategory, string> = {
   auth: "Auth",
 };
 
+// Hand-written notes rendered below a category's command table.
+const CATEGORY_NOTES: Partial<Record<CommandCategory, string>> = {
+  auth:
+    "`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions. For an API key, `whoami` reports the credential type, not a user.",
+};
+
 const CATEGORY_ORDER: CommandCategory[] = [
   "development",
   "deploy",
@@ -2346,6 +2364,11 @@ function generateCLICommandCatalog(): string[] {
       lines.push(`| \`veryfront ${cmd.name}\` | ${desc} |`);
     }
     lines.push("");
+    const note = CATEGORY_NOTES[category];
+    if (note) {
+      lines.push(note);
+      lines.push("");
+    }
   }
 
   return lines;

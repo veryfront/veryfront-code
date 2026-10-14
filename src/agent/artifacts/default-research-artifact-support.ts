@@ -143,6 +143,7 @@ export async function fetchLatestConversationUserText(input: {
   }
 
   try {
+    // listConversationMessages. The parts are read with the private array helpers below.
     const response = await fetch(
       `${input.apiUrl}/conversations/${input.conversationId}/messages?limit=20`,
       {

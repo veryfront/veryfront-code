@@ -31,8 +31,8 @@ import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
-  executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
+  runRemoteIntegrationTool,
 } from "#veryfront/integrations/remote-tools.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
@@ -507,7 +507,7 @@ export async function executeConfiguredTool(
     }
     return await dispatchWithTerminalRunControl(
       context,
-      () => executeRemoteIntegrationTool(toolName, input, context),
+      () => runRemoteIntegrationTool(toolName, input, context),
     );
   }
 

@@ -793,6 +793,41 @@ describe("ensureBranch", () => {
     ]);
   });
 
+  it("URL-encodes the project slug in the lookup after a create conflict", async () => {
+    const getRequests: Array<{ url: string; params?: Record<string, string> }> = [];
+    const conflict = Object.assign(new Error("conflict"), { status: 409 });
+    const mockClient = createMockClient({
+      post: () => Promise.reject(conflict),
+      get: (url: string, params?: Record<string, string>) => {
+        getRequests.push({ url, params });
+        if (getRequests.length === 1) {
+          return Promise.resolve({
+            data: [{ id: "other-branch", name: "feature-x-old", project_id: "proj-456" }],
+            page_info: { next: "cursor-2" },
+          });
+        }
+        return Promise.resolve({
+          data: [{ id: "branch-existing", name: "feature-x", project_id: "proj-456" }],
+        });
+      },
+    });
+
+    const result = await ensureBranch(mockClient, "my project/x", "feature-x");
+
+    assertEquals(result.id, "branch-existing");
+    assertEquals(result.created, false);
+    assertEquals(getRequests, [
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100" },
+      },
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100", cursor: "cursor-2" },
+      },
+    ]);
+  });
+
   it("rethrows a create conflict when the existing branch cannot be found", async () => {
     const conflict = Object.assign(new Error("conflict"), { status: 409 });
     const mockClient = createMockClient({
@@ -916,7 +951,7 @@ describe("resolvePushRemoteFiles", () => {
         params: { search: "feature-x", limit: "100" },
       },
       {
-        url: "/projects/my-project/files?branch=feature-x",
+        url: "/projects/my-project/files?ref=branch%3Afeature-x",
         params: { limit: "100", sort_by: "updated_at", sort_order: "desc" },
       },
     ]);
@@ -2249,7 +2284,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2329,7 +2364,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2455,7 +2490,7 @@ describe("push divergence guard", () => {
             return Response.json({ error: "already exists" }, { status: 409 });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2524,7 +2559,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -7834,6 +7869,23 @@ describe("push dependency pin reconciliation", () => {
         assertStringIncludes(error.message, '"package.json"');
         assertEquals(puts, []);
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("warns without --verbose when the dependency history cannot be read", async () => {
+    await runPinPush(
+      {
+        history: { version: 1, project_id: OTHER_PROJECT_ID, branch: null, entries: [] },
+      },
+      async ({ error, output, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 1);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Dependency pin history unavailable",
+        );
       },
     );
   });

@@ -10,15 +10,17 @@ import {
   startSharedInitialization,
 } from "../shared-initialization.ts";
 import {
-  type EnsureStyleArtifactBuildInput,
+  type DependencyResolution,
   type FileDetail,
   type FileListResult,
   type GetFileOptions,
+  type GetStyleArtifactInput,
   type ListFilesOptions,
-  type ProjectStyleArtifactResolution,
-  type ResolveStyleArtifactInput,
+  type ResolveDependenciesInput,
+  type StartStyleArtifactBuildInput,
+  type StyleArtifact,
   type TokenProvider,
-  type UpsertStyleArtifactInput,
+  type UpdateStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";
 import { API_CLIENT_ERROR, type VeryfrontAPIConfig, VeryfrontError } from "./types.ts";
@@ -75,6 +77,50 @@ export type FileContext =
   | { type: "environment"; name: string }
   | { type: "release"; version: string };
 
+/** Input for `client.dependencies.getHistory()`. */
+export interface GetDependencyHistoryInput {
+  /** Branch name or ID. Omit, or pass `null` or `"main"`, for the main branch. */
+  branch?: string | null;
+  /** Caller-owned cancellation signal for the API request. */
+  signal?: AbortSignal;
+}
+
+/** Dependency operations of a {@linkcode VeryfrontApiClient}. */
+export interface VeryfrontApiDependencies {
+  /** Read up to 16 recent package.json dependency snapshots for a branch. */
+  getHistory(input?: GetDependencyHistoryInput): Promise<DependencyMetadataHistory>;
+  /** Pin npm specifiers to exact versions in the branch's package.json. */
+  resolve(input: ResolveDependenciesInput): Promise<DependencyResolution>;
+}
+
+/**
+ * Style artifact operations of a {@linkcode VeryfrontApiClient}. A style
+ * artifact is the compiled-CSS record for one style profile and one branch,
+ * environment or release. The Veryfront runtime uses these operations; the
+ * project reference defaults to the client's project.
+ */
+export interface VeryfrontApiStyleArtifacts {
+  /** Get the current record. A missing record has `status: "missing"`. */
+  get(input: GetStyleArtifactInput, projectRef?: string): Promise<StyleArtifact>;
+  /** Record the state of the compiled CSS. This does not upload the CSS file. */
+  update(
+    input: UpdateStyleArtifactInput,
+    projectRef?: string,
+    signal?: AbortSignal,
+  ): Promise<StyleArtifact>;
+  /** Start a background CSS build, or return the record that is ready or building. */
+  startBuild(input: StartStyleArtifactBuildInput, projectRef?: string): Promise<StyleArtifact>;
+}
+
+/**
+ * Typed client for the Veryfront API. `dependencies.getHistory()` and
+ * `dependencies.resolve()` read and pin a project's npm dependencies;
+ * `readDependencyMetadataHistory()` is a deprecated alias of `dependencies.getHistory()`.
+ * `styleArtifacts.get()`, `styleArtifacts.update()` and `styleArtifacts.startBuild()`
+ * manage the compiled-CSS record that the Veryfront runtime uses;
+ * `resolveStyleArtifact()`, `upsertStyleArtifact()` and `ensureStyleArtifactBuild()`
+ * are their deprecated aliases.
+ */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
     retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
@@ -90,6 +136,8 @@ export class VeryfrontApiClient {
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
   /** Kept off `config`: a plain property is readable by any code holding the client. */
   readonly #apiToken: string | undefined;
+  #dependencies?: VeryfrontApiDependencies;
+  #styleArtifacts?: VeryfrontApiStyleArtifacts;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -349,6 +397,30 @@ export class VeryfrontApiClient {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
 
+  /**
+   * Dependencies: the npm packages in the project's package.json.
+   *
+   * - `getHistory({ branch })` reads up to 16 recent dependency snapshots. The
+   *   client must be initialized, because the response is checked against the
+   *   project ID and the requested branch.
+   * - `resolve({ specifiers, branch, expectedDeclarations })` pins npm
+   *   specifiers to exact versions in the branch's package.json.
+   */
+  get dependencies(): VeryfrontApiDependencies {
+    if (!this.#dependencies) {
+      this.#dependencies = IntrinsicObjectFreeze({
+        getHistory: (input: GetDependencyHistoryInput = {}) =>
+          // Dispatch through the instance method so a reader installed on this
+          // client applies to both names.
+          this.readDependencyMetadataHistory(input.branch ?? null, input.signal),
+        resolve: (input: ResolveDependenciesInput) =>
+          this.operations.resolveDependencies(this.requireProjectSlug(), input),
+      });
+    }
+    return this.#dependencies;
+  }
+
+  /** @deprecated Use `client.dependencies.getHistory({ branch, signal })`. */
   readDependencyMetadataHistory(
     branch: string | null,
     signal?: AbortSignal,
@@ -526,33 +598,60 @@ export class VeryfrontApiClient {
     return this.operations.lookupProjectByDomain(domain, options);
   }
 
+  /**
+   * Style artifacts: the compiled-CSS record for one style profile and one
+   * branch, environment or release. The Veryfront runtime uses these operations.
+   *
+   * - `get(input)` returns the current record (ready, building, failed or missing).
+   * - `update(input)` records the state of the compiled CSS. It does not upload the file.
+   * - `startBuild(input)` starts a background build unless the record is ready or building.
+   */
+  get styleArtifacts(): VeryfrontApiStyleArtifacts {
+    if (!this.#styleArtifacts) {
+      // Dispatch through the instance methods so a replacement installed on a
+      // deprecated name applies to both names.
+      this.#styleArtifacts = IntrinsicObjectFreeze({
+        get: (input: GetStyleArtifactInput, projectRef?: string) =>
+          this.resolveStyleArtifact(input, projectRef),
+        update: (input: UpdateStyleArtifactInput, projectRef?: string, signal?: AbortSignal) =>
+          this.upsertStyleArtifact(input, projectRef, signal),
+        startBuild: (input: StartStyleArtifactBuildInput, projectRef?: string) =>
+          this.ensureStyleArtifactBuild(input, projectRef),
+      });
+    }
+    return this.#styleArtifacts;
+  }
+
+  /** @deprecated Use `client.styleArtifacts.get(input, projectRef)`. */
   resolveStyleArtifact(
-    input: ResolveStyleArtifactInput,
+    input: GetStyleArtifactInput,
     projectRef = this.requireProjectSlug(),
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.resolveStyleArtifact(projectRef, input);
+  ): Promise<StyleArtifact> {
+    return this.operations.getStyleArtifact(projectRef, input);
   }
 
+  /** @deprecated Use `client.styleArtifacts.startBuild(input, projectRef)`. */
   ensureStyleArtifactBuild(
-    input: EnsureStyleArtifactBuildInput,
+    input: StartStyleArtifactBuildInput,
     projectRef = this.requireProjectSlug(),
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.ensureStyleArtifactBuild(projectRef, input);
+  ): Promise<StyleArtifact> {
+    return this.operations.startStyleArtifactBuild(projectRef, input);
   }
 
+  /** @deprecated Use `client.styleArtifacts.update(input, projectRef, signal)`. */
   upsertStyleArtifact(
-    input: UpsertStyleArtifactInput,
+    input: UpdateStyleArtifactInput,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.upsertStyleArtifact(projectRef, input, signal);
+  ): Promise<StyleArtifact> {
+    return this.operations.updateStyleArtifact(projectRef, input, signal);
   }
 
   // =============================================================================
   // Dependency Artifact Build Operations
   // =============================================================================
 
-  uploadDependencyArtifactAsset(
+  writeDependencyArtifactAsset(
     artifactId: string,
     attemptCount: number,
     contentHash: string,
@@ -560,7 +659,7 @@ export class VeryfrontApiClient {
     bytes: Uint8Array<ArrayBuffer>,
     signal?: AbortSignal,
   ) {
-    return this.operations.uploadDependencyArtifactAsset(
+    return this.operations.writeDependencyArtifactAsset(
       artifactId,
       attemptCount,
       contentHash,
@@ -570,18 +669,47 @@ export class VeryfrontApiClient {
     );
   }
 
-  reportDependencyArtifactBuildResult(
+  createDependencyArtifactBuildResult(
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
     signal?: AbortSignal,
   ) {
-    return this.operations.reportDependencyArtifactBuildResult(
+    return this.operations.createDependencyArtifactBuildResult(
       artifactId,
       attemptCount,
       result,
       signal,
     );
+  }
+
+  /** @deprecated Use `client.writeDependencyArtifactAsset(...)`. */
+  uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeDependencyArtifactAsset"]> {
+    return this.writeDependencyArtifactAsset(
+      artifactId,
+      attemptCount,
+      contentHash,
+      contentType,
+      bytes,
+      signal,
+    );
+  }
+
+  /** @deprecated Use `client.createDependencyArtifactBuildResult(...)`. */
+  reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["createDependencyArtifactBuildResult"]> {
+    return this.createDependencyArtifactBuildResult(artifactId, attemptCount, result, signal);
   }
 
   // =============================================================================

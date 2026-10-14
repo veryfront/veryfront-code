@@ -4942,19 +4942,19 @@ describe("agent runtime refresh hooks", () => {
 
     // Runtime tool discovery fires whenever the run context carries a token, and
     // `apiBaseUrl` falls back to the production API when VERYFRONT_API_BASE_URL is
-    // unset. Unmocked, generate() and stream() each POST /integrations/tools/list
+    // unset. Unmocked, generate() and stream() each GET /integration-tools
     // to api.veryfront.com and the test is at the mercy of a 30s fetch timeout.
     // This test is about project skills, so answer discovery with no tools.
     const { generated, streamed } = await withMockFetch(
       (input) => {
         const url = input instanceof Request ? input.url : String(input);
         // Match the whole pathname, not a substring: a loose test also accepts
-        // a neighbouring route like `/integrations/tools/listing`, so a call to
+        // a neighbouring route like `/integration-toolset`, so a call to
         // the wrong endpoint would be answered with an empty catalogue and the
         // test would still pass. Anchored at the end rather than compared whole
         // because VERYFRONT_API_BASE_URL may carry a path prefix, and the client
         // concatenates base and path (`${baseUrl}${path}`).
-        if (!new URL(url).pathname.endsWith("/integrations/tools/list")) {
+        if (!new URL(url).pathname.endsWith("/integration-tools")) {
           throw new Error(`Unexpected network call from a unit test: ${url}`);
         }
         return Promise.resolve(Response.json({ tools: [] }));

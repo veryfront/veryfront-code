@@ -22,11 +22,32 @@ const DEFAULT_CHUNK_OVERLAP = 200;
  * ```
  */
 export async function chunk(text: string, options?: ChunkOptions): Promise<string[]> {
-  const maxChars = options?.maxChars ?? DEFAULT_CHUNK_MAX_CHARS;
-  const overlap = options?.overlap ?? DEFAULT_CHUNK_OVERLAP;
-  const separators = options?.separators ?? ["\n\n", "\n", " ", ""];
+  return (await chunkWithOffsets(text, options)).map((part) => part.content);
+}
 
-  return splitRecursive(text, separators, maxChars, overlap);
+/** A text chunk with UTF-16 offsets into the original source string. */
+export interface PositionedTextChunk {
+  content: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+/**
+ * Splits text into overlapping chunks and preserves each chunk's UTF-16 source offsets.
+ *
+ * Use this when downstream indexing must point back to exact positions in the original document.
+ */
+export async function chunkWithOffsets(
+  text: string,
+  options?: ChunkOptions,
+): Promise<PositionedTextChunk[]> {
+  return splitRecursive(
+    text,
+    options?.separators ?? ["\n\n", "\n", " ", ""],
+    options?.maxChars ?? DEFAULT_CHUNK_MAX_CHARS,
+    options?.overlap ?? DEFAULT_CHUNK_OVERLAP,
+    0,
+  );
 }
 
 function splitRecursive(
@@ -34,35 +55,46 @@ function splitRecursive(
   separators: string[],
   maxChars: number,
   overlap: number,
-): string[] {
-  if (text.length <= maxChars) return [text];
-
+  sourceOffset: number,
+): PositionedTextChunk[] {
+  if (text.length <= maxChars) {
+    return [{ content: text, startOffset: sourceOffset, endOffset: sourceOffset + text.length }];
+  }
   const sep = separators.find((s) => text.includes(s)) ?? "";
   const parts = sep ? text.split(sep) : [...text];
-
-  const chunks: string[] = [];
+  const chunks: PositionedTextChunk[] = [];
   let current = "";
-
+  let currentStart = sourceOffset;
+  let partOffset = sourceOffset;
   for (const part of parts) {
     const candidate = current ? current + sep + part : part;
     if (candidate.length > maxChars && current) {
-      chunks.push(current);
-      // Overlap: keep the last `overlap` chars of the current chunk. Guard
-      // `overlap === 0` explicitly — `slice(-0)` is `slice(0)`, which returns
-      // the WHOLE chunk and would cascade it into every subsequent chunk.
+      chunks.push({
+        content: current,
+        startOffset: currentStart,
+        endOffset: currentStart + current.length,
+      });
       const tail = overlap > 0 ? current.slice(-overlap) : "";
+      currentStart = tail ? currentStart + current.length - tail.length : partOffset;
       current = tail ? tail + sep + part : part;
     } else {
+      if (!current) currentStart = partOffset;
       current = candidate;
     }
+    partOffset += part.length + sep.length;
   }
-  if (current) chunks.push(current);
-
-  // If any chunk still exceeds maxChars, recurse with next separator
+  if (current) {
+    chunks.push({
+      content: current,
+      startOffset: currentStart,
+      endOffset: currentStart + current.length,
+    });
+  }
   const remaining = separators.slice(separators.indexOf(sep) + 1);
   if (remaining.length === 0) return chunks;
-
-  return chunks.flatMap((c) =>
-    c.length > maxChars ? splitRecursive(c, remaining, maxChars, overlap) : [c]
+  return chunks.flatMap((part) =>
+    part.content.length > maxChars
+      ? splitRecursive(part.content, remaining, maxChars, overlap, part.startOffset)
+      : [part]
   );
 }

@@ -12,7 +12,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
-import { register, resolve } from "#veryfront/extensions/contracts.ts";
+import { register, resolve, unregister } from "#veryfront/extensions/contracts.ts";
 
 import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
@@ -1253,6 +1253,82 @@ describe("mcp/server", () => {
       assertEquals(legacy.result, {
         content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
         isError: false,
+      });
+    } finally {
+      register("SchemaValidator", validator);
+    }
+  });
+
+  it("keeps raw JSON output tools compatible when the schema validator is absent", async () => {
+    const validator = resolve<SchemaValidator>("SchemaValidator");
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const inputSchema = defineSchema((v) => v.object({}))();
+    registerTool(
+      "test:raw-json-output-no-validator",
+      tool({
+        id: "test:raw-json-output-no-validator",
+        description: "Uses a raw JSON output contract without a registered validator",
+        inputSchema,
+        outputSchema: {
+          type: "object",
+          properties: { ok: { type: "boolean" } },
+          required: ["ok"],
+        },
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const invalidContract = tool({
+      id: "test:invalid-output-no-validator",
+      description: "Keeps invalid output contracts fail-closed without a validator",
+      inputSchema,
+      outputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+      execute: async () => ({ ok: true }),
+    });
+    Object.defineProperty(invalidContract.outputSchemaJson!, "type", {
+      enumerable: true,
+      get() {
+        throw new Error("schema accessor ran");
+      },
+    });
+    registerTool("test:invalid-output-no-validator", invalidContract);
+
+    unregister("SchemaValidator");
+    try {
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      assertEquals(listed.error, undefined);
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      const rawDefinition = definitions.find((entry) =>
+        entry.name === "test:raw-json-output-no-validator"
+      );
+      assertExists(rawDefinition);
+      assertEquals(Object.hasOwn(rawDefinition, "outputSchema"), false);
+
+      const called = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "test:raw-json-output-no-validator", arguments: {} },
+      });
+      assertEquals(called.result, {
+        content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+        isError: false,
+      });
+
+      const invalid = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "test:invalid-output-no-validator", arguments: {} },
+      });
+      assertEquals(invalid.result, {
+        content: [{
+          type: "text",
+          text: 'Tool "test:invalid-output-no-validator" has an invalid output contract',
+        }],
+        isError: true,
       });
     } finally {
       register("SchemaValidator", validator);

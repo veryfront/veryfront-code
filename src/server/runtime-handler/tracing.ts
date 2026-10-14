@@ -17,6 +17,8 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability";
 
+import { getEffectiveRequestHost } from "../utils/request-host.ts";
+
 interface SpanInfo {
   /** The server span (unknown type from OTLP setup) */
   span: unknown;
@@ -45,12 +47,17 @@ export function startRequestTracing(req: Request, pathname: string): SpanInfo {
 /**
  * Set initial HTTP attributes on the span.
  */
-export function setRequestAttributes(span: unknown, req: Request, url: URL): void {
+export function setRequestAttributes(
+  span: unknown,
+  req: Request,
+  url: URL,
+  proxyTrusted: boolean,
+): void {
   if (!span) return;
 
   setSpanAttributes(span, {
     "http.url": req.url,
-    "http.host": req.headers.get("host") || url.host,
+    "http.host": getEffectiveRequestHost(req, url, proxyTrusted),
     "http.scheme": url.protocol.replace(":", ""),
   });
 }
@@ -62,12 +69,13 @@ export function setProjectAttributes(
   span: unknown,
   projectSlug: string | undefined,
   environment: string | undefined,
+  requestEnvironment?: string,
 ): void {
   if (!span || !projectSlug) return;
 
   setSpanAttributes(span, {
     "veryfront.project_slug": projectSlug,
-    "veryfront.environment": environment || "unknown",
+    "veryfront.environment": environment || requestEnvironment || "unknown",
   });
 }
 

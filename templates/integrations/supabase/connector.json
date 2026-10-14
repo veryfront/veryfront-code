@@ -57,37 +57,37 @@
     {
       "id": "supabase__list_tables",
       "name": "List Tables",
-      "description": "List all tables in your Supabase database",
+      "description": "List tables",
       "requiresWrite": false
     },
     {
       "id": "supabase__query_table",
       "name": "Query Table",
-      "description": "Select rows from a table with optional filters and sorting",
+      "description": "Query table",
       "requiresWrite": false
     },
     {
       "id": "supabase__insert_row",
       "name": "Insert Row",
-      "description": "Insert a new row into a table",
+      "description": "Insert row",
       "requiresWrite": true
     },
     {
       "id": "supabase__update_row",
       "name": "Update Row",
-      "description": "Update an existing row in a table",
+      "description": "Update row",
       "requiresWrite": true
     },
     {
       "id": "supabase__delete_row",
       "name": "Delete Row",
-      "description": "Delete a row from a table",
+      "description": "Delete row",
       "requiresWrite": true
     },
     {
       "id": "supabase__list_organizations",
       "name": "List Organizations",
-      "description": "List the organizations your access token can manage",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -97,7 +97,7 @@
     {
       "id": "supabase__list_projects",
       "name": "List Projects",
-      "description": "List all Supabase projects across your organizations",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -107,7 +107,7 @@
     {
       "id": "supabase__get_project",
       "name": "Get Project",
-      "description": "Get details and status of a Supabase project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -125,7 +125,7 @@
     {
       "id": "supabase__run_sql",
       "name": "Run SQL",
-      "description": "Run a SQL query against a project's Postgres database via the Management API",
+      "description": "Run SQL",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

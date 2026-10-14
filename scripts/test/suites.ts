@@ -180,6 +180,7 @@ const PROCESS_ISOLATED_TEST_FILES = new Set([
   "cli/commands/dev/dev-output.integration.test.ts",
   "tests/integration/adapters/shell-adapter.test.ts",
   "tests/integration/cli/merge-preview.integration.test.ts",
+  "tests/integration/cli/studio-config.integration.test.ts",
   "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
   "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
 ]);

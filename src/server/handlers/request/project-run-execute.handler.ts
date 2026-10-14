@@ -1,3 +1,7 @@
+import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.ts";
+import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
+import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
@@ -146,6 +150,7 @@ import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES } from "#veryfront/workflow/limits.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import {
+  createProjectRunInferenceEmbeddingModel,
   PROJECT_RUN_INFERENCE_TOKEN_HEADER,
   runWithProjectRunInferenceCredential,
 } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
@@ -155,7 +160,10 @@ import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
 } from "#veryfront/agent/hosted/durable-run-event-sink.ts";
-import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  getActiveRunEventSinks,
+  runWithMandatoryRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
@@ -168,6 +176,7 @@ import {
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
 import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import type { AgentRunRuntimeEventRecordedEvent } from "#veryfront/runtime/model-call-context.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -175,6 +184,12 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import {
+  classifyRuntimeOwnershipProbeApiResponse,
+  createProjectRunRuntimeOwnershipProbeFromHostEnv,
+  type RuntimeOwnershipProbe,
+  type RuntimeOwnershipProbeAuthoritySurface,
+} from "./project-run-runtime-ownership-probe.ts";
 
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
@@ -266,6 +281,8 @@ const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
 const KNOWLEDGE_LOG_MAX_EVENTS = 1_000;
 const KNOWLEDGE_LOG_MAX_BYTES = 256 * 1_024;
 const KNOWLEDGE_LOG_TRUNCATED_MESSAGE = "Knowledge ingest logs were truncated";
+const KNOWLEDGE_PROGRESS_RUNTIME = "veryfront";
+const KNOWLEDGE_PROGRESS_EVENT_KIND = "knowledge_ingest_progress";
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
@@ -386,7 +403,9 @@ export interface ProjectRunExecuteResponse {
     | "RUN_TIMEOUT"
     | "INPUT_VALIDATION_FAILED"
     | "OUTPUT_VALIDATION_FAILED"
-    | "OUTPUT_TOO_LARGE";
+    | "OUTPUT_TOO_LARGE"
+    | "TASK_FILESYSTEM_READ_ONLY"
+    | "TASK_EXECUTION_FAILED";
   /**
    * Structured failure detail, such as schema validation errors, or
    * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.
@@ -411,6 +430,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  eventToken?: string;
   content?: string;
   signal?: AbortSignal;
 }
@@ -531,6 +551,7 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    eventToken?: string;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
     request: ProjectRunExecuteRequest;
@@ -555,6 +576,7 @@ export interface ProjectRunExecuteHandlerDeps {
   workflowPauseDecisionTimeoutMs?: number;
   /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
   workflowClientDestroyTimeoutMs?: number;
+  createRuntimeOwnershipProbe?(nowMs: number): RuntimeOwnershipProbe | undefined;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -2343,17 +2365,26 @@ async function destroyWorkflowClient(
 }
 
 interface RuntimeApiClient {
+  postRaw<T>(
+    path: string,
+    body: string,
+    options?: { signal?: AbortSignal; idempotencyKey?: string },
+  ): Promise<T>;
   getStream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
   get<T>(
     path: string,
     params?: Record<string, string>,
     options?: { signal?: AbortSignal },
   ): Promise<T>;
-  post<T>(path: string, body?: unknown): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T>;
   put<T>(
     path: string,
     body?: unknown,
-    options?: { signal?: AbortSignal; retryPolicy?: "default" | "none" },
+    options?: {
+      signal?: AbortSignal;
+      params?: Record<string, string>;
+      retryPolicy?: "default" | "none";
+    },
   ): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -2876,11 +2907,26 @@ function isPermittedProjectRunObservationEventType(type: string): boolean {
   }
 }
 
+function readRuntimeOwnershipEventAuthorityCanonicalRunId(
+  request: ProjectRunExecuteRequest,
+  eventToken: string | undefined,
+): string | undefined {
+  if (eventToken === undefined) return undefined;
+  try {
+    return readProjectExecutionParent(
+      eventToken,
+      request.runId,
+      request.projectId,
+    ).canonicalRunId;
+  } catch {
+    return undefined;
+  }
+}
+
 function shouldObserveProjectRunRuntime(request: ProjectRunExecuteRequest): boolean {
   if (request.kind === "workflow") return true;
   switch (request.target) {
     case "task:eval":
-    case "task:knowledge-ingest":
     case "task:release-asset-build":
     case "task:dependency-artifact-build":
     case "task:style-artifact-build":
@@ -3068,6 +3114,7 @@ function createRunStopAcknowledger(
   req: Request,
   runId: string,
   executionSignal?: AbortSignal,
+  afterAcknowledged?: () => Promise<void>,
 ): (() => Promise<void>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
@@ -3124,6 +3171,16 @@ function createRunStopAcknowledger(
       if (!ReflectApply(ResponseOkGetter, response, [])) {
         throw new TaskError("Run stop acknowledgement rejected");
       }
+      try {
+        await afterAcknowledged?.();
+      } catch {
+        serverLogger.warn(
+          "[project-run-execute] Runtime ownership probe failed after stop acknowledgement",
+          {
+            runId,
+          },
+        );
+      }
     } catch {
       // Best effort. Missing acknowledgement remains unconfirmed in the API.
       serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
@@ -3166,6 +3223,7 @@ function createRunPauseAcknowledger(
   req: Request,
   runId: string,
   sleep: (ms: number) => Promise<void>,
+  afterPauseAcknowledged?: () => Promise<void>,
 ): ((decisionStopped?: AbortSignal) => Promise<boolean | undefined>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
@@ -3225,6 +3283,15 @@ function createRunPauseAcknowledger(
             status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
             typeof body.stop === "boolean"
           ) {
+            // Only the actual successful server acknowledgement may trigger the probe.
+            // Conservative stop decisions after rejection or cancellation are not pause evidence.
+            if (body.stop) {
+              try {
+                await afterPauseAcknowledged?.();
+              } catch {
+                // Diagnostic probe failures must not change the server acknowledgement decision.
+              }
+            }
             return body.stop;
           }
         }
@@ -3538,7 +3605,9 @@ function createDurableEvalAgentRunBody(
         : { type: "main_branch" },
     },
     config: {
-      conversation_mode: "create_new",
+      // Eval examples are isolated headless executions. A runtime service
+      // account's owner is attribution, not authority to own a conversation.
+      conversation_mode: "none",
       tools: request.tools,
       context: request.context,
       forwarded_props: createDurableEvalAgentForwardedProps(input, request),
@@ -3645,13 +3714,36 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
+function requireCanonicalWriterHttps(apiUrl: string): string {
+  const scheme = ReflectApply(StringPrototypeSlice, apiUrl, [0, 8]) as string;
+  if (ReflectApply(StringPrototypeToLowerCase, scheme, []) !== "https://") {
+    throw new TypeError("The knowledge writer credential requires an HTTPS API endpoint");
+  }
+  return apiUrl;
+}
+
 function createRuntimeApiClient(
   req: Request,
   ctx: HandlerContext,
   defaultSignal?: AbortSignal,
+  canonicalWriterAuthority = false,
+  retainedWriterToken?: string,
+  retainedBearerToken?: string,
+  retainedChildWriterAuthority = false,
+  authoritySurface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): RuntimeApiClient {
-  const apiUrl = getEnvironmentConfig().apiBaseUrl;
-  const token = getRuntimeApiToken(req, ctx);
+  // A client that may carry the current-attempt writer credential uses the
+  // host-owned HTTPS origin; project env files cannot select it, and a
+  // boot-configured HTTP API origin does not extend to this credential.
+  const apiUrl = canonicalWriterAuthority
+    ? requireCanonicalWriterHttps(
+      requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl()),
+    )
+    : getEnvironmentConfig().apiBaseUrl;
+  const token = retainedBearerToken ?? getRuntimeApiToken(req, ctx);
+  // The execution request no longer carries the event token; it is retained
+  // by the handler and passed in explicitly.
+  const writerToken = canonicalWriterAuthority ? retainedWriterToken ?? null : null;
   if (!token) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
@@ -3665,12 +3757,15 @@ function createRuntimeApiClient(
     body?: unknown,
     params?: Record<string, string>,
     signal: AbortSignal | undefined = defaultSignal,
+    retainedWireBody?: string,
+    retainedIdempotencyKey?: string,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
       url.searchParams.set(key, value);
     }
 
+    const canonicalMutation = isRuntimeFileMutationRequest(method, path);
     const response = await send(
       url.toString(),
       createNativeRequestInit(undefined, {
@@ -3679,24 +3774,50 @@ function createRuntimeApiClient(
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
+          ...(retainedIdempotencyKey ? { "Idempotency-Key": retainedIdempotencyKey } : {}),
+          ...(writerToken &&
+              (canonicalMutation ||
+                (retainedChildWriterAuthority && method === "POST" && path === "/runs"))
+            ? { "X-Veryfront-Run-Event-Token": writerToken }
+            : {}),
         },
-        body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
+        body: retainedWireBody ??
+          (body === undefined ? undefined : capturedArtifactJsonStringify(body)),
         signal,
       }),
     );
 
-    if (!response.ok) {
-      throw API_CLIENT_ERROR.create({
-        detail: `Veryfront API request failed: ${response.status} ${response.statusText}`,
+    if (!ReflectApply(ResponseOkGetter, response, [])) {
+      const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+      const error = API_CLIENT_ERROR.create({
+        detail: `Veryfront API request failed: ${status} ${response.statusText}`,
       });
+      throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }
 
-    if (response.status === 204) return undefined as T;
+    if (ReflectApply(ResponseStatusGetter, response, []) === 204) return undefined as T;
 
-    return response.json() as Promise<T>;
+    // Project code shares this process and can replace Response.prototype.json; probe
+    // readbacks and other API results are parsed with the reader captured at load.
+    return await ReflectApply(ResponsePrototypeJson, response, []) as T;
   }
 
   return {
+    postRaw<T>(
+      path: string,
+      body: string,
+      options?: { signal?: AbortSignal; idempotencyKey?: string },
+    ): Promise<T> {
+      return requestJson<T>(
+        "POST",
+        path,
+        undefined,
+        undefined,
+        options?.signal,
+        body,
+        options?.idempotencyKey,
+      );
+    },
     async getStream(
       path: string,
       options?: { signal?: AbortSignal },
@@ -3735,15 +3856,15 @@ function createRuntimeApiClient(
     ): Promise<T> {
       return requestJson<T>("GET", path, undefined, params, options?.signal);
     },
-    post<T>(path: string, body?: unknown): Promise<T> {
-      return requestJson<T>("POST", path, body);
+    post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
+      return requestJson<T>("POST", path, body, undefined, options?.signal);
     },
     put<T>(
       path: string,
       body?: unknown,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; params?: Record<string, string> },
     ): Promise<T> {
-      return requestJson<T>("PUT", path, body, undefined, options?.signal);
+      return requestJson<T>("PUT", path, body, options?.params, options?.signal);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("PATCH", path, body);
@@ -3757,7 +3878,13 @@ function createRuntimeApiClient(
 export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(
+    input.req,
+    input.ctx,
+    input.signal,
+    input.eventToken !== undefined,
+    input.eventToken,
+  );
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
   const response = await client.put<{ path?: string }>(
@@ -3826,9 +3953,172 @@ async function resolveUploadIdsToPaths(
   return paths;
 }
 
+type KnowledgeRuntimeProgressValue = {
+  version: 1;
+  phase: string;
+  source_ordinal: number;
+  source_count: number;
+  source_type: string;
+  progress: {
+    unit: string;
+    current: number;
+    total?: number;
+  };
+};
+
+type KnowledgeRuntimeProgressBridge = {
+  record: (level: string, message: string, metadata?: Record<string, unknown>) => void;
+  flush: () => Promise<void>;
+};
+
+const KNOWLEDGE_RUNTIME_PROGRESS_PHASES = new Set([
+  "file_processing",
+  "parser_started_pre_call",
+  "pdf_page_completed",
+  "ppt_slide_completed",
+  "document_file_completed",
+  "file_completed",
+  "file_failed",
+]);
+const KNOWLEDGE_RUNTIME_PROGRESS_SOURCE_TYPES = new Set([
+  "pdf",
+  "pptx",
+  "docx",
+  "markdown",
+  "json",
+  "text",
+  "html",
+  "csv",
+  "unknown",
+]);
+const KNOWLEDGE_RUNTIME_PROGRESS_UNITS = new Set(["file", "page", "slide"]);
+const KNOWLEDGE_RUNTIME_PARSER_PROGRESS_PHASES = new Set([
+  "pdf_page_completed",
+  "ppt_slide_completed",
+  "document_file_completed",
+]);
+
+function readKnowledgeProgressString(
+  metadata: Record<string, unknown>,
+  key: string,
+  allowed: Set<string>,
+): string | undefined {
+  const value = getOwnDataProperty(metadata, key);
+  if (typeof value !== "string") return undefined;
+  return allowed.has(value) ? value : undefined;
+}
+
+function readKnowledgeProgressInteger(
+  metadata: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = getOwnDataProperty(metadata, key);
+  if (typeof value !== "number" || !NumberIsFinite(value) || MathTrunc(value) !== value) {
+    return undefined;
+  }
+  return value > 0 ? value : undefined;
+}
+
+function readKnowledgeRuntimeProgressValue(
+  metadata: Record<string, unknown> | undefined,
+): KnowledgeRuntimeProgressValue | undefined {
+  if (metadata === undefined) return undefined;
+  const phase = readKnowledgeProgressString(
+    metadata,
+    "phase",
+    KNOWLEDGE_RUNTIME_PROGRESS_PHASES,
+  );
+  const sourceOrdinal = readKnowledgeProgressInteger(metadata, "source_ordinal") ??
+    readKnowledgeProgressInteger(metadata, "progress_current");
+  const sourceCount = readKnowledgeProgressInteger(metadata, "source_count") ??
+    readKnowledgeProgressInteger(metadata, "progress_total");
+  const sourceType = readKnowledgeProgressString(
+    metadata,
+    "source_type",
+    KNOWLEDGE_RUNTIME_PROGRESS_SOURCE_TYPES,
+  ) ?? "unknown";
+  if (phase === undefined || sourceOrdinal === undefined || sourceCount === undefined) {
+    return undefined;
+  }
+
+  const progressUnit = readKnowledgeProgressString(
+    metadata,
+    "progress_unit",
+    KNOWLEDGE_RUNTIME_PROGRESS_UNITS,
+  ) ?? "file";
+  const progressCurrent = readKnowledgeProgressInteger(metadata, "progress_current") ??
+    sourceOrdinal;
+  const progressTotal = readKnowledgeProgressInteger(metadata, "progress_total");
+  return {
+    version: 1,
+    phase,
+    source_ordinal: sourceOrdinal,
+    source_count: sourceCount,
+    source_type: sourceType,
+    progress: {
+      unit: progressUnit,
+      current: progressCurrent,
+      ...(progressTotal === undefined ? {} : { total: progressTotal }),
+    },
+  };
+}
+
+export function createKnowledgeRuntimeProgressBridge(): KnowledgeRuntimeProgressBridge | undefined {
+  const sink = getActiveRunEventSinks().mandatory;
+  if (!sink) return undefined;
+  const pending: Promise<void>[] = [];
+  const emittedParserProgress = new Set<string>();
+  let firstFailure: unknown;
+
+  const queue = (event: AgentRunRuntimeEventRecordedEvent) => {
+    if (firstFailure !== undefined) throw firstFailure;
+    try {
+      const result = sink(event);
+      if (result && typeof result === "object" && "then" in result) {
+        const pendingResult = Promise.resolve(result).then(() => undefined);
+        pendingResult.catch((error) => {
+          firstFailure ??= error;
+        });
+        pending.push(pendingResult);
+      }
+    } catch (error) {
+      firstFailure ??= error;
+      throw error;
+    }
+  };
+
+  return {
+    record: (_level, _message, metadata) => {
+      const value = readKnowledgeRuntimeProgressValue(metadata);
+      if (value === undefined) return;
+
+      if (KNOWLEDGE_RUNTIME_PARSER_PROGRESS_PHASES.has(value.phase)) {
+        const key = `${value.source_ordinal}:${value.phase}`;
+        const parserProgressSeen = emittedParserProgress.has(key);
+        const parserProgressComplete = value.progress.total !== undefined &&
+          value.progress.current >= value.progress.total;
+        if (parserProgressSeen && !parserProgressComplete) return;
+        emittedParserProgress.add(key);
+      }
+
+      queue({
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: KNOWLEDGE_PROGRESS_RUNTIME,
+        kind: KNOWLEDGE_PROGRESS_EVENT_KIND,
+        value,
+      });
+    },
+    async flush() {
+      await Promise.allSettled(pending);
+      if (firstFailure !== undefined) throw firstFailure;
+    },
+  };
+}
+
 export function createKnowledgeEventLogger(
   lines: string[],
   truncatedMessage = KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+  progressBridge?: KnowledgeRuntimeProgressBridge,
 ): Logger {
   const encoder = new TextEncoder();
   const truncatedLine = JSON.stringify({ level: "warn", message: truncatedMessage });
@@ -3846,6 +4136,7 @@ export function createKnowledgeEventLogger(
     }
   };
   const append = (level: string, message: string, metadata?: Record<string, unknown>) => {
+    progressBridge?.record(level, message, metadata);
     if (truncated || eventCount >= KNOWLEDGE_LOG_MAX_EVENTS) {
       truncate();
       return;
@@ -3902,16 +4193,32 @@ function resolveKnowledgeOutputDestination(
     detail: "Knowledge ingest requires an explicit writable main_branch or preview_branch target",
   });
 }
+function resolveRuntimeOwnershipCanonicalBranchId(
+  request: ProjectRunExecuteRequest,
+): string | undefined | null {
+  if (request.runtimeTargetKind === "preview_branch") return request.runtimeTargetBranchId ?? null;
+  if (request.runtimeTargetKind === undefined || request.runtimeTargetKind === "main_branch") {
+    return undefined;
+  }
+  return null;
+}
 
 async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  eventToken?: string;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx, input.signal);
+  const client = createRuntimeApiClient(
+    input.req,
+    input.ctx,
+    input.signal,
+    true,
+    input.eventToken,
+  );
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
@@ -3929,6 +4236,101 @@ async function executeKnowledgeIngestRun(input: {
     } = await import("#cli/commands/knowledge/command");
     const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
     const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
+    const { indexKnowledgeDocument } = await import(
+      "../../../../cli/commands/knowledge/indexing.ts"
+    );
+
+    const { createEmbeddingFacade } = await import("#veryfront/embedding/embedding.ts");
+    const { getDefaultVeryfrontCloudEmbeddingModel } = await import(
+      "#veryfront/platform/cloud/resolver.ts"
+    );
+
+    const outputDestination = resolveKnowledgeOutputDestination(input.request);
+    const indexCanonical: typeof indexKnowledgeDocument = (indexInput) =>
+      runWithVeryfrontCloudContextAsync({
+        projectSlug: projectReference,
+        serviceLayer: "cloud",
+      }, () => {
+        const modelId = getDefaultVeryfrontCloudEmbeddingModel();
+        const model = createProjectRunInferenceEmbeddingModel(modelId);
+        if (!model) {
+          throw new Error("Knowledge indexing requires a managed run inference credential.");
+        }
+        return indexKnowledgeDocument({
+          ...indexInput,
+          embedder: createEmbeddingFacade({}, modelId, model),
+        });
+      });
+
+    // Lifecycle work indexes an admitted immutable version without publishing again.
+    // The branch comes only from the signed runtime target, never the task config.
+    if (getOwnDataProperty(config, "mode") === "index_existing_canonical") {
+      const path = getOwnDataProperty(config, "file_path");
+      const fileId = getOwnDataProperty(config, "file_id");
+      const versionId = getOwnDataProperty(config, "expected_version_id");
+      const checksum = getOwnDataProperty(config, "checksum");
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (
+        typeof path !== "string" || path.length === 0 ||
+        typeof fileId !== "string" || !uuid.test(fileId) ||
+        typeof versionId !== "string" || !uuid.test(versionId) ||
+        (checksum !== null &&
+          (typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)))
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail:
+            "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum (or explicit null for a legacy version).",
+        });
+      }
+      const selected = await client.get<unknown>(
+        `/projects/${encodeURIComponent(projectReference)}/files/${encodeURIComponent(path)}`,
+        outputDestination ? { branch_id: outputDestination.branchId } : undefined,
+        { signal: input.signal },
+      );
+      input.signal.throwIfAborted();
+      if (!isRecord(selected)) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      const content = getOwnDataProperty(selected, "content");
+      if (
+        getOwnDataProperty(selected, "id") !== fileId ||
+        getOwnDataProperty(selected, "version_id") !== versionId ||
+        getOwnDataProperty(selected, "path") !== path ||
+        typeof content !== "string"
+      ) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      const selectedChecksum = getOwnDataProperty(selected, "checksum");
+      const computedChecksum = await computeHash(content);
+      const legacyChecksum = checksum === null &&
+        (selectedChecksum === null || selectedChecksum === undefined);
+      if (
+        !legacyChecksum &&
+        (selectedChecksum !== checksum || computedChecksum !== checksum)
+      ) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      input.signal.throwIfAborted();
+      const localPath = `${outputDir}/canonical.md`;
+      await Deno.writeTextFile(localPath, content);
+      input.signal.throwIfAborted();
+      const receipt = await indexCanonical({
+        client,
+        projectSlug: projectReference,
+        branch: outputDestination?.branchId ?? "main",
+        published: { path, file_id: fileId, version_id: versionId, checksum: computedChecksum },
+        ...(legacyChecksum ? { checksumAcknowledgement: "legacy-null" as const } : {}),
+        localPath,
+        signal: input.signal,
+      });
+      input.signal.throwIfAborted();
+      return {
+        success: true,
+        result: { kind: "canonical_knowledge_index", mode: "index_existing_canonical", ...receipt },
+        logs: null,
+        duration_ms: Date.now() - startedAt,
+      };
+    }
 
     const uploadIds = getStringArrayConfig(config, ["upload_ids", "uploadIds"]);
     const paths = getStringArrayConfig(config, ["paths", "upload_paths", "uploadPaths"]);
@@ -3949,7 +4351,6 @@ async function executeKnowledgeIngestRun(input: {
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
     const okfBundle = getOwnDataProperty(config, "okf_bundle") === true ||
       getOwnDataProperty(config, "okfBundle") === true;
-    const outputDestination = resolveKnowledgeOutputDestination(input.request);
 
     if (uploadPaths.length > 0 && pathPrefix) {
       throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
@@ -4002,23 +4403,37 @@ async function executeKnowledgeIngestRun(input: {
       throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
     }
 
-    const results = await ingestResolvedSources(collection.sources, options, {
-      client,
-      projectSlug: projectReference,
-      outputDir,
-      runParser: runKnowledgeParser,
-      eventLogger: createKnowledgeEventLogger(logLines),
-      uploadKnowledgeFile: (remotePath, localPath) =>
-        putRemoteFileFromLocal(
+    const progressBridge = createKnowledgeRuntimeProgressBridge();
+    const results = await (async () => {
+      try {
+        return await ingestResolvedSources(collection.sources, options, {
           client,
-          projectReference,
-          remotePath,
-          localPath,
-          input.signal,
-          outputDestination,
-        ),
-      signal: input.signal,
-    });
+          projectSlug: projectReference,
+          outputDir,
+          runParser: runKnowledgeParser,
+          eventLogger: createKnowledgeEventLogger(
+            logLines,
+            KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+            progressBridge,
+          ),
+          destinationBranch: outputDestination?.branchId ?? "main",
+          indexKnowledgeDocument: indexCanonical,
+          uploadKnowledgeFile: (remotePath, localPath, metadata) =>
+            putRemoteFileFromLocal(
+              client,
+              projectReference,
+              remotePath,
+              localPath,
+              input.signal,
+              outputDestination,
+              metadata,
+            ),
+          signal: input.signal,
+        });
+      } finally {
+        await progressBridge?.flush();
+      }
+    })();
     input.signal.throwIfAborted();
     const result = buildKnowledgeIngestRunResult({
       requestedCount,
@@ -4209,6 +4624,7 @@ async function executeEvalRun(
     signal?: AbortSignal;
     summaryOnly?: boolean;
     progressLogs?: string[];
+    eventToken?: string;
   } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -4299,6 +4715,7 @@ async function executeEvalRun(
       report,
       projectReference,
       reportPath: requestedReportPath,
+      eventToken: options.eventToken,
       content: reportContent,
       signal: options.signal,
     });
@@ -4337,6 +4754,7 @@ async function executeEvalTaskRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
+  retainedEventToken?: string,
 ): Promise<ProjectRunExecuteResponse> {
   const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
   if (!evalId) {
@@ -4363,6 +4781,7 @@ async function executeEvalTaskRun(
             signal: taskContext.signal ?? taskSignal,
             summaryOnly: true,
             progressLogs,
+            eventToken: retainedEventToken,
           }),
       },
     },
@@ -4383,6 +4802,7 @@ async function executeEvalTaskRun(
       error: taskResult.error,
       logs: progressLogs.join("\n") || null,
       duration_ms: taskResult.durationMs,
+      ...(taskResult.errorCode === undefined ? {} : { error_code: taskResult.errorCode }),
       ...(taskResult.retryable ? { retryable: true as const } : {}),
     };
   }
@@ -4576,9 +4996,9 @@ async function executeDependencyArtifactBuildRun(input: {
       projectId: input.ctx.projectId,
     });
     const result = await runDependencyArtifactBuild(taskInput, {
-      uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
+      writeAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
         runWhileActive(input.signal, () =>
-          apiClient.uploadDependencyArtifactAsset(
+          apiClient.writeDependencyArtifactAsset(
             artifactId,
             attemptCount,
             contentHash,
@@ -4586,9 +5006,9 @@ async function executeDependencyArtifactBuildRun(input: {
             bytes,
             input.signal,
           )),
-      reportResult: ({ artifactId, attemptCount, result }) =>
+      createResult: ({ artifactId, attemptCount, result }) =>
         runWhileActive(input.signal, () =>
-          apiClient.reportDependencyArtifactBuildResult(
+          apiClient.createDependencyArtifactBuildResult(
             artifactId,
             attemptCount,
             result,
@@ -4900,7 +5320,7 @@ async function executeStyleArtifactBuildRun(input: {
     });
     input.signal.throwIfAborted();
 
-    await apiClient.upsertStyleArtifact(
+    await apiClient.styleArtifacts.update(
       {
         ...selector,
         styleProfileHash,
@@ -4930,7 +5350,7 @@ async function executeStyleArtifactBuildRun(input: {
   } catch (error) {
     if (input.signal.aborted) throw input.signal.reason;
     if (apiClient && selector && styleProfileHash) {
-      await apiClient.upsertStyleArtifact(
+      await apiClient.styleArtifacts.update(
         {
           ...selector,
           styleProfileHash,
@@ -4966,6 +5386,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
+  createRuntimeOwnershipProbe: (nowMs) => createProjectRunRuntimeOwnershipProbeFromHostEnv(nowMs),
   sleep: (ms) => new IntrinsicPromise<void>((resolve) => TaskSetTimeout(resolve, ms)),
   now: () => Date.now(),
 };
@@ -4997,9 +5418,23 @@ async function executeProjectRun(
           const execute = async (): Promise<ProjectRunExecuteResponse> => {
             switch (request.target) {
               case "task:eval":
-                return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+                return await executeEvalTaskRun(
+                  request,
+                  ctx,
+                  req,
+                  req.signal,
+                  deps,
+                  control,
+                  retainedEventToken,
+                );
               case "task:knowledge-ingest":
-                return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+                return await deps.executeKnowledgeIngest({
+                  request,
+                  ctx,
+                  req,
+                  signal,
+                  eventToken: retainedEventToken,
+                });
               case "task:release-asset-build":
                 return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
               case "task:dependency-artifact-build":
@@ -5152,9 +5587,148 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
           stopController.signal,
         ]]) as AbortSignal;
-        const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
+        const startedAt = this.deps.now();
+        const hostObservedAt = this.taskDeadlineClock.now();
+        const runtimeOwnershipProbe = this.deps.createRuntimeOwnershipProbe?.(hostObservedAt);
+        const runtimeOwnershipCanonicalBranchId = runtimeOwnershipProbe === undefined
+          ? null
+          : resolveRuntimeOwnershipCanonicalBranchId(request);
+        const runtimeOwnershipEventAuthorityCanonicalRunId = runtimeOwnershipProbe === undefined
+          ? undefined
+          : readRuntimeOwnershipEventAuthorityCanonicalRunId(request, eventToken);
+        const runtimeOwnershipProbeSession = runtimeOwnershipCanonicalBranchId === null
+          ? undefined
+          : runtimeOwnershipProbe?.createSession({
+            request: { ...request, resumedManually: request.resume?.type === "manual" },
+            ctx,
+            nowMs: hostObservedAt,
+            readNowMs: () => this.taskDeadlineClock.now(),
+            retainedEventToken: runtimeOwnershipEventAuthorityCanonicalRunId !== undefined,
+            eventAuthorityCanonicalRunId: runtimeOwnershipEventAuthorityCanonicalRunId,
+            authorityAttemptId: runtimeOwnershipEventAuthorityCanonicalRunId === undefined ||
+                eventToken === undefined
+              ? undefined
+              : readProjectExecutionParent(eventToken, request.runId, request.projectId).attemptId,
+            canonicalBranchId: runtimeOwnershipCanonicalBranchId,
+            createCanonicalClient: (signal) =>
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                eventToken,
+                undefined,
+                false,
+                "canonical-source",
+              ),
+            ...(request.kind !== "task" || request.canonicalRunId === undefined ? {} : {
+              childProbe: createRuntimeOwnershipChildProbe({
+                projectId: request.projectId,
+                canonicalRunId: request.canonicalRunId,
+                targetTaskId: "ce-runtime-proof-task",
+                createWriter: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    true,
+                    "child-admission",
+                  ),
+                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
+                createEvents: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    undefined,
+                    eventToken,
+                    false,
+                    "run-events",
+                  ),
+              }),
+            }),
+            ...(inferenceToken === undefined ? {} : {
+              indexProbe: createRuntimeOwnershipIndexProbe({
+                projectId: request.projectId,
+                branchId: runtimeOwnershipCanonicalBranchId,
+                createWriter: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    false,
+                    "canonical-index",
+                  ),
+                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
+                embed: async (text, signal) => {
+                  const { createEmbeddingFacade } = await import(
+                    "#veryfront/embedding/embedding.ts"
+                  );
+                  const modelId = "veryfront-cloud/openai/text-embedding-3-small";
+                  const model = createProjectRunInferenceEmbeddingModel(modelId);
+                  if (!model) {
+                    throw new Error(
+                      "Runtime ownership indexing requires actual managed inference authority",
+                    );
+                  }
+                  return await runWithVeryfrontCloudContextAsync({
+                    projectSlug: ctx.projectSlug ?? request.projectId,
+                    serviceLayer: "cloud",
+                  }, () => createEmbeddingFacade({}, modelId, model).embed(text, { signal }));
+                },
+              }),
+            }),
+            createReadbackClient: (signal) =>
+              createRuntimeApiClient(req, ctx, signal, true, undefined),
+            createEventAppendClient: (signal) =>
+              eventToken === undefined
+                ? createRuntimeApiClient(req, ctx, signal, true, undefined)
+                : createRuntimeApiClient(
+                  req,
+                  ctx,
+                  signal,
+                  true,
+                  undefined,
+                  eventToken,
+                  false,
+                  "run-events",
+                ),
+            createHeartbeatClient: (signal) =>
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                undefined,
+                undefined,
+                false,
+                "run-heartbeat",
+              ),
+          });
+        const callback = createRunStopAcknowledger(
+          req,
+          request.runId,
+          executionSignal,
+          () =>
+            runtimeOwnershipProbeSession?.afterStopAcknowledged() ??
+              primordialPromiseResolve(undefined),
+        );
         const acknowledgePause = request.kind === "workflow"
-          ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
+          ? createRunPauseAcknowledger(
+            req,
+            request.runId,
+            this.deps.sleep,
+            () =>
+              runtimeOwnershipProbeSession?.afterPauseAcknowledged?.() ??
+                primordialPromiseResolve(undefined),
+          )
           : undefined;
         const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
         const settledStop = this.stopRegistry.register(request.runId, () => {
@@ -5169,10 +5743,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         return await withSpan(
           "project_run.execute",
           async () => {
-            const startedAt = this.deps.now();
             let executionOwned = false;
             try {
-              const execute = () => {
+              const execute = async () => {
+                await runtimeOwnershipProbeSession?.beforeExecute();
                 if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
                   requireProjectRunObservationParent(request, eventToken);
                 }

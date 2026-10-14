@@ -509,6 +509,20 @@ describe(
     // file; it cannot tell "resolved inside the project but the file is
     // missing" apart from "refused as an escape". Seed the project-relative
     // copy so the allowed branch has to actually resolve and bundle.
+    it("loads a relative JSON import from the adapter", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/app/data.json", '{ "label": "JSON_FILE_MARKER" }');
+
+      const { errors, output } = await bundleEntry(
+        'import data from "./data.json"; console.log(data.label);',
+        "/project",
+        adapter,
+      );
+
+      assertEquals(errors, []);
+      assertEquals(output.includes("JSON_FILE_MARKER"), true);
+    });
+
     it("resolves a project-relative absolute import to the project copy", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

@@ -69,7 +69,9 @@ export async function runIntegrationOperation(
 ): Promise<unknown> {
   if (options.subcommand === "list") {
     return {
-      integrations: await collectIntegrationRows(client.discover({ search: options.search })),
+      integrations: await collectIntegrationRows(
+        client.listIntegrations({ search: options.search }),
+      ),
     };
   }
   const target = requireIntegrationTarget(options);
@@ -85,7 +87,7 @@ export async function runIntegrationOperation(
     case "status": {
       if (options.toolName) {
         return {
-          selected_readiness: await client.readiness(options.toolName, {
+          selected_readiness: await client.checkReadiness(options.toolName, {
             ...(options.connectionId ? { connectionId: options.connectionId } : {}),
             ...(options.expectedConnectionGenerationId
               ? { expectedConnectionGenerationId: options.expectedConnectionGenerationId }
@@ -115,7 +117,7 @@ export async function runIntegrationOperation(
       if (args === null || typeof args !== "object" || Array.isArray(args)) {
         throw INVALID_ARGUMENT.create({ detail: "--args must contain a JSON object." });
       }
-      return client.call(target, args as Record<string, unknown>, {
+      return client.runTool(target, args as Record<string, unknown>, {
         connectionId: options.connectionId,
         ...(options.expectedConnectionGenerationId !== undefined
           ? { expectedConnectionGenerationId: options.expectedConnectionGenerationId }

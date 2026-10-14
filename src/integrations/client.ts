@@ -38,6 +38,11 @@ import {
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
 } from "./limits.ts";
 import type {
+  ConnectionDeletion,
+  ConnectionRequestOptions,
+  ConnectionStatus,
+  ConnectSession,
+  CreateConnectSessionOptions,
   IntegrationCallOptions,
   IntegrationCatalogEntry,
   IntegrationClient,
@@ -127,9 +132,36 @@ function uuid(value: unknown): value is string {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
-function integrationPath(integration: string): string {
+function integrationName(integration: string): string {
   if (!identifier(integration)) throw new TypeError("Integration must be a canonical identifier");
-  return encodeURIComponent(integration);
+  return integration;
+}
+function integrationPath(integration: string): string {
+  return encodeURIComponent(integrationName(integration));
+}
+function connectionScope(scope: unknown): "user" | "project" {
+  if (scope !== "user" && scope !== "project") {
+    throw new TypeError("Connection scope must be user or project");
+  }
+  return scope;
+}
+function requireRedirectUri(redirectUri: unknown): string {
+  if (typeof redirectUri !== "string") {
+    throw new TypeError("OAuth requires an explicit redirect URI");
+  }
+  let redirect: URL;
+  try {
+    redirect = new URL(redirectUri);
+  } catch {
+    throw new TypeError("OAuth redirect URI must be absolute");
+  }
+  if (
+    redirect.username || redirect.password ||
+    !["http:", "https:", "veryfront:"].includes(redirect.protocol)
+  ) {
+    throw new TypeError("Unsupported OAuth redirect URI");
+  }
+  return redirectUri;
 }
 function boundedObject(value: unknown, responseBytes?: number): IntegrationJsonObject {
   const snapshot = responseBytes === undefined
@@ -183,9 +215,10 @@ function parseToolResult(value: unknown): IntegrationToolResult {
 function requireShape<T extends IntegrationJsonObject>(
   value: unknown,
   valid: (item: IntegrationJsonObject) => boolean,
+  outcomeUnknown = false,
 ): T {
   if (!record(value) || !valid(value)) {
-    throw new IntegrationApiError("invalid_response", 200, false);
+    throw new IntegrationApiError("invalid_response", 200, outcomeUnknown);
   }
   return value as T;
 }
@@ -221,10 +254,12 @@ export async function createIntegrationClient(
   let generationPreconditionSupported = false;
 
   async function request(path: string, options: {
-    method?: "GET" | "POST";
     body?: string;
+    method?: "GET" | "POST" | "DELETE";
     signal?: AbortSignal | undefined;
     execution?: boolean;
+    /** A write whose effect is uncertain once dispatched, without tool-call response bounds. */
+    mutation?: boolean;
     requireProjectBinding?: boolean;
     capturePreconditions?: boolean;
     requireGenerationPrecondition?: boolean;
@@ -234,8 +269,10 @@ export async function createIntegrationClient(
       body,
       signal: operationSignal,
       execution: call = false,
+      mutation = false,
       requireProjectBinding = false,
     } = options;
+    const outcomeUnknown = call || mutation;
     const signal = context.abortSignal && operationSignal
       ? AbortSignal.any([context.abortSignal, operationSignal])
       : context.abortSignal ?? operationSignal;
@@ -273,7 +310,7 @@ export async function createIntegrationClient(
         throw new IntegrationApiError(
           "http",
           response.status,
-          call && (response.status >= 500 || response.status === 408 ||
+          outcomeUnknown && (response.status >= 500 || response.status === 408 ||
             readIntegrationHttpProblem(problem)?.slug === "integration-execution-outcome-unknown"),
           condition,
           problem,
@@ -286,14 +323,14 @@ export async function createIntegrationClient(
             (!uuid(effectiveProject) || effectiveProject.toLowerCase() !== project.id)))
       ) {
         discardResponseBody(response);
-        throw new IntegrationApiError("project_binding", response.status, call);
+        throw new IntegrationApiError("project_binding", response.status, outcomeUnknown);
       }
       const advertised = response.headers.get("x-veryfront-tool-preconditions")?.split(",")
         .map((value) => value.trim()).includes("connection_generation_id") ?? false;
       if (options.capturePreconditions) generationPreconditionSupported = advertised;
       if (options.requireGenerationPrecondition && !advertised) {
         discardResponseBody(response);
-        throw new IntegrationApiError("unsupported_precondition", response.status, call);
+        throw new IntegrationApiError("unsupported_precondition", response.status, outcomeUnknown);
       }
       const value = await readBoundedResponseJson(
         response,
@@ -308,13 +345,13 @@ export async function createIntegrationClient(
     } catch (error) {
       if (error instanceof IntegrationApiError) throw error;
       if (scope.signal.aborted) {
-        if (!call) throw scope.signal.reason;
+        if (!outcomeUnknown) throw scope.signal.reason;
         throw new IntegrationApiError("transport", response?.status, true);
       }
       throw new IntegrationApiError(
         response ? "invalid_response" : "transport",
         response?.status,
-        call,
+        outcomeUnknown,
       );
     } finally {
       scope.dispose();
@@ -337,8 +374,8 @@ export async function createIntegrationClient(
   // Accessible project detail alone does not establish a token's tool binding.
   // The read-only discovery handler publishes the same authoritative project
   // selection used by calls, including project-bound credential precedence.
-  const binding = await request("/integrations/tools/list?limit=1", {
-    method: "POST",
+  const binding = await request("/integration-tools?limit=1", {
+    method: "GET",
     capturePreconditions: true,
     requireProjectBinding: true,
   });
@@ -393,6 +430,44 @@ export async function createIntegrationClient(
     }
   }
 
+  /** Validate a connect session: a one-time link to this API's start-connection route. */
+  function readConnectSession(
+    result: IntegrationJsonObject,
+    integration: string,
+  ): { sessionToken: string; connectUrl: string; expiresAt: string } {
+    const expires = typeof result.expires_at === "string" ? Date.parse(result.expires_at) : NaN;
+    let connectUrl: URL;
+    try {
+      connectUrl = new URL(
+        typeof result.connect_url === "string" ? resolveUrl(result.connect_url) : "",
+      );
+    } catch {
+      throw new IntegrationApiError("invalid_response", 200, false);
+    }
+    const expectedUrl = new URL(resolveUrl(`/oauth/connect/${integrationPath(integration)}`));
+    if (
+      typeof result.session_token !== "string" || !/^[a-f0-9]{64}$/i.test(result.session_token) ||
+      connectUrl.pathname !== expectedUrl.pathname || connectUrl.username ||
+      connectUrl.password || connectUrl.hash ||
+      connectUrl.searchParams.getAll("session_token").length !== 1 ||
+      connectUrl.searchParams.get("session_token") !== result.session_token ||
+      !Number.isFinite(expires) || new Date(expires).toISOString() !== result.expires_at
+    ) {
+      throw new IntegrationApiError("invalid_response", 200, false);
+    }
+    return {
+      sessionToken: result.session_token,
+      connectUrl: connectUrl.toString(),
+      expiresAt: result.expires_at as string,
+    };
+  }
+
+  function integrationResourcePath(name: string): string {
+    return `/projects/${encodeURIComponent(selectedProject.id)}/integrations/${
+      integrationPath(name)
+    }`;
+  }
+
   async function getDetails(
     integration: string,
     signal?: AbortSignal,
@@ -406,7 +481,7 @@ export async function createIntegrationClient(
 
   const client: IntegrationClient = Object.freeze({
     project: selectedProject,
-    discover(options: { search?: string; sortOrder?: "asc" | "desc" } = {}) {
+    listIntegrations(options: { search?: string; sortOrder?: "asc" | "desc" } = {}) {
       return pages<IntegrationCatalogEntry>(
         "/integrations",
         "data",
@@ -420,8 +495,14 @@ export async function createIntegrationClient(
           typeof item.description === "string" && typeof item.auth_type === "string",
       );
     },
+    discover(options?: { search?: string; sortOrder?: "asc" | "desc" }) {
+      return client.listIntegrations(options);
+    },
     getIntegration: getDetails,
-    async readiness(
+    readiness(toolName: string, options?: IntegrationSelectionOptions) {
+      return client.checkReadiness(toolName, options);
+    },
+    async checkReadiness(
       toolName: string,
       options: IntegrationSelectionOptions = {},
     ): Promise<IntegrationSelectedReadiness> {
@@ -454,10 +535,11 @@ export async function createIntegrationClient(
       const body = await request(
         `/projects/${selectedProject.id}/integrations/${
           encodeURIComponent(identity.integration)
-        }?${params}`,
+        }/readiness?${params}`,
         { signal: abortSignal },
       );
-      const value = body.selected_readiness;
+      // The readiness route returns the readiness object itself, with no wrapper key.
+      const value: unknown = body;
       if (
         !isSelectedReadiness(value, {
           projectId: selectedProject.id,
@@ -496,67 +578,31 @@ export async function createIntegrationClient(
         ? await options.redirectUri()
         : options.redirectUri;
       signal?.throwIfAborted();
-      if (typeof redirectUri !== "string") {
-        throw new TypeError("OAuth requires an explicit redirect URI");
-      }
-      let redirect: URL;
-      try {
-        redirect = new URL(redirectUri);
-      } catch {
-        throw new TypeError("OAuth redirect URI must be absolute");
-      }
-      if (
-        redirect.username || redirect.password ||
-        !["http:", "https:", "veryfront:"].includes(redirect.protocol)
-      ) {
-        throw new TypeError("Unsupported OAuth redirect URI");
-      }
-      const body = JSON.stringify({
-        integration,
-        project_reference: selectedProject.id,
+      const session = await client.createConnectSession(integration, {
         scope,
-        redirect_uri: redirectUri,
+        redirectUri: requireRedirectUri(redirectUri),
+        ...(signal ? { abortSignal: signal } : {}),
       });
-      if (new TextEncoder().encode(body).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
-        throw new RangeError("Integration connect request exceeds the byte limit");
-      }
-      const result = await request("/oauth/connect/session", { method: "POST", body, signal });
-      const expires = typeof result.expires_at === "string" ? Date.parse(result.expires_at) : NaN;
-      let connectUrl: URL;
-      try {
-        connectUrl = new URL(
-          typeof result.connect_url === "string" ? resolveUrl(result.connect_url) : "",
-        );
-      } catch {
-        throw new IntegrationApiError("invalid_response", 200, false);
-      }
-      const expectedUrl = new URL(resolveUrl(`/oauth/connect/${integrationPath(integration)}`));
-      if (
-        typeof result.session_token !== "string" || !/^[a-f0-9]{64}$/i.test(result.session_token) ||
-        connectUrl.pathname !== expectedUrl.pathname || connectUrl.username ||
-        connectUrl.password || connectUrl.hash ||
-        connectUrl.searchParams.getAll("session_token").length !== 1 ||
-        connectUrl.searchParams.get("session_token") !== result.session_token ||
-        !Number.isFinite(expires) || new Date(expires).toISOString() !== result.expires_at
-      ) {
-        throw new IntegrationApiError("invalid_response", 200, false);
-      }
       const handoff: IntegrationOAuthHandoff = {
         status: "oauth_handoff",
         integration,
         project_id: selectedProject.id,
         scope,
-        connect_url: connectUrl.toString(),
-        expires_at: result.expires_at as string,
+        connect_url: session.connectUrl,
+        expires_at: session.expiresAt,
       };
       Object.defineProperty(handoff, "connect_url", { enumerable: false });
       return Object.freeze(handoff);
     },
     listTools(integration: string, options: { name?: string; order?: "asc" | "desc" } = {}) {
       return pages<IntegrationClientTool>(
-        `/integrations/${integrationPath(integration)}/tools`,
+        "/integration-tools",
         "tools",
-        { order: options.order ?? "asc", ...(options.name ? { name: options.name } : {}) },
+        {
+          integration: integrationName(integration),
+          order: options.order ?? "asc",
+          ...(options.name ? { name: options.name } : {}),
+        },
         (item) =>
           typeof item.name === "string" && item.name.startsWith(`${integration}__`) &&
           parseIntegrationToolIdentity(item.name) !== null &&
@@ -565,11 +611,9 @@ export async function createIntegrationClient(
     },
     listConnections(integration: string, options: { abortSignal?: AbortSignal } = {}) {
       return pages<IntegrationClientConnection>(
-        `/projects/${encodeURIComponent(selectedProject.id)}/integrations/${
-          integrationPath(integration)
-        }/connections`,
+        `/projects/${encodeURIComponent(selectedProject.id)}/connections`,
         "data",
-        { sort_by: "created_at", sort_order: "asc" },
+        { integration: integrationName(integration), sort_by: "created_at", sort_order: "asc" },
         (item) =>
           uuid(item.id) && uuid(item.connection_generation_id) &&
           item.integration === integration && (item.scope === "user" || item.scope === "project") &&
@@ -586,24 +630,102 @@ export async function createIntegrationClient(
       if (scope !== "user" && scope !== "project") {
         throw new TypeError("OAuth status requires an explicit user or project scope");
       }
-      const params = new URLSearchParams({ project_reference: selectedProject.id, scope });
-      const status = requireShape<IntegrationConnectionStatus>(
-        await request(`/oauth/status/${integrationPath(integration)}?${params}`, {
+      const current = await client.getConnectionStatus(integration, scope, options);
+      // Keep the legacy status shape: both ID spellings when connected, neither when not.
+      const ids: Record<string, string> = current.connectionId && current.connectionGenerationId
+        ? {
+          connectionId: current.connectionId,
+          connectionGenerationId: current.connectionGenerationId,
+          connection_id: current.connectionId,
+          connection_generation_id: current.connectionGenerationId,
+        }
+        : {};
+      const status: IntegrationConnectionStatus = {
+        connected: current.connected,
+        ...ids,
+        integration,
+        scope,
+      };
+      return status;
+    },
+    async createConnectSession(
+      name: string,
+      options: CreateConnectSessionOptions,
+    ): Promise<ConnectSession> {
+      const path = `${integrationResourcePath(name)}/connect-sessions`;
+      const scope = connectionScope(options?.scope);
+      const body = JSON.stringify({
+        scope,
+        redirect_uri: requireRedirectUri(options.redirectUri),
+      });
+      if (new TextEncoder().encode(body).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
+        throw new RangeError("Integration connect request exceeds the byte limit");
+      }
+      const result = await request(path, {
+        method: "POST",
+        body,
+        signal: options.abortSignal,
+      });
+      const session = readConnectSession(result, name);
+      const value: ConnectSession = { ...session };
+      Object.defineProperty(value, "sessionToken", { enumerable: false });
+      Object.defineProperty(value, "connectUrl", { enumerable: false });
+      return Object.freeze(value);
+    },
+    async getConnectionStatus(
+      name: string,
+      scope: "user" | "project",
+      options: ConnectionRequestOptions = {},
+    ): Promise<ConnectionStatus> {
+      const path = `${integrationResourcePath(name)}/connection-status`;
+      const params = new URLSearchParams({ scope: connectionScope(scope) });
+      const status = requireShape(
+        await request(`${path}?${params}`, { signal: options.abortSignal }),
+        (item) =>
+          typeof item.connected === "boolean" && item.integration === name &&
+          item.scope === scope &&
+          (item.connected
+            ? uuid(item.connection_id) && uuid(item.connection_generation_id)
+            : item.connection_id === null && item.connection_generation_id === null),
+      );
+      return Object.freeze({
+        integration: name,
+        scope,
+        connected: status.connected as boolean,
+        connectionId: status.connection_id as string | null,
+        connectionGenerationId: status.connection_generation_id as string | null,
+      });
+    },
+    async deleteConnection(
+      name: string,
+      connectionId: string,
+      scope: "user" | "project",
+      options: ConnectionRequestOptions = {},
+    ): Promise<ConnectionDeletion> {
+      const path = `${integrationResourcePath(name)}/connections`;
+      if (!uuid(connectionId)) throw new TypeError("connectionId must be a UUID");
+      const params = new URLSearchParams({ scope: connectionScope(scope) });
+      const deletion = requireShape(
+        await request(`${path}/${encodeURIComponent(connectionId)}?${params}`, {
+          method: "DELETE",
           signal: options.abortSignal,
+          mutation: true,
         }),
         (item) =>
-          typeof item.connected === "boolean" && item.integration === integration &&
-          ["connection_id", "connection_generation_id", "connectionId", "connectionGenerationId"]
-            .every((key) => item[key] === undefined || uuid(item[key])) &&
-          (item.connection_id === undefined || item.connectionId === undefined ||
-            item.connection_id === item.connectionId) &&
-          (item.connection_generation_id === undefined ||
-            item.connectionGenerationId === undefined ||
-            item.connection_generation_id === item.connectionGenerationId),
+          typeof item.id === "string" && item.id.toLowerCase() === connectionId.toLowerCase() &&
+          item.status === "deleted" && typeof item.provider_revoked === "boolean",
+        true,
       );
-      return { ...status, scope };
+      return Object.freeze({
+        id: deletion.id as string,
+        status: "deleted" as const,
+        providerRevoked: deletion.provider_revoked as boolean,
+      });
     },
-    async call(
+    call(toolName: string, args: Record<string, unknown>, options?: IntegrationCallOptions) {
+      return client.runTool(toolName, args, options);
+    },
+    async runTool(
       toolName: string,
       args: Record<string, unknown>,
       options: IntegrationCallOptions = {},
@@ -644,9 +766,9 @@ export async function createIntegrationClient(
       }
       const result = parseToolResult(
         await request(
-          `/integrations/${encodeURIComponent(identity.integration)}/tools/${
-            encodeURIComponent(identity.toolId)
-          }/call`,
+          `/integration-tools/${
+            encodeURIComponent(`${identity.integration}__${identity.toolId}`)
+          }/run`,
           {
             method: "POST",
             body,

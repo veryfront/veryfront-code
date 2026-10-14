@@ -10,6 +10,11 @@ and transport surfaces.
 
 ## The four parts
 
+Tool summaries use an action and resource name in at most six words, such as
+"List messages". Define them in `templates/integrations/*/connector.json`, then
+run `deno run -A scripts/build/generate-integrations-module.ts` to refresh the
+runtime catalog. Keep parameter requirements in each tool's input schema.
+
 - **Catalog:** Provider metadata, setup requirements, available tools, input
   schemas, and side-effect information.
 - **Connection:** The authenticated provider account used by managed execution.
@@ -23,7 +28,8 @@ and transport surfaces.
 - **Transport:** REST, GraphQL, MCP, the TypeScript client, and the Veryfront
   CLI all call the same hosted tools. REST, the TypeScript client, and the CLI
   also read connection inventory and start OAuth. GraphQL and MCP discover and
-  call tools but do not list connections.
+  call tools, create connect sessions, read connection status, and delete
+  connections, but do not list connections.
 
 The hosted API flow is `discover → connect → status → call`. No integration
 policy setup is required. Every surface can select an exact connection when a
@@ -79,10 +85,10 @@ header carries the project UUID that Veryfront resolved from the slug; the
 second command keeps it for the call precondition:
 
 ```bash
-curl -sS "$VERYFRONT_API_URL/integrations/gmail/tools?name=gmail__list_emails" \
+curl -sS "$VERYFRONT_API_URL/integration-tools?integration=gmail&name=gmail__list_emails" \
   -H "$AUTH" -H "$PROJECT"
 PROJECT_ID=$(curl -sS -o /dev/null -D - \
-  "$VERYFRONT_API_URL/integrations/gmail/tools?name=gmail__list_emails" \
+  "$VERYFRONT_API_URL/integration-tools?integration=gmail&name=gmail__list_emails" \
   -H "$AUTH" -H "$PROJECT" |
   awk 'tolower($1) == "x-veryfront-project-id:" { print $2 }' | tr -d '\r')
 ```
@@ -112,7 +118,7 @@ call runs the read instead and `CONNECT_URL` stays empty. The URL is single-use
 and expires, so do not log or share it:
 
 ```bash
-CONNECT_URL=$(curl -sS -X POST "$VERYFRONT_API_URL/integrations/gmail/tools/list_emails/call" \
+CONNECT_URL=$(curl -sS -X POST "$VERYFRONT_API_URL/integration-tools/gmail__list_emails/run" \
   -H "$AUTH" -H "$PROJECT" -H "x-veryfront-expected-project-id: $PROJECT_ID" \
   -H "Content-Type: application/json" \
   --data '{"arguments":{"q":"in:inbox","maxResults":1}}' |
@@ -131,7 +137,7 @@ Read the project's Gmail connections. Each row has an `id`, a `scope` (`user` or
 `connection_generation_id` that changes when the account is reconnected:
 
 ```bash
-curl -sS "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail/connections?limit=100" \
+curl -sS "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/connections?integration=gmail&limit=100" \
   -H "$AUTH"
 ```
 
@@ -152,11 +158,11 @@ Readiness reports whether that selection can run the tool. It reads metadata
 only and never contacts Gmail:
 
 ```bash
-curl -sS -G "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail" \
+curl -sS -G "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail/readiness" \
   --data-urlencode "tool_name=gmail__list_emails" \
   --data-urlencode "connection_id=$CONNECTION_ID" \
   --data-urlencode "expected_connection_generation_id=$CONNECTION_GENERATION_ID" \
-  -H "$AUTH" | jq '.selected_readiness | {selection: .selection.state, local: .local_eligibility.state, blockers: .local_eligibility.blockers}'
+  -H "$AUTH" | jq '{selection: .selection.state, local: .local_eligibility.state, blockers: .local_eligibility.blockers}'
 ```
 
 Continue when `selection` is `selected` and `local` is `eligible`. A `stale`
@@ -173,7 +179,7 @@ API, but keep them: they make the call fail instead of running against an
 account, generation, or project you did not inspect.
 
 ```bash
-curl -sS -X POST "$VERYFRONT_API_URL/integrations/gmail/tools/list_emails/call" \
+curl -sS -X POST "$VERYFRONT_API_URL/integration-tools/gmail__list_emails/run" \
   -H "$AUTH" -H "$PROJECT" \
   -H "x-veryfront-expected-project-id: $PROJECT_ID" \
   -H "Content-Type: application/json" \
@@ -189,37 +195,36 @@ JSON
 ### Call with GraphQL
 
 GraphQL has no connection inventory; take the IDs from the REST inventory or
-the CLI. The `integration` query returns the tool list and readiness, and the
-`executeIntegrationTool` mutation runs the tool. `projectReference` accepts the
+the CLI. The `integrationReadiness` query returns readiness, and the
+`runIntegrationTool` mutation runs the tool. `projectReference` accepts the
 slug or UUID:
 
 ```bash
 QUERY=$(cat <<'GRAPHQL'
-query GmailReadiness($input: GetIntegrationInput!) {
-  integration(input: $input) {
-    error
-    integration {
-      tools { name }
-      selectedReadiness {
-        selection { state connectionId connectionGenerationId }
-        localEligibility { state blockers }
-      }
-    }
+query GmailReadiness($project: String!, $connection: ID, $generation: ID) {
+  integrationReadiness(
+    projectReference: $project
+    name: "gmail"
+    toolName: "gmail__list_emails"
+    connectionId: $connection
+    expectedConnectionGenerationId: $generation
+  ) {
+    selection { state connectionId connectionGenerationId }
+    localEligibility { state blockers }
   }
 }
 GRAPHQL
 )
 jq -n --arg query "$QUERY" --arg project "$VERYFRONT_PROJECT" \
   --arg connection "$CONNECTION_ID" --arg generation "$CONNECTION_GENERATION_ID" \
-  '{query: $query, variables: {input: {name: "gmail", projectReference: $project,
-    toolName: "gmail__list_emails", connectionId: $connection,
-    expectedConnectionGenerationId: $generation}}}' |
+  '{query: $query, variables: {project: $project, connection: $connection,
+    generation: $generation}}' |
   curl -sS "$VERYFRONT_API_URL/graphql" -H "$AUTH" -H "Content-Type: application/json" --data @- |
-  jq '.data.integration.integration.selectedReadiness'
+  jq '{errors, readiness: .data.integrationReadiness}'
 
 MUTATION=$(cat <<'GRAPHQL'
 mutation ListOneEmail($input: ExecuteIntegrationToolInput!) {
-  executeIntegrationTool(input: $input) {
+  runIntegrationTool(input: $input) {
     isError
     structuredContent
   }
@@ -233,10 +238,10 @@ jq -n --arg query "$MUTATION" --arg project "$VERYFRONT_PROJECT" \
     expectedConnectionGenerationId: $generation,
     args: {q: "in:inbox", maxResults: 1}}}}' |
   curl -sS "$VERYFRONT_API_URL/graphql" -H "$AUTH" -H "Content-Type: application/json" --data @- |
-  jq '{errors, isError: .data.executeIntegrationTool.isError, fields: (.data.executeIntegrationTool.structuredContent | keys?)}'
+  jq '{errors, isError: .data.runIntegrationTool.isError, fields: (.data.runIntegrationTool.structuredContent | keys?)}'
 ```
 
-`executeIntegrationTool` is a mutation because it can run write tools. A
+`runIntegrationTool` is a mutation because it can run write tools. A
 read-only tool needs only read access to the project. Tool failures return
 `isError: true`; request failures such as a stale generation return GraphQL
 `errors`.
@@ -273,14 +278,14 @@ const selection = {
   connectionId: selected.id,
   expectedConnectionGenerationId: selected.connection_generation_id,
 };
-const readiness = await client.readiness("gmail__list_emails", selection);
+const readiness = await client.checkReadiness("gmail__list_emails", selection);
 if (readiness.selection.state !== "selected" || readiness.local_eligibility.state !== "eligible") {
   throw new Error(
     `Not ready: ${readiness.selection.state}, ${readiness.local_eligibility.blockers.join(", ")}`,
   );
 }
 
-const outcome = await client.call(
+const outcome = await client.runTool(
   "gmail__list_emails",
   { q: "in:inbox", maxResults: 1 },
   selection,
@@ -313,6 +318,11 @@ If you keep the project as CommonJS, name the file `first-call.mts` and run
 
 `client.connect("gmail", { redirectUri })` starts the same OAuth handoff as the
 CLI and returns a one-time `connect_url` with an `expires_at` deadline.
+`client.createConnectSession("gmail", { scope, redirectUri })` creates the same
+one-time link as a connect session with `connectUrl` and `expiresAt`.
+`client.getConnectionStatus("gmail", scope)` reads whether the scope is
+connected, and `client.deleteConnection("gmail", connectionId, scope)` removes
+one connection and reports `providerRevoked`.
 
 ### Call with the CLI
 
@@ -387,7 +397,7 @@ places that result at a different path:
 | Surface    | Tool result                                                                                                                            |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | REST       | The response body                                                                                                                      |
-| GraphQL    | `data.executeIntegrationTool`, limited to the fields you select                                                                        |
+| GraphQL    | `data.runIntegrationTool`, limited to the fields you select                                                                            |
 | MCP        | The JSON-RPC `result`                                                                                                                  |
 | TypeScript | `outcome.result`, with `outcome.status` set to `success` or `tool_error`                                                               |
 | CLI        | `data.result` with `success: true`; a tool failure exits 1 with `error.code` set to `INTEGRATION_TOOL_ERROR` and the outcome in `data` |

@@ -13,13 +13,19 @@ export interface EmbeddingConfig {
   batchSize?: number; // max texts per embedMany API call (default 100)
 }
 
+/** Options for an embedding call. */
+export interface EmbeddingCallOptions {
+  /** Cancel provider work and stop subsequent batches. */
+  signal?: AbortSignal;
+}
+
 /** Public API contract for embedding. */
 export interface Embedding {
   model: string;
   /** Embed a single text. Applies queryPrefix if configured. */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, options?: EmbeddingCallOptions): Promise<number[]>;
   /** Embed multiple texts. Applies documentPrefix if configured. Batches automatically. */
-  embedMany(texts: string[]): Promise<number[][]>;
+  embedMany(texts: string[], options?: EmbeddingCallOptions): Promise<number[][]>;
 }
 
 /** Options accepted by chunk. */
@@ -117,12 +123,27 @@ export interface RagSearchResult {
   type: string;
 }
 
+/** Serializable V1 document scope applied by hosted semantic search before ranking. */
+export interface RagDocumentScope {
+  version: 1;
+  path_flavor: "posix";
+  include_all: boolean;
+  includes: readonly string[];
+  excludes: readonly string[];
+  content_dir: string;
+  project_dir?: string;
+  resolved_content_dir: string;
+  resolved_project_dir?: string;
+}
+
 /** Options accepted by rag search. */
 export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
   /** Optional pre-ranking document predicate for authorization-scoped local search. */
   filterDocument?: (document: RagDocumentMeta) => boolean;
+  /** Optional hosted semantic scope that the server must apply before ranking. */
+  documentScope?: RagDocumentScope;
 }
 
 /** Options accepted when refreshing an existing rag document. */

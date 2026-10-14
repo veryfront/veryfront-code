@@ -26,7 +26,7 @@ describe("integration user interruption", () => {
         async (input, init) => {
           const path = new URL(String(input)).pathname;
           if (path === "/projects/fixture") return Response.json(project);
-          if (path === "/integrations/tools/list") {
+          if (path === "/integration-tools") {
             return Response.json({ tools: [] }, {
               headers: { "x-veryfront-project-id": project.id },
             });
@@ -163,7 +163,7 @@ describe("interruption versus failure", () => {
         async (input) => {
           const path = new URL(String(input)).pathname;
           if (path === "/projects/fixture") return Response.json(project);
-          if (path === "/integrations/tools/list") {
+          if (path === "/integration-tools") {
             return Response.json({ tools: [] }, {
               headers: { "x-veryfront-project-id": project.id },
             });
@@ -201,7 +201,7 @@ describe("interactive callback interruption cleanup", () => {
       async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === "/projects/fixture") return Response.json(project);
-        if (path === "/integrations/tools/list") {
+        if (path === "/integration-tools") {
           return Response.json({ tools: [] }, {
             headers: { "x-veryfront-project-id": project.id },
           });
@@ -213,13 +213,16 @@ describe("interactive callback interruption cleanup", () => {
             credential_requirement: { mode: "oauth_connection" },
           });
         }
-        if (path === "/oauth/status/github") {
+        if (path === `/projects/${project.id}/integrations/github/connection-status`) {
           return Response.json({
             integration: "github",
+            scope: "user",
             connected: false,
+            connection_id: null,
+            connection_generation_id: null,
           });
         }
-        if (path === "/oauth/connect/session") {
+        if (path === `/projects/${project.id}/integrations/github/connect-sessions`) {
           handoffs++;
           return Response.json({
             session_token: token,

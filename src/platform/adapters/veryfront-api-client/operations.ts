@@ -161,38 +161,56 @@ function parseMetadataHistoryResponse(
 }
 
 function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, string>> {
+  return parseRawKeyDependencyMap(
+    raw,
+    "dependency metadata history",
+    "version",
+    (value): value is string => typeof value === "string",
+  );
+}
+
+/**
+ * Copy a package-keyed map without rebuilding it through a record schema, so
+ * every own key, including `__proto__`, survives exactly as the API sent it.
+ */
+function parseRawKeyDependencyMap<Value extends string>(
+  raw: unknown,
+  subject: string,
+  valueLabel: string,
+  isValue: (value: unknown) => value is Value,
+): Readonly<Record<string, Value>> {
   if (typeof raw !== "object" || raw === null || IntrinsicArrayIsArray(raw)) {
     throw API_CLIENT_ERROR.create({
-      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      detail: `Veryfront API ${subject} contains an invalid dependency map`,
       status: 502,
     });
   }
   const prototype = IntrinsicObjectGetPrototypeOf(raw);
   if (prototype !== IntrinsicObjectPrototype && prototype !== null) {
     throw API_CLIENT_ERROR.create({
-      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      detail: `Veryfront API ${subject} contains an invalid dependency map`,
       status: 502,
     });
   }
 
-  const result = IntrinsicObjectCreate(null) as Record<string, string>;
+  const result = IntrinsicObjectCreate(null) as Record<string, Value>;
   const keys = IntrinsicReflectOwnKeys(raw);
   let index = 0;
   while (index < keys.length) {
     const key = keys[index++];
     if (typeof key !== "string") {
       throw API_CLIENT_ERROR.create({
-        detail: "Veryfront API dependency metadata history contains an invalid dependency name",
+        detail: `Veryfront API ${subject} contains an invalid dependency name`,
         status: 502,
       });
     }
     const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(raw, key);
     if (
       descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-      typeof descriptor.value !== "string"
+      !isValue(descriptor.value)
     ) {
       throw API_CLIENT_ERROR.create({
-        detail: "Veryfront API dependency metadata history contains an invalid dependency version",
+        detail: `Veryfront API ${subject} contains an invalid dependency ${valueLabel}`,
         status: 502,
       });
     }
@@ -204,6 +222,76 @@ function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, strin
     });
   }
   return IntrinsicObjectFreeze(result);
+}
+
+function invalidDependencyResolutionResponse(): Error {
+  return API_CLIENT_ERROR.create({
+    detail: "Veryfront API dependency resolution contains an invalid response",
+    status: 502,
+  });
+}
+
+function resolutionField(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) throw invalidDependencyResolutionResponse();
+  return descriptor.value;
+}
+
+function parseDependencyResolutionResponse(value: unknown): DependencyResolution {
+  if (value === null || typeof value !== "object" || IntrinsicArrayIsArray(value)) {
+    throw invalidDependencyResolutionResponse();
+  }
+  const response = value as Record<string, unknown>;
+  const persisted = resolutionField(response, "persisted");
+  if (typeof persisted !== "boolean") throw invalidDependencyResolutionResponse();
+  return IntrinsicObjectFreeze({
+    pins: parseRawKeyDependencyMap(
+      resolutionField(response, "pins"),
+      "dependency resolution",
+      "version",
+      (pin): pin is string => typeof pin === "string",
+    ),
+    persisted,
+    skipped: parseRawKeyDependencyMap(
+      resolutionField(response, "skipped"),
+      "dependency resolution",
+      "skip reason",
+      (reason): reason is DependencySkipReason => reason === "declaration_changed",
+    ),
+  });
+}
+
+/** Why a requested package was not written to package.json. */
+export type DependencySkipReason = "declaration_changed";
+
+/** Input for `client.dependencies.resolve()`. */
+export interface ResolveDependenciesInput {
+  /** npm specifiers: a bare name, `name@exact` or `name@range`. 1-100 entries. */
+  specifiers: readonly string[];
+  /** Branch name or ID. Omit, or pass `null` or `"main"`, for the main branch. */
+  branch?: string | null;
+  /**
+   * The declaration the caller observed for each requested package, `null` when
+   * the package was absent. When set, the keys must equal the requested package
+   * names, and a package whose declaration changed is skipped instead of written.
+   */
+  expectedDeclarations?: Readonly<Record<string, string | null>>;
+  /** Caller-owned cancellation signal for the API request. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result of `client.dependencies.resolve()`. A requested package that is in
+ * neither `pins` nor `skipped` did not resolve (unknown package or registry
+ * failure) and was not written.
+ */
+export interface DependencyResolution {
+  /** Exact version for every requested package that resolved, keyed by package name. */
+  readonly pins: Readonly<Record<string, string>>;
+  /** `false` when writing package.json failed. The caller can retry. */
+  readonly persisted: boolean;
+  /** Requested packages left unchanged because their declaration changed. */
+  readonly skipped: Readonly<Record<string, DependencySkipReason>>;
 }
 
 function requireBoundedFileContentLimit(maximumBytes: number): number {
@@ -231,8 +319,20 @@ export interface ListFilesOptions {
   signal?: AbortSignal;
 }
 
-/** Every branch listing field except `content`. */
-const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size,type,updated_at,checksum)";
+/**
+ * Every branch listing field except `content`. `size_bytes` is the size field;
+ * `size` is its earlier spelling, selected beside it so an API that answers only
+ * `size` still returns a file size.
+ */
+const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size_bytes,size,type,updated_at,checksum)";
+
+/**
+ * The `ref` content selector for a branch. An empty reference addresses main,
+ * as the route treats an omitted selector.
+ */
+function branchFileRef(branchRef: string): string {
+  return branchRef === "" ? "main" : `branch:${branchRef}`;
+}
 
 export interface FileListResult {
   files: ProjectFile[];
@@ -262,21 +362,31 @@ export interface GetFileOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Selects the style artifact record. Set exactly one of `branch`,
+ * `environmentName` or `releaseId`. The type does not enforce this: the API
+ * rejects any other combination with a validation error.
+ */
 export interface StyleArtifactSelector {
   branch?: string;
   environmentName?: string;
   releaseId?: string;
 }
 
-export interface ResolveStyleArtifactInput extends StyleArtifactSelector {
+/** Input for `client.styleArtifacts.get()`. */
+export interface GetStyleArtifactInput extends StyleArtifactSelector {
   styleProfileHash: string;
 }
 
-export interface EnsureStyleArtifactBuildInput extends ResolveStyleArtifactInput {
+/** Input for `client.styleArtifacts.startBuild()`. */
+export interface StartStyleArtifactBuildInput extends GetStyleArtifactInput {
+  /** Queue a new build even when the record is ready or building. */
   force?: boolean;
 }
 
-export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
+/** Input for `client.styleArtifacts.update()`. */
+export interface UpdateStyleArtifactInput extends GetStyleArtifactInput {
+  /** Defaults to `"ready"`. */
   status?: "building" | "ready" | "failed";
   artifactHash?: string;
   assetPath?: string;
@@ -286,7 +396,11 @@ export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
   failureReason?: string;
 }
 
-export interface ProjectStyleArtifactResolution {
+/**
+ * Current compiled-CSS record for one style profile and one branch,
+ * environment or release. A missing record has `status: "missing"`.
+ */
+export interface StyleArtifact {
   status: "ready" | "missing" | "building" | "failed";
   artifactHash?: string;
   assetPath?: string;
@@ -296,6 +410,15 @@ export interface ProjectStyleArtifactResolution {
   failureReason?: string;
   updatedAt?: string;
 }
+
+/** @deprecated Use `GetStyleArtifactInput`. */
+export type ResolveStyleArtifactInput = GetStyleArtifactInput;
+/** @deprecated Use `StartStyleArtifactBuildInput`. */
+export type EnsureStyleArtifactBuildInput = StartStyleArtifactBuildInput;
+/** @deprecated Use `UpdateStyleArtifactInput`. */
+export type UpsertStyleArtifactInput = UpdateStyleArtifactInput;
+/** @deprecated Use `StyleArtifact`. */
+export type ProjectStyleArtifactResolution = StyleArtifact;
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const {
@@ -338,7 +461,7 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
   };
 }
 
-function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchParams {
+function buildStyleArtifactParams(input: GetStyleArtifactInput): URLSearchParams {
   const params = new URLSearchParams({
     style_profile_hash: input.styleProfileHash,
   });
@@ -350,7 +473,7 @@ function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchPa
   return params;
 }
 
-function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolution {
+function mapStyleArtifact(raw: unknown): StyleArtifact {
   const response = getStyleArtifactResolveResponseSchema().parse(raw);
   return {
     status: response.status,
@@ -515,6 +638,32 @@ export class VeryfrontAPIOperations {
     return parseMetadataHistoryResponse(decoded, expectedProjectId, branch);
   }
 
+  async resolveDependencies(
+    projectRef: string,
+    input: ResolveDependenciesInput,
+  ): Promise<DependencyResolution> {
+    const branch = input.branch === "main" ? null : input.branch ?? null;
+    const endpoint = `/projects/${encodeURIComponent(projectRef)}/dependencies/resolve`;
+    logger.debug("resolveDependencies", {
+      projectRef,
+      branch,
+      specifierCount: input.specifiers.length,
+    });
+    const raw = await this.request(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        specifiers: input.specifiers,
+        ...(branch === null ? {} : { branch }),
+        ...(input.expectedDeclarations === undefined
+          ? {}
+          : { expected_declarations: input.expectedDeclarations }),
+      }),
+      signal: input.signal,
+    });
+    return parseDependencyResolutionResponse(raw);
+  }
+
   async listBranchFiles(
     projectRef: string,
     branchRef = "main",
@@ -522,7 +671,7 @@ export class VeryfrontAPIOperations {
   ): Promise<FileListResult> {
     const params = addRuntimeServerFunctionAccess(buildListParams(options));
     if (options.withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
-    params.set("branch", branchRef);
+    params.set("ref", branchFileRef(branchRef));
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
@@ -580,7 +729,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;
@@ -622,7 +773,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;
@@ -919,13 +1072,13 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  async resolveStyleArtifact(
+  async getStyleArtifact(
     projectRef: string,
-    input: ResolveStyleArtifactInput,
-  ): Promise<ProjectStyleArtifactResolution> {
+    input: GetStyleArtifactInput,
+  ): Promise<StyleArtifact> {
     const params = buildStyleArtifactParams(input);
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current?${params}`;
-    logger.debug("resolveStyleArtifact", {
+    logger.debug("getStyleArtifact", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -933,15 +1086,15 @@ export class VeryfrontAPIOperations {
       styleProfileHash: input.styleProfileHash,
     });
 
-    return mapStyleArtifactResolution(await this.request(url));
+    return mapStyleArtifact(await this.request(url));
   }
 
-  async ensureStyleArtifactBuild(
+  async startStyleArtifactBuild(
     projectRef: string,
-    input: EnsureStyleArtifactBuildInput,
-  ): Promise<ProjectStyleArtifactResolution> {
+    input: StartStyleArtifactBuildInput,
+  ): Promise<StyleArtifact> {
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current/builds`;
-    logger.debug("ensureStyleArtifactBuild", {
+    logger.debug("startStyleArtifactBuild", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -950,7 +1103,7 @@ export class VeryfrontAPIOperations {
       force: input.force ?? false,
     });
 
-    return mapStyleArtifactResolution(
+    return mapStyleArtifact(
       await this.request(url, {
         method: "POST",
         headers: {
@@ -967,13 +1120,13 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  async upsertStyleArtifact(
+  async updateStyleArtifact(
     projectRef: string,
-    input: UpsertStyleArtifactInput,
+    input: UpdateStyleArtifactInput,
     signal?: AbortSignal,
-  ): Promise<ProjectStyleArtifactResolution> {
+  ): Promise<StyleArtifact> {
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current`;
-    logger.debug("upsertStyleArtifact", {
+    logger.debug("updateStyleArtifact", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -983,7 +1136,7 @@ export class VeryfrontAPIOperations {
       artifactHash: input.artifactHash,
     });
 
-    return mapStyleArtifactResolution(
+    return mapStyleArtifact(
       await this.request(url, {
         method: "PUT",
         headers: {
@@ -1007,11 +1160,33 @@ export class VeryfrontAPIOperations {
     );
   }
 
+  /** @deprecated Use `getStyleArtifact`. */
+  resolveStyleArtifact(projectRef: string, input: GetStyleArtifactInput): Promise<StyleArtifact> {
+    return this.getStyleArtifact(projectRef, input);
+  }
+
+  /** @deprecated Use `startStyleArtifactBuild`. */
+  ensureStyleArtifactBuild(
+    projectRef: string,
+    input: StartStyleArtifactBuildInput,
+  ): Promise<StyleArtifact> {
+    return this.startStyleArtifactBuild(projectRef, input);
+  }
+
+  /** @deprecated Use `updateStyleArtifact`. */
+  upsertStyleArtifact(
+    projectRef: string,
+    input: UpdateStyleArtifactInput,
+    signal?: AbortSignal,
+  ): Promise<StyleArtifact> {
+    return this.updateStyleArtifact(projectRef, input, signal);
+  }
+
   // ===========================================================================
   // Dependency artifact build operations
   // ===========================================================================
 
-  async uploadDependencyArtifactAsset(
+  async writeDependencyArtifactAsset(
     artifactId: string,
     attemptCount: number,
     contentHash: string,
@@ -1028,7 +1203,7 @@ export class VeryfrontAPIOperations {
     const url = `/dependency-artifacts/${
       encodeURIComponent(artifactId)
     }/attempts/${attemptCount}/assets/${contentHash}`;
-    logger.debug("uploadDependencyArtifactAsset", {
+    logger.debug("writeDependencyArtifactAsset", {
       attemptCount,
       contentHash,
       contentType,
@@ -1043,7 +1218,7 @@ export class VeryfrontAPIOperations {
     return getDependencyArtifactAssetUploadResponseSchema().parse(raw);
   }
 
-  async reportDependencyArtifactBuildResult(
+  async createDependencyArtifactBuildResult(
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
@@ -1052,7 +1227,7 @@ export class VeryfrontAPIOperations {
     const url = `/dependency-artifacts/${
       encodeURIComponent(artifactId)
     }/attempts/${attemptCount}/result`;
-    logger.debug("reportDependencyArtifactBuildResult", {
+    logger.debug("createDependencyArtifactBuildResult", {
       attemptCount,
       outcome: result.outcome,
     });

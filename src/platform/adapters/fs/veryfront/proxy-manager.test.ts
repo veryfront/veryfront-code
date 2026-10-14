@@ -156,8 +156,8 @@ describe("ProxyFSAdapterManager", () => {
           details: {
             responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
             url:
-              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
-                encodeURIComponent(branch)
+              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&ref=${
+                encodeURIComponent(`branch:${branch}`)
               }`,
           },
         },

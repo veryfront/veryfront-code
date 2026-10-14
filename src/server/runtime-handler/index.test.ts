@@ -51,12 +51,16 @@ import {
   _resetShimForTests,
   type Meter,
   setGlobalMetricsAPI,
+  setGlobalTracerProvider,
+  type Span,
+  type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { seedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { getRequestLogger } from "#veryfront/utils/logger/request-context.ts";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 
 const TEST_FIXTURES_ROOT = fromFileUrl(
@@ -372,6 +376,115 @@ describe("server/runtime-handler/index", () => {
     resetMetrics();
     resetOtelInstruments();
     _resetShimForTests();
+  });
+
+  it("labels execution diagnostics for standalone and hosted requests", async () => {
+    const originalHandle = SSRHandler.prototype.handle;
+    const { entries, restore } = captureDebugLogs();
+    const spans: Array<{ name: string; attributes: Record<string, unknown> }> = [];
+    const tracer = {
+      startSpan(name: string) {
+        const attributes: Record<string, unknown> = {};
+        spans.push({ name, attributes });
+        const span = {
+          setAttribute(key: string, value: unknown) {
+            attributes[key] = value;
+            return span;
+          },
+          setAttributes(values: Record<string, unknown>) {
+            Object.assign(attributes, values);
+            return span;
+          },
+          setStatus: () => span,
+          recordException: () => {},
+          addEvent: () => span,
+          end: () => {},
+          updateName: () => {},
+          spanContext: () => ({
+            traceId: "0123456789abcdef0123456789abcdef",
+            spanId: "0123456789abcdef",
+            traceFlags: 1,
+          }),
+        };
+        return span as unknown as Span;
+      },
+    } as unknown as Tracer;
+    setGlobalTracerProvider({ getTracer: () => tracer });
+    try {
+      for (
+        const [defaultEnvironment, releaseId, expected] of [
+          [undefined, undefined, "preview"],
+          ["production", undefined, "production"],
+          ["preview", "release-1", "production"],
+        ] as const
+      ) {
+        entries.length = 0;
+        spans.length = 0;
+        let executedEnvironment: string | undefined;
+        SSRHandler.prototype.handle = (_req, ctx) => {
+          executedEnvironment = ctx.resolvedEnvironment;
+          getRequestLogger()?.error("Standalone execution failed");
+          return Promise.resolve({ response: new Response("failure", { status: 500 }) });
+        };
+        const handler = createVeryfrontHandler("/tmp/test-project", createRouteMockAdapter(), {
+          projectDir: "/tmp/test-project",
+          defaultProjectSlug: "diagnostics",
+          defaultEnvironment,
+          defaultReleaseId: releaseId,
+          config: {} as VeryfrontConfig,
+          allowHostProjectCodeExecution: true,
+        });
+        const response = await handler(new Request("http://ordinary.example.com/diagnostics"));
+        assertEquals(response.status, 500);
+        assertEquals(executedEnvironment, expected);
+        const started = entries.find((entry) => entry.message === "Request started");
+        assertEquals(started?.message, "Request started");
+        assertEquals(started?.environment, undefined);
+        const error = entries.find((entry) => entry.message === "Standalone execution failed");
+        assertEquals(error?.environment, expected);
+        const requestSpan = spans.find((span) => span.name === "GET /diagnostics");
+        assertEquals(requestSpan?.attributes["http.host"], "ordinary.example.com");
+        assertEquals(requestSpan?.attributes["veryfront.project_slug"], "diagnostics");
+        assertEquals(requestSpan?.attributes["veryfront.environment"], expected);
+      }
+
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      spans.length = 0;
+      let resolvedHostedProject: string | undefined;
+      const hostedHandler = createVeryfrontHandler("/tmp/test-project", createRouteMockAdapter(), {
+        projectDir: "/tmp/test-project",
+        config: { fs: { veryfront: { proxyMode: true } } } as VeryfrontConfig,
+        hostedHttp: {
+          resolve(authority) {
+            resolvedHostedProject = authority.projectSlug;
+            return Promise.reject(new Error("Hosted execution unavailable"));
+          },
+          broker: { fetch: () => Promise.reject(new Error("Unexpected broker call")) },
+        },
+      });
+      const hostedResponse = await hostedHandler(
+        new Request("http://renderer/diagnostics", {
+          headers: {
+            "x-forwarded-host": "diagnostics.production.example.com",
+            "x-project-slug": "diagnostics",
+            "x-project-id": "project-diagnostics",
+            "x-release-id": "release-diagnostics",
+            "x-environment-id": "environment-diagnostics",
+            "x-environment-name": "Production",
+            "x-environment": "production",
+            "x-token": "source-token",
+          },
+        }),
+      );
+      assertEquals(hostedResponse.status, 503);
+      assertEquals(resolvedHostedProject, "diagnostics");
+      const hostedSpan = spans.find((span) => span.name === "GET /diagnostics");
+      assertEquals(hostedSpan?.attributes["veryfront.project_slug"], "diagnostics");
+      assertEquals(hostedSpan?.attributes["veryfront.environment"], "production");
+    } finally {
+      SSRHandler.prototype.handle = originalHandle;
+      restore();
+    }
   });
 
   it("preserves debug flags supplied by binding-backed runtime adapters", () => {

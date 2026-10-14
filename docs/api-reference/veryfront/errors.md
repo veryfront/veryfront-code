@@ -1,7 +1,7 @@
 ---
 title: "veryfront/errors"
 description: "Structured error system with slug-based registry, RFC 9457 HTTP problem details, error boundaries for HTTP and CLI, and user-friendly formatting."
-order: 7
+order: 8
 ---
 
 ## Import

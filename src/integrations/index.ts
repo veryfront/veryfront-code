@@ -76,6 +76,7 @@ export {
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  runRemoteIntegrationTool,
 } from "./remote-tools.ts";
 export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export { createLocalIntegrationToolSource } from "./local-tool-source.ts";
@@ -93,6 +94,11 @@ export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-ser
 
 export { createIntegrationClient, IntegrationApiError } from "./client.ts";
 export type {
+  ConnectionDeletion,
+  ConnectionRequestOptions,
+  ConnectionStatus,
+  ConnectSession,
+  CreateConnectSessionOptions,
   IntegrationCallOptions,
   IntegrationCallOutcome,
   IntegrationCatalogEntry,

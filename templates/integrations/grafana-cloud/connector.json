@@ -28,7 +28,7 @@
     {
       "id": "grafana-cloud__search_dashboards",
       "name": "Search Dashboards",
-      "description": "Search dashboards and folders in the Grafana stack",
+      "description": "Search dashboards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -87,7 +87,7 @@
     {
       "id": "grafana-cloud__get_dashboard",
       "name": "Get Dashboard",
-      "description": "Get a dashboard's full JSON model by UID",
+      "description": "Get dashboard",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
     {
       "id": "grafana-cloud__list_folders",
       "name": "List Folders",
-      "description": "List dashboard folders in the Grafana stack",
+      "description": "List folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -135,7 +135,7 @@
     {
       "id": "grafana-cloud__list_annotations",
       "name": "List Annotations",
-      "description": "List annotations and alert events in a time range",
+      "description": "List annotations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -179,7 +179,7 @@
     {
       "id": "grafana-cloud__create_annotation",
       "name": "Create Annotation",
-      "description": "Create an annotation (e.g. mark a deploy) on a dashboard or globally",
+      "description": "Create annotation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -224,7 +224,7 @@
     {
       "id": "grafana-cloud__list_datasources",
       "name": "List Data Sources",
-      "description": "List data sources configured in the Grafana stack",
+      "description": "List data sources",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

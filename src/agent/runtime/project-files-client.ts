@@ -998,7 +998,7 @@ function createRuntimeProjectFileUrl(input: {
 
   url.searchParams.set("fields", input.fields);
   if (input.branchId) {
-    url.searchParams.set("branch", input.branchId);
+    url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
@@ -1032,7 +1032,7 @@ function createStrictRuntimeProjectFileUrl(input: {
 
   url.searchParams.set("fields", input.fields);
   if (input.branchId) {
-    url.searchParams.set("branch", input.branchId);
+    url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
