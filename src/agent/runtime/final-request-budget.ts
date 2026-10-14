@@ -1,5 +1,6 @@
 import { estimateTokens } from "../../chat/message-prep.ts";
 import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 const isArray = Array.isArray;
@@ -106,6 +107,48 @@ export function enforceFinalRequestBudget(
     maxOutputTokens: estimate.maxOutputTokens,
     estimatedInputTokens: estimate.inputCostKnown ? estimate.estimatedInputTokens : null,
   };
+}
+
+/**
+ * Enforce the budget, then re-check it against the effective wire request.
+ * Native provider controls (for example `providerOptions.anthropic.max_tokens`
+ * or a native response format) replace the neutral values on the wire, so a
+ * request that fits only under the neutral values is still rejected.
+ */
+export function enforceProviderRequestBudget(
+  input: FinalRequestBudgetInput & {
+    model: Parameters<typeof buildModelCallContextRequest>[0];
+    reasoning?: unknown;
+    providerOptions?: unknown;
+  },
+): { maxOutputTokens: number; estimatedInputTokens: number | null } {
+  const { model, reasoning, providerOptions, ...budget } = input;
+  const result = enforceFinalRequestBudget(budget);
+  if (budget.limit === undefined) return result;
+  const effective = buildModelCallContextRequest(
+    model,
+    {
+      maxOutputTokens: result.maxOutputTokens,
+      ...(reasoning === undefined ? {} : { reasoning }),
+      ...(providerOptions === undefined ? {} : { providerOptions }),
+      ...(budget.responseFormat === undefined ? {} : { responseFormat: budget.responseFormat }),
+    } as Parameters<typeof buildModelCallContextRequest>[1],
+  );
+  const additional = budget.additionalOutputTokens ?? 0;
+  const wireOutput = effective?.maxOutputTokens;
+  const nativeOutput = wireOutput !== undefined && wireOutput !== result.maxOutputTokens &&
+    wireOutput !== result.maxOutputTokens + additional;
+  const nativeFormat = budget.responseFormat === undefined &&
+    effective?.responseFormat !== undefined;
+  if (!nativeOutput && !nativeFormat) return result;
+  enforceFinalRequestBudget({
+    ...budget,
+    responseFormat: budget.responseFormat ?? effective?.responseFormat,
+    requestedOutputTokens: nativeOutput ? wireOutput : result.maxOutputTokens,
+    explicitOutputTokens: true,
+    additionalOutputTokens: nativeOutput ? 0 : additional,
+  });
+  return result;
 }
 
 /** Best-effort estimate of the assembled request, before provider-specific framing. */

@@ -453,7 +453,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { createToolResultContext, type ToolResultContext } from "./tool-result-context.ts";
 import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
 import {
-  enforceFinalRequestBudget,
+  enforceProviderRequestBudget,
   inspectFinalRequestBudget,
   type ServedRequestLimit,
 } from "./final-request-budget.ts";
@@ -4588,7 +4588,10 @@ export class AgentRuntime {
           });
           // Reject an over-budget request before the turn is accepted, so a
           // rejected input is rolled back instead of committed to memory.
-          const { maxOutputTokens } = enforceFinalRequestBudget({
+          const { maxOutputTokens } = enforceProviderRequestBudget({
+            model: languageModel,
+            ...(reasoning === undefined ? {} : { reasoning }),
+            ...(providerOptions === undefined ? {} : { providerOptions }),
             system: providerSystemPrompt,
             messages: providerMessages,
             tools: runtimeTools,
@@ -5935,7 +5938,10 @@ export class AgentRuntime {
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
       // Reject an over-budget request before the turn is accepted, so a
       // rejected input is rolled back instead of committed to memory.
-      const { maxOutputTokens } = enforceFinalRequestBudget({
+      const { maxOutputTokens } = enforceProviderRequestBudget({
+        model: languageModel,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        ...(providerOptions === undefined ? {} : { providerOptions }),
         system: providerSystemPrompt,
         messages: providerMessages,
         tools: runtimeTools,

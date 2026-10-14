@@ -1121,6 +1121,53 @@ describe("invoke_agent child request budget", () => {
     assert(promptTokens + sent + 16_384 <= 40_000, `sent ${sent} for ${promptTokens}`);
   });
 
+  it("rejects a native output override that exceeds the window on the wire", async () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "claude-haiku-4-5",
+        modelId: "anthropic/claude-haiku-4-5",
+        provider: "anthropic",
+        surface: "anthropic",
+        aliases: [],
+        operations: ["messages"],
+        capabilities: { limit: { context: 40_000, output: 64_000 } },
+      }],
+    });
+    const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
+    const model = scriptedModel([{ text: "unexpected" }], {
+      modelId,
+      provider: "anthropic",
+      only: "generate",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "test-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "anthropic",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    const runtime = new AgentRuntime("native-output", {
+      model: modelId,
+      system: "Answer",
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+      resolveModelTransport: () => ({
+        model,
+        providerOptions: { anthropic: { max_tokens: 60_000 } },
+      }),
+    });
+    const error = await assertRejects(
+      () => runtime.generate("Plan this ".repeat(4_000)),
+      VeryfrontError,
+    );
+    assert(error instanceof VeryfrontError);
+    assertEquals(error.slug, "agent-context-window-exceeded");
+    assertEquals(model.callCount, 0);
+  });
+
   it("still rejects a child whose input leaves less than the bounded output reserve", async () => {
     const { model, wire } = await runNoToolsChild(700_000);
     assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), true);
