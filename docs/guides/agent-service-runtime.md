@@ -433,7 +433,7 @@ Closing the managed broker handler or aborting its service signal returns 503
 
 Set `VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS` and
 `VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS` in the service environment to
-bound how long each hosted model call waits for semantic output. The first
+bound how long each streamed agent model call waits for semantic output. The first
 budget covers the wait for the first text, reasoning, or tool output, with a
 default of `60000`. The second covers the gap between outputs once progress
 begins, with a default of `15000`.

@@ -373,9 +373,12 @@ ignored and the host's own setting stands.
 
 ### Model stream progress budgets
 
-Hosted agent services can bound how long each model call waits for semantic
-progress. Semantic progress is text, reasoning, or tool output, so these budgets
-fire even when a provider keeps the connection busy with keepalive frames.
+Hosted agent services can bound how long each streamed agent model call waits
+for semantic progress. Semantic progress is text, reasoning, or tool output, so
+these budgets fire even when a provider keeps the connection busy with
+keepalive frames. Context compaction summaries use a separate whole-response
+request, so these budgets do not apply to them; the request abort signal and
+the provider transport deadlines bound that request.
 
 | Variable                                           | Default | What it bounds                                                     |
 | -------------------------------------------------- | ------- | ------------------------------------------------------------------ |
