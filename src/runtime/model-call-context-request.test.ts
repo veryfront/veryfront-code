@@ -7,6 +7,7 @@ import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudOpenAITransportPlan,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   buildModelCallContextRequest,
@@ -919,21 +920,29 @@ describe("model call request projection", () => {
 
   it("records dropped reasoning when the catalog omits the function-tool capability", () => {
     __resetVeryfrontCloudCatalogForTests();
-    for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
+    for (const modelId of ["gpt-5.4", "gpt-5.5", "gpt-6-sol"]) {
       const model = { provider: "veryfront-cloud", modelProvider: "openai", modelId };
       const capability = resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`openai/${modelId}`);
-      // The built model records the facts the provider resolved for it.
+      const plan = modelId === "gpt-6-sol"
+        ? resolveVeryfrontCloudOpenAITransportPlan("openai", modelId)
+        : { transport: "chat-completions", pinned: true };
+      if (modelId === "gpt-6-sol") assertEquals(plan.pinned, false);
+      // Match provider facts: adaptive plans do not set a pinned transport.
       registerVeryfrontCloudModelFacts(model as never, () =>
         ({
           provider: "openai",
           surface: "openai",
           native: true,
-          transportPlan: "chat-completions",
-          openAITransport: "chat-completions",
+          transportPlan: plan,
+          ...(plan.pinned ? { openAITransport: plan.transport } : {}),
           ...(capability === undefined ? {} : { openAIChatReasoningWithFunctionTools: capability }),
         }) as never);
       for (const useTools of [false, true]) {
-        const options: ModelRuntimeCallOptions = { prompt, ...(useTools ? { tools } : {}) };
+        const options: ModelRuntimeCallOptions = {
+          prompt,
+          reasoning: { enabled: true, effort: "medium" },
+          ...(useTools ? { tools } : {}),
+        };
         const projected = buildModelCallContextRequest(model, options);
         const body = buildOpenAIChatRequest(
           modelId,
