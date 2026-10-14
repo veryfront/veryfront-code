@@ -437,6 +437,10 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
     const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
       `${provider}/${upstreamModelId}`,
     );
+    // The Chat-only wire still rejects reasoning beside function tools for the
+    // models the catalog (or the native OpenAI pattern) marks that way.
+    const openAIChatReasoningWithFunctionTools =
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`${provider}/${upstreamModelId}`);
     const chatCompletionsOnlyReason =
       `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
       "which carries no hosted tools. Use a provider that implements the OpenAI surface " +
@@ -449,6 +453,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           baseURL,
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -465,6 +470,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           providerName: "openai-compatible",
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -477,6 +483,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
         baseURL,
         openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
         openAIChatPreserveSystemMessages,
+        openAIChatReasoningWithFunctionTools,
         openAITransport: "chat-completions",
         fetch,
       }),
