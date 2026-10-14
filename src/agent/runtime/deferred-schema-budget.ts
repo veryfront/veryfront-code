@@ -85,25 +85,14 @@ export function fitDeferredToolSchemasToBudget(input: {
   let plan = input.plan;
   let budget = input.inspect(plan);
   const evictedNames: string[] = [];
+  let bestPlan = plan;
+  let bestBudget = budget;
+  let bestEvictedNames: string[] = [];
   if (budget.fits || budget.outputExceeded || budget.estimatedInputTokens === null) {
     return { plan, evictedNames };
   }
 
-  const initial = { plan, budget };
   const protectedNames = protectedToolNames(input.sourceMessages, plan);
-  // The first eviction also exposes tool_search. That one-time cost is
-  // credited to the first eviction so several small schemas can amortize it
-  // together; the batch is undone if it never pays off.
-  let searchSchemaCredit = 0;
-  if (!plan.visible.some((entry) => entry.name === TOOL_SEARCH_TOOL_NAME)) {
-    const withSearch = input.inspect({
-      ...plan,
-      visible: [...plan.visible, createToolSearchDefinition()],
-    }).estimatedInputTokens;
-    if (withSearch !== null && budget.estimatedInputTokens !== null) {
-      searchSchemaCredit = Math.max(0, withSearch - budget.estimatedInputTokens);
-    }
-  }
   for (const name of plan.loadedToolNames) {
     if (protectedNames.has(name)) continue;
     const tool = plan.visible.find((entry) => entry.name === name);
@@ -119,25 +108,18 @@ export function fitDeferredToolSchemasToBudget(input: {
     deferred.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     const candidate: ToolExposurePlan = { ...plan, loadedToolNames, visible, deferred };
     const nextBudget = input.inspect(candidate);
-    const currentEstimate = budget.estimatedInputTokens;
-    if (
-      currentEstimate === null || nextBudget.outputExceeded ||
-      nextBudget.estimatedInputTokens === null ||
-      (nextBudget.estimatedInputTokens >= currentEstimate + searchSchemaCredit &&
-        !nextBudget.fits)
-    ) continue;
-    searchSchemaCredit = 0;
+    if (nextBudget.outputExceeded || nextBudget.estimatedInputTokens === null) continue;
     plan = candidate;
     budget = nextBudget;
     evictedNames.push(name);
+    // The first eviction may pay the one-time tool_search schema cost. Keep
+    // evaluating that tentative batch, but publish only an overall improvement.
+    if (budget.fits || budget.estimatedInputTokens! < bestBudget.estimatedInputTokens!) {
+      bestPlan = plan;
+      bestBudget = budget;
+      bestEvictedNames = [...evictedNames];
+    }
     if (budget.fits) break;
   }
-  if (
-    !budget.fits && budget.estimatedInputTokens !== null &&
-    initial.budget.estimatedInputTokens !== null &&
-    budget.estimatedInputTokens >= initial.budget.estimatedInputTokens
-  ) {
-    return { plan: initial.plan, evictedNames: [] };
-  }
-  return { plan, evictedNames };
+  return { plan: bestPlan, evictedNames: bestEvictedNames };
 }

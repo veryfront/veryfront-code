@@ -558,3 +558,57 @@ it("amortizes the reader schema across several moderate historical results", () 
   assertEquals(inspect(fitted).fits, true);
   assertEquals(context.size, 2);
 });
+
+it("amortizes the reader schema over multiple historical references", () => {
+  const first = toolMessage("first", "read_data", "first result ".repeat(200));
+  const second = toolMessage("second", "read_data", "second result ".repeat(200));
+  const latest = toolMessage("latest", "read_data", "latest");
+  const source = [first, second, latest];
+  const context = createToolResultContext({ limits: { previewBytes: 64 } });
+  const inspect = (messages: Message[]) => {
+    const references =
+      messages.slice(0, 2).filter((message) => typeof result(message) === "object").length;
+    const estimate = 1_000 - references * 400 + (context.size > 0 ? 600 : 0);
+    return { fits: estimate <= 850, outputExceeded: false, estimatedInputTokens: estimate };
+  };
+  const projected = projectHistoricalToolResultsForBudget({
+    sourceMessages: source,
+    modelMessages: source,
+    context,
+    inspect,
+  });
+  assertEquals(inspect(projected).fits, true);
+  assertEquals(context.size, 2);
+  for (const index of [0, 1]) {
+    const reference = result(projected[index]!) as { ref: string };
+    assertStrictEquals(context.getOriginalResult(reference.ref), result(source[index]!));
+  }
+  assertStrictEquals(projected[2], latest);
+});
+
+it("rolls back an unamortized reader and frees its slot for a later useful result", () => {
+  for (const includeLarge of [false, true]) {
+    const moderate = toolMessage("moderate", "read_data", "moderate result ".repeat(150));
+    const large = toolMessage("large", "read_data", "large result ".repeat(500));
+    const latest = toolMessage("latest", "read_data", "latest");
+    const source = includeLarge ? [moderate, large, latest] : [moderate, latest];
+    const context = createToolResultContext({ limits: { previewBytes: 64, maxStoredResults: 1 } });
+    const inspect = (messages: Message[]) => {
+      const savings = messages.reduce((sum, message) =>
+        sum + (
+          typeof result(message) === "object" ? (message.id === "large" ? 1_200 : 400) : 0
+        ), 0);
+      const estimate = 2_000 - savings + (context.size > 0 ? 600 : 0);
+      return { fits: estimate <= 1_500, outputExceeded: false, estimatedInputTokens: estimate };
+    };
+    const projected = projectHistoricalToolResultsForBudget({
+      sourceMessages: source,
+      modelMessages: source,
+      context,
+      inspect,
+    });
+    assertStrictEquals(projected[0], moderate);
+    assertEquals(context.size, includeLarge ? 1 : 0);
+    assertEquals(inspect(projected).fits, includeLarge);
+  }
+});

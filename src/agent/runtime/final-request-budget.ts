@@ -169,11 +169,21 @@ function resolveEffectiveBudget(
     };
   }
   const derivedAdditional = lowOutput === undefined ? 0 : Math.max(0, lowOutput - 1);
+  // A fixed explicit request can reach the provider's model output clamp.
+  // Measure that actual value rather than extrapolating the small probes.
+  // Implicit requests can later be lowered to fit the window, so they still
+  // reserve the full additive budget at those lower, unclamped values.
+  const explicitOutput = budget.explicitOutputTokens === true
+    ? probe(budget.requestedOutputTokens)?.maxOutputTokens
+    : undefined;
+  const additionalOutputTokens = explicitOutput === undefined
+    ? Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional)
+    : Math.max(0, explicitOutput - budget.requestedOutputTokens);
   return {
     budget: {
       ...budget,
       responseFormat,
-      additionalOutputTokens: Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional),
+      additionalOutputTokens,
     },
   };
 }

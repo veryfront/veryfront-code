@@ -16,7 +16,10 @@ import { agent } from "../index.ts";
 import { AgentRuntime } from "./index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import { enforceFinalRequestBudget, enforceProviderRequestBudget } from "./final-request-budget.ts";
-import { resolveAdditiveReasoningOutputTokens } from "#veryfront/runtime/model-call-context-request.ts";
+import {
+  buildModelCallContextRequest,
+  resolveAdditiveReasoningOutputTokens,
+} from "#veryfront/runtime/model-call-context-request.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import type { AgentConfig, Message } from "../types.ts";
 
@@ -1202,6 +1205,49 @@ describe("invoke_agent child request budget", () => {
     assert(error instanceof VeryfrontError);
     assertEquals(error.slug, "agent-context-window-exceeded");
     assertEquals(model.callCount, 0);
+  });
+
+  it("accounts for Anthropic output clamping at the actual explicit request", () => {
+    const model = { provider: "anthropic", modelId: "claude-haiku-4-5" };
+    const reasoning = { enabled: true, budgetTokens: 4_096 };
+    for (const requestedOutputTokens of [62_000, 64_000]) {
+      const input = {
+        model,
+        reasoning,
+        system: "Plan",
+        messages: [{ role: "user", content: "Think carefully." }],
+        limit: { context: 200_000, output: 64_000 },
+        requestedOutputTokens,
+        explicitOutputTokens: true,
+        additionalOutputTokens: 4_096,
+      };
+      const admitted = enforceProviderRequestBudget(input);
+      assertEquals(admitted.maxOutputTokens, requestedOutputTokens);
+      const wire = buildModelCallContextRequest(model, {
+        reasoning,
+        maxOutputTokens: admitted.maxOutputTokens,
+      });
+      assertEquals(wire?.maxOutputTokens, 64_000);
+      assertThrows(() =>
+        enforceProviderRequestBudget({
+          ...input,
+          limit: { context: 200_000, output: 63_999 },
+        })
+      );
+    }
+    const implicit = enforceProviderRequestBudget({
+      model,
+      reasoning,
+      system: "Plan",
+      messages: [],
+      limit: { context: 18_000, output: 64_000 },
+      requestedOutputTokens: 64_000,
+    });
+    const wire = buildModelCallContextRequest(model, {
+      reasoning,
+      maxOutputTokens: implicit.maxOutputTokens,
+    });
+    assert((wire?.maxOutputTokens ?? Infinity) + (implicit.estimatedInputTokens ?? 0) <= 18_000);
   });
 
   it("keeps additive thinking within a served output ceiling below the model maximum", () => {

@@ -7,8 +7,6 @@ import {
   isSkillReferenceToolResult,
   toolResultDisclosureInput,
 } from "./tool-result-context-messages.ts";
-import { createToolResultReadDefinition } from "./tool-result-context-tools.ts";
-import { estimateTokens } from "../../chat/message-prep.ts";
 
 const hasOwn = Object.hasOwn;
 
@@ -61,23 +59,20 @@ export function projectHistoricalToolResultsForBudget(input: {
   if (budget.fits || budget.outputExceeded || budget.estimatedInputTokens === null) {
     return projected;
   }
-  const initial = { projected, budget };
+
+  let bestProjected = projected;
+  let bestOverallBudget = budget;
   const createdRefs: string[] = [];
-  // The first retained reference also exposes the reader schema. That one-time
-  // cost is credited to the first reference so several moderate results can
-  // amortize it together; the batch is undone if it never pays off.
-  let readerSchemaCredit = 0;
-  if (input.context.size === 0) {
-    const reader = createToolResultReadDefinition();
-    readerSchemaCredit = Math.ceil(
-      estimateTokens({
-        name: reader.name,
-        type: "function",
-        description: reader.description,
-        inputSchema: reader.parameters,
-      }) * 1.1,
-    );
-  }
+  let bestRefCount = 0;
+  const discardTentativeReferences = () => {
+    while (createdRefs.length > bestRefCount) input.context.delete(createdRefs.pop()!);
+    projected = bestProjected;
+    budget = bestOverallBudget;
+  };
+  const finishProjection = () => {
+    discardTentativeReferences();
+    return bestProjected;
+  };
 
   let latestUser = -1;
   let latestToolCall = -1;
@@ -138,12 +133,12 @@ export function projectHistoricalToolResultsForBudget(input: {
       }
       if (isProtectedToolResult(part)) continue;
       const currentEstimate = budget.estimatedInputTokens;
-      if (currentEstimate === null) return projected;
+      if (currentEstimate === null) return finishProjection();
       const storedBefore = input.context.size;
       let createdRef: string | undefined;
       let bestMessages: Message[] | undefined;
-      let bestBudget = budget;
-      const threshold = currentEstimate + readerSchemaCredit;
+      let bestCandidateBudget = budget;
+      let budgetWithReader: ToolResultProjectionBudget | undefined;
       const previewCandidates = isSkillReferenceToolResult(part)
         ? SKILL_REFERENCE_PREVIEW_CANDIDATES
         : ORDINARY_PREVIEW_CANDIDATES;
@@ -154,6 +149,9 @@ export function projectHistoricalToolResultsForBudget(input: {
             previewBytes === undefined ? undefined : { previewBytes },
           );
           if (input.context.size > storedBefore) createdRef = reference.modelResult.ref;
+          // Measure the inline request with the same reader exposure, separating
+          // this result's savings from the helper schema's one-time overhead.
+          budgetWithReader ??= input.inspect(projected);
           const parts = slicePrivateArray(modelMessage.parts);
           parts[partIndex] = { ...modelPart, result: reference.modelResult };
           const messages = slicePrivateArray(projected);
@@ -161,36 +159,47 @@ export function projectHistoricalToolResultsForBudget(input: {
           const nextBudget = input.inspect(messages);
           if (
             !nextBudget.outputExceeded && nextBudget.estimatedInputTokens !== null &&
-            nextBudget.estimatedInputTokens <
-              (bestMessages ? bestBudget.estimatedInputTokens! : threshold)
+            !budgetWithReader.outputExceeded && budgetWithReader.estimatedInputTokens !== null &&
+            (nextBudget.fits ||
+              nextBudget.estimatedInputTokens < budgetWithReader.estimatedInputTokens) &&
+            (!bestMessages || nextBudget.fits ||
+              nextBudget.estimatedInputTokens < bestCandidateBudget.estimatedInputTokens!)
           ) {
             bestMessages = messages;
-            bestBudget = nextBudget;
+            bestCandidateBudget = nextBudget;
             if (nextBudget.fits) break;
           }
         }
       } catch (error) {
         if (createdRef) input.context.delete(createdRef);
-        if (isToolResultContextCapacityError(error)) continue;
+        if (isToolResultContextCapacityError(error)) {
+          if (createdRefs.length > bestRefCount) {
+            // An unamortized batch must not occupy the last slot and prevent
+            // a later, larger result from paying the reader cost by itself.
+            discardTentativeReferences();
+            partIndex--;
+          }
+          continue;
+        }
+        for (const ref of createdRefs) input.context.delete(ref);
         throw error;
       }
-      // A reference can cost more than the inline result once the reader schema
-      // is exposed. Release newly retained values that do not improve the
-      // assembled estimate, leaving storage for a later useful result.
-      if (!bestMessages || bestBudget.estimatedInputTokens! >= threshold) {
+      if (!bestMessages) {
         if (createdRef) input.context.delete(createdRef);
         continue;
       }
       if (createdRef) createdRefs.push(createdRef);
-      readerSchemaCredit = 0;
       projected = bestMessages;
-      budget = bestBudget;
-      if (budget.fits) return projected;
+      budget = bestCandidateBudget;
+      // Several individually useful references may jointly amortize the reader
+      // schema. Keep them tentative until their combined estimate improves.
+      if (budget.fits || budget.estimatedInputTokens! < bestOverallBudget.estimatedInputTokens!) {
+        bestProjected = projected;
+        bestOverallBudget = budget;
+        bestRefCount = createdRefs.length;
+      }
+      if (budget.fits) return finishProjection();
     }
   }
-  if (budget.estimatedInputTokens! >= initial.budget.estimatedInputTokens!) {
-    for (const ref of createdRefs) input.context.delete(ref);
-    return initial.projected;
-  }
-  return projected;
+  return finishProjection();
 }

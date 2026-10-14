@@ -387,3 +387,25 @@ it("amortizes the tool_search schema across several small schema evictions", () 
   assertEquals(fitted.evictedNames, ["small_a", "small_b"]);
   assertEquals(inspect(fitted.plan).fits, true);
 });
+
+it("amortizes the search schema over multiple deferred evictions", () => {
+  for (const count of [1, 2]) {
+    const names = ["first", "second"].slice(0, count);
+    const state = createToolExposureState(names);
+    const plan = createToolExposurePlan({
+      authorized: names.map((name) => definition(name)),
+      mode: "deferred",
+      state,
+    });
+    const inspect = (candidate: typeof plan) => {
+      const removed = count - candidate.loadedToolNames.size;
+      const helper = candidate.visible.some((tool) => tool.name === "tool_search");
+      const estimate = 2_000 - removed * 400 + (helper ? 600 : 0);
+      return { fits: estimate <= 1_900, outputExceeded: false, estimatedInputTokens: estimate };
+    };
+    const fitted = fitDeferredToolSchemasToBudget({ plan, sourceMessages: [], inspect });
+    assertEquals(inspect(fitted.plan).fits, count === 2);
+    assertEquals(fitted.evictedNames, count === 2 ? names : []);
+    assertEquals([...state.loadedToolNames], names);
+  }
+});
