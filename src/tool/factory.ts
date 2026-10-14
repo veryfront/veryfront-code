@@ -129,7 +129,10 @@ function snapshotMcpConfig(
     // captured structured clone primitive to reject Proxies before reflection
     // and then validate the owned clone.
     try {
-      inspectedValue = apply(structuredCloneValue, globalThis, [value]) as object;
+      // Clone an owned wrapper: Deno 2.9 probes top-level WebIDL brands before
+      // serialization, which would run a candidate Proxy's descriptor trap.
+      // Nested values reach the native serializer and Proxies reject hook-free.
+      inspectedValue = (apply(structuredCloneValue, globalThis, [[value]]) as [object])[0];
     } catch {
       schemaError(toolId, "MCP configuration must contain only data properties");
     }

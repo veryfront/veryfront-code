@@ -1,4 +1,5 @@
 // deno-fmt-ignore-file
+// deno-lint-ignore-file -- Verified generated upstream browser bundle.
 /**
  * Official yaml@2.9.0 browser entry, bundled without algorithm changes.
  * Package integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==

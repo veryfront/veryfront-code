@@ -114,7 +114,10 @@ describe("reactReExportToEsmUrl", () => {
     const reactSrcDir = new URL("../../../../../react/", import.meta.url);
     const sources: string[] = [];
     for await (const entry of Deno.readDir(reactSrcDir)) {
-      if (entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+      if (
+        entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".d.ts")
+      ) {
         sources.push(entry.name);
       }
     }

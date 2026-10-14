@@ -46,20 +46,6 @@ function anthropicRequest(overrides: {
   });
 }
 
-async function assertRejectsWithMessage(
-  fn: () => Promise<unknown>,
-  expected: string,
-  assertionMessage: string,
-): Promise<void> {
-  const error = await assertRejects(
-    fn,
-    Error,
-    undefined,
-    assertionMessage,
-  );
-  assertStringIncludes((error as Error).message, expected, assertionMessage);
-}
-
 describe("runtime provider cancellation", () => {
   it("observes child client disconnect before pending response headers and excludes cleanup", async () => {
     for (const abortClient of [true, false]) {

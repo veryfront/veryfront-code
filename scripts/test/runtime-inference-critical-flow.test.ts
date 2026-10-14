@@ -487,9 +487,6 @@ describe("runtime inference critical-flow pure contract", () => {
     );
   });
 
-
-
-
   it("requires provider-side client abort evidence before cleanup can release the black-hole response", async () => {
     await waitForProviderCancellation(
       {
