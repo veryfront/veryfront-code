@@ -1,5 +1,5 @@
 import { bindHostedAgentPauseLifetime } from "#veryfront/agent/hosted/manual-pause-credential.ts";
-import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
+import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import type { ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import {
   invalidateHostedAgentPauseSettlement,
@@ -1009,8 +1009,7 @@ function getForwardedIntegrationToolDefinitions(
       description: def.description,
       parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
     };
-    const discovery = normalizeToolDiscoveryMetadata(def.discovery);
-    if (discovery) forwarded.discovery = discovery;
+    copyToolDiscoveryMetadata(def, forwarded);
     return forwarded;
   });
 }

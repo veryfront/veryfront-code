@@ -1,3 +1,4 @@
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -1578,8 +1579,15 @@ type FrameworkToolSearchResult =
 const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "query"] as const;
 const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] as const;
 
+function readToolSearchArg(args: Record<string, unknown>, key: string): unknown {
+  const property = ObjectGetOwnPropertyDescriptor(args, key);
+  if (!property) return undefined;
+  if (!ObjectHasOwn(property, "value")) throw new Error("tool_search requires data properties");
+  return property.value;
+}
+
 function hasToolSearchArg(args: Record<string, unknown>, key: string): boolean {
-  return ObjectHasOwn(args, key) && args[key] !== undefined;
+  return readToolSearchArg(args, key) !== undefined;
 }
 
 function executeFrameworkToolSearch(input: {
@@ -1590,6 +1598,7 @@ function executeFrameworkToolSearch(input: {
   result: FrameworkToolSearchResult & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
+  if (isProxyWithoutHooks(input.args)) throw new Error("tool_search requires data properties");
   // The provider schema has no root combinator, so enforce exactly one mode here.
   const modes = filterPrivateArray(
     TOOL_SEARCH_MODES,
@@ -1617,7 +1626,8 @@ function executeFrameworkToolSearch(input: {
   );
   const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
   if (modes[0] === "search") {
-    const query = typeof input.args.search === "string" ? privateTextTrim(input.args.search) : "";
+    const phrase = readToolSearchArg(input.args, "search");
+    const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
     if (!query) {
       throw new Error("tool_search search requires a non-empty capability phrase string");
     }
@@ -1637,7 +1647,7 @@ function executeFrameworkToolSearch(input: {
     };
   }
   if (modes[0] === "schema") {
-    const name = input.args.schema;
+    const name = readToolSearchArg(input.args, "schema");
     if (typeof name !== "string" || !name) {
       throw new Error("tool_search schema requires one exact tool name string");
     }
@@ -1680,7 +1690,11 @@ function executeFrameworkToolSearch(input: {
     };
   }
   if (modes[0] === "inventory") {
-    const { inventory: scope, cursor, limit, domain, resource } = input.args;
+    const scope = readToolSearchArg(input.args, "inventory");
+    const cursor = readToolSearchArg(input.args, "cursor");
+    const limit = readToolSearchArg(input.args, "limit");
+    const domain = readToolSearchArg(input.args, "domain");
+    const resource = readToolSearchArg(input.args, "resource");
     if (scope !== "all" && scope !== "platform") {
       throw new Error(
         'tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
@@ -1717,7 +1731,8 @@ function executeFrameworkToolSearch(input: {
       checkpoint: checkpoint(),
     };
   }
-  const query = typeof input.args.query === "string" ? privateTextTrim(input.args.query) : "";
+  const phrase = readToolSearchArg(input.args, "query");
+  const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }

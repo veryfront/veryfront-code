@@ -1,3 +1,4 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
@@ -10,7 +11,7 @@ import type {
 } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import {
-  normalizeToolDiscoveryMetadata,
+  readToolDiscoveryMetadata,
   TOOL_DISCOVERY_META_KEY,
 } from "#veryfront/tool/discovery-metadata.ts";
 import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
@@ -522,8 +523,14 @@ export class MCPServer {
       }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
-      const discovery = normalizeToolDiscoveryMetadata(tool.discovery);
-      if (discovery) entry._meta = { [TOOL_DISCOVERY_META_KEY]: discovery };
+      const discovery = readToolDiscoveryMetadata(tool);
+      if (discovery) {
+        defineOwnDataProperty(entry, "_meta", { [TOOL_DISCOVERY_META_KEY]: discovery }, {
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
       tools.push(entry);
     }
 

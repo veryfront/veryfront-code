@@ -34,10 +34,33 @@ it("ignores invalid navigation without evaluating accessors", () => {
       { version: 1, type: "other" },
       { version: 1, type: "platform", resource: "x".repeat(129) },
       { version: 1, type: "platform", operation: "x".repeat(129) },
-      { version: 1, type: "integration", extra: "x".repeat(3_000) },
     ]
   ) {
     assertEquals(normalizeToolDiscoveryMetadata(value), undefined);
   }
   assertEquals(reads, 0);
+});
+
+it("ignores extension values without reflecting them", () => {
+  let calls = 0;
+  const extension = new Proxy({}, {
+    getPrototypeOf() {
+      calls++;
+      throw new Error("extension reflected");
+    },
+    ownKeys() {
+      calls++;
+      throw new Error("extension reflected");
+    },
+  });
+  assertEquals(
+    normalizeToolDiscoveryMetadata({ version: 1, type: "integration", extra: extension }),
+    { version: 1, type: "integration" },
+  );
+  assertEquals(
+    normalizeToolDiscoveryMetadata({ version: 1, type: "integration", extra: "x".repeat(3000) }),
+    { version: 1, type: "integration" },
+  );
+  assertEquals(normalizeToolDiscoveryMetadata(extension), undefined);
+  assertEquals(calls, 0);
 });

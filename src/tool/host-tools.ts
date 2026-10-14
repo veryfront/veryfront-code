@@ -8,7 +8,7 @@ import type {
   ToolExecutionContext,
   ToolSet,
 } from "./types.ts";
-import { normalizeToolDiscoveryMetadata } from "./discovery-metadata.ts";
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -212,8 +212,7 @@ export function createToolsFromHostDefinitions(
         materializedTool = tool(config);
       }
       if (materializedTool) {
-        const discovery = normalizeToolDiscoveryMetadata(definition.discovery);
-        if (discovery) materializedTool.discovery = discovery;
+        copyToolDiscoveryMetadata(definition, materializedTool);
         const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)

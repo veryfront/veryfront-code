@@ -1,5 +1,6 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import { normalizeToolDiscoveryMetadata, TOOL_DISCOVERY_META_KEY } from "./discovery-metadata.ts";
+import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -265,10 +266,14 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
   };
 
   // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
-  const discovery = normalizeToolDiscoveryMetadata(
-    isRecord(entry._meta) ? entry._meta[TOOL_DISCOVERY_META_KEY] : undefined,
-  );
-  if (discovery) definition.discovery = discovery;
+  const discovery = readMcpToolDiscoveryMetadata(entry);
+  if (discovery) {
+    defineOwnDataProperty(definition, "discovery", discovery, {
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
 
   if (entry.title !== undefined) {
     if (

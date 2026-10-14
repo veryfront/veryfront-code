@@ -1,4 +1,4 @@
-import { normalizeToolDiscoveryMetadata } from "./discovery-metadata.ts";
+import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -122,7 +122,7 @@ function snapshotProviderMcpMetadata(
 }
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
-  const discovery = normalizeToolDiscoveryMetadata(tool.discovery);
+  const discovery = readToolDiscoveryMetadata(tool);
   const hasPreConvertedSchema = tool.inputSchemaJson != null;
   const jsonSchema = snapshotProviderSchema(
     tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),

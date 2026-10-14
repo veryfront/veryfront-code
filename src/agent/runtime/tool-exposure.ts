@@ -21,7 +21,7 @@ import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/pri
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool";
-import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
+import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
@@ -477,13 +477,6 @@ export type ToolMetadataSearchResult = {
   loadedCount: 0;
   miss: boolean;
 };
-
-function readToolDiscoveryMetadata(tool: ToolDefinition): ToolDiscoveryMetadata | undefined {
-  const descriptor = ObjectGetOwnPropertyDescriptor(tool, "discovery");
-  return descriptor && isOwnDataPropertyDescriptor(descriptor)
-    ? normalizeToolDiscoveryMetadata(descriptor.value)
-    : undefined;
-}
 
 function readToolDiscoveryField(tool: ToolDefinition): { discovery?: ToolDiscoveryMetadata } {
   const discovery = readToolDiscoveryMetadata(tool);

@@ -1,6 +1,6 @@
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
-import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
+import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import type { AgentConfig } from "../types.ts";
 import { defineSchema } from "#veryfront/schemas";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -360,8 +360,7 @@ export function getRuntimeForwardedIntegrationToolDefs(
           ? def.parameters
           : { type: "object", properties: {} },
       };
-      const discovery = normalizeToolDiscoveryMetadata(def.discovery);
-      if (discovery) definition.discovery = discovery;
+      copyToolDiscoveryMetadata(def, definition);
       return definition;
     });
 }
