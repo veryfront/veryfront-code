@@ -103,7 +103,6 @@ const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
 const STREAM_START_IDLE_MS = 60_000;
 const STREAM_OUTPUT_IDLE_MS = 15_000;
-const streamNow = Date.now;
 
 type TraceAttributePrimitive = string | number | boolean;
 type TraceAttributeValue = TraceAttributePrimitive | readonly TraceAttributePrimitive[];
@@ -962,8 +961,11 @@ export function processStreamInternal(
   // provider wrappers. After Gate 2 the extensions emit raw streams, so the
   // legacy compatibility boundary reinstates the wrapper for source-opened
   // streams only; pre-opened results keep their historical unwrapped shape.
-  const requiredFinishDeadline = callbacks?.streamRequiresFinish
-    ? streamNow() + resolveRuntimeLifecyclePolicy(callbacks).attemptTimeoutMs
+  const requiredFinishPolicy = callbacks?.streamRequiresFinish
+    ? resolveRuntimeLifecyclePolicy(callbacks)
+    : undefined;
+  const requiredFinishDeadline = requiredFinishPolicy
+    ? requiredFinishPolicy.clock.nowMs() + requiredFinishPolicy.attemptTimeoutMs
     : undefined;
   const result = isRuntimeStreamSource(resultOrSource)
     ? wrapLegacyRuntimeStreamResult(
@@ -1323,7 +1325,7 @@ export function processStreamInternal(
         const wouldTimeOutIdle = !hasActiveLocalToolInput && !shouldStopForCommittedLocalToolCall;
         const remainingFinishWait = requiredFinishDeadline === undefined
           ? undefined
-          : requiredFinishDeadline - streamNow();
+          : requiredFinishDeadline - requiredFinishPolicy!.clock.nowMs();
         if (
           !sawProviderFinishPart && remainingFinishWait !== undefined && remainingFinishWait <= 0
         ) {
@@ -1943,6 +1945,10 @@ export function processStreamInternal(
           case "error": {
             closeTextSegment();
             closeReasoningSegment();
+            if (callbacks?.streamRequiresFinish) {
+              throwIfAborted(abortSignal);
+              throw createRuntimeProviderStreamFailure(typedPart.error);
+            }
             logger.warn("Runtime stream error:", typedPart.error);
             sendSSE(controller, encoder, resolveRuntimeStreamErrorEvent(typedPart.error));
             break;
@@ -1954,7 +1960,6 @@ export function processStreamInternal(
         }
 
         throwIfAborted(abortSignal);
-        if (callbacks?.streamRequiresFinish && typedPart.type === "error") break;
       }
 
       throwIfAborted(abortSignal);

@@ -1338,6 +1338,44 @@ describe("chat-stream-handler", () => {
       }
     });
 
+    it("uses the lifecycle clock to expire the required finish deadline", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let reads = 0;
+      let clockReads = 0;
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            reads++;
+            yield { type: "finish", finishReason: "stop", totalUsage: null };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      const error = await assertRejects(() =>
+        processStream(
+          result,
+          state,
+          controller,
+          encoder,
+          "t",
+          {
+            streamRequiresFinish: true,
+            streamLifecyclePolicy: {
+              attemptTimeoutMs: 1_000,
+              clock: {
+                nowMs: () => clockReads++ === 0 ? 100 : 1_100,
+                waitUntil: () => Promise.resolve("deadline"),
+              },
+            },
+          },
+        )
+      ) as Error;
+      assertEquals(error.name, "RuntimeProviderStreamFailure");
+      assertEquals(reads, 0);
+      assertEquals(state.finishReason, null);
+    });
+
     it("accepts a required provider stream finish and preserves its usage", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -1360,24 +1398,37 @@ describe("chat-stream-handler", () => {
       assertEquals(state.usage?.totalTokens, 5);
     });
 
-    it("preserves explicit provider errors when a required stream ends without finish", async () => {
-      const { events, controller, encoder } = createSSECollector();
-      const state = createStreamState();
-      const providerError = new Error("Provider request failed with status 402");
-      Object.defineProperty(providerError, "responseBody", {
-        value: JSON.stringify({ slug: "insufficient-credits" }),
-      });
-      await processStream(
-        createMockResult([{ type: "error", error: providerError }]),
-        state,
-        controller,
-        encoder,
-        "t",
-        { streamRequiresFinish: true },
-      );
-      assertEquals(events[0]?.code, "INSUFFICIENT_CREDITS");
-      assertEquals(events.length, 1);
-      assertEquals(state.finishReason, null);
+    it("propagates required provider errors without reporting successful completion", async () => {
+      for (const committedTool of [false, true]) {
+        const { events, controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const providerError = new Error("Provider request failed with status 402");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify({ slug: "insufficient-credits" }),
+        });
+        const error = await assertRejects(() =>
+          processStream(
+            createMockResult([
+              ...(committedTool
+                ? [{ type: "tool-call", toolCallId: "local-1", toolName: "test", input: {} }]
+                : []),
+              { type: "error", error: providerError },
+            ]),
+            state,
+            controller,
+            encoder,
+            "t",
+            { streamRequiresFinish: true, requireProviderFinish: true },
+          )
+        );
+        const provenance = readRuntimeProviderStreamFailureCause(error);
+        assertEquals(provenance.found, true);
+        if (!provenance.found) throw new Error("Expected private provider cause");
+        assertStrictEquals(provenance.cause, providerError);
+        assertEquals(resolveRuntimeStreamErrorEvent(provenance.cause).code, "INSUFFICIENT_CREDITS");
+        assertEquals(events.filter((event) => event.type === "error").length, 0);
+        assertEquals(state.finishReason, null);
+      }
     });
 
     it("does not synthesize success after an explicit provider error idles", async () => {
@@ -1392,11 +1443,14 @@ describe("chat-stream-handler", () => {
         },
         textStream: emptyAsyncIterable(),
       };
-      await processStream(result, state, controller, encoder, "t", {
-        streamRequiresFinish: true,
-        streamIdleTimeoutMs: 10,
-      });
-      assertEquals(events[0]?.type, "error");
+      const error = await assertRejects(() =>
+        processStream(result, state, controller, encoder, "t", {
+          streamRequiresFinish: true,
+          streamIdleTimeoutMs: 10,
+        })
+      );
+      assertEquals(readRuntimeProviderStreamFailureCause(error).found, true);
+      assertEquals(events.length, 0);
       assertEquals(state.finishReason, null);
     });
 
