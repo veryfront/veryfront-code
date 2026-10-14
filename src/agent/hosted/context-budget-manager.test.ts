@@ -14,6 +14,53 @@ import {
   getContextCompactionEventPayloadSchema,
 } from "./context-budget-manager.ts";
 
+import { createHostedChatContextBudgetOptions } from "./cloud-agent-chat-execution.ts";
+import { createNodeVeryfrontCloudAgentServiceContext } from "./cloud-agent-config.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+
+function hostedDefaultOptions() {
+  const context = createNodeVeryfrontCloudAgentServiceContext({
+    serviceName: "context-budget-test",
+    createBashTool: () => {
+      throw new Error("Shell tools are not used by context budgeting");
+    },
+    env: {
+      VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET: "10000",
+      VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS: "1000",
+      VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS: "1000",
+      VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS: "1000",
+    },
+  });
+  const request: ParsedHostedChatRequest = {
+    agentId: undefined,
+    userId: "fixture-user",
+    authToken: "fixture-token",
+    messages: [],
+    validatedContext: { projectId: null, branchId: null },
+    projectId: null,
+    conversationId: undefined,
+    parentRunId: undefined,
+    upstreamParentConversationId: undefined,
+    upstreamParentRunId: undefined,
+    spawnedFromToolCallId: undefined,
+    model: undefined,
+    allowDelegation: undefined,
+    forwardedProps: {},
+    runtimeOverrides: undefined,
+    persistLatestUserMessageBeforeDurableRun: false,
+    durableRootRun: { runId: "run_fixture", messageId: "11111111-1111-4111-8111-111111111111" },
+  };
+  const options = createHostedChatContextBudgetOptions(
+    context,
+    request,
+    {},
+    new AbortController().signal,
+  );
+  assertExists(options);
+  assertEquals(options.minimumRecentTurns, 2, "actual hosted default is retained");
+  return { ...options, summaryGenerator: () => ({ text: "Completed older stages" }) };
+}
+
 function message(
   id: string,
   role: AgentRuntimeMessage["role"],
@@ -125,6 +172,72 @@ Deno.test("applyContextBudget compacts a long active turn while preserving its e
       );
     }
   }
+});
+
+Deno.test("actual hosted default compacts the one available active user turn", async () => {
+  const messages = [message("request", "user", "Exact hosted request")];
+  for (let index = 0; index < 30; index++) {
+    messages.push(toolCallMessage(`call-${index}`, "reused-tool"));
+    const result = toolResultMessage(`result-${index}`, "reused-tool");
+    result.parts.push({ type: "text", text: "fixture ".repeat(500) });
+    messages.push(result);
+  }
+  const result = await applyContextBudget(messages, hostedDefaultOptions());
+  assertEquals(result.diagnostics.compacted, true);
+  assertEquals(
+    result.messages.filter((entry) => messages.some((original) => original.id === entry.id)).map(
+      (entry) => entry.id,
+    ),
+    ["request", "call-29", "result-29"],
+  );
+  assertEquals(result.eventPayload?.preservedMessageIds, ["request"]);
+});
+
+Deno.test("actual hosted default fails closed when two protected turns overflow", async () => {
+  const messages = [
+    message("first-request", "user", "First protected request"),
+    message("request", "user", "Second protected request"),
+  ];
+  for (let index = 0; index < 30; index++) {
+    messages.push(toolCallMessage(`call-${index}`, `tool-${index}`));
+    const result = toolResultMessage(`result-${index}`, `tool-${index}`);
+    result.parts.push({ type: "text", text: "fixture ".repeat(500) });
+    messages.push(result);
+  }
+  const original = structuredClone(messages);
+  let summarized = false;
+  await assertRejects(
+    () =>
+      applyContextBudget(messages, {
+        ...hostedDefaultOptions(),
+        summaryGenerator: () => {
+          summarized = true;
+          return { text: "Summary" };
+        },
+      }),
+    ContextCompactionError,
+    "exceeded usable token budget",
+  );
+  assertEquals(summarized, false, "an impossible protected suffix fails before a model summary");
+  assertEquals(messages, original);
+});
+
+Deno.test("actual hosted default retains two complete recent turns when their suffix fits", async () => {
+  const messages = [
+    message("old-request", "user", "Old history ".repeat(5000)),
+    message("old-response", "assistant", "Old response"),
+    message("protected-request", "user", "First protected request"),
+    message("protected-response", "assistant", "First protected response ".repeat(300)),
+    message("request", "user", "Latest protected request"),
+    toolCallMessage("call", "tool"),
+    toolResultMessage("result", "tool"),
+  ];
+  const result = await applyContextBudget(messages, hostedDefaultOptions());
+  assertEquals(result.diagnostics.compacted, true);
+  for (const original of messages.slice(1)) {
+    assertEquals(result.messages.find((entry) => entry.id === original.id), original);
+  }
+  assertEquals(result.messages.some((entry) => entry.id === "old-request"), false);
 });
 
 Deno.test("active-turn compaction treats completed tool identifier reuse as separate pairs", async () => {

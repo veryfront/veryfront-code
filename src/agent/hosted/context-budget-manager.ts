@@ -398,10 +398,12 @@ export async function applyContextBudget(
     messages.some((message, index) =>
       index !== latestUserIndex && message.id === latestUserMessage.id
     );
+  const availableUserTurns = messages.filter(isUserMessage).length;
+  const effectiveMinimumRecentTurns = Math.min(options.minimumRecentTurns ?? 1, availableUserTurns);
   // A long tool loop can belong to one user turn. Keeping that entire turn
   // makes compaction ineffective; retain its request and a dependency-safe tail.
   if (
-    (options.minimumRecentTurns ?? 1) === 1 &&
+    effectiveMinimumRecentTurns === 1 &&
     !requestHasRepeatedSegments &&
     getMessageListTokens(messages.slice(tailStartIndex)) >=
       usableBudget - (options.maxSummaryTokens ?? Math.min(2048, Math.floor(usableBudget / 4)))
@@ -427,6 +429,9 @@ export async function applyContextBudget(
     .filter((message) => message !== preservedRequest);
   const retainedTail = messages.slice(tailStartIndex);
   const retainedMessages = preservedRequest ? [preservedRequest, ...retainedTail] : retainedTail;
+  if (getMessageListTokens(retainedMessages) >= usableBudget) {
+    throw new ContextCompactionError("Context compaction result exceeded usable token budget");
+  }
   const firstKeptEntryId = retainedTail[0]?.id;
 
   if (!firstKeptEntryId) {

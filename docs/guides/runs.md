@@ -204,6 +204,12 @@ The internal `AGENT_RUN_CONTEXT_COMPACTED` event identifies the contiguous tail 
 `firstKeptEntryId`. Its optional `preservedMessageIds` identifies exact user requests
 retained before that tail. Replay restores those original messages in source order and
 rejects invalid preservation records. Older events keep their existing replay behavior.
+Hosted services default to protecting two recent turns. If the history contains only
+one user turn, compaction can shorten its tool loop while preserving the exact request.
+When two turns are available, their protected suffix remains complete; if that suffix
+cannot fit, compaction raises `ContextCompactionError` before summary generation.
+Successful compaction inside two protected complete turns is not supported by this change.
+
 The API must support `preservedMessageIds` before a framework that emits it is deployed.
 
 ## Typed Runs contract SDK
