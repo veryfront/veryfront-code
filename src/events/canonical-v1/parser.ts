@@ -120,6 +120,33 @@ function safeCursor(value: string): void {
     throw new TypeError("Invalid canonical-v1 durable cursor");
   }
 }
+function hasProducingSource(event: CanonicalEventV1, live: boolean): boolean {
+  const source = new URL(event.source);
+  const rawPath = /^https:\/\/[^/]+(\/[^?#]*)$/.exec(event.source)?.[1];
+  if (
+    source.protocol !== "https:" || source.username || source.password ||
+    source.search || source.hash || rawPath !== source.pathname ||
+    event.source.includes("\\")
+  ) return false;
+  const ownerPath = `/runs/${encodeURIComponent(event.runid ?? "")}`;
+  const marker = live ? `${ownerPath}/streams/` : ownerPath;
+  const ownerStart = source.pathname.lastIndexOf(marker);
+  if (ownerStart < 0) return false;
+  const tail = source.pathname.slice(ownerStart + marker.length);
+  if (live ? !tail || tail.includes("/") : tail !== "") return false;
+  // The physical-store base is opaque identity, but it must not contain URL
+  // normalization aliases or encoded separators that obscure its boundaries.
+  const base = source.pathname.slice(0, ownerStart);
+  try {
+    return (base === "" || base.slice(1).split("/").every((part) => {
+      const decoded = decodeURIComponent(part);
+      return decoded !== "" && decoded !== "." && decoded !== ".." &&
+        !decoded.includes("/") && !decoded.includes("\\");
+    })) && (!live || encodeURIComponent(decodeURIComponent(tail)) === tail);
+  } catch {
+    return false;
+  }
+}
 function envelope(event: CanonicalEventV1, view: string, live = false): void {
   for (const [key, value] of Object.entries(event)) {
     if (key === "tracestate") continue;
@@ -135,14 +162,7 @@ function envelope(event: CanonicalEventV1, view: string, live = false): void {
     event.tracestate !== undefined &&
     (typeof event.tracestate !== "string" || !isTraceState(event.tracestate))
   ) throw new TypeError("Invalid W3C tracestate");
-  const source = new URL(event.source);
-  if (
-    source.protocol !== "https:" || source.search || source.hash || source.username ||
-    source.password ||
-    (live
-      ? !source.pathname.startsWith(`/runs/${encodeURIComponent(event.runid ?? "")}/streams/`)
-      : source.pathname !== `/runs/${encodeURIComponent(event.runid ?? "")}`)
-  ) {
+  if (!hasProducingSource(event, live)) {
     throw new TypeError("Invalid canonical-v1 producing source");
   }
   if (validatePayloadSemantics(event).length) {
