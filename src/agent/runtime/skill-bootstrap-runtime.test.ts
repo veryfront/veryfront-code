@@ -47,6 +47,48 @@ Deno.test("startup supports the Code framework's flat-input skill loader", async
   }
 });
 
+Deno.test("startup resolves an agent-owned skill short name to its canonical ID", async () => {
+  clearMCPRegistry();
+  skillRegistryInternal.clearAll();
+  registerSkill("researcher--cite", {
+    id: "researcher--cite",
+    ownerAgentId: "researcher",
+    shortName: "cite",
+    rootPath: "/skills/researcher--cite",
+    metadata: { name: "cite", description: "Citation guidance" },
+    fsAdapter: createSkillTestAdapter({
+      "/skills/researcher--cite/SKILL.md": "# Citation guidance",
+    }),
+  });
+  const model = scriptedModel([(options) => {
+    assertStringIncludes(JSON.stringify(options.prompt), "Citation guidance");
+    return { text: "Ready" };
+  }], { only: "generate" });
+  const assistant = agent({
+    id: "researcher",
+    system: "Help with the task.",
+    model: model.modelId,
+    bootstrapSkill: "cite",
+    skills: ["cite"],
+    tools: { load_skill: createLoadSkillTool() },
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+  try {
+    const response = await assistant.generate({ input: "Cite the sources" });
+    assertEquals(response.toolCalls?.[0]?.args, { skillId: "cite" });
+    assertEquals(response.toolCalls?.[0]?.result, {
+      skillId: "researcher--cite",
+      instructions: "# Citation guidance",
+      references: [],
+      scripts: [],
+    });
+    assertEquals(model.callCount, 1);
+  } finally {
+    skillRegistryInternal.clearAll();
+  }
+});
+
 for (const mode of ["generate", "stream"] as const) {
   Deno.test(`startup skill loads for a ${mode} model without tool calling`, async () => {
     clearMCPRegistry();

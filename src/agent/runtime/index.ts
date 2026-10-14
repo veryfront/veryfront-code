@@ -217,7 +217,10 @@ import {
   setProviderObservedSkillBodies,
 } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
-import { validateRuntimeSkillBootstrapResult } from "./skill-bootstrap.ts";
+import {
+  resolveRuntimeSkillBootstrapId,
+  validateRuntimeSkillBootstrapResult,
+} from "./skill-bootstrap.ts";
 import {
   prepareFrameworkSkillBootstrap,
   runWithFrameworkSkillBootstrap,
@@ -2578,6 +2581,7 @@ function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, T
  * load so the active skill policy and history stay consistent.
  */
 async function executeStartupSkill(input: {
+  agentId: string;
   skillId: string;
   authorized: readonly ToolDefinition[];
   messages: Message[];
@@ -2601,6 +2605,7 @@ async function executeStartupSkill(input: {
   if (!definition || !args) {
     throw new Error("bootstrapSkill requires an authorized framework skill loader");
   }
+  const expectedSkillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
   const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
   const message: Message = {
     id: generateMessageId(),
@@ -2624,7 +2629,7 @@ async function executeStartupSkill(input: {
       loader,
       () => input.execute(definition.name, toolCallId, args, admittedTurn),
     );
-    validateRuntimeSkillBootstrapResult(result, input.skillId);
+    validateRuntimeSkillBootstrapResult(result, expectedSkillId);
   } catch (error) {
     toolCall.status = "error";
     toolCall.error = "Startup skill preparation failed";
@@ -4229,6 +4234,7 @@ export class AgentRuntime {
           : preparedStep.toolExposurePlan;
         if (!startupSkillLoaded) {
           await executeStartupSkill({
+            agentId: this.id,
             skillId: this.config.bootstrapSkill!,
             authorized: preparedStep.startupAuthorizedTools,
             messages: currentMessages,
@@ -5335,6 +5341,7 @@ export class AgentRuntime {
         : preparedStep.toolExposurePlan;
       if (!startupSkillLoaded) {
         await executeStartupSkill({
+          agentId: this.id,
           skillId: this.config.bootstrapSkill!,
           authorized: preparedStep.startupAuthorizedTools,
           messages: currentMessages,
