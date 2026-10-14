@@ -1361,9 +1361,9 @@ describe("projectKnowledge", () => {
       "/projects/acme/files",
       "a non-production request reads the branch files endpoint",
     );
-    assertStringIncludes(
-      requestedUrls[0] ?? "",
-      "branch=feature-x",
+    assertEquals(
+      new URL(requestedUrls[0] ?? "", "https://api.example.test").searchParams.get("ref"),
+      "branch:feature-x",
       "a non-production request reads the requested branch",
     );
   });

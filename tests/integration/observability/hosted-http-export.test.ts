@@ -143,8 +143,9 @@ it("exports 100 interleaved executor requests per project without mixed destinat
         // Consume in the opposite order after both executor request scopes return.
         assertEquals(await responses[1]!.text(), "project-b");
         assertEquals(await responses[0]!.text(), "project-a");
-        await Promise.all(settled.splice(0));
-        assertEquals(broker.active, 0);
+        // One warm executor per project serves every iteration.
+        assertEquals(settled.length, 2);
+        assertEquals(broker.active, 2);
       }
       await flushProjectHttpTracing();
       const spansByProject = new Map(projects.map((project) => [project, [] as Span[]]));

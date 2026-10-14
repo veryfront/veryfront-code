@@ -691,6 +691,9 @@ jobs:
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership

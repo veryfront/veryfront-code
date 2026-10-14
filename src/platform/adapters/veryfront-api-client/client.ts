@@ -11,16 +11,16 @@ import {
 } from "../shared-initialization.ts";
 import {
   type DependencyResolution,
-  type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type GetFileOptions,
+  type GetStyleArtifactInput,
   type ListFilesOptions,
-  type ProjectStyleArtifactResolution,
   type ResolveDependenciesInput,
-  type ResolveStyleArtifactInput,
+  type StartStyleArtifactBuildInput,
+  type StyleArtifact,
   type TokenProvider,
-  type UpsertStyleArtifactInput,
+  type UpdateStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";
 import { API_CLIENT_ERROR, type VeryfrontAPIConfig, VeryfrontError } from "./types.ts";
@@ -94,9 +94,32 @@ export interface VeryfrontApiDependencies {
 }
 
 /**
+ * Style artifact operations of a {@linkcode VeryfrontApiClient}. A style
+ * artifact is the compiled-CSS record for one style profile and one branch,
+ * environment or release. The Veryfront runtime uses these operations; the
+ * project reference defaults to the client's project.
+ */
+export interface VeryfrontApiStyleArtifacts {
+  /** Get the current record. A missing record has `status: "missing"`. */
+  get(input: GetStyleArtifactInput, projectRef?: string): Promise<StyleArtifact>;
+  /** Record the state of the compiled CSS. This does not upload the CSS file. */
+  update(
+    input: UpdateStyleArtifactInput,
+    projectRef?: string,
+    signal?: AbortSignal,
+  ): Promise<StyleArtifact>;
+  /** Start a background CSS build, or return the record that is ready or building. */
+  startBuild(input: StartStyleArtifactBuildInput, projectRef?: string): Promise<StyleArtifact>;
+}
+
+/**
  * Typed client for the Veryfront API. `dependencies.getHistory()` and
  * `dependencies.resolve()` read and pin a project's npm dependencies;
  * `readDependencyMetadataHistory()` is a deprecated alias of `dependencies.getHistory()`.
+ * `styleArtifacts.get()`, `styleArtifacts.update()` and `styleArtifacts.startBuild()`
+ * manage the compiled-CSS record that the Veryfront runtime uses;
+ * `resolveStyleArtifact()`, `upsertStyleArtifact()` and `ensureStyleArtifactBuild()`
+ * are their deprecated aliases.
  */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
@@ -114,6 +137,7 @@ export class VeryfrontApiClient {
   /** Kept off `config`: a plain property is readable by any code holding the client. */
   readonly #apiToken: string | undefined;
   #dependencies?: VeryfrontApiDependencies;
+  #styleArtifacts?: VeryfrontApiStyleArtifacts;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -574,26 +598,53 @@ export class VeryfrontApiClient {
     return this.operations.lookupProjectByDomain(domain, options);
   }
 
+  /**
+   * Style artifacts: the compiled-CSS record for one style profile and one
+   * branch, environment or release. The Veryfront runtime uses these operations.
+   *
+   * - `get(input)` returns the current record (ready, building, failed or missing).
+   * - `update(input)` records the state of the compiled CSS. It does not upload the file.
+   * - `startBuild(input)` starts a background build unless the record is ready or building.
+   */
+  get styleArtifacts(): VeryfrontApiStyleArtifacts {
+    if (!this.#styleArtifacts) {
+      // Dispatch through the instance methods so a replacement installed on a
+      // deprecated name applies to both names.
+      this.#styleArtifacts = IntrinsicObjectFreeze({
+        get: (input: GetStyleArtifactInput, projectRef?: string) =>
+          this.resolveStyleArtifact(input, projectRef),
+        update: (input: UpdateStyleArtifactInput, projectRef?: string, signal?: AbortSignal) =>
+          this.upsertStyleArtifact(input, projectRef, signal),
+        startBuild: (input: StartStyleArtifactBuildInput, projectRef?: string) =>
+          this.ensureStyleArtifactBuild(input, projectRef),
+      });
+    }
+    return this.#styleArtifacts;
+  }
+
+  /** @deprecated Use `client.styleArtifacts.get(input, projectRef)`. */
   resolveStyleArtifact(
-    input: ResolveStyleArtifactInput,
+    input: GetStyleArtifactInput,
     projectRef = this.requireProjectSlug(),
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.resolveStyleArtifact(projectRef, input);
+  ): Promise<StyleArtifact> {
+    return this.operations.getStyleArtifact(projectRef, input);
   }
 
+  /** @deprecated Use `client.styleArtifacts.startBuild(input, projectRef)`. */
   ensureStyleArtifactBuild(
-    input: EnsureStyleArtifactBuildInput,
+    input: StartStyleArtifactBuildInput,
     projectRef = this.requireProjectSlug(),
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.ensureStyleArtifactBuild(projectRef, input);
+  ): Promise<StyleArtifact> {
+    return this.operations.startStyleArtifactBuild(projectRef, input);
   }
 
+  /** @deprecated Use `client.styleArtifacts.update(input, projectRef, signal)`. */
   upsertStyleArtifact(
-    input: UpsertStyleArtifactInput,
+    input: UpdateStyleArtifactInput,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
-  ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.upsertStyleArtifact(projectRef, input, signal);
+  ): Promise<StyleArtifact> {
+    return this.operations.updateStyleArtifact(projectRef, input, signal);
   }
 
   // =============================================================================

@@ -319,8 +319,20 @@ export interface ListFilesOptions {
   signal?: AbortSignal;
 }
 
-/** Every branch listing field except `content`. */
-const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size,type,updated_at,checksum)";
+/**
+ * Every branch listing field except `content`. `size_bytes` is the size field;
+ * `size` is its earlier spelling, selected beside it so an API that answers only
+ * `size` still returns a file size.
+ */
+const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size_bytes,size,type,updated_at,checksum)";
+
+/**
+ * The `ref` content selector for a branch. An empty reference addresses main,
+ * as the route treats an omitted selector.
+ */
+function branchFileRef(branchRef: string): string {
+  return branchRef === "" ? "main" : `branch:${branchRef}`;
+}
 
 export interface FileListResult {
   files: ProjectFile[];
@@ -350,21 +362,31 @@ export interface GetFileOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Selects the style artifact record. Set exactly one of `branch`,
+ * `environmentName` or `releaseId`. The type does not enforce this: the API
+ * rejects any other combination with a validation error.
+ */
 export interface StyleArtifactSelector {
   branch?: string;
   environmentName?: string;
   releaseId?: string;
 }
 
-export interface ResolveStyleArtifactInput extends StyleArtifactSelector {
+/** Input for `client.styleArtifacts.get()`. */
+export interface GetStyleArtifactInput extends StyleArtifactSelector {
   styleProfileHash: string;
 }
 
-export interface EnsureStyleArtifactBuildInput extends ResolveStyleArtifactInput {
+/** Input for `client.styleArtifacts.startBuild()`. */
+export interface StartStyleArtifactBuildInput extends GetStyleArtifactInput {
+  /** Queue a new build even when the record is ready or building. */
   force?: boolean;
 }
 
-export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
+/** Input for `client.styleArtifacts.update()`. */
+export interface UpdateStyleArtifactInput extends GetStyleArtifactInput {
+  /** Defaults to `"ready"`. */
   status?: "building" | "ready" | "failed";
   artifactHash?: string;
   assetPath?: string;
@@ -374,7 +396,11 @@ export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
   failureReason?: string;
 }
 
-export interface ProjectStyleArtifactResolution {
+/**
+ * Current compiled-CSS record for one style profile and one branch,
+ * environment or release. A missing record has `status: "missing"`.
+ */
+export interface StyleArtifact {
   status: "ready" | "missing" | "building" | "failed";
   artifactHash?: string;
   assetPath?: string;
@@ -384,6 +410,15 @@ export interface ProjectStyleArtifactResolution {
   failureReason?: string;
   updatedAt?: string;
 }
+
+/** @deprecated Use `GetStyleArtifactInput`. */
+export type ResolveStyleArtifactInput = GetStyleArtifactInput;
+/** @deprecated Use `StartStyleArtifactBuildInput`. */
+export type EnsureStyleArtifactBuildInput = StartStyleArtifactBuildInput;
+/** @deprecated Use `UpdateStyleArtifactInput`. */
+export type UpsertStyleArtifactInput = UpdateStyleArtifactInput;
+/** @deprecated Use `StyleArtifact`. */
+export type ProjectStyleArtifactResolution = StyleArtifact;
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const {
@@ -426,7 +461,7 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
   };
 }
 
-function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchParams {
+function buildStyleArtifactParams(input: GetStyleArtifactInput): URLSearchParams {
   const params = new URLSearchParams({
     style_profile_hash: input.styleProfileHash,
   });
@@ -438,7 +473,7 @@ function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchPa
   return params;
 }
 
-function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolution {
+function mapStyleArtifact(raw: unknown): StyleArtifact {
   const response = getStyleArtifactResolveResponseSchema().parse(raw);
   return {
     status: response.status,
@@ -636,7 +671,7 @@ export class VeryfrontAPIOperations {
   ): Promise<FileListResult> {
     const params = addRuntimeServerFunctionAccess(buildListParams(options));
     if (options.withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
-    params.set("branch", branchRef);
+    params.set("ref", branchFileRef(branchRef));
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
@@ -694,7 +729,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;
@@ -736,7 +773,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;
@@ -1033,13 +1072,13 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  async resolveStyleArtifact(
+  async getStyleArtifact(
     projectRef: string,
-    input: ResolveStyleArtifactInput,
-  ): Promise<ProjectStyleArtifactResolution> {
+    input: GetStyleArtifactInput,
+  ): Promise<StyleArtifact> {
     const params = buildStyleArtifactParams(input);
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current?${params}`;
-    logger.debug("resolveStyleArtifact", {
+    logger.debug("getStyleArtifact", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -1047,15 +1086,15 @@ export class VeryfrontAPIOperations {
       styleProfileHash: input.styleProfileHash,
     });
 
-    return mapStyleArtifactResolution(await this.request(url));
+    return mapStyleArtifact(await this.request(url));
   }
 
-  async ensureStyleArtifactBuild(
+  async startStyleArtifactBuild(
     projectRef: string,
-    input: EnsureStyleArtifactBuildInput,
-  ): Promise<ProjectStyleArtifactResolution> {
+    input: StartStyleArtifactBuildInput,
+  ): Promise<StyleArtifact> {
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current/builds`;
-    logger.debug("ensureStyleArtifactBuild", {
+    logger.debug("startStyleArtifactBuild", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -1064,7 +1103,7 @@ export class VeryfrontAPIOperations {
       force: input.force ?? false,
     });
 
-    return mapStyleArtifactResolution(
+    return mapStyleArtifact(
       await this.request(url, {
         method: "POST",
         headers: {
@@ -1081,13 +1120,13 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  async upsertStyleArtifact(
+  async updateStyleArtifact(
     projectRef: string,
-    input: UpsertStyleArtifactInput,
+    input: UpdateStyleArtifactInput,
     signal?: AbortSignal,
-  ): Promise<ProjectStyleArtifactResolution> {
+  ): Promise<StyleArtifact> {
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current`;
-    logger.debug("upsertStyleArtifact", {
+    logger.debug("updateStyleArtifact", {
       projectRef,
       branch: input.branch,
       environmentName: input.environmentName,
@@ -1097,7 +1136,7 @@ export class VeryfrontAPIOperations {
       artifactHash: input.artifactHash,
     });
 
-    return mapStyleArtifactResolution(
+    return mapStyleArtifact(
       await this.request(url, {
         method: "PUT",
         headers: {
@@ -1119,6 +1158,28 @@ export class VeryfrontAPIOperations {
         signal,
       }),
     );
+  }
+
+  /** @deprecated Use `getStyleArtifact`. */
+  resolveStyleArtifact(projectRef: string, input: GetStyleArtifactInput): Promise<StyleArtifact> {
+    return this.getStyleArtifact(projectRef, input);
+  }
+
+  /** @deprecated Use `startStyleArtifactBuild`. */
+  ensureStyleArtifactBuild(
+    projectRef: string,
+    input: StartStyleArtifactBuildInput,
+  ): Promise<StyleArtifact> {
+    return this.startStyleArtifactBuild(projectRef, input);
+  }
+
+  /** @deprecated Use `updateStyleArtifact`. */
+  upsertStyleArtifact(
+    projectRef: string,
+    input: UpdateStyleArtifactInput,
+    signal?: AbortSignal,
+  ): Promise<StyleArtifact> {
+    return this.updateStyleArtifact(projectRef, input, signal);
   }
 
   // ===========================================================================

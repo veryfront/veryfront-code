@@ -338,7 +338,7 @@ it("an exact local tool name loads only that tool, retaining aliases and related
     definition("list_skills", "List project skills"),
     definition("veryfront__list_skills", "List project skills"),
     definition("get_skill", "Read a skill from the list_skills inventory"),
-    definition("get_skill_source", "Read source for list_skills entries"),
+    definition("read_skill_source", "Read source for list_skills entries"),
   ];
   const state = createToolExposureState();
   const first = searchToolExposure({ query: "  LIST_SKILLS  ", authorized, state });

@@ -92,6 +92,20 @@ describe("discovery/import-rewriter", () => {
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
 
+  it("rewrites the conversations SDK import in compiled Deno binaries", () => {
+    const transformed = rewriteForDeno(
+      'import { Conversation, createConversationsApiTransport } from "veryfront/conversations";',
+      "/project/app/api/chat",
+      { compiled: true },
+    );
+
+    assertStringIncludes(
+      transformed,
+      'const { Conversation, createConversationsApiTransport } = globalThis.__VERYFRONT_MODULES__["veryfront/conversations"]',
+    );
+    assertEquals(transformed.includes('from "veryfront/'), false);
+  });
+
   it("prefixes arbitrary bare npm imports with npm: for Deno temp module imports", () => {
     const transformed = rewriteForDeno(
       [

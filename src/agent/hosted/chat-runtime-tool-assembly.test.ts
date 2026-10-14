@@ -2058,7 +2058,7 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted
   assertEquals(requestedUrls.length, 1);
   assertEquals(new URL(requestedUrls[0] ?? "").origin, "https://staging-api.example.test");
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+  assertEquals(new URL(requestedUrls[0] ?? "").searchParams.get("ref"), "branch:feature-x");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to hosted knowledge", async () => {
@@ -2114,7 +2114,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to ho
   assertEquals(returned, 1);
   assertEquals(requestedUrls.length, 1);
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+  assertEquals(new URL(requestedUrls[0] ?? "").searchParams.get("ref"), "branch:feature-x");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for hosted knowledge", async () => {
@@ -2172,7 +2172,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for h
   assertEquals(returned, 1);
   assertEquals(requestedUrls.length, 1);
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-after-switch/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=branch-after-switch");
+  assertEquals(
+    new URL(requestedUrls[0] ?? "").searchParams.get("ref"),
+    "branch:branch-after-switch",
+  );
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps research mirroring behind denied remote tools", async () => {

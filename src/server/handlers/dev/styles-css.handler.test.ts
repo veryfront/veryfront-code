@@ -77,13 +77,18 @@ function mockTailwindFetch(): { restore: () => void; getCallCount: () => number 
   };
 }
 
+type StyleArtifactsClient = Pick<VeryfrontApiClient, "styleArtifacts">;
+
+function styleArtifactsClient(
+  styleArtifacts: StyleArtifactsClient["styleArtifacts"],
+): StyleArtifactsClient {
+  return { styleArtifacts };
+}
+
 function createHandlerAdapter(
   files: Array<{ path: string; content?: string }>,
   contentContext: ResolvedContentContext | null,
-  client?: Pick<
-    VeryfrontApiClient,
-    "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
-  >,
+  client?: StyleArtifactsClient,
 ): MockRuntimeAdapter & {
   setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
 } {
@@ -93,10 +98,7 @@ function createHandlerAdapter(
   const underlyingAdapter: {
     getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
     getContentContext: () => ResolvedContentContext | null;
-    getClient?: () => Pick<
-      VeryfrontApiClient,
-      "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
-    >;
+    getClient?: () => StyleArtifactsClient;
   } = {
     getAllSourceFiles: async () => currentFiles,
     getContentContext: () => contentContext,
@@ -523,15 +525,15 @@ describe("server/handlers/dev/styles-css.handler", () => {
     const fetchMock = mockTailwindFetch();
     let storedHash: string | undefined;
     let resolveCalls = 0;
-    const client = {
-      resolveStyleArtifact: async () => {
+    const client = styleArtifactsClient({
+      get: async () => {
         resolveCalls++;
         return storedHash
           ? { status: "ready" as const, artifactHash: storedHash }
           : { status: "missing" as const };
       },
-      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
-      upsertStyleArtifact: async (input: { artifactHash?: string }) => {
+      startBuild: async () => ({ status: "building" as const }),
+      update: async (input: { artifactHash?: string }) => {
         if (!input.artifactHash) {
           throw new Error("artifactHash is required");
         }
@@ -542,7 +544,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
           assetPath: `/_vf/css/${input.artifactHash}.css`,
         };
       },
-    };
+    });
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{
@@ -601,16 +603,16 @@ describe("server/handlers/dev/styles-css.handler", () => {
     let resolveCalls = 0;
     let ensureCalls = 0;
     let upsertCalls = 0;
-    const client = {
-      resolveStyleArtifact: async () => {
+    const client = styleArtifactsClient({
+      get: async () => {
         resolveCalls++;
         return { status: "ready" as const, artifactHash: "stale-branch-css" };
       },
-      ensureStyleArtifactBuild: async () => {
+      startBuild: async () => {
         ensureCalls++;
         return { status: "building" as const };
       },
-      upsertStyleArtifact: async () => {
+      update: async () => {
         upsertCalls++;
         return {
           status: "ready" as const,
@@ -618,7 +620,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
           assetPath: "/_vf/css/new-branch-css.css",
         };
       },
-    };
+    });
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{
@@ -662,13 +664,13 @@ describe("server/handlers/dev/styles-css.handler", () => {
     const fetchMock = mockTailwindFetch();
     let resolveCalls = 0;
     let upsertCalls = 0;
-    const client = {
-      resolveStyleArtifact: async () => {
+    const client = styleArtifactsClient({
+      get: async () => {
         resolveCalls++;
         return { status: "ready" as const, artifactHash: "stale-branch-fallback-css" };
       },
-      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
-      upsertStyleArtifact: async () => {
+      startBuild: async () => ({ status: "building" as const }),
+      update: async () => {
         upsertCalls++;
         return {
           status: "ready" as const,
@@ -676,7 +678,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
           assetPath: "/_vf/css/new-branch-fallback-css.css",
         };
       },
-    };
+    });
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{
@@ -721,13 +723,13 @@ describe("server/handlers/dev/styles-css.handler", () => {
     const fetchMock = mockTailwindFetch();
     let resolveCalls = 0;
     let upsertCalls = 0;
-    const client = {
-      resolveStyleArtifact: async () => {
+    const client = styleArtifactsClient({
+      get: async () => {
         resolveCalls++;
         return { status: "ready" as const, artifactHash: "stale-branch-release-css" };
       },
-      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
-      upsertStyleArtifact: async () => {
+      startBuild: async () => ({ status: "building" as const }),
+      update: async () => {
         upsertCalls++;
         return {
           status: "ready" as const,
@@ -735,7 +737,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
           assetPath: "/_vf/css/new-branch-release-css.css",
         };
       },
-    };
+    });
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{
@@ -778,16 +780,16 @@ describe("server/handlers/dev/styles-css.handler", () => {
     const fetchMock = mockTailwindFetch();
     let ensureCalls = 0;
     let upsertCalls = 0;
-    const client = {
-      resolveStyleArtifact: async () => ({ status: "missing" as const }),
-      ensureStyleArtifactBuild: async () => {
+    const client = styleArtifactsClient({
+      get: async () => ({ status: "missing" as const }),
+      startBuild: async () => {
         ensureCalls++;
         return {
           status: "building" as const,
           buildRunId: "run_11111111-1111-4111-a111-111111111111",
         };
       },
-      upsertStyleArtifact: async (input: { artifactHash?: string }) => {
+      update: async (input: { artifactHash?: string }) => {
         if (!input.artifactHash) {
           throw new Error("artifactHash is required");
         }
@@ -798,7 +800,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
           assetPath: `/_vf/css/${input.artifactHash}.css`,
         };
       },
-    };
+    });
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{

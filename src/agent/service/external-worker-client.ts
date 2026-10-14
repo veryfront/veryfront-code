@@ -1,9 +1,20 @@
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
+
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import {
+  type AgentWorkerRuntimeOwnershipProbe,
+  type AgentWorkerRuntimeOwnershipProbeCredentials,
+  type AgentWorkerRuntimeOwnershipProbeResult,
+  type AgentWorkerRuntimeOwnershipProbeRun,
+  createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
+} from "./agent-worker-runtime-ownership-probe.ts";
+
+const DateParse = Date.parse;
+const NumberIsFinite = Number.isFinite;
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
@@ -186,6 +197,19 @@ const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
+const stringIncludes = String.prototype.includes;
+function errorMessageIncludes(error: unknown, expected: string): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && (apply(stringIncludes, message, [expected]) as boolean);
+}
+
+function isOwnershipProbeCursorFailure(error: unknown): boolean {
+  return errorMessageIncludes(error, "ownership probe append cursor is unavailable") ||
+    errorMessageIncludes(error, "ownership probe append outcome is ambiguous") ||
+    errorMessageIncludes(error, "ownership probe stale generation outcome is ambiguous");
+}
+
 const WorkerClaimSchema = lazySchema(
   defineSchema<{ run: ExternalAgentWorkerRun | null; credentials?: RunCredentials }>((v) =>
     v.object({
@@ -204,6 +228,7 @@ export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
   authToken: string;
   fetch?: typeof fetch;
+  ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 }
 
 /** Input payload for register external agent worker. */
@@ -292,12 +317,16 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #authToken: string;
   readonly #fetch: typeof fetch;
   readonly #runCredentials = new NativeMap<string, RunCredentials>();
-  readonly #workerTokensByWorkerId = new Map<string, string>();
+  readonly #runClaims = new NativeMap<string, { workerId: string; run: ExternalAgentWorkerRun }>();
+  readonly #workerTokensByWorkerId = new NativeMap<string, string>();
+  readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
     this.#apiUrl = options.apiUrl.replace(/\/$/, "");
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;
+    this.#ownershipProbe = options.ownershipProbe ??
+      createAgentWorkerRuntimeOwnershipProbeFromHostEnv();
   }
 
   async #request<T>(
@@ -307,7 +336,8 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     options: { workerId?: string } = {},
   ): Promise<T> {
     const token = options.workerId
-      ? this.#workerTokensByWorkerId.get(options.workerId) ?? this.#authToken
+      ? (apply(mapGet, this.#workerTokensByWorkerId, [options.workerId]) as string | undefined) ??
+        this.#authToken
       : this.#authToken;
     const response = await this.#fetch(`${this.#apiUrl}${path}`, {
       ...init,
@@ -346,7 +376,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     );
 
-    this.#workerTokensByWorkerId.set(response.worker.id, response.token);
+    apply(mapSet, this.#workerTokensByWorkerId, [response.worker.id, response.token]);
     return response.worker;
   }
 
@@ -364,6 +394,110 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     return response.worker;
   }
 
+  #probeCredentials(credentials: RunCredentials): AgentWorkerRuntimeOwnershipProbeCredentials {
+    return {
+      authToken: credentials.auth_token,
+      runEventToken: credentials.run_event_token,
+      runTerminalToken: credentials.run_terminal_token,
+    };
+  }
+
+  #validatedTerminalRoute(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): ReturnType<typeof terminalRoute> {
+    return terminalRoute(credentials.run_terminal_token, run.run_id);
+  }
+
+  #probeRun(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): AgentWorkerRuntimeOwnershipProbeRun {
+    const route = this.#validatedTerminalRoute(run, credentials);
+    const leaseExpiresAtMs = run.lease_expires_at === null
+      ? undefined
+      : DateParse(run.lease_expires_at);
+    return {
+      runId: run.run_id,
+      canonicalRunId: route.id,
+      projectId: run.project_id,
+      agentId: run.agent_id,
+      latestExternalEventSequence: run.latest_external_event_sequence,
+      leaseExpiresAtMs: leaseExpiresAtMs !== undefined && NumberIsFinite(leaseExpiresAtMs)
+        ? leaseExpiresAtMs
+        : undefined,
+    };
+  }
+
+  #withProbeCursor(
+    run: ExternalAgentWorkerRun,
+    latestExternalEventSequence: number | undefined,
+  ): ExternalAgentWorkerRun {
+    if (latestExternalEventSequence === undefined) return run;
+    if (latestExternalEventSequence === run.latest_external_event_sequence) return run;
+    return { ...run, latest_external_event_sequence: latestExternalEventSequence };
+  }
+
+  async #observeOwnershipProbe<T>(
+    operation: () => Promise<T> | T,
+  ): Promise<T | undefined> {
+    try {
+      return await operation();
+    } catch {
+      return undefined;
+    }
+  }
+
+  async #observeOwnershipProbeCursor(
+    operation: () =>
+      | Promise<AgentWorkerRuntimeOwnershipProbeResult | void>
+      | AgentWorkerRuntimeOwnershipProbeResult
+      | void,
+  ): Promise<number | undefined> {
+    try {
+      const result = await operation();
+      return result?.latestExternalEventSequence;
+    } catch (error) {
+      if (isOwnershipProbeCursorFailure(error)) throw error;
+      return undefined;
+    }
+  }
+
+  async #recoverRunAfterProbeCursorFailure(input: {
+    workerId: string;
+    runId: string;
+    leaseDurationSeconds: number;
+  }): Promise<ExternalAgentWorkerRun | null> {
+    const response = await this.#request(
+      `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
+        encodeURIComponent(input.runId)
+      }/lease`,
+      WorkerClaimSchema,
+      {
+        method: "POST",
+        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+      },
+      { workerId: input.workerId },
+    );
+    if (response.run && response.credentials) {
+      // The lease route names one run. A response for any other run proves nothing about
+      // the requested one and must not install credentials under either id.
+      if (response.run.run_id !== input.runId) {
+        throw new Error("Recovered worker run does not match the requested run");
+      }
+      this.#validatedTerminalRoute(response.run, response.credentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
+      return response.run;
+    }
+    apply(mapDelete, this.#runCredentials, [input.runId]);
+    apply(mapDelete, this.#runClaims, [input.runId]);
+    return null;
+  }
+
   async claimRun(
     input: ClaimExternalAgentWorkerRunInput,
   ): Promise<ExternalAgentWorkerRun | null> {
@@ -377,11 +511,42 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
-      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      const responseCredentials = response.credentials;
+      const probeRun = this.#probeRun(response.run, responseCredentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterClaim({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(responseCredentials),
+            }),
+        );
+      } catch (error) {
+        const runId = response.run.run_id;
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
+        throw error;
+      }
+      response.run = this.#withProbeCursor(response.run, probeCursor);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
     }
     if (response.run && !response.credentials) {
       apply(mapDelete, this.#runCredentials, [response.run.run_id]);
+      apply(mapDelete, this.#runClaims, [response.run.run_id]);
     }
     return response.run;
   }
@@ -389,6 +554,9 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   async renewLease(
     input: ClaimExternalAgentWorkerRunInput & { runId: string },
   ): Promise<ExternalAgentWorkerRun | null> {
+    const previousCredentials = apply(mapGet, this.#runCredentials, [input.runId]) as
+      | RunCredentials
+      | undefined;
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
@@ -401,11 +569,59 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
-      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      const responseCredentials = response.credentials;
+      const probeRun = this.#probeRun(response.run, responseCredentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterRenew({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(responseCredentials),
+              previousCredentials: previousCredentials
+                ? this.#probeCredentials(previousCredentials)
+                : undefined,
+            }),
+        );
+      } catch (error) {
+        const runId = response.run.run_id;
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
+        throw error;
+      }
+      response.run = this.#withProbeCursor(response.run, probeCursor);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
     }
     if (!response.run || !response.credentials) {
+      const previousClaim = apply(mapGet, this.#runClaims, [input.runId]) as
+        | { workerId: string; run: ExternalAgentWorkerRun }
+        | undefined;
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
+      if (previousCredentials && previousClaim) {
+        await this.#observeOwnershipProbe(() =>
+          this.#ownershipProbe?.afterLeaseLost({
+            apiUrl: this.#apiUrl,
+            fetch: this.#fetch,
+            workerId: previousClaim.workerId,
+            run: this.#probeRun(previousClaim.run, previousCredentials),
+            credentials: this.#probeCredentials(previousCredentials),
+          })
+        );
+      }
     }
     return response.run;
   }
@@ -470,8 +686,26 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       model: "",
       fetch: this.#fetch,
     });
+    const claim = apply(mapGet, this.#runClaims, [input.runId]) as
+      | { workerId: string; run: ExternalAgentWorkerRun }
+      | undefined;
+    if (claim) {
+      const probeInput = {
+        apiUrl: this.#apiUrl,
+        fetch: this.#fetch,
+        workerId: claim.workerId,
+        run: this.#probeRun(claim.run, credentials),
+        credentials: this.#probeCredentials(credentials),
+      };
+      if (input.status === "cancelled") {
+        await this.#observeOwnershipProbe(() => this.#ownershipProbe?.afterCancelled(probeInput));
+      } else {
+        await this.#observeOwnershipProbe(() => this.#ownershipProbe?.afterTerminal?.(probeInput));
+      }
+    }
     if (apply(mapGet, this.#runCredentials, [input.runId]) === credentials) {
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
     }
   }
 }

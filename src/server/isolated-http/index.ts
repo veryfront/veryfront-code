@@ -4,6 +4,7 @@ export {
   type ConnectExecutorTransportOptions,
   createHostedExecutorAllocatorClient,
   createHostedHttpBroker,
+  type HostedHttpBrokerOptions,
   type HostedHttpIngressOptions,
   type HostedHttpInput,
   type HostedHttpRequestAuthority,

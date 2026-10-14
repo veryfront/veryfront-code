@@ -113,7 +113,12 @@ function replacementApi() {
         if (listingFailed) {
           return Response.json({ message: "Fixture listing failure" }, { status: 503 });
         }
-        const cursor = Number(new URL(request.url).searchParams.get("cursor") ?? 0);
+        const query = new URL(request.url).searchParams;
+        // The file listing is addressed with the `ref` selector, not `branch`.
+        if (query.has("branch") || !/^(main|branch:.+)$/.test(query.get("ref") ?? "")) {
+          return Response.json({ message: "Fixture expects a ref selector" }, { status: 400 });
+        }
+        const cursor = Number(query.get("cursor") ?? 0);
         const paths = [...files.keys()];
         return Response.json({
           data: paths.slice(cursor, cursor + listingPageSize).map((path) => ({ path })),

@@ -42,5 +42,7 @@ export const uploadsHelp: CommandHelp = {
     "Subcommands: list, pull, put, delete",
     "Uses the project uploads store, not project source files",
     "`put` reuses the same upload path for create/update semantics",
+    "`list --json` returns folders first, then uploads; each upload reports its size in `size_bytes`",
+    "`put --json` returns the created upload: `upload_id`, `path`, and `upload_url`",
   ],
 };

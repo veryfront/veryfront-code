@@ -538,6 +538,9 @@ export function createHostedHttpResolver(
 
   async function resolveWithin(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     signal.throwIfAborted();
+    // Authorization starts now. Brokers order generation changes by this time, so a
+    // resolution that finishes late cannot pass for a newer authorization.
+    const requestedAt = Date.now();
     const token = authority.sourceToken;
     if (typeof token !== "string" || !token || token.length > MAX_SOURCE_TOKEN_CHARS) {
       throw refuse("A source credential is required");
@@ -608,7 +611,7 @@ export function createHostedHttpResolver(
           owner,
           source,
           executionProfile: "http" as const,
-          requestedAt: now,
+          requestedAt,
           prepareDeadlineAt: now + prepareMs,
           hardDeadlineAt: now + hardMs,
         },

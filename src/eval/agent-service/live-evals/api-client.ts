@@ -93,14 +93,19 @@ const getLiveEvalIdResponseSchema = defineSchema((v) =>
 
 const getProjectUploadResponseSchema = defineSchema((v) =>
   v.object({
-    file_upload_url: v.string().optional(),
+    upload_url: v.string().optional(),
     required_headers: v.record(v.string(), v.string()).optional(),
   })
 );
 
 const getProjectUploadListResponseSchema = defineSchema((v) =>
   v.object({
-    data: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
+    // Uploads only. Folders are the separate `folders` array; `data` also repeats
+    // them as `type: "folder"` items, which are not uploads.
+    data: v.array(
+      v.object({ path: v.string().optional(), type: v.string().optional() }).passthrough(),
+    ).optional(),
+    folders: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
   })
 );
 
@@ -409,7 +414,9 @@ async function waitForProjectUploadFixture(
     }
 
     const payload = getProjectUploadListResponseSchema().parse(await listResponse.json());
-    if (payload.data?.some((upload) => upload.path === input.filePath)) {
+    if (
+      payload.data?.some((upload) => upload.type !== "folder" && upload.path === input.filePath)
+    ) {
       return input.filePath;
     }
 
@@ -463,7 +470,7 @@ export async function createLiveEvalConversation(
     method: "POST",
     headers: createLiveEvalJsonHeaders(context),
     body: JSON.stringify({
-      ...(projectId ? { project_id: projectId } : {}),
+      ...(projectId ? { project_reference: projectId } : {}),
       title,
     }),
     signal: createRequestSignal(input.requestTimeoutMs),
@@ -532,9 +539,9 @@ export async function createLiveEvalProjectUploadFixture(
       method: "POST",
       headers: createLiveEvalJsonHeaders(context),
       body: JSON.stringify({
-        file_path: filePath,
+        path: filePath,
         content_type: contentType,
-        size: bodySize,
+        size_bytes: bodySize,
       }),
       signal: createRequestSignal(input.requestTimeoutMs),
     },
@@ -545,9 +552,9 @@ export async function createLiveEvalProjectUploadFixture(
   }
 
   const createPayload = getProjectUploadResponseSchema().parse(await createResponse.json());
-  if (!createPayload.file_upload_url) {
+  if (!createPayload.upload_url) {
     throw INVALID_ARGUMENT.create({
-      detail: "Project upload response did not include file_upload_url",
+      detail: "Project upload response did not include upload_url",
     });
   }
 
@@ -559,7 +566,7 @@ export async function createLiveEvalProjectUploadFixture(
     signal: createRequestSignal(input.requestTimeoutMs),
     ...(isReadableStreamBody(uploadBody) ? { duplex: "half" as const } : {}),
   };
-  const uploadResponse = await createFetch(context)(createPayload.file_upload_url, uploadInit);
+  const uploadResponse = await createFetch(context)(createPayload.upload_url, uploadInit);
 
   if (!uploadResponse.ok) {
     await throwLiveEvalApiError("Failed to upload project fixture", uploadResponse);

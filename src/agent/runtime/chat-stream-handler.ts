@@ -1,4 +1,5 @@
 import { isPersistedReasoningPart } from "./streamed-assistant-message.ts";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { isTerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -436,6 +437,7 @@ export interface ChatStreamCallbacks {
   localToolInputIdleTimeoutMs?: number;
   localToolCommitGraceMs?: number;
   requireProviderFinish?: boolean;
+  streamRequiresFinish?: boolean;
   streamIdleTimeoutMs?: number;
   streamLifecycleMode?: StreamLifecycleMode;
   streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
@@ -623,6 +625,7 @@ async function readNextStreamPartWithTimeout(
   setTimeoutFn: typeof setTimeout = setTimeout,
   clearTimeoutFn: typeof clearTimeout = clearTimeout,
   abortSignal?: AbortSignal,
+  detachOnAbort = false,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const pending = createPrivateDeferred<IteratorResult<unknown> | "timeout">();
@@ -633,7 +636,7 @@ async function readNextStreamPartWithTimeout(
       pending.reject,
     );
     timeoutId = setTimeoutFn(() => pending.resolve("timeout"), timeoutMs);
-    return await pending.promise;
+    return await (detachOnAbort ? awaitAbortable(pending.promise, abortSignal) : pending.promise);
   } finally {
     if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
@@ -709,6 +712,7 @@ export function resolveRuntimeLifecyclePolicy(
     ...compatibility,
     ...callbacks?.streamLifecyclePolicy,
     ...(callbacks?.requireProviderFinish ? { requireProviderFinish: true } : {}),
+    ...(callbacks?.streamRequiresFinish ? { streamRequiresFinish: true } : {}),
   });
 }
 
@@ -957,6 +961,12 @@ export function processStreamInternal(
   // provider wrappers. After Gate 2 the extensions emit raw streams, so the
   // legacy compatibility boundary reinstates the wrapper for source-opened
   // streams only; pre-opened results keep their historical unwrapped shape.
+  const requiredFinishPolicy = callbacks?.streamRequiresFinish
+    ? resolveRuntimeLifecyclePolicy(callbacks)
+    : undefined;
+  const requiredFinishDeadline = requiredFinishPolicy
+    ? requiredFinishPolicy.clock.nowMs() + requiredFinishPolicy.attemptTimeoutMs
+    : undefined;
   const result = isRuntimeStreamSource(resultOrSource)
     ? wrapLegacyRuntimeStreamResult(
       resultOrSource.open(abortSignal ?? new AbortController().signal),
@@ -1313,7 +1323,29 @@ export function processStreamInternal(
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never
         // executes and its card is stranded at input-available.
         const wouldTimeOutIdle = !hasActiveLocalToolInput && !shouldStopForCommittedLocalToolCall;
-        const next = hasActiveLocalToolInput
+        const remainingFinishWait = requiredFinishDeadline === undefined
+          ? undefined
+          : requiredFinishDeadline - requiredFinishPolicy!.clock.nowMs();
+        if (
+          !sawProviderFinishPart && remainingFinishWait !== undefined && remainingFinishWait <= 0
+        ) {
+          throw createRuntimeProviderStreamFailure(
+            new Error("Provider stream exceeded required finish deadline"),
+          );
+        }
+        // Hosted streams wait for terminal metadata within the provider deadline and
+        // caller signal, rather than the short local-model compatibility idle windows.
+        const next = callbacks?.streamRequiresFinish && !sawProviderFinishPart
+          ? await readNextStreamPartWithTimeout(
+            streamIterator,
+            state,
+            remainingFinishWait!,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
+            abortSignal,
+            true,
+          )
+          : hasActiveLocalToolInput
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
@@ -1352,6 +1384,11 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state, abortSignal);
         throwIfAborted(abortSignal);
         if (next === "timeout") {
+          if (callbacks?.streamRequiresFinish && !sawProviderFinishPart) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream exceeded required finish deadline"),
+            );
+          }
           if (
             wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
             !somePrivateArray(state.reasoningParts, isPersistedReasoningPart)
@@ -1376,6 +1413,13 @@ export function processStreamInternal(
           break;
         }
         if (next.done) {
+          if (callbacks?.streamRequiresFinish && !sawProviderFinishPart) {
+            throw createRuntimeProviderStreamFailure(
+              Object.assign(new Error("Provider stream ended before required finish"), {
+                retryable: true,
+              }),
+            );
+          }
           if (
             callbacks?.requireProviderFinish && !sawProviderFinishPart &&
             somePrivateArray(
@@ -1901,6 +1945,10 @@ export function processStreamInternal(
           case "error": {
             closeTextSegment();
             closeReasoningSegment();
+            if (callbacks?.streamRequiresFinish) {
+              throwIfAborted(abortSignal);
+              throw createRuntimeProviderStreamFailure(typedPart.error);
+            }
             logger.warn("Runtime stream error:", typedPart.error);
             sendSSE(controller, encoder, resolveRuntimeStreamErrorEvent(typedPart.error));
             break;

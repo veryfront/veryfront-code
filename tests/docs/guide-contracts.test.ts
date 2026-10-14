@@ -71,8 +71,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "createExternalAgentWorkerClient",
-      "`/conversations/${conversation.id}/messages`",
-      'parts: [{ type: "text", text: prompt }]',
+      'import { Conversation, createConversationsApiTransport } from "veryfront/conversations";',
+      "{ projectReference: projectId, title: \"Runtime connection demo\" }",
+      'await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });',
       "registerWorker",
       "claimRun",
       "ConversationRunEventEncoder",
@@ -1145,10 +1146,8 @@ describe("Connect-runtime worker admission", () => {
     const beforeAdmission = guide.slice(prompt, admission);
     assertStringIncludes(
       beforeAdmission,
-      "await api(`/conversations/${conversation.id}/messages`, {",
+      'await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });',
     );
-    assertStringIncludes(beforeAdmission, 'role: "user"');
-    assertStringIncludes(beforeAdmission, 'parts: [{ type: "text", text: prompt }]');
   });
 });
 
