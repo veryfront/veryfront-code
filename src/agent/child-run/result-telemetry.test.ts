@@ -1,3 +1,4 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -45,6 +46,24 @@ describe("child result telemetry budget", () => {
     const result = { output: "accepted", toolCalls: [call], toolResults: [] };
     assertStrictEquals(boundChildResultTelemetry(result), result);
     assertEquals(reads, 0);
+  });
+  it("falls back to the admitted base when omission metadata cannot fit", () => {
+    const parts = Array.from({ length: 5 }, () => "x".repeat(900_000));
+    const base = { output: { parts }, toolCalls: [], toolResults: [] };
+    const excess = JSON.stringify(base).length - (PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES - 5);
+    parts[4] = parts[4]!.slice(excess);
+    const result = {
+      ...base,
+      toolCalls: [{ toolName: "example", toolCallId: "call", input: "x".repeat(1_048_577) }],
+    };
+    const bounded = boundChildResultTelemetry(result);
+    assertEquals(
+      snapshotBoundedJsonValue(bounded, 1_048_576, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+        .success,
+      true,
+    );
+    assertStrictEquals(bounded.output, result.output);
+    assertEquals(bounded.toolCalls.length, 0);
   });
   it("bounds aggregate nodes and reports omitted trace entries", () => {
     const toolCalls = Array.from({ length: 35_000 }, (_, index) => ({

@@ -69,7 +69,7 @@ export function boundChildResultTelemetry<T extends ChildResultTelemetry>(
   // Keep the largest admitted trace prefix and report the omitted entry counts.
   let low = 0;
   let high = Math.max(toolCalls.length, toolResults.length);
-  let admitted: BoundedChildResult<T> = result;
+  let admitted: BoundedChildResult<T> = base;
   while (low <= high) {
     const count = Math.floor((low + high) / 2);
     const candidate = {

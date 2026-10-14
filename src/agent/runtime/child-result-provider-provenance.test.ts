@@ -697,3 +697,39 @@ Deno.test("actual final-step capture preserves ownership-admitted telemetry at t
   }
   assertEquals(input["3"]?.length, 1_048_576);
 });
+
+Deno.test("encoded child results preserve the accepted source allowance after parsing", () => {
+  const value = "x".repeat(1_048_577);
+  const encoded = JSON.stringify({ ...childResult(), output: { value } });
+  const message: Message = {
+    id: "encoded",
+    role: "tool",
+    parts: [{ type: "tool-result", toolCallId: "call", toolName: "invoke_agent", result: encoded }],
+  };
+  markTrustedPlatformPolicyToolResultPart(message.parts[0] as ToolResultPart);
+  assertProjection(message, { ...acceptedOutput(), output: { value } });
+});
+
+Deno.test("ordinary project results preserve admitted arrays across both provider paths", () => {
+  const values = Array.from({ length: 10_001 }, (_, index) => index);
+  const message: Message = {
+    id: "ordinary",
+    role: "tool",
+    parts: [{ type: "tool-result", toolCallId: "call", toolName: "list_records", result: values }],
+  };
+  const chat = convertAgentRuntimeMessagesToProviderMessages([message]);
+  assertEquals<unknown>(chat, [{
+    role: "tool",
+    content: [{
+      type: "tool-result",
+      toolCallId: "call",
+      toolName: "list_records",
+      output: { type: "json", value: values },
+    }],
+  }]);
+  const converted = convertToTextGenerationRuntimeMessages([message]);
+  assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+    type: "json",
+    value: values,
+  });
+});

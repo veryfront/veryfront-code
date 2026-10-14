@@ -15,6 +15,7 @@ import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import {
   JSON_VALUE_MAX_STRING_BYTES,
   snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
 } from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -351,9 +352,10 @@ function convertContentToAgentRuntimeParts(
 }
 
 function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } {
+  const admitted = snapshotBoundedJsonValue(value);
   return {
     type: "json",
-    value: toChatJsonValue(value),
+    value: admitted.success ? admitted.value : toChatJsonValue(value),
   };
 }
 
@@ -509,6 +511,7 @@ export function createProviderToolResultOutput(part: {
   let value = output.value;
   if (isChildResult) {
     let candidate: unknown = value;
+    let parsedBoundedSource = false;
     if (
       isRecord(candidate) && hasOwn(candidate, "type") &&
       (candidate.type === "json" || candidate.type === "text") &&
@@ -519,6 +522,7 @@ export function createProviderToolResultOutput(part: {
     if (typeof candidate === "string") {
       try {
         candidate = privateJsonParse(candidate);
+        parsedBoundedSource = childSnapshot?.success === true;
       } catch {
         // Preserve malformed or non-JSON tool text for error recovery.
       }
@@ -533,7 +537,9 @@ export function createProviderToolResultOutput(part: {
         isRecord(candidate.summary) && hasOwn(candidate.summary, "text") &&
         candidate.summary.text === candidate.text)
     ) {
-      const projectedSnapshot = snapshotProviderChildValue(candidate);
+      const projectedSnapshot = parsedBoundedSource
+        ? snapshotBoundedParsedJsonValue(candidate, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+        : snapshotProviderChildValue(candidate);
       if (projectedSnapshot.success) {
         value = projectedSnapshot.value;
         output.value = value;
