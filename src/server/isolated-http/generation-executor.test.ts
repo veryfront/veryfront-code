@@ -64,6 +64,28 @@ describe("hosted HTTP generation broker", () => {
     assertEquals(count(f.calls, "release:canceled"), 1);
   });
 
+  it("refuses global HTTP owners before allocation under the existing installation contract", async () => {
+    const f = fixture(() => new Response("must not dispatch"));
+    const owner = { scopeKind: "global" as const, serviceName: "service-a" };
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await assertRejects(
+        () =>
+          broker.fetch(new Request("https://app.example"), {
+            ...f.input,
+            session: { ...f.input.session, request: { ...f.input.session.request, owner } },
+            installation: { ...f.input.installation, owner },
+          }),
+        TypeError,
+        "Invalid executor installation",
+      );
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("keeps installations of different projects on separate allocations", async () => {
     const a = fixture(() => new Response("a"));
     const b = fixture(() => new Response("b"), undefined, "project-b");
