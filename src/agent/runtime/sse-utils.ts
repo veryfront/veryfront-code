@@ -19,7 +19,10 @@ import {
   nextToolResultSequence,
   observeToolResultSequenceStream,
 } from "#veryfront/runtime/tool-result-sequence.ts";
-import { isPrimaryRuntimeStream } from "#veryfront/runtime/runtime-stream-ownership.ts";
+import {
+  getRuntimeStreamControllerOwner,
+  isPrimaryRuntimeStream,
+} from "#veryfront/runtime/runtime-stream-ownership.ts";
 
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 
@@ -42,11 +45,12 @@ export function sendSSE(
   event: Record<string, unknown>,
 ): void {
   try {
+    const owner = getRuntimeStreamControllerOwner(controller);
     const type = getOwnDescriptor(event, "type")?.value;
     const sink = getActiveRunEventSinks().mandatory;
     if (isPrimaryRuntimeStream()) {
-      observeToolResultMirrorStream(sink, controller, type);
-      observeToolResultSequenceStream(controller, type);
+      observeToolResultMirrorStream(sink, owner, type);
+      observeToolResultSequenceStream(owner, type);
     }
     const id = getOwnDescriptor(event, "toolCallId")?.value;
     const preliminary = getOwnDescriptor(event, "preliminary")?.value;
@@ -54,7 +58,7 @@ export function sendSSE(
       ((type === "tool-output-available" && preliminary !== true) ||
         type === "tool-output-error" || type === "tool-output-denied" ||
         type === "tool-input-error");
-    const sequence = terminalToolResult ? nextToolResultSequence(controller) : undefined;
+    const sequence = terminalToolResult ? nextToolResultSequence(owner) : undefined;
     enqueuePrivateStream(
       controller,
       encodePrivateText(
@@ -68,7 +72,7 @@ export function sendSSE(
     );
     if (sequence) commitToolResultSequence(sequence);
     if (terminalToolResult && typeof id === "string") {
-      registerQueuedToolResult(sink, controller, id);
+      registerQueuedToolResult(sink, owner, id);
     }
   } catch (error) {
     if (isClosedStreamControllerError(error)) {

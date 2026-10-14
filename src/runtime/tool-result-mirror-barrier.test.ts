@@ -80,6 +80,22 @@ describe("runtime/tool-result-mirror-barrier", () => {
     );
   });
 
+  it("waits for every fresh occurrence when a producer reuses a tool call ID", async () => {
+    const { mirror, sink, controller } = fixture();
+    registerQueuedToolResult(sink, controller, "reused");
+    registerQueuedToolResult(sink, controller, "reused");
+    let complete = false;
+    const wait = waitForQueuedToolResults(mirror, context("reused"), new AbortController().signal)
+      .then(() => {
+        complete = true;
+      });
+    acknowledgeMirroredToolResult(mirror, "reused");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(complete, false);
+    acknowledgeMirroredToolResult(mirror, "reused");
+    await wait;
+    assertEquals(complete, true);
+  });
   it("requires acknowledgement by the owning mirror", async () => {
     const owner = fixture();
     const other = fixture();

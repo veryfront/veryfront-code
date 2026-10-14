@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -18,7 +18,7 @@ type Scope = {
   ordinal: number;
   rootController?: ReadableStreamDefaultController;
 };
-const active = new AsyncLocalStorage<Scope>();
+const active = createPrivateAsyncLocalStorage<Scope>();
 const resultChunks = createPrivateWeakStore<ChatUiMessageChunk, ToolResultSequence>();
 const syntheticRecoveryChunks = createPrivateWeakStore<ChatUiMessageChunk, true>();
 

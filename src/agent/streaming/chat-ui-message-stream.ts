@@ -120,7 +120,7 @@ type ToolPart = {
   order: number;
   inputText: string;
   input: Record<string, unknown>;
-  state: "input-available" | "output-available" | "output-error";
+  state: "input-available" | "output-available" | "output-error" | "output-denied";
   providerExecuted?: boolean;
   output?: unknown;
   errorText?: string;
@@ -390,6 +390,11 @@ function observeChatStreamEvent(input: {
       }
       return;
     }
+    case "tool-output-denied": {
+      const toolPart = state.toolParts.get(event.toolCallId);
+      if (toolPart) toolPart.state = "output-denied";
+      return;
+    }
     case "tool-output-error":
     case "tool-input-error": {
       const toolPart = state.toolParts.get(event.toolCallId);
@@ -558,6 +563,8 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
         state: "output-available",
         output: toolPart.output,
       }
+      : toolPart.state === "output-denied"
+      ? { ...basePart, state: "output-denied" }
       : toolPart.state === "output-error"
       ? {
         ...basePart,

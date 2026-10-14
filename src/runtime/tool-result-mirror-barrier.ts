@@ -12,9 +12,10 @@ type PendingResult = {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
+  next?: PendingResult;
 };
 type MirrorState = {
-  pending: Map<string, PendingResult>;
+  pending: Map<string, { first: PendingResult; last: PendingResult }>;
   disposed: boolean;
   rootController?: ReadableStreamDefaultController;
 };
@@ -72,7 +73,7 @@ export function registerQueuedToolResult(
 ): void {
   const mirror = sink ? sinks.get(sink) : undefined;
   const state = mirror ? mirrors.get(mirror) : undefined;
-  if (!state || state.disposed || state.rootController !== controller || state.pending.has(id)) {
+  if (!state || state.disposed || state.rootController !== controller) {
     return;
   }
   let resolveResult: () => void = () => {};
@@ -82,7 +83,17 @@ export function registerQueuedToolResult(
     rejectResult = reject;
   });
   void primordialPromiseCatch(promise, () => {});
-  state.pending.set(id, { promise, resolve: resolveResult, reject: rejectResult });
+  const pending: PendingResult = {
+    promise,
+    resolve: resolveResult,
+    reject: rejectResult,
+    next: undefined,
+  };
+  const existing = state.pending.get(id);
+  if (existing) {
+    existing.last.next = pending;
+    existing.last = pending;
+  } else state.pending.set(id, { first: pending, last: pending });
 }
 
 /** @internal Acknowledge only after the public result has entered the durable queue. */
@@ -91,9 +102,11 @@ export function acknowledgeMirroredToolResult(
   id: string,
 ): void {
   const state = mirrors.get(mirror);
-  const pending = state?.pending.get(id);
-  if (!pending) return;
-  state?.pending.delete(id);
+  const queued = state?.pending.get(id);
+  if (!queued) return;
+  const pending = queued.first;
+  if (pending.next) queued.first = pending.next;
+  else state?.pending.delete(id);
   pending.resolve();
 }
 
@@ -110,7 +123,7 @@ export async function waitForQueuedToolResults(
     if (message.role !== "tool") continue;
     for (const part of message.content) {
       if (part.type !== "tool-result") continue;
-      const pending = state.pending.get(part.toolCallId);
+      const pending = state.pending.get(part.toolCallId)?.last;
       if (!pending) continue;
       signal.throwIfAborted();
       let onAbort: () => void = () => {};
@@ -132,8 +145,12 @@ export function disposeToolResultMirrorBarrier(mirror: ConversationRunChunkMirro
   const state = mirrors.get(mirror);
   if (!state) return;
   state.disposed = true;
-  for (const pending of state.pending.values()) {
-    pending.reject(new Error("Tool result mirror disposed before its result was queued"));
+  for (const queued of state.pending.values()) {
+    let pending: PendingResult | undefined = queued.first;
+    while (pending) {
+      pending.reject(new Error("Tool result mirror disposed before its result was queued"));
+      pending = pending.next;
+    }
   }
   state.pending.clear();
 }

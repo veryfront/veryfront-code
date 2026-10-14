@@ -164,6 +164,11 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
   it("forwards a terminal input failure and a denied result to the UI stream", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
     encoder.encode({ type: "tool-input-start", toolCallId: "bad-input", toolName: "search_docs" });
+    encoder.encode({
+      type: "tool-input-delta",
+      toolCallId: "bad-input",
+      inputTextDelta: '{"query":"example"}',
+    });
     assertEquals(
       encoder.encode({
         type: "tool-input-error",
@@ -174,7 +179,7 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
         type: "tool-input-error",
         toolCallId: "bad-input",
         toolName: "search_docs",
-        input: {},
+        input: { query: "example" },
         errorText: "Invalid arguments",
       }],
     );

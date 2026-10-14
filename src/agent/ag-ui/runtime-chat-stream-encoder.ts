@@ -546,7 +546,7 @@ export function createAgUiRuntimeChatStreamEncoder(
             type: "tool-input-error",
             toolCallId,
             toolName: getStringField(event, "toolName") ?? toolPart?.toolName ?? "unknown",
-            input: getToolInput(event) ?? toolPart?.input ?? {},
+            input: event.input !== undefined ? getToolInput(event) : toolPart?.input ?? {},
             errorText: getStringField(event, "errorText") ?? "Tool input failed",
           });
           return events;

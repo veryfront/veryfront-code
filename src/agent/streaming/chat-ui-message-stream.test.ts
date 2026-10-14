@@ -37,6 +37,36 @@ async function collectChunks(
 }
 
 describe("createChatUiMessageStreamFromDataStream", () => {
+  it("keeps a denied terminal tool result in the finished response", async () => {
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream({
+        stream: createSseStream([
+          { type: "message-start", messageId: "denial-message" },
+          {
+            type: "tool-input-available",
+            toolCallId: "denied",
+            toolName: "reader",
+            input: { query: "docs" },
+          },
+          { type: "tool-output-denied", toolCallId: "denied" },
+          { type: "message-finish" },
+        ]),
+      }, {
+        onFinish(value) {
+          finish = value;
+        },
+      }),
+    );
+    assertEquals(chunks.some((chunk) => chunk.type === "tool-output-denied"), true);
+    assertEquals(finish?.responseMessage.parts, [{
+      type: "dynamic-tool",
+      toolCallId: "denied",
+      toolName: "reader",
+      input: { query: "docs" },
+      state: "output-denied",
+    }]);
+  });
   it("preserves trusted terminal positions while keeping preliminary output provisional", async () => {
     const sessionId = crypto.randomUUID();
     const chunks = await collectChunks(
