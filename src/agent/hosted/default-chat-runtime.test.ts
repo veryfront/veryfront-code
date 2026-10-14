@@ -50,6 +50,7 @@ import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
@@ -2463,4 +2464,57 @@ it("hosted runtime retains authored parallel tool control with unchanged tool gr
   } finally {
     clearModelProviders();
   }
+});
+
+it("prepared hosted runtime converts tools for the assembly's target when the model has no cloud facts", async () => {
+  const modelId = "veryfront-cloud/google/prepared-tool-schema-target";
+  let names: string[] = [];
+  const model = scriptedModel([
+    (options) => {
+      names = (options.tools ?? []).map((tool) => tool.name);
+      return { text: "done" };
+    },
+  ], { only: "generate", provider: "google", modelId: "prepared-tool-schema-target" });
+  const toolNames = Array.from(
+    { length: 130 },
+    (_, index) => `tool_${String(index).padStart(3, "0")}`,
+  );
+  const runtimeTools = createToolsFromHostDefinitions(
+    markTrustedHostToolSet(Object.fromEntries(toolNames.map((name) => [name, {
+      description: `Tool ${name}`,
+      inputSchemaJson: { type: "object", properties: {} },
+      execute: () => ({ ok: true }),
+    }]))),
+  );
+  const runtime = createPreparedHostedRuntimeAgent({
+    options: {
+      projectId: "project",
+      instructions: "Use tools.",
+      model: modelId,
+      toolLoading: "eager",
+    },
+    taskContext: { projectId: "project", branchId: null },
+    toolAssembly: {
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      runtimeTools,
+      remoteToolSources: [],
+      localToolNames: toolNames,
+      remoteToolNames: [],
+      providerToolNames: [],
+      availableToolNames: toolNames,
+      modelVisibleToolNames: toolNames,
+      toolLoadingMode: "eager",
+      toolSchemaTarget: { model: modelId, wireSurface: "openai" },
+      compatibleRemoteToolNames: [],
+      systemInstructions: "Use tools.",
+    },
+    modelId,
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+  }, { resolveModelRuntime: (id) => id === modelId ? model : undefined });
+
+  await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+    await runtime.generate({ input: "Hello" });
+  });
+
+  assertEquals(names.length, 128);
 });

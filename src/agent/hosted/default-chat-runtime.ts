@@ -395,6 +395,9 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
     __vfToolBootstrapNames: input.toolAssembly.modelVisibleToolNames,
+    ...(input.toolAssembly.toolSchemaTarget === undefined
+      ? {}
+      : { __vfToolSchemaTarget: input.toolAssembly.toolSchemaTarget }),
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,

@@ -118,7 +118,10 @@ import {
 } from "./provider-metadata.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
-import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  readVeryfrontCloudModelFacts,
+  type VeryfrontCloudSurfaceId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
@@ -233,6 +236,7 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
+  getRuntimeToolSchemaTarget,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   type ProviderReplayInvokeAgentToolCall,
@@ -1985,6 +1989,25 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
   return toolName === TOOL_SEARCH_TOOL_NAME &&
     isToolVisibleForStep(toolName, plan) &&
     !intrinsicArraySome(plan.authorized, (tool) => tool.name === toolName);
+}
+
+/**
+ * The model and wire surface whose provider tool rules apply this step. A
+ * built Veryfront Cloud model's own facts win; a model runtime without them
+ * (an executor proxy) uses the target trusted preparation resolved.
+ */
+function resolveStepToolSchemaOptions(
+  config: AgentConfig,
+  effectiveModel: string,
+  languageModel: ModelRuntime,
+): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
+  const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
+  if (surface !== undefined) return { wireSurface: surface };
+  const target = getRuntimeToolSchemaTarget(config);
+  if (target?.model === undefined) return {};
+  return target.wireSurface === undefined
+    ? { toolSchemaModel: target.model }
+    : { toolSchemaModel: target.model, wireSurface: target.wireSurface };
 }
 
 function hasToolResultContextEnabled(
@@ -3948,7 +3971,7 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
-          wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+          ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
           reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
@@ -4023,7 +4046,7 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
-          wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+          ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
           providerTools: stepProviderTools,
           requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
         });
@@ -5021,7 +5044,7 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
-        wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+        ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
         reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
@@ -5283,7 +5306,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
-        wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+        ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
         providerTools: stepProviderTools,
         requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
       });

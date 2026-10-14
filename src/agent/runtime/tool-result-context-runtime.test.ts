@@ -823,3 +823,39 @@ describe("agent runtime tool result context integration", () => {
     assertEquals(toolResultValue(toolResultMessage(finished, "list_records")), LARGE_RESULT);
   });
 });
+
+describe("agent runtime tool schema target without model facts", () => {
+  it("caps converted tools by the prepared wire surface when the model runtime has no cloud facts", async () => {
+    let names: string[] = [];
+    const model = scriptedModel([
+      (options) => {
+        names = toolNamesFromCall(options);
+        return { text: "done" };
+      },
+    ], {
+      modelId: "google/local-model",
+      provider: "google",
+      only: "generate",
+    });
+
+    const assistant = agent(
+      {
+        model: "veryfront-cloud/google/local-model",
+        system: "Use tools.",
+        skills: [],
+        tools: cappedNoopTools(130),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolSchemaTarget: {
+          model: "veryfront-cloud/google/local-model",
+          wireSurface: "openai",
+        },
+      } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+    );
+
+    const response = await assistant.generate({ input: "Hello." });
+
+    assertEquals(response.text, "done");
+    assertEquals(names.length, 128);
+  });
+});

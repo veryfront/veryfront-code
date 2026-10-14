@@ -33,6 +33,8 @@ import {
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
   wireSurface?: VeryfrontCloudSurfaceId;
+  /** Model ID whose tool schema rules apply, when it differs from `model`. */
+  toolSchemaModel?: string;
   providerTools?: string[];
   requiredToolNames?: readonly string[];
 }
@@ -123,7 +125,7 @@ export function convertToolsToRuntimeTools(
     intrinsicReflectApply(intrinsicObjectKeys, Object, [providerNativeTools ?? {}]) as string[],
   );
   const compatibleTools = selectProviderCompatibleTools(tools, {
-    model: options?.model,
+    model: options?.toolSchemaModel ?? options?.model,
     wireSurface: options?.wireSurface,
     requiredToolNames: options?.requiredToolNames,
   });
@@ -145,7 +147,7 @@ export function convertToolsToRuntimeTools(
         description: def.description,
         inputSchema: createRuntimeJsonSchema(
           sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
-            model: options?.model,
+            model: options?.toolSchemaModel ?? options?.model,
             wireSurface: options?.wireSurface,
             moonshotExpansionBudget,
           }),

@@ -111,6 +111,8 @@ export interface PrepareAgentRuntimeStepInput {
   effectiveModel?: string;
   /** The authenticated gateway model's resolved wire surface, when available. */
   wireSurface?: VeryfrontCloudSurfaceId;
+  /** Model ID whose provider tool limit applies, when it differs from `effectiveModel`. */
+  toolSchemaModel?: string;
   /**
    * Schemas the runtime appends after planning (such as the tool-result
    * reader). The plan leaves this many slots under the provider tool limit.
@@ -387,7 +389,10 @@ export async function prepareAgentRuntimeStep(
     state: toolExposureState,
     bootstrapToolNames,
     maxVisibleTools: reserveToolSlots(
-      getProviderToolProfile(input.effectiveModel ?? input.config.model, input.wireSurface)
+      getProviderToolProfile(
+        input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
+        input.wireSurface,
+      )
         .maxTools,
       input.reservedToolSlots,
     ),

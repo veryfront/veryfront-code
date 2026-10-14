@@ -961,6 +961,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         providerNativeToolNames: withServedFacts(() =>
           getProviderNativeToolNames({ model: modelId, hosted: true })
         ),
+        // Granted IDs are always `veryfront-cloud/...`, so the target keeps
+        // that route; the broker-loaded catalog names its wire surface. The
+        // executor's model proxy carries no cloud facts, so the runtime
+        // converts tools for this target too.
         toolSchemaTarget: withServedFacts(() => resolveProviderToolSchemaTarget(modelId)),
         sourceProviderToolNames: definition.providerTools,
         prepareRemoteToolInput: ({ toolName, toolInput }) =>
