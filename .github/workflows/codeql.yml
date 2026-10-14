@@ -7,6 +7,12 @@ on:
   # Required for merge-queue entries: queued runs report checks via merge_group.
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
+    inputs:
+      public_pool:
+        description: Canary read-only public analysis on main without enabling the rollout
+        type: boolean
+        default: false
   schedule:
     - cron: "0 6 * * 1" # Weekly Monday 6am UTC
 
@@ -24,26 +30,65 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Enable only after this workflow and the pool's codeql job are on main.
+  # The called workflow is the runner group's trusted, main-pinned definition.
+  public-analysis:
+    if: ${{ (vars.CI_CODEQL_PUBLIC == 'enabled' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.public_pool == true)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Public CodeQL analysis
+    permissions:
+      contents: read
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: codeql
+
   analyze:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [public-analysis]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Analyze
     runs-on: ubuntu-latest
-    # CodeQL takes ~10 minutes on this repo. Cap the job well under the merge
+    # Cap the hosted analysis or result-upload job under the merge
     # queue's check_response_timeout (1800s) so that a hung step fails fast and
     # visibly, rather than stalling until the Actions default of 360 minutes —
     # which would reproduce the very ejection this workflow exists to prevent.
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: checkout
+        continue-on-error: true
+        with:
+          persist-credentials: false
 
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+      - name: Require successful public analysis
+        id: public-result
+        if: ${{ needs.public-analysis.result != 'skipped' }}
+        continue-on-error: true
+        env:
+          PUBLIC_ANALYSIS_RESULT: ${{ needs.public-analysis.result }}
+          PUBLIC_SOURCE_ROOT: ${{ needs.public-analysis.outputs.codeql-source-root }}
+          PUBLIC_ARTIFACT_NAME: ${{ needs.public-analysis.outputs.codeql-artifact-name }}
+        run: |
+          if [ "$PUBLIC_ANALYSIS_RESULT" != "success" ]; then
+            echo "::error::Public CodeQL analysis finished with ${PUBLIC_ANALYSIS_RESULT}"
+            exit 1
+          fi
+          case "$PUBLIC_SOURCE_ROOT" in
+            /*) ;;
+            *) echo "::error::Public CodeQL source root is unavailable"; exit 1 ;;
+          esac
+          if [[ ! "$PUBLIC_ARTIFACT_NAME" =~ ^codeql-sarif-${GITHUB_RUN_ID}-[1-9][0-9]*$ ]]; then
+            echo "::error::Public CodeQL artifact identity is unavailable"
+            exit 1
+          fi
+
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        if: ${{ needs.public-analysis.result == 'skipped' && steps.checkout.outcome == 'success' }}
         with:
           languages: javascript-typescript
           queries: security-and-quality
 
       # A merge-queue batch can dissolve while this job is still running. GitHub
       # then deletes the ephemeral gh-readonly-queue ref, and the SARIF upload —
-      # which starts ~10 minutes in, after the analysis itself has already
+      # which starts after the analysis itself has already
       # succeeded — fails with "ref ... not found in this repository". Nothing is
       # being merged at that point, so the run is moot rather than failing, but
       # the queue reads the red check as the PR's fault and ejects it.
@@ -68,13 +113,35 @@ jobs:
       # SHA, and this run's moot-green could then satisfy a live entry. If the
       # queue's merge method ever changes, revisit this guard first.
       - id: analyze
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        if: ${{ needs.public-analysis.result == 'skipped' && steps.checkout.outcome == 'success' }}
         continue-on-error: true
         with:
           category: "/language:javascript-typescript"
 
+      - name: Download public analysis results
+        id: public-download
+        if: ${{ needs.public-analysis.result == 'success' && steps.public-result.outcome == 'success' && steps.checkout.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.public-analysis.outputs.codeql-artifact-name }}
+          path: dist/codeql-results
+
+      - name: Upload public analysis to code scanning
+        id: public-upload
+        if: ${{ needs.public-analysis.result == 'success' && steps.public-download.outcome == 'success' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: dist/codeql-results
+          category: "/language:javascript-typescript"
+          checkout_path: ${{ needs.public-analysis.outputs.codeql-source-root }}
+          ref: ${{ github.ref }}
+          sha: ${{ github.sha }}
+
       - name: Re-raise CodeQL failure unless the target ref is gone
-        if: ${{ steps.analyze.outcome == 'failure' }}
+        if: ${{ steps.checkout.outcome == 'failure' || steps.analyze.outcome == 'failure' || steps.public-result.outcome == 'failure' || steps.public-download.outcome == 'failure' || steps.public-upload.outcome == 'failure' }}
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}

@@ -107,6 +107,7 @@ const PUBLIC_POOL_RUNNER =
   "${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}";
 const PUBLIC_POOL_JOBS = [
   "ci",
+  "codeql",
   "coverage-integration-client",
   "coverage-node-executor",
   "coverage-shards",
@@ -188,7 +189,7 @@ describe("public runner pool workflow", () => {
     assertEquals(Object.keys(jobs).sort(), [...PUBLIC_POOL_JOBS, "unknown-job"].sort());
     for (const name of PUBLIC_POOL_JOBS) {
       const job = jobs[name]!;
-      assertEquals(job["runs-on"], PUBLIC_POOL_RUNNER, `${name} runner`);
+      if (name !== "codeql") assertEquals(job["runs-on"], PUBLIC_POOL_RUNNER, `${name} runner`);
       assertEquals(
         job.if,
         `\${{ inputs.job == '${name}' && ${FORK_GUARD} }}`,
