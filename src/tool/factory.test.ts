@@ -780,8 +780,8 @@ describe("tool factory", () => {
         inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: () => "ok",
       });
-      assertEquals({ ...t.discovery }, discovery);
-      assertEquals({ ...toolToProviderDefinition(t).discovery }, discovery);
+      assertEquals<unknown>({ ...t.discovery }, discovery);
+      assertEquals<unknown>({ ...toolToProviderDefinition(t).discovery }, discovery);
     });
 
     it("carries discovery from dynamicTool() and drops invalid metadata", () => {
@@ -792,7 +792,7 @@ describe("tool factory", () => {
         inputSchema: { type: "object", properties: {} },
         execute: () => [],
       });
-      assertEquals({ ...t.discovery }, discovery);
+      assertEquals<unknown>({ ...t.discovery }, discovery);
       const invalid = dynamicTool({
         id: "bad",
         description: "Bad",
