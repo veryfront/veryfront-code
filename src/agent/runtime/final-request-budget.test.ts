@@ -682,3 +682,34 @@ describe("final model request budget", () => {
     assertEquals(request.includes("old value ".repeat(450)), false);
   });
 });
+
+for (const type of ["image", "file"] as const) {
+  it(`treats native inline ${type} token cost as unknown`, () => {
+    const result = enforceFinalRequestBudget({
+      system: "Describe the attachment",
+      messages: [{
+        role: "user",
+        content: [{
+          type,
+          url: "data:image/png;base64," + "a".repeat(1_400_000),
+          mediaType: "image/png",
+        }],
+      }],
+      limit: { context: 128_000, output: 4096 },
+      requestedOutputTokens: 4096,
+    });
+    assertEquals(result, { maxOutputTokens: 4096, estimatedInputTokens: null });
+  });
+}
+it("still rejects oversized ordinary text that contains a data URL", () => {
+  assertThrows(
+    () =>
+      enforceFinalRequestBudget({
+        system: "Help",
+        messages: [{ role: "user", content: "data:image/png;base64," + "a".repeat(1_400_000) }],
+        limit: { context: 128_000, output: 4096 },
+        requestedOutputTokens: 4096,
+      }),
+    VeryfrontError,
+  );
+});

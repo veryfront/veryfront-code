@@ -1,6 +1,29 @@
 import { estimateTokens } from "../../chat/message-prep.ts";
 import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 
+const getOwnDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
+
+function own(value: unknown, key: string): unknown {
+  return value !== null && typeof value === "object"
+    ? getOwnDescriptor(value, key)?.value
+    : undefined;
+}
+
+function hasNativeMedia(messages: readonly unknown[]): boolean {
+  for (let index = 0; index < messages.length; index++) {
+    const message = own(messages, String(index));
+    if (own(message, "role") !== "user") continue;
+    const content = own(message, "content");
+    if (!isArray(content)) continue;
+    for (let partIndex = 0; partIndex < content.length; partIndex++) {
+      const type = own(own(content, String(partIndex)), "type");
+      if (type === "image" || type === "file") return true;
+    }
+  }
+  return false;
+}
+
 /** Token ceilings the served model deployment declares. */
 export type ServedRequestLimit = { readonly context?: number; readonly output?: number };
 
@@ -56,8 +79,9 @@ export function inspectFinalRequestBudget(
   const maxOutputTokens = outputLimit === undefined
     ? input.requestedOutputTokens
     : Math.min(input.requestedOutputTokens, outputLimit);
-  // An absent served context limit is unknown, not a zero-token estimate.
-  if (input.limit?.context === undefined) {
+  // Native media cost depends on the provider's media tokenizer. Encoded bytes
+  // cannot be estimated as text; keep the input cost unknown, as for a missing limit.
+  if (input.limit?.context === undefined || hasNativeMedia(input.messages)) {
     return { maxOutputTokens, estimatedInputTokens: null, fits: true, outputExceeded };
   }
   const toolSchemas = Object.entries(input.tools ?? {}).map(([name, value]) => {
