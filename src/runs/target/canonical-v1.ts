@@ -171,7 +171,13 @@ export function createCanonicalEventsV1Facade(
     },
     async get(runId, eventId, options) {
       cursor(eventId);
-      return await parseRunReadMemberV1(await request(path(runId, `events/${eventId}`), options));
+      const member = await parseRunReadMemberV1(
+        await request(path(runId, `events/${eventId}`), options),
+      );
+      if (String(member.metadata.event_id) !== eventId) {
+        throw new TypeError("canonical-v1 event identity mismatch");
+      }
+      return member;
     },
     async discover(options) {
       return await parseEventDiscoveryV1(

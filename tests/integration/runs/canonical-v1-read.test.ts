@@ -76,6 +76,22 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
       assertEquals(page.next_cursor, "42");
     });
   });
+  it("rejects a get response for another event in canonical and legacy history", async () => {
+    for (const member of [canonical, legacy]) {
+      await fixture(() => Response.json(member), async (sdk) => {
+        await assertRejects(
+          () => sdk.canonicalEventsV1.get("run_demo", "43"),
+          TypeError,
+          "event identity mismatch",
+        );
+        const matching = await sdk.canonicalEventsV1.get(
+          "run_demo",
+          String(member.metadata.event_id),
+        );
+        assertEquals(matching.metadata.event_id, member.metadata.event_id);
+      });
+    }
+  });
   it("uses global discovery and exposes structured pre-open errors", async () => {
     await fixture((request) => {
       const url = new URL(request.url);
