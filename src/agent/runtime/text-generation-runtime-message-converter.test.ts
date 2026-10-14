@@ -47,7 +47,7 @@ describe("text-generation-runtime-message-converter", () => {
           result,
         }],
       } as Message]);
-      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
         type: "json",
         value: { ok: true, status: "completed", childRunId: "child", summary: {}, output: receipt },
       });
@@ -81,7 +81,7 @@ describe("text-generation-runtime-message-converter", () => {
           result,
         }],
       } as Message]);
-      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
         type: "json",
         value: { ok: true, childRunId: "child", text, summary: { truncated: false } },
       });
@@ -107,7 +107,7 @@ describe("text-generation-runtime-message-converter", () => {
         result: child,
       }],
     } as Message]);
-    assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+    assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
       type: "json",
       value: child,
     });
