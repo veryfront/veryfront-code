@@ -799,7 +799,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/chat": "Chat components and hooks.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
-  "veryfront/conversations": "Conversations, messages, branches, participants, and read state.",
+  "veryfront/conversations":
+    "Conversations, messages, branches, participants, and read state.",
   "veryfront/embedding": "Embedding and retrieval helpers.",
   "veryfront/extensions": "Extension contracts and loader helpers.",
   "veryfront/fonts": "Font components.",
@@ -1130,7 +1131,11 @@ function normalizeFunctionDef(def: Record<string, unknown>): FunctionDef {
 function normalizeInterfaceDef(def: Record<string, unknown>): InterfaceDef {
   return {
     ...def,
-    extends: Array.isArray(def.extends) ? def.extends : [],
+    extends: Array.isArray(def.extends)
+      ? def.extends.map(normalizeTsType).filter((parent) =>
+        parent !== undefined
+      )
+      : [],
     constructors: Array.isArray(def.constructors) ? def.constructors : [],
     methods: normalizeMethods(def.methods),
     properties: normalizeProperties(def.properties),
@@ -1208,7 +1213,7 @@ function normalizeTsType(type: unknown): TsType | undefined {
   if (kind === "keyword" && typeof value === "string") {
     normalized.keyword = value;
   } else if (kind === "typeRef") {
-    const typeRef = asRecord(value) ?? {};
+    const typeRef = asRecord(value) ?? asRecord(record.typeRef) ?? {};
     normalized.typeRef = {
       ...typeRef,
       typeParams: Array.isArray(typeRef.typeParams)
@@ -1691,8 +1696,7 @@ const METHOD_DESCRIPTIONS: Record<
   },
   Sandbox: {
     create: {
-      desc:
-        "Create an isolated sandbox workspace.",
+      desc: "Create an isolated sandbox workspace.",
       params: {
         options: "Sandbox creation options (auth token + optional API URL).",
       },
@@ -1726,7 +1730,8 @@ const METHOD_DESCRIPTIONS: Record<
       desc: "Record activity for idle cleanup. Fixed expiry does not change.",
     },
     close: {
-      desc: "Close the client. Existing and persistent sandboxes remain; temporary sandboxes created by this client are deleted.",
+      desc:
+        "Close the client. Existing and persistent sandboxes remain; temporary sandboxes created by this client are deleted.",
     },
   },
   MiddlewarePipeline: {
@@ -2229,18 +2234,37 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 // 5d. Generate Type Reference section
 // ---------------------------------------------------------------------------
 
-function interfaceReferenceProperties(node: DocNode, nodes: DocNode[], visited = new Set<string>()): InterfaceProperty[] {
+function interfaceReferenceProperties(
+  node: DocNode,
+  nodes: DocNode[],
+  visited = new Set<string>(),
+): InterfaceProperty[] {
   if (!node.interfaceDef || visited.has(node.name)) return [];
   visited.add(node.name);
   const inherited: InterfaceProperty[] = [];
   for (const parent of node.interfaceDef.extends) {
-    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) continue;
+    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) {
+      continue;
+    }
     const reference = parent.typeRef;
-    if (!reference || typeof reference !== "object" || !("typeName" in reference) || typeof reference.typeName !== "string") continue;
+    if (
+      !reference || typeof reference !== "object" ||
+      !("typeName" in reference) || typeof reference.typeName !== "string"
+    ) continue;
     const parentNode = findNode(nodes, reference.typeName);
-    if (parentNode) inherited.push(...interfaceReferenceProperties(parentNode, nodes, visited));
+    if (parentNode) {
+      inherited.push(
+        ...interfaceReferenceProperties(parentNode, nodes, visited),
+      );
+    }
   }
-  return [...new Map([...inherited, ...node.interfaceDef.properties].map(property => [property.name, property])).values()];
+  return [
+    ...new Map(
+      [...inherited, ...node.interfaceDef.properties].map(
+        (property) => [property.name, property],
+      ),
+    ).values(),
+  ];
 }
 
 function generateTypeReference(nodes: DocNode[], importPath: string): string[] {

@@ -242,6 +242,7 @@ Connection settings of `Conversation.list`, `get`, `create` and `attach`.
 
 | Property    | Type                                              | Description                                                                                                                       | Source                                                                                     |
 | ----------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `signal?`   | `AbortSignal`                                     | Cancels the request.                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/conversations/types.ts) |
 | `transport` | <code>VeryfrontApiTransport&lt;unknown&gt;</code> | Canonical Veryfront API transport, including origin, credentials and retries, for example from `createConversationsApiTransport`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/conversations/types.ts) |
 
 ### `CreateConversationInput`
