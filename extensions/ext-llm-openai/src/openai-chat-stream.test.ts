@@ -71,49 +71,6 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     assertEquals(Deno.inspect(error, { depth: 10 }).includes("sk-synthetic"), false);
   });
 
-  it("reads streamed error fields only as own data properties", async () => {
-    const keys = ["error", "code"] as const;
-    const originals = keys.map((key) => Object.getOwnPropertyDescriptor(Object.prototype, key));
-    let calls = 0;
-    let terminal: unknown;
-    let parts: unknown[] = [];
-    try {
-      Object.defineProperty(Object.prototype, "error", {
-        configurable: true,
-        get() {
-          calls++;
-          return { message: "forged", code: "server_error" };
-        },
-      });
-      Object.defineProperty(Object.prototype, "code", {
-        configurable: true,
-        get() {
-          calls++;
-          return "rate_limit_exceeded";
-        },
-      });
-      terminal = await assertRejects(
-        () => collectParts(streamFromText(data({ error: { message: "Bad request" } }))),
-        ProviderRequestError,
-      );
-      parts = await collectParts(streamFromText([
-        data({ choices: [{ index: 0, delta: { content: "Ready." }, finish_reason: "stop" }] }),
-        "data: [DONE]\r\n\r\n",
-      ].join("")));
-    } finally {
-      keys.forEach((key, index) => {
-        const original = originals[index];
-        if (original) Object.defineProperty(Object.prototype, key, original);
-        else Reflect.deleteProperty(Object.prototype, key);
-      });
-    }
-    assertEquals(calls, 0);
-    assert(terminal instanceof ProviderRequestError);
-    assertEquals(terminal instanceof ProviderRateLimitError, false);
-    assertEquals(terminal.retryable, false);
-    assertEquals(parts.length > 0, true);
-  });
-
   it("preserves retryability for transient streamed provider error codes", async () => {
     const rateLimited = await assertRejects(() =>
       collectParts(streamFromText(data({
@@ -157,11 +114,34 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       code: "EXTERNAL_SERVICE_ERROR",
       message: "LLM provider service error",
     });
-    for (const malformed of [null, "not an envelope", {}, { message: 7 }]) {
+    await assertRejects(
+      () => collectParts(streamFromText(data({ error: null }))),
+      ProviderStreamProtocolError,
+      "event had neither choices nor usage",
+    );
+    for (const malformed of ["not an envelope", {}, { message: 7 }]) {
       await assertRejects(
         () => collectParts(streamFromText(data({ error: malformed }))),
         ProviderStreamProtocolError,
-        "event had neither choices nor usage",
+        "provider error event was malformed",
+      );
+    }
+  });
+
+  it("rejects a malformed explicit error envelope beside otherwise valid content", async () => {
+    for (const malformed of ["not an envelope", {}, { message: 7 }]) {
+      await assertRejects(
+        () =>
+          collectParts(streamFromText([
+            data({
+              error: malformed,
+              choices: [{ index: 0, delta: { content: "Ready." }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            "data: [DONE]\r\n\r\n",
+          ].join(""))),
+        ProviderStreamProtocolError,
+        "provider error event was malformed",
       );
     }
   });

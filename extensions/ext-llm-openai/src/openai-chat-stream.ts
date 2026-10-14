@@ -214,6 +214,9 @@ function isContentFilterAnnotation(choice: Record<string, unknown>): boolean {
 
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ReflectApply = Reflect.apply;
+const StringToLowerCase = String.prototype.toLowerCase;
+const StringIncludes = String.prototype.includes;
 
 /** Return an own data property, never an inherited or accessor value. */
 function readOwnDataField(record: Record<string, unknown> | undefined, key: string): unknown {
@@ -229,6 +232,17 @@ const STREAMED_CONTEXT_LENGTH_PATTERNS = [
   "context length exceeded",
   "maximum context length",
 ] as const;
+
+/** Match context-size wording through load-time intrinsics, never project hooks. */
+function isStreamedContextLengthMessage(message: string): boolean {
+  const normalized = ReflectApply(StringToLowerCase, message, []) as string;
+  for (let index = 0; index < STREAMED_CONTEXT_LENGTH_PATTERNS.length; index++) {
+    if (ReflectApply(StringIncludes, normalized, [STREAMED_CONTEXT_LENGTH_PATTERNS[index]])) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Map a provider error reported inside an HTTP 200 chat stream to a curated
@@ -246,11 +260,7 @@ function streamedProviderError(
     message: "Provider reported a failed generation in its response stream",
     retryable: false,
   };
-  const normalizedMessage = message.toLowerCase();
-  if (
-    code === "context_length_exceeded" ||
-    STREAMED_CONTEXT_LENGTH_PATTERNS.some((pattern) => normalizedMessage.includes(pattern))
-  ) {
+  if (code === "context_length_exceeded" || isStreamedContextLengthMessage(message)) {
     // Fixed wording that provider error parsing classifies as a context limit.
     return new ProviderRequestError({
       ...options,
@@ -309,9 +319,15 @@ export async function* streamOpenAICompatibleParts(
     // never carries the provider record (or its text) as a cause.
     // Own data fields only: an inherited accessor must not run, forge a
     // retryable code, or mask the provider failure.
-    const errorRecord = readRecord(readOwnDataField(record, "error"));
-    const errorMessage = readOwnDataField(errorRecord, "message");
-    if (errorRecord && typeof errorMessage === "string") {
+    // An explicit envelope that cannot be classified is rejected rather than
+    // accepted as generated output; `null` is the absent-field form.
+    const errorValue = readOwnDataField(record, "error");
+    if (errorValue !== undefined && errorValue !== null) {
+      const errorRecord = readRecord(errorValue);
+      const errorMessage = readOwnDataField(errorRecord, "message");
+      if (!errorRecord || typeof errorMessage !== "string") {
+        throw invalidOpenAIStream(context, "provider error event was malformed");
+      }
       throw streamedProviderError(context, readOwnDataField(errorRecord, "code"), errorMessage);
     }
     const usageRecord = readRecord(record.usage);
