@@ -723,35 +723,39 @@ function createRootNormalizationBudget(shared: RootSchemaExpansionBudget): RootN
   return { remainingNodes: 20_000, remainingBytes: 512 * 1024, shared };
 }
 
-function chargeRootNormalization(
-  value: unknown,
-  budget: RootNormalizationBudget,
-  depth: number,
-  introduced = false,
-): void {
-  const pending = [{ value, depth }];
+const MAX_ROOT_NORMALIZATION_DEPTH = 64;
+
+function rootNormalizationBudgetExceeded(): TypeError {
+  return new TypeError("Tool schema root normalization budget exceeded");
+}
+
+/**
+ * Charge a subtree that normalization introduced (a resolved reference copy or
+ * a retained source copy). The accepted input itself is never charged, so an
+ * unchanged schema cannot exhaust the per-schema or shared allowance.
+ */
+function chargeRootNormalizationGrowth(value: unknown, budget: RootNormalizationBudget): void {
+  const pending = [value];
   while (pending.length) {
-    const current = pending.pop()!;
-    const bytes = estimateSerializedNodeBytes(current.value);
+    const current = pending.pop();
+    const bytes = estimateSerializedNodeBytes(current);
     budget.remainingNodes--;
     budget.remainingBytes -= bytes;
-    if (introduced) {
-      budget.shared.remainingNodes--;
-      budget.shared.remainingBytes -= bytes;
-    }
+    budget.shared.remainingNodes--;
+    budget.shared.remainingBytes -= bytes;
     if (
-      current.depth > 64 || budget.remainingNodes < 0 || budget.remainingBytes < 0 ||
+      budget.remainingNodes < 0 || budget.remainingBytes < 0 ||
       budget.shared.remainingNodes < 0 || budget.shared.remainingBytes < 0
     ) {
-      throw new TypeError("Tool schema root normalization budget exceeded");
+      throw rootNormalizationBudgetExceeded();
     }
-    if (current.value !== null && typeof current.value === "object") {
-      for (const key of Object.keys(current.value)) {
-        const descriptor = Object.getOwnPropertyDescriptor(current.value, key);
+    if (current !== null && typeof current === "object") {
+      for (const key of Object.keys(current)) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
         if (!descriptor || !("value" in descriptor)) {
           throw new TypeError("Tool schema root normalization requires data properties");
         }
-        pending.push({ value: descriptor.value, depth: current.depth + 1 });
+        pending.push(descriptor.value);
       }
     }
   }
@@ -764,6 +768,7 @@ function normalizeObjectSchemaRoot(
   budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
   depth = 0,
 ): Record<string, unknown> {
+  if (depth > MAX_ROOT_NORMALIZATION_DEPTH) throw rootNormalizationBudgetExceeded();
   if (depth === 0 && isPlainRecord(schema)) {
     // Admit the input once under the same bounded contract as public raw schemas.
     // The smaller normalization allowance applies only to introduced material.
@@ -771,8 +776,6 @@ function normalizeObjectSchemaRoot(
     if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
     if (rootSchema === schema) rootSchema = accepted;
     schema = accepted;
-  } else if (depth > 0) {
-    chargeRootNormalization(schema, budget, depth, true);
   }
   if (!isPlainRecord(schema)) {
     return createPermissiveToolInputSchema();
@@ -791,6 +794,7 @@ function normalizeObjectSchemaRoot(
         budget,
         depth + 1,
       );
+      chargeRootNormalizationGrowth(target, budget);
       const siblingRoot = normalizeObjectSchemaRoot(
         siblings,
         rootSchema,
@@ -798,13 +802,11 @@ function normalizeObjectSchemaRoot(
         budget,
         depth + 1,
       );
-      const combined = {
+      return {
         ...target,
         ...siblingRoot,
         ...mergeObjectSchemas([target, siblingRoot], "allOf"),
       };
-      chargeRootNormalization(combined, budget, depth, true);
-      return combined;
     }
   }
 
@@ -828,14 +830,12 @@ function normalizeObjectSchemaRoot(
       normalizeObjectSchemaRoot(branch, rootSchema, seenRefs, budget, depth + 1)
     );
     const composed = mergeObjectSchemas(branches, keyword);
-    chargeRootNormalization(composed, budget, depth, true);
     sanitized = {
       ...sanitized,
       ...mergeObjectSchemas([sanitized, composed], "allOf"),
     };
   }
 
-  if (depth > 0) chargeRootNormalization(sanitized, budget, depth, true);
   return sanitized;
 }
 
@@ -887,8 +887,8 @@ function retainSourceRootReferences(
   const prefix = `#/$defs/${name}`;
   const source = rewriteSourceRootReferences(schema, prefix);
   const result = rewriteSourceRootReferences(normalized, prefix) as Record<string, unknown>;
+  chargeRootNormalizationGrowth(source, budget);
   result.$defs = { ...(isPlainRecord(result.$defs) ? result.$defs : {}), [name]: source };
-  chargeRootNormalization(result, budget, 0, true);
   return result;
 }
 
@@ -903,7 +903,6 @@ function sanitizeOpenAISchemaRoot(
     return schema;
   }
   const budget = createRootNormalizationBudget(shared);
-  chargeRootNormalization(schema, budget, 0);
   const { not: _not, enum: _enum, ...root } = schema;
   const normalized = normalizeObjectSchemaRoot(
     root,

@@ -159,14 +159,14 @@ describe("provider-tool-compat", () => {
       "root normalization budget",
     );
   });
-  it("bounds encoded bytes while folding OpenAI roots", () => {
+  it("bounds encoded bytes introduced by references while folding OpenAI roots", () => {
     assertThrows(
       () =>
         sanitizeProviderToolSchema(
           {
             type: "object",
-            description: "\u0000".repeat(90_000),
-            allOf: [{ type: "object" }],
+            $defs: { large: { type: "object", description: "\u0000".repeat(90_000) } },
+            allOf: [{ $ref: "#/$defs/large" }],
           } as never,
           { model: "openai/gpt-5.4" },
         ),
@@ -174,12 +174,22 @@ describe("provider-tool-compat", () => {
       "root normalization budget",
     );
   });
+  it("accepts large unchanged input while folding OpenAI roots", () => {
+    const description = "\u0000".repeat(90_000);
+    const result = sanitizeProviderToolSchema(
+      { type: "object", description, allOf: [{ type: "object" }] } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.description, description);
+    assertEquals(Object.hasOwn(result, "allOf"), false);
+  });
   it("shares the root expansion allowance across a tool collection", () => {
     const budget = createRootSchemaExpansionBudget();
     budget.remainingNodes = 100;
     const schema = {
       type: "object",
-      allOf: [{ properties: { value: { type: "string" } } }],
+      $defs: { input: { properties: { value: { type: "string" } } } },
+      allOf: [{ $ref: "#/$defs/input" }],
     } as never;
     const options = { model: "openai/gpt-5.4", rootExpansionBudget: budget };
     assertEquals(sanitizeProviderToolSchema(schema, options).type, "object");
@@ -226,6 +236,25 @@ describe("provider-tool-compat", () => {
       assertEquals(budget.remainingNodes, 200_000);
       assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
     }
+  });
+  it("charges a large root composition branch at most once", () => {
+    const budget = createRootSchemaExpansionBudget();
+    const description = "d".repeat(180 * 1024);
+    const normalized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        anyOf: [{ properties: { value: { type: "string", description } } }, {
+          properties: { other: { type: "number" } },
+        }],
+      } as never,
+      { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget },
+    );
+    assertEquals(
+      (normalized.properties?.value as { description?: string }).description,
+      description,
+    );
+    assertEquals(budget.remainingNodes, 200_000);
+    assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
   });
   it("keeps the shared expansion allowance for a large reference-free Anthropic catalog", () => {
     const budget = createRootSchemaExpansionBudget();
