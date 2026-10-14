@@ -1,8 +1,126 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { captureHostBuiltinModuleLoader } from "./native-brand-checks.ts";
 
 describe("native brand checks", () => {
+  it("captures only an own host loader and calls its getter once with the host receiver", () => {
+    const loader = () => ({});
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: loader }), loader);
+    let accesses = 0;
+    const host = Object.defineProperty({}, "getBuiltinModule", {
+      get() {
+        accesses++;
+        assertEquals(this, host);
+        return loader;
+      },
+    });
+    assertEquals(captureHostBuiltinModuleLoader(host), loader);
+    assertEquals(accesses, 1);
+    assertEquals(captureHostBuiltinModuleLoader({}), undefined);
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: undefined }), undefined);
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.create({ getBuiltinModule: loader })),
+      undefined,
+    );
+    const invalid = {};
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.defineProperty({}, "getBuiltinModule", {
+        get: () => invalid,
+      })),
+      invalid,
+    );
+  });
+
+  it("captures brand predicates from a lazy host builtin loader once", async () => {
+    const hostProcess = (globalThis as typeof globalThis & {
+      process?: { getBuiltinModule?: (specifier: string) => unknown };
+    }).process;
+    if (!hostProcess) throw new Error("host process must be available in server tests");
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    const loader = hostProcess.getBuiltinModule;
+    if (!previous || typeof loader !== "function") {
+      throw new Error("host builtin loader must be available in server tests");
+    }
+    let accesses = 0;
+    let isolated: typeof import("./native-brand-checks.ts") | undefined;
+    try {
+      Object.defineProperty(hostProcess, "getBuiltinModule", {
+        configurable: true,
+        get() {
+          accesses++;
+          return loader;
+        },
+      });
+      isolated = await import("./native-brand-checks.ts?lazy-host-builtin-loader");
+      assertEquals(accesses, 1);
+      Object.defineProperty(hostProcess, "getBuiltinModule", {
+        configurable: true,
+        get() {
+          throw new Error("captured predicates must not reload the host module");
+        },
+      });
+      assertEquals(isolated.nativeBrandChecks?.isNativeError(new Error("fixture")), true);
+      assertEquals(isolated.nativeBrandChecks?.isNativeError({}), false);
+      let trapCalls = 0;
+      const proxy = new Proxy({}, {
+        get() {
+          trapCalls++;
+          return undefined;
+        },
+        ownKeys() {
+          trapCalls++;
+          return [];
+        },
+      });
+      assertEquals(isolated.nativeBrandChecks?.isProxy(proxy), true);
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
+      assertEquals(trapCalls, 0);
+      assertEquals(accesses, 1);
+    } finally {
+      Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+    }
+  });
+
+  it("fails closed when the host loader is missing or does not return a function", async () => {
+    const hostProcess = (globalThis as typeof globalThis & {
+      process?: { getBuiltinModule?: (specifier: string) => unknown };
+    }).process;
+    if (!hostProcess) throw new Error("host process must be available in server tests");
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    if (!previous) throw new Error("host builtin loader must be available in server tests");
+    const hasBunFallback = (globalThis as typeof globalThis & { Bun?: unknown }).Bun != null;
+    try {
+      for (const shape of ["missing", "empty", "invalid-accessor"]) {
+        if (shape === "missing") {
+          Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+        } else {
+          Object.defineProperty(
+            hostProcess,
+            "getBuiltinModule",
+            shape === "empty"
+              ? { configurable: true, value: undefined }
+              : { configurable: true, get: () => ({}) },
+          );
+        }
+        const load = () => import(`./native-brand-checks.ts?unavailable-host-loader-${shape}`);
+        if (hasBunFallback) {
+          // Bun's lexical require still provides its host builtin module.
+          const isolated = await load();
+          assertEquals(isolated.nativeBrandChecks?.isNativeError(new Error("fixture")), true);
+        } else {
+          await assertRejects(
+            load,
+            Error,
+            "does not expose complete node:util/types brand checks",
+          );
+        }
+      }
+    } finally {
+      Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+    }
+  });
+
   it("identifies native-slot objects without trusting their prototype", async () => {
     const isolated = await import("./native-brand-checks.ts?non-plain-builtins");
     const values: object[] = [
