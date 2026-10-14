@@ -165,3 +165,51 @@ it("protects every schema returned by the most recent search batch", () => {
   assertEquals(afterOneUse.evictedNames, ["older", "first"]);
   assertEquals(afterOneUse.plan.visible.some((tool) => tool.name === "second"), true);
 });
+
+function searchTurn(id: string, loaded: readonly string[]): Message[] {
+  return [{
+    id: `${id}-call`,
+    role: "assistant",
+    parts: [{ type: "tool-call", toolCallId: id, toolName: "tool_search", args: {} }],
+  }, {
+    id: `${id}-result`,
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: id,
+      toolName: "tool_search",
+      result: {
+        matches: loaded.map((name) => ({ name, status: "loaded", description: name })),
+        resultCount: loaded.length,
+        loadedCount: loaded.length,
+        miss: false,
+      },
+    }],
+  }];
+}
+
+it("stops protecting a searched schema once a newer search step supersedes it", () => {
+  const state = createToolExposureState(["stale", "fresh"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("stale", 6_000), definition("fresh", 6_000)],
+    mode: "deferred",
+    state,
+  });
+  const fitted = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [
+      ...searchTurn("first-search", ["stale"]),
+      ...searchTurn("next-search", ["fresh"]),
+    ],
+    inspect: (candidate) => {
+      const stale = candidate.visible.some((tool) => tool.name === "stale");
+      return {
+        fits: !stale,
+        outputExceeded: false,
+        estimatedInputTokens: stale ? 13_250 : 11_500,
+      };
+    },
+  });
+  assertEquals(fitted.evictedNames, ["stale"]);
+  assertEquals(fitted.plan.visible.some((tool) => tool.name === "fresh"), true);
+});

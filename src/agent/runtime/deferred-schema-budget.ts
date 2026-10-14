@@ -16,6 +16,8 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   const pending = new Map<string, string>();
   let latestCallNames = new Set<string>();
   const awaitingFirstUse = new Set<string>();
+  // A newer search step supersedes schemas the model already skipped once.
+  let modelStepSinceSearch = false;
   for (const message of messages) {
     const names = new Set<string>();
     for (const part of message.parts) {
@@ -27,6 +29,8 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
             result && typeof result === "object" && "matches" in result &&
             Array.isArray(result.matches)
           ) {
+            if (modelStepSinceSearch) awaitingFirstUse.clear();
+            modelStepSinceSearch = false;
             for (const match of result.matches) {
               if (
                 match && typeof match === "object" && match.status === "loaded" &&
@@ -41,7 +45,10 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
         awaitingFirstUse.delete(part.toolName);
       }
     }
-    if (names.size > 0) latestCallNames = names;
+    if (names.size > 0) {
+      latestCallNames = names;
+      modelStepSinceSearch = true;
+    }
   }
   const protectedNames = new Set([...latestCallNames, ...pending.values(), ...awaitingFirstUse]);
   // A schema returned by tool_search has not yet had a chance to be called.
