@@ -917,6 +917,41 @@ describe("model call request projection", () => {
     assertEquals(project("acme")?.reasoning?.enabled, true);
   });
 
+  it("records dropped reasoning when the catalog omits the function-tool capability", () => {
+    __resetVeryfrontCloudCatalogForTests();
+    for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
+      const model = { provider: "veryfront-cloud", modelProvider: "openai", modelId };
+      const capability = resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`openai/${modelId}`);
+      // The built model records the facts the provider resolved for it.
+      registerVeryfrontCloudModelFacts(model as never, () =>
+        ({
+          provider: "openai",
+          surface: "openai",
+          native: true,
+          transportPlan: "chat-completions",
+          openAITransport: "chat-completions",
+          ...(capability === undefined ? {} : { openAIChatReasoningWithFunctionTools: capability }),
+        }) as never);
+      for (const useTools of [false, true]) {
+        const options: ModelRuntimeCallOptions = { prompt, ...(useTools ? { tools } : {}) };
+        const projected = buildModelCallContextRequest(model, options);
+        const body = buildOpenAIChatRequest(
+          modelId,
+          "veryfront-cloud",
+          options,
+          false,
+          createWarningCollector(),
+          capability === undefined ? {} : { reasoningWithFunctionTools: capability },
+        );
+        assertEquals(body.reasoning_effort, useTools ? undefined : "medium");
+        assertEquals(
+          projected?.reasoning,
+          useTools ? { enabled: false } : { enabled: true, effort: "medium" },
+        );
+      }
+    }
+  });
+
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
     it(`matches ${modelId} Cloud Chat reasoning with and without function tools`, () => {
       const catalogId = `openai/${modelId}`;
