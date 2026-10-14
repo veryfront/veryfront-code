@@ -237,6 +237,15 @@ function buildUploadDeleteUrl(projectSlug: string, uploadPath: string): string {
   return `/projects/${projectSlug}/uploads/${encodeURIComponent(normalizeUploadPath(uploadPath))}`;
 }
 
+/**
+ * Report an upload's size in `size_bytes` whichever spelling the API answered
+ * with, so the `list --json` output does not depend on the API version.
+ */
+function withUploadSizeBytes(item: UploadItem): UploadItem {
+  if (item.size_bytes !== undefined || item.size === undefined) return item;
+  return { ...item, size_bytes: item.size };
+}
+
 export async function listAllUploads(
   client: ApiClient,
   projectSlug: string,
@@ -269,7 +278,9 @@ export async function listAllUploads(
     } else if (!folders) {
       legacyFolders.push(...response.data.filter((item) => item.type === "folder"));
     }
-    uploads.push(...response.data.filter((item) => item.type !== "folder"));
+    uploads.push(
+      ...response.data.filter((item) => item.type !== "folder").map(withUploadSizeBytes),
+    );
     cursor = response.page_info?.next ?? undefined;
   } while (cursor);
 

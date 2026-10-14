@@ -203,6 +203,28 @@ describe("listAllUploads", () => {
     ]);
   });
 
+  it("reports size_bytes for an upload that carries only size", async () => {
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            { type: "file", path: "legacy.pdf", size: 10 },
+            { type: "file", path: "both.pdf", size_bytes: 20, size: 20 },
+            { type: "file", path: "pending.pdf" },
+          ],
+          page_info: { next: null },
+        }),
+    });
+
+    const uploads = await listAllUploads(client, "my-project");
+
+    assertEquals(uploads, [
+      { type: "file", path: "legacy.pdf", size: 10, size_bytes: 10 },
+      { type: "file", path: "both.pdf", size_bytes: 20, size: 20 },
+      { type: "file", path: "pending.pdf" },
+    ]);
+  });
+
   it("reads folder items from every page when no response has a folders array", async () => {
     const pages = [
       {
