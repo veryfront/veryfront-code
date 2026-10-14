@@ -1204,6 +1204,17 @@ describe("observability/telemetry-error", () => {
       assertEquals(JSON.stringify(providerError).includes("private request body"), false);
     });
 
+    it("falls back to the Google status when the envelope code is numeric", async () => {
+      const body = JSON.stringify({
+        error: { code: 400, status: "INVALID_ARGUMENT", message: "private" },
+      });
+      const providerError = await buildProviderError("google", new Response(body, { status: 400 }));
+      const summary = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(providerError),
+      );
+      assertEquals(summary?.[0]?.providerErrorCode, "INVALID_ARGUMENT");
+    });
+
     it("keeps malformed or unsafe provider details at status-only diagnostics", async () => {
       const bodies = [
         "not-json",

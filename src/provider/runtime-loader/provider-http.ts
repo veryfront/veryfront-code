@@ -798,7 +798,8 @@ export async function buildProviderError(
     recordProviderErrorDiagnostic(
       error,
       structured?.type,
-      structured?.code ?? structured?.status,
+      // Google puts the numeric HTTP code in `code` and the classification in `status`.
+      typeof structured?.code === "string" ? structured.code : structured?.status,
       structured?.param,
     );
   }
