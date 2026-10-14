@@ -227,9 +227,11 @@ export interface AgentConfig<TOutput = any> {
   toolLoading?: "eager" | "deferred";
   /**
    * Expose up to 16 exact authorized tool schemas immediately in deferred mode.
-   * Other tools stay discoverable through `tool_search`. This does not grant
-   * tool access or replace the trusted skill loader. Omit to keep the runtime
-   * bootstrap defaults.
+   * Other tools stay discoverable through `tool_search`. In eager mode these
+   * tools are kept when a provider's schema limit caps the catalog. This does
+   * not grant tool access or replace the trusted skill loader. Applies to root
+   * runs; hosted `invoke_agent` child runs do not apply it. Omit to keep the
+   * runtime bootstrap defaults.
    */
   bootstrapTools?: string[];
   /**
@@ -334,7 +336,8 @@ export interface AgentConfig<TOutput = any> {
   skills?: SkillSelector;
   /**
    * Load one authorized skill root through the framework skill loader before
-   * the first model call. Skill references remain deferred. Omit to start
+   * the first model call. Skill references remain deferred. Applies to root
+   * runs; hosted `invoke_agent` child runs do not apply it. Omit to start
    * without a preloaded skill.
    */
   bootstrapSkill?: string;

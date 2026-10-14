@@ -158,6 +158,8 @@ export interface PreparedAgentRuntimeStep {
   toolExposurePlan: ToolExposurePlan;
   /** Authorized catalog before per-step skill restrictions, for host-controlled startup loads. */
   startupAuthorizedTools: ToolDefinition[];
+  /** Authored startup tools that provider schema capping must retain. */
+  configuredBootstrapToolNames: readonly string[];
 }
 
 const INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER = "Integration tool discovery status:";
@@ -436,14 +438,18 @@ export async function prepareAgentRuntimeStep(
     ).maxTools,
     input.reservedToolSlots,
   );
+  const toolLoadingMode = resolveRuntimeToolLoading(input.config).mode;
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
-    mode: resolveRuntimeToolLoading(input.config).mode,
+    mode: toolLoadingMode,
     state: toolExposureState,
     bootstrapToolNames,
     maxVisibleTools,
   });
+  // An eager catalog is capped later by provider compatibility selection, which
+  // retains the authored startup tools; only a deferred startup set can overflow.
   if (
+    toolLoadingMode === "deferred" &&
     configuredBootstrapNames.length > 0 && maxVisibleTools !== undefined &&
     toolExposurePlan.visible.length > maxVisibleTools
   ) {
@@ -479,5 +485,6 @@ export async function prepareAgentRuntimeStep(
     tools: toolExposurePlan.visible,
     toolExposurePlan,
     startupAuthorizedTools,
+    configuredBootstrapToolNames: configuredBootstrapNames,
   };
 }

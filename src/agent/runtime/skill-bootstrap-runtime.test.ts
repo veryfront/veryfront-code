@@ -6,7 +6,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
-import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { scriptedModel, toolNamesOf } from "./model-runtime.test-helpers.ts";
 import { createRuntimeLoadSkillTool } from "./load-skill-tool.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -652,4 +652,134 @@ describe("startup skill and tool bootstrap", () => {
       assertEquals(model.callCount, 1);
     });
   }
+  it("startup skill load notifies the stream onToolCall observer", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("observed-plan", {
+      id: "observed-plan",
+      rootPath: "/skills/observed-plan",
+      metadata: { name: "observed-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/observed-plan/SKILL.md": "# Observed" }),
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "stream" });
+    const assistant = agent({
+      id: "observed-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "observed-plan",
+      skills: ["observed-plan"],
+      tools: { load_skill: createLoadSkillTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: string[] = [];
+    try {
+      const result = await assistant.stream({
+        input: "Go",
+        onToolCall: (toolCall) => observed.push(`${toolCall.name}:${toolCall.id}`),
+      });
+      await result.toDataStreamResponse().text();
+      assertEquals(observed.length, 1);
+      assertStringIncludes(observed[0]!, "load_skill:bootstrap_skill_");
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("a pause requested during the startup load holds before the first model call", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    let reads = 0;
+    registerSkill("held-plan", {
+      id: "held-plan",
+      rootPath: "/skills/held-plan",
+      metadata: { name: "held-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/held-plan/SKILL.md": "# Held guidance" }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Held guidance");
+      return { text: "Ready" };
+    }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const config = {
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "held-plan",
+      skills: ["held-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      onToolResult: () => {
+        reads += 1;
+      },
+    };
+    const messages = [{
+      id: "request",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Go" }],
+    }];
+    let checks = 0;
+    let saved: unknown;
+    try {
+      const paused = new AgentRuntime("bootstrap-held", config, {
+        manualPause: {
+          load: async () => null,
+          // The initial boundary passes; the pause arrives while the loader runs.
+          requested: async () => ++checks > 1,
+          acknowledge: async (checkpoint) => {
+            saved = checkpoint;
+            return true;
+          },
+        },
+      });
+      await new Response(await paused.stream(messages)).text();
+      assertEquals(model.callCount, 0);
+      assertEquals(reads, 1);
+      assertEquals((saved as { startupSkillLoaded?: boolean }).startupSkillLoaded, true);
+      const resumed = new AgentRuntime("bootstrap-held", config, {
+        manualPause: { load: async () => saved, acknowledge: async () => false },
+      });
+      assertStringIncludes(await new Response(await resumed.stream(messages)).text(), "Ready");
+      assertEquals(model.callCount, 1);
+      assertEquals(reads, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("eager provider capping keeps authored bootstrap tools instead of rejecting them", async () => {
+    clearMCPRegistry();
+    const names = Array.from(
+      { length: 140 },
+      (_, index) => `cap_${String(index).padStart(3, "0")}`,
+    );
+    const tools = Object.fromEntries(names.map((name) => [
+      name,
+      tool({
+        id: name,
+        description: name,
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "ok",
+      }),
+    ]));
+    const model = scriptedModel([(options) => {
+      const visible = toolNamesOf(options);
+      assertEquals(visible.length <= 128, true);
+      assertEquals(visible.includes("cap_139"), true);
+      return { text: "Ready" };
+    }], { provider: "openai", modelId: "gpt-4.1", only: "generate" });
+    const assistant = agent({
+      id: "eager-capped-bootstrap",
+      system: "Help",
+      model: "openai/gpt-4.1",
+      skills: false,
+      tools,
+      toolLoading: "eager",
+      bootstrapTools: ["cap_139"],
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    await assistant.generate({ input: "Go" });
+    assertEquals(model.callCount, 1);
+  });
 });

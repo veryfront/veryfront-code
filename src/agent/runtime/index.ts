@@ -2216,6 +2216,16 @@ function getRequiredToolResultReaderNames(exposeReader: boolean): readonly strin
   return exposeReader ? [GET_TOOL_RESULT_TOOL_NAME] : undefined;
 }
 
+/** Names provider schema capping must keep: the result reader and authored startup tools. */
+function getRequiredRuntimeToolNames(
+  exposeReader: boolean,
+  bootstrapToolNames: readonly string[],
+): readonly string[] | undefined {
+  const reader = getRequiredToolResultReaderNames(exposeReader);
+  if (bootstrapToolNames.length === 0) return reader;
+  return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
+}
+
 function shouldHandleToolResultRead(input: {
   toolName: string;
   plan: ToolExposurePlan;
@@ -2592,6 +2602,7 @@ async function executeStartupSkill(input: {
   persistMessage: (message: Message) => Promise<void>;
   skillState: AgentLoopSkillState;
   toolCalls: ToolCall[];
+  onToolCall?: (toolCall: ToolCall) => void;
   resolveLoader: (toolName: string) => unknown;
   execute: (
     toolName: string,
@@ -2630,6 +2641,7 @@ async function executeStartupSkill(input: {
   await input.persistMessage(message);
   const toolCall: ToolCall = { id: toolCallId, name: definition.name, args, status: "executing" };
   pushPrivateArray(input.toolCalls, toolCall);
+  input.onToolCall?.(toolCall);
   const startTime = Date.now();
   let result: unknown;
   try {
@@ -4326,7 +4338,10 @@ export class AgentRuntime {
           model: effectiveModel,
           ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           providerTools: stepProviderTools,
-          requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+          requiredToolNames: getRequiredRuntimeToolNames(
+            exposeToolResultReader,
+            preparedStep.configuredBootstrapToolNames,
+          ),
         });
         currentSystemPrompt = withIntegrationToolDiscoveryStatus(
           synchronizeRuntimeToolInventory(
@@ -5361,6 +5376,7 @@ export class AgentRuntime {
           persistMessage,
           skillState,
           toolCalls,
+          onToolCall: callbacks?.onToolCall,
           resolveLoader: (name) =>
             resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
           execute: async (toolName, toolCallId, args, admittedTurn) => {
@@ -5393,6 +5409,9 @@ export class AgentRuntime {
           },
         });
         startupSkillLoaded = true;
+        // A pause requested while the loader ran must hold before the first
+        // provider call; the checkpoint records the completed startup load.
+        await pauseAtBoundary(step);
         // Refresh the active skill policy without consuming a model step.
         step--;
         continue;
@@ -5637,7 +5656,10 @@ export class AgentRuntime {
         model: effectiveModel,
         ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         providerTools: stepProviderTools,
-        requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+        requiredToolNames: getRequiredRuntimeToolNames(
+          exposeToolResultReader,
+          preparedStep.configuredBootstrapToolNames,
+        ),
       });
       currentSystemPrompt = withIntegrationToolDiscoveryStatus(
         synchronizeRuntimeToolInventory(
