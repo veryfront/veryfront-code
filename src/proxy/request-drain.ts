@@ -1,4 +1,6 @@
-import { completeOnResponseBodySettlement } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { continueProxyShutdownPromise } from "./shutdown-intrinsics.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
 export interface TrackedProxyRequest {
@@ -24,8 +26,26 @@ export class ProxyRequestDrainTracker {
     this.inFlight.delete(requestId);
   }
 
-  completeOnResponseEnd(requestId: string, response: Response): Response {
-    return completeOnResponseBodySettlement(response, () => this.complete(requestId));
+  completeOnResponseEnd(requestId: string, request: Request, response: Response): Response {
+    if (!response.body) {
+      this.complete(requestId);
+      return response;
+    }
+
+    const lifetime = getRequestTransportLifetime(request);
+    if (lifetime?.completed) {
+      const complete = () => this.complete(requestId);
+      void continueProxyShutdownPromise(lifetime.completed, complete, complete);
+      return response;
+    }
+
+    return completeOnResponseBodyConsumption(
+      response,
+      () => this.complete(requestId),
+      lifetime?.signal ?? request.signal,
+      { highWaterMark: 0 },
+      { completeOnSourceClose: false, errorOnAbort: true },
+    );
   }
 
   getInFlightCount(): number {

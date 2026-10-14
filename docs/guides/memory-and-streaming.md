@@ -315,8 +315,8 @@ envelope (`run_id`, `event_class`, `span_id`, `parent_span_id`, `turn_id`,
 row uses `event_type: "CUSTOM"`.
 
 The typed contract is the only one, on every surface: the run-scoped route,
-the conversation-scoped events route, GraphQL `agentRunEvents`, the MCP
-`get_agent_run_events` tool, and the SSE streams. Do not send a `format`
+the conversation-scoped events route, GraphQL `listRunEvents`, the MCP
+`list_run_events` tool, and the SSE streams. Do not send a `format`
 query parameter. `format=typed` is deprecated: the API accepts and ignores it.
 Any other value, including `format=raw`, is refused.
 

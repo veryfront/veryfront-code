@@ -12,7 +12,7 @@ import {
 const extensionImports: Readonly<Record<string, string>> = extensionPackage.imports;
 
 describe("ext-css-tailwind local plugin policy", () => {
-  it("pins every static plugin to its exact extension-owned npm dependency", () => {
+  it("pins every static plugin to its exact extension-owned source", () => {
     assertEquals(
       TAILWIND_PLUGIN_ALLOWLIST.length,
       TAILWIND_PLUGIN_POLICY.length,
@@ -21,7 +21,7 @@ describe("ext-css-tailwind local plugin policy", () => {
     for (const policy of TAILWIND_PLUGIN_POLICY) {
       assertEquals(
         extensionImports[policy.importSpecifier],
-        policy.npmSpecifier,
+        policy.sourceSpecifier,
       );
       assertEquals(
         TAILWIND_PLUGIN_ALLOWLIST.includes(bareName(policy.name)),
@@ -32,8 +32,8 @@ describe("ext-css-tailwind local plugin policy", () => {
 
   it("binds the complete pinned local registry into the policy identity", () => {
     assertEquals(JSON.parse(TAILWIND_PLUGIN_POLICY_IDENTITY), {
-      schema: "veryfront.tailwind-plugin-policy.v3",
-      resolution: "extension-owned-static-npm-imports",
+      schema: "veryfront.tailwind-plugin-policy.v4",
+      resolution: "extension-owned-static-imports",
       plugins: TAILWIND_PLUGIN_POLICY.map((entry) => ({ ...entry })).sort((left, right) =>
         left.name < right.name ? -1 : left.name > right.name ? 1 : 0
       ),

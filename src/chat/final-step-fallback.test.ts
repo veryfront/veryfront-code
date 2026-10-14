@@ -154,6 +154,27 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("drops the output when a call and its result name different tools", () => {
+    // One call id, two tool names: the result is not this call's output.
+    const content = [
+      { type: "tool-call", toolCallId: "c", toolName: "bash", input: { command: "ls" } },
+      { type: "tool-result", toolCallId: "c", toolName: "web_fetch", output: "fetched" },
+    ];
+    for (
+      const step of [
+        { response: { messages: [{ role: "assistant", content }] } },
+        { toolCalls: [content[0]], toolResults: [content[1]] },
+      ]
+    ) {
+      const parts = buildFallbackUiMessageParts(step);
+      assertEquals(JSON.stringify(parts).includes("fetched"), false);
+      assertEquals(
+        parts.some((part) => "state" in part && part.state === "output-available"),
+        false,
+      );
+    }
+  });
+
   it("preserves reasoning parts from response message content", () => {
     const step = {
       response: {

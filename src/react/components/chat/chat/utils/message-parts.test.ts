@@ -7,6 +7,7 @@ import {
   getTextContent,
   groupPartsInOrder,
   isReasoningPart,
+  isSkillToolPart,
   isToolPart,
 } from "./message-parts.ts";
 import type { ChatMessage, ChatMessagePart } from "#veryfront/agent/react";
@@ -381,5 +382,36 @@ describe("message-parts", () => {
         { type: "text", content: "- one\n- two" },
       ]);
     });
+  });
+});
+
+describe("skill tool aliases", () => {
+  for (const prefix of ["", "veryfront__"]) {
+    for (const name of ["load_skill", "load_skill_reference", "execute_skill_script"]) {
+      it(`recognizes ${prefix}${name} for compact skill rendering`, () => {
+        assertEquals(
+          isSkillToolPart({
+            type: "dynamic-tool",
+            toolCallId: "skill-call",
+            toolName: `${prefix}${name}`,
+            state: "input-available",
+            input: {},
+          }),
+          true,
+        );
+      });
+    }
+  }
+  it("rejects unrelated tools with matching suffixes", () => {
+    assertEquals(
+      isSkillToolPart({
+        type: "dynamic-tool",
+        toolCallId: "other-call",
+        toolName: "other__load_skill",
+        state: "input-available",
+        input: {},
+      }),
+      false,
+    );
   });
 });

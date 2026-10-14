@@ -1167,7 +1167,10 @@ it("OAuthProvider cancels a response that arrives after strict timeout", async (
     (key) => ENV[key],
   );
   let resolveFetch!: (response: Response) => void;
-  let bodyCancelled = false;
+  let markCancelled!: () => void;
+  const bodyCancelled = new Promise<void>((resolve) => {
+    markCancelled = resolve;
+  });
   installMockFetch(
     (() =>
       new Promise<Response>((resolve) => {
@@ -1185,14 +1188,12 @@ it("OAuthProvider cancels a response that arrives after strict timeout", async (
       new Response(
         new ReadableStream({
           cancel() {
-            bodyCancelled = true;
+            markCancelled();
           },
         }),
       ),
     );
-    await Promise.resolve();
-    await Promise.resolve();
-    assertEquals(bodyCancelled, true);
+    await bodyCancelled;
   } finally {
     restoreMockFetch();
   }

@@ -2,15 +2,23 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repositoryRoot = new URL("../../../", import.meta.url);
+// Host-side paths must not depend on the shared process cwd, which parallel tests may change.
+const perfCache = resolve(fileURLToPath(repositoryRoot), ".cache/perf");
 
 describe("framework profiling command", () => {
   it("distinguishes compatible baseline metadata, dependency changes, and read errors", async () => {
-    await Deno.mkdir(".cache/perf", { recursive: true });
-    const base = resolve(await makeTempDirWithOptions({ dir: ".cache/perf", prefix: "metadata-" }));
+    await Deno.mkdir(perfCache, { recursive: true });
+    const base = await makeTempDirWithOptions({ dir: perfCache, prefix: "metadata-" });
     const config = JSON.parse(
       await Deno.readTextFile(new URL("../../../deno.json", import.meta.url)),
     );
     const lock = await Deno.readTextFile(new URL("../../../deno.lock", import.meta.url));
+    const packageMetadata = await Deno.readTextFile(
+      new URL("../../../package.json", import.meta.url),
+    );
     const stageMembers = async (directory: string) => {
       for (const member of config.workspace) {
         await Deno.mkdir(`${directory}/${member}`, { recursive: true });
@@ -20,7 +28,8 @@ describe("framework profiling command", () => {
         );
       }
     };
-    const check = async (cwd?: string) => {
+    let checkStderr = "";
+    const check = async (cwd: string | URL = repositoryRoot) => {
       const result = await new Deno.Command("deno", {
         args: [
           "run",
@@ -33,12 +42,14 @@ describe("framework profiling command", () => {
         stdout: "piped",
         stderr: "piped",
       }).output();
+      checkStderr = new TextDecoder().decode(result.stderr);
       return result.code;
     };
     try {
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, tasks: {} }));
       await Deno.writeTextFile(`${base}/deno.lock`, lock);
       await stageMembers(base);
+      await Deno.writeTextFile(`${base}/package.json`, packageMetadata);
       assertEquals(await check(), 0);
       for (const relative of ["deno.json", "react/deno.json"]) {
         const path = `${base}/${relative}`;
@@ -59,7 +70,7 @@ describe("framework profiling command", () => {
       await Deno.remove(`${base}/react/deno.jsonc`);
       await Deno.writeTextFile(`${base}/package.json`, "{/* invalid package JSON */}");
       assertEquals(await check(), 2, "Invalid package metadata must remain an error");
-      await Deno.remove(`${base}/package.json`);
+      await Deno.writeTextFile(`${base}/package.json`, packageMetadata);
       for (const member of ["react", "extensions/ext-css-tailwind"]) {
         const path = `${base}/${member}/deno.json`;
         const original = await Deno.readTextFile(path);
@@ -151,7 +162,7 @@ describe("framework profiling command", () => {
       }
       assertEquals(await check(head), 1);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, imports: {} }));
-      assertEquals(await check(), 1);
+      assertEquals(await check(), 1, checkStderr);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify(config));
       await Deno.writeTextFile(`${base}/deno.lock`, "changed dependency graph");
       assertEquals(await check(), 1);
@@ -165,6 +176,7 @@ describe("framework profiling command", () => {
   it("launches workers with task permissions and writes usable reports", async () => {
     const label = `test-${crypto.randomUUID()}`;
     const directory = `.cache/perf/${label}`;
+    const artifacts = resolve(perfCache, label);
     const args = [
       `--label=${label}`,
       "--scenario=request-timing",
@@ -175,6 +187,7 @@ describe("framework profiling command", () => {
     try {
       const result = await new Deno.Command("deno", {
         args: ["task", "perf", ...args],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -183,12 +196,12 @@ describe("framework profiling command", () => {
       assertEquals(response.success, true);
       assertEquals(response.command, "perf");
       assertEquals(response.data.directory, directory);
-      const results = JSON.parse(await Deno.readTextFile(`${directory}/results.json`));
+      const results = JSON.parse(await Deno.readTextFile(`${artifacts}/results.json`));
       assertEquals(response.data.results, results);
       assertEquals(results.scenarios.length, 1);
       assertEquals(results.scenarios[0].runs.length, 3);
       assertEquals(results.scenarios[0].latencyMs.median > 0, true);
-      const html = await Deno.readTextFile(`${directory}/index.html`);
+      const html = await Deno.readTextFile(`${artifacts}/index.html`);
       assertStringIncludes(html, "<svg");
       const viewer = await new Deno.Command("deno", {
         args: [
@@ -198,8 +211,9 @@ describe("framework profiling command", () => {
           "--allow-read",
           "--allow-env",
           "tests/integration/perf/viewer.test-helpers.ts",
-          `${directory}/index.html`,
+          `${artifacts}/index.html`,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -208,11 +222,11 @@ describe("framework profiling command", () => {
         0,
         "Generated flamegraph controls must pass the browser DOM checks",
       );
-      assertStringIncludes(await Deno.readTextFile(`${directory}/summary.md`), "request-timing");
-      const profile = JSON.parse(await Deno.readTextFile(`${directory}/request-timing.cpuprofile`));
+      assertStringIncludes(await Deno.readTextFile(`${artifacts}/summary.md`), "request-timing");
+      const profile = JSON.parse(await Deno.readTextFile(`${artifacts}/request-timing.cpuprofile`));
       assertEquals(profile.samples.length > 0, true);
 
-      const savedBaseline = await Deno.readTextFile(`${directory}/results.json`);
+      const savedBaseline = await Deno.readTextFile(`${artifacts}/results.json`);
       const invalidComparison = await new Deno.Command("deno", {
         args: [
           "task",
@@ -220,29 +234,32 @@ describe("framework profiling command", () => {
           ...args,
           "--scenario=ssr",
           "--no-profile",
-          `--baseline=${directory}/results.json`,
+          `--baseline=${artifacts}/results.json`,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
       assertEquals(invalidComparison.code, 2);
-      assertEquals(await Deno.readTextFile(`${directory}/results.json`), savedBaseline);
+      assertEquals(await Deno.readTextFile(`${artifacts}/results.json`), savedBaseline);
 
       const invalidBaseline = JSON.parse(savedBaseline);
       invalidBaseline.scenarios[0].latencyMs.median = 0;
       const invalidBaselineText = JSON.stringify(invalidBaseline);
-      await Deno.writeTextFile(`${directory}/results.json`, invalidBaselineText);
+      await Deno.writeTextFile(`${artifacts}/results.json`, invalidBaselineText);
       const invalidLatency = await new Deno.Command("deno", {
-        args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
+        args: ["task", "perf", ...args, "--no-profile", `--baseline=${artifacts}/results.json`],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
       assertEquals(invalidLatency.code, 2);
-      assertEquals(await Deno.readTextFile(`${directory}/results.json`), invalidBaselineText);
-      await Deno.writeTextFile(`${directory}/results.json`, savedBaseline);
+      assertEquals(await Deno.readTextFile(`${artifacts}/results.json`), invalidBaselineText);
+      await Deno.writeTextFile(`${artifacts}/results.json`, savedBaseline);
 
       const rerun = await new Deno.Command("deno", {
-        args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
+        args: ["task", "perf", ...args, "--no-profile", `--baseline=${artifacts}/results.json`],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -253,7 +270,7 @@ describe("framework profiling command", () => {
         "number",
       );
       await assertRejects(
-        () => Deno.stat(`${directory}/request-timing.cpuprofile`),
+        () => Deno.stat(`${artifacts}/request-timing.cpuprofile`),
         Deno.errors.NotFound,
       );
 
@@ -271,6 +288,7 @@ describe("framework profiling command", () => {
           "scripts/perf/run.ts",
           ...args,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -282,10 +300,10 @@ describe("framework profiling command", () => {
       assertEquals(failure.error.context.reason, "permission-denied");
       assertEquals(failure.error.context.exitCode, null);
       for (const name of ["results.json", "index.html", "summary.md"]) {
-        await assertRejects(() => Deno.stat(`${directory}/${name}`), Deno.errors.NotFound);
+        await assertRejects(() => Deno.stat(`${artifacts}/${name}`), Deno.errors.NotFound);
       }
     } finally {
-      await Deno.remove(directory, { recursive: true }).catch((error) => {
+      await Deno.remove(artifacts, { recursive: true }).catch((error) => {
         if (!(error instanceof Deno.errors.NotFound)) throw error;
       });
     }

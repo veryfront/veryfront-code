@@ -1,0 +1,13 @@
+{
+  "contractId": "veryfront.tool-exposure-checkpoint.sha256.v1",
+  "checkpoint": {
+    "version": 2,
+    "loadedToolNames": [
+      "list_files",
+      "create_file",
+      "café_東京"
+    ]
+  },
+  "serialized": "{\"version\":2,\"loadedToolNames\":[\"list_files\",\"create_file\",\"café_東京\"]}",
+  "sha256": "7ef5d8fb43e0775ccb4c0649d3e7f75af2c3aa51cbacc05789915081b062d3ba"
+}

@@ -14,7 +14,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
 
@@ -353,10 +353,11 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
             },
           );
         } catch (error) {
-          logger.debug("Scheduled platform dependency resolution failed", {
+          logger.warn("Scheduled platform dependency resolution failed", {
             projectId: queued.projectId,
             target: dependencyWritebackTargetKey(queued.target),
             specifierCount: batch.length,
+            code: dependencyResolutionErrorCode(error),
             error: String(error),
           });
         } finally {
@@ -380,6 +381,17 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
   pendingPlatformResolutionPromises.add(flush);
 }
 
+/** A loggable classification of a write-back failure, such as `AbortError`. */
+function dependencyResolutionErrorCode(error: unknown): string {
+  if (error !== null && typeof error === "object") {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+    const name = (error as { name?: unknown }).name;
+    if (typeof name === "string" && name.length > 0) return name;
+  }
+  return "unknown";
+}
+
 /** Override the platform write-back transport. For tests only. */
 export function _setDependencyResolutionPosterForTest(
   poster?: DependencyResolutionPoster,
@@ -392,8 +404,9 @@ export function _setDependencyResolutionPosterForTest(
  * declarations.
  *
  * Uses the request-scoped bearer token when provided, with the runtime
- * environment token as a fallback. Silently ignores all failures including
- * 404 (endpoint may not exist yet while the API track is built in parallel).
+ * environment token as a fallback. Never throws: a non-OK status (including
+ * 404 from an API without the endpoint) or a network failure is logged as a
+ * warning, and the render continues unpinned.
  *
  * @param projectId  - project identifier from the render context
  * @param specifiers - raw bare names or package declarations such as
@@ -452,11 +465,9 @@ export async function postDependencyResolution(
     // served in this process can replace the global, and a direct call would
     // hand it the `Authorization` header to read.
     //
-    // This also puts the write-back under the host egress ceiling, which denies
-    // private and loopback destinations. A deployment whose API base is
-    // internal must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; the write-back
-    // is best-effort, so a blocked request degrades to a logged skip.
-    const res = await guardedOutboundFetch(url, {
+    // Bind the host transport to this API origin, including an internal HTTP
+    // endpoint explicitly configured by the operator before startup.
+    const res = await createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -474,8 +485,8 @@ export async function postDependencyResolution(
       signal: controller.signal,
     });
 
-    if (!res.ok && res.status !== 404) {
-      logger.debug("Dependency resolution write-back returned non-OK status", {
+    if (!res.ok) {
+      logger.warn("Dependency resolution write-back returned non-OK status", {
         projectId,
         status: res.status,
       });
@@ -486,8 +497,9 @@ export async function postDependencyResolution(
       // The response status is all this best-effort transport consumes.
     }
   } catch (err) {
-    logger.debug("Dependency resolution write-back failed", {
+    logger.warn("Dependency resolution write-back failed", {
       projectId,
+      code: dependencyResolutionErrorCode(err),
       error: String(err),
     });
   } finally {

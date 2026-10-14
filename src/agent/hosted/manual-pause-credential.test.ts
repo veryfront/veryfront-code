@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   activateHostedAgentPauseCapability,
@@ -32,8 +32,9 @@ it("binds a deferred pause transport once to the detached execution lifetime", a
     token: "pause-test-token",
     signal: undefined,
     fetch: (_url, init) => {
+      assert(init && "signal" in init, "fetch must receive request options");
       requests++;
-      assertEquals(init?.signal?.aborted, false);
+      assertEquals((init && "signal" in init ? init.signal : undefined)?.aborted, false);
       if (requests === 2) {
         execution.abort();
         return Promise.resolve(new Response(null, { status: 503 }));
@@ -67,10 +68,14 @@ describe("hosted agent pause capability", () => {
       token: "pause-test-token",
       signal: new AbortController().signal,
       fetch: async (url, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         assertEquals(String(url), "https://api.example.com/runs/run_pause_test/pause-ack");
-        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer pause-test-token");
-        assertEquals(init?.redirect, "error");
-        bodies.push(String(init?.body));
+        assertEquals(
+          new Headers(init && "headers" in init ? init.headers : undefined).get("Authorization"),
+          "Bearer pause-test-token",
+        );
+        assertEquals(init && "redirect" in init ? init.redirect : undefined, "error");
+        bodies.push(String(init && "body" in init ? init.body : undefined));
         if (bodies.length === 1) throw new TypeError("Reply was lost after commit");
         return Response.json({ stop: true });
       },
@@ -90,6 +95,7 @@ describe("hosted agent pause capability", () => {
       token: "pause-test-token",
       signal: new AbortController().signal,
       fetch: (url, init) => {
+        assert(init && "method" in init, "fetch must receive request options");
         if (init?.method === "GET") {
           assertEquals(String(url), "https://api.example.com/runs/run_pause_test/pause-checkpoint");
           return Promise.resolve(Response.json({ stop: false, checkpoint }));
@@ -258,6 +264,7 @@ for (const nextStep of [10_001, Number.MAX_SAFE_INTEGER]) {
       token: "pause-test-token",
       signal: new AbortController().signal,
       fetch: (_url, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         sent = JSON.parse(init!.body as string);
         return Promise.resolve(Response.json({ stop: true }));
       },
@@ -335,6 +342,7 @@ it("cancels an unconfirmed retirement hold without claiming a durable pause", as
     token: "pause-test-token",
     signal: lifetime.signal,
     fetch: (_url, init) => {
+      assert(init && "method" in init, "fetch must receive request options");
       if (init?.method === "POST") return Promise.resolve(Response.json({ stop: true }));
       lifetime.abort();
       return Promise.reject(new TypeError("Retirement probe cancelled"));
@@ -394,11 +402,12 @@ it("checks pause intent without sending the continuation", async () => {
     token: "pause-test-token",
     signal: new AbortController().signal,
     fetch: (url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       assertEquals(
         String(url),
         "https://api.example.com/runs/run_pause_test/pause-checkpoint?boundary=true",
       );
-      assertEquals(init?.body, undefined);
+      assertEquals(init && "body" in init ? init.body : undefined, undefined);
       return Promise.resolve(
         Response.json({ stop: false, checkpoint: null, pauseRequested: false }),
       );
@@ -468,6 +477,7 @@ it("retires a resumed continuation only after the dispatch gate confirms no paus
     token: "pause-test-token",
     signal: AbortSignal.timeout(3000),
     fetch: (url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       if (init?.method === "POST") {
         assertEquals(JSON.parse(String(init.body)), { checkpoint: null });
         return Promise.resolve(Response.json({ stop: false }));

@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProviderRequestError } from "veryfront/provider/shared";
+import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
@@ -159,7 +159,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
           data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
           "data: [DONE]\r\n\r\n",
         ].join(""))),
-      ProviderRequestError,
+      ProviderStreamProtocolError,
       "tool call arguments were not valid JSON object text",
     );
   });

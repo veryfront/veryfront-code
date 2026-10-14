@@ -8,12 +8,14 @@ import type {
   StreamingToolCall,
   StreamingToolResult,
 } from "./chat-stream-handler.ts";
+import { isToolResultPart } from "./tool-result-part.ts";
 import { parseToolArgs } from "./tool-helpers.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
 
 const hasOwn = Object.hasOwn;
 
 export { getToolResultError } from "#veryfront/tool/result.ts";
+export { isToolResultPart } from "./tool-result-part.ts";
 
 export function createToolResultMessage(
   toolCallId: string,
@@ -330,8 +332,4 @@ export function materializeStreamedToolCall(
     return { kind: "parse-error", part, parseError: capturedInput.parseError };
   }
   return { kind: "complete", part };
-}
-
-export function isToolResultPart(part: MessagePart): part is ToolResultPart {
-  return part.type === "tool-result" && "result" in part;
 }

@@ -6,6 +6,8 @@ import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { CANONICAL_FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -80,12 +82,51 @@ import {
 } from "./cloud-agent-child-tools.ts";
 import {
   getServerResolvedProviderReplayCheckpoints,
-  getServerResolvedToolExposureCheckpoint,
+  resolveHostedRequestToolExposureCheckpoint,
 } from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
+const reflectApply = Reflect.apply;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+
+function hasOwn(value: HostToolSet | PropertyDescriptor, key: PropertyKey): boolean {
+  return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
+}
+
+function ownDataValue(value: HostToolSet, key: string): unknown {
+  const descriptor = reflectApply(objectGetOwnPropertyDescriptor, Object, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor !== undefined && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+function dataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = objectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.writable = true;
+  descriptor.value = value;
+  return descriptor;
+}
+
+function defineData(target: HostToolSet, key: string, value: unknown): void {
+  reflectApply(objectDefineProperty, Object, [target, key, dataDescriptor(value)]);
+}
+
+function copyOwnDataTools(target: HostToolSet, source: HostToolSet): void {
+  const keys = reflectApply(objectKeys, Object, [source]) as string[];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const value = ownDataValue(source, key);
+    if (value !== undefined) defineData(target, key, value);
+  }
+}
 
 /** Full type of a prepared cloud agent chat execution, ready to stream or detach. */
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
@@ -104,17 +145,20 @@ export function buildLocalTools(
   taskContext: DefaultHostedChatRuntimeTaskContext,
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
-  const tools: HostToolSet = {
-    ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
-    ...markTrustedHostToolSet({
-      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
+  const projectTools = getDiscoveredHostTools({ agentId: taskContext.agentId });
+  const platformTools = markTrustedHostToolSet({
+    // Persist canonical form ownership so replay remains safe after project tools change.
+    [CANONICAL_FORM_INPUT_TOOL_ID]: {
+      ...createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
         controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
       }),
-      load_skill: createLoadSkillTool(context, taskContext),
-      sleep: sleepTool,
-      web_fetch: createHostedWebFetchTool(),
-    }),
-  };
+      id: CANONICAL_FORM_INPUT_TOOL_ID,
+    },
+    load_skill: createLoadSkillTool(context, taskContext),
+    sleep: sleepTool,
+    web_fetch: createHostedWebFetchTool(),
+  });
+  const tools = withPlatformHostToolAliases(platformTools, projectTools);
 
   if (options.allowDelegation !== false) {
     const agentConfig = options.liveProjectSteering?.agent;
@@ -125,12 +169,18 @@ export function buildLocalTools(
         selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
         taskContext,
       });
-      Object.assign(tools, markTrustedHostToolSet(delegateTools));
+      copyOwnDataTools(tools, markTrustedHostToolSet(delegateTools));
     } else {
       // Generic invoke_agent remains the platform tool for dynamic agent
       // selection. Explicit scoped delegate bindings opt into fixed targets.
       const invokeAgentTool = createInvokeAgentTool(context, taskContext);
-      tools.invoke_agent = markTrustedHostToolProvenance(invokeAgentTool);
+      copyOwnDataTools(
+        tools,
+        withPlatformHostToolAliases(
+          { invoke_agent: markTrustedHostToolProvenance(invokeAgentTool) },
+          tools,
+        ),
+      );
     }
   }
 
@@ -373,10 +423,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
   } = await prepareVeryfrontCloudHostedChatExecution({
     request: req,
     hostToolPolicy: context.options.hostToolPolicy,
-    serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
-      req.forwardedProps,
-      req.serverEnvelopeVerified === true,
-    ),
+    serverResolvedToolExposureCheckpoint: resolveHostedRequestToolExposureCheckpoint(req),
     serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints({
       forwardedProps: req.forwardedProps,
       serverResolvedProviderReplayCheckpoints: req.serverResolvedProviderReplayCheckpoints,

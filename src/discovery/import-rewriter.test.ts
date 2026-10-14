@@ -15,7 +15,7 @@ describe("discovery/import-rewriter", () => {
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { evalAgent } from "veryfront/eval";',
-        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
+        'import { runRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
     );
@@ -39,7 +39,7 @@ describe("discovery/import-rewriter", () => {
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { evalAgent } from "veryfront/eval";',
-        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
+        'import { runRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
       { compiled: true },
@@ -71,7 +71,7 @@ describe("discovery/import-rewriter", () => {
     );
     assertStringIncludes(
       transformed,
-      'const { executeRemoteIntegrationTool } = globalThis.__VERYFRONT_MODULES__["veryfront/integrations"]',
+      'const { runRemoteIntegrationTool } = globalThis.__VERYFRONT_MODULES__["veryfront/integrations"]',
     );
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
@@ -88,6 +88,20 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(
       transformed,
       'const { createChatUploadHandler } = globalThis.__VERYFRONT_MODULES__["veryfront/chat/uploads"]',
+    );
+    assertEquals(transformed.includes('from "veryfront/'), false);
+  });
+
+  it("rewrites the conversations SDK import in compiled Deno binaries", () => {
+    const transformed = rewriteForDeno(
+      'import { Conversation, createConversationsApiTransport } from "veryfront/conversations";',
+      "/project/app/api/chat",
+      { compiled: true },
+    );
+
+    assertStringIncludes(
+      transformed,
+      'const { Conversation, createConversationsApiTransport } = globalThis.__VERYFRONT_MODULES__["veryfront/conversations"]',
     );
     assertEquals(transformed.includes('from "veryfront/'), false);
   });

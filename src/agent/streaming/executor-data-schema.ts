@@ -1,6 +1,7 @@
 import {
   AGENT_PROVIDER_AUTH_ERROR,
   OUTPUT_SCHEMA_INVALID_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
 } from "#veryfront/chat/provider-error-registry.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import {
@@ -63,6 +64,7 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       usage: getUsageSchema().optional(),
       totalUsage: getUsageSchema().optional(),
       object: json.optional(),
+      objectEncoding: v.literal("snapshot").optional(),
     }).strict(),
     v.object({
       type: v.literal("step-start"),
@@ -229,6 +231,8 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
           ? AGENT_PROVIDER_AUTH_ERROR.message
           : code === OUTPUT_SCHEMA_INVALID_ERROR.code
           ? OUTPUT_SCHEMA_INVALID_ERROR.message
+          : code === PROVIDER_STREAM_PROTOCOL_ERROR.code
+          ? PROVIDER_STREAM_PROTOCOL_ERROR.message
           : code,
       };
     })()

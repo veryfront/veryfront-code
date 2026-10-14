@@ -530,6 +530,7 @@ async function transpileDocumentExtractionWorker(
         "native-progress-extraction-worker",
         "native-extraction",
         "native-extraction-process",
+        "node-native-extraction-process",
       ]
     ) {
       const workerSrc =

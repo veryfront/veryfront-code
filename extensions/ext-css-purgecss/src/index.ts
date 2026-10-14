@@ -8,7 +8,9 @@ import {
   type CSSPurgingRequest,
   type CSSPurgingResult,
 } from "veryfront/extensions/css";
+// @deno-types="../vendor/purgecss-memory.d.ts"
 import { PurgeCSS } from "purgecss";
+import vendorSources from "../vendor-sources.json" with { type: "json" };
 import extensionPackage from "../deno.json" with { type: "json" };
 
 const arrayIsArray = Array.isArray;
@@ -19,12 +21,9 @@ const getPrototypeOf = Object.getPrototypeOf;
 const hasOwn = Object.hasOwn;
 const objectPrototype = Object.prototype;
 const ownKeys = Reflect.ownKeys;
-const executeRegularExpression = RegExp.prototype.exec;
 const apply = Reflect.apply;
 const purgeCSSPurge = PurgeCSS.prototype.purge;
-const EXACT_NPM_SPECIFIER_PATTERN =
-  /^npm:purgecss@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
-const ENGINE_SEMANTICS_VERSION = "veryfront.css-purgecss.v1";
+const ENGINE_SEMANTICS_VERSION = "veryfront.css-purgecss.v2";
 const PROVIDER_RESULT_KEYS = freeze(
   [
     "css",
@@ -33,16 +32,17 @@ const PROVIDER_RESULT_KEYS = freeze(
   ] as const,
 );
 
-function dependencyVersion(specifier: string): string {
-  const match = apply(executeRegularExpression, EXACT_NPM_SPECIFIER_PATTERN, [
-    specifier,
-  ]) as RegExpExecArray | null;
-  if (match?.[1] === undefined) {
-    throw new TypeError(
-      "ext-css-purgecss dependency must use an exact npm version",
-    );
+function providerSourceIdentity(): string {
+  const source = vendorSources.components[0];
+  if (
+    vendorSources.components.length !== 1 || source === undefined ||
+    extensionPackage.imports.purgecss !== `./${source.source}` ||
+    source.upstream.name !== "purgecss" || source.upstream.version !== "8.0.0" ||
+    !/^[a-f0-9]{64}$/.test(source.sha256)
+  ) {
+    throw new TypeError("ext-css-purgecss requires its pinned in-memory source distribution");
   }
-  return match[1];
+  return `${source.upstream.name}@${source.upstream.version};${source.name}@${source.version};sha256:${source.sha256}`;
 }
 
 function assertEmptyConfig(value: unknown): void {
@@ -236,9 +236,7 @@ class PurgeCSSPurgingEngine implements CSSPurgingEngine {
 
   constructor() {
     this.cacheIdentity =
-      `${ENGINE_SEMANTICS_VERSION};ext-css-purgecss@${extensionPackage.version};purgecss@${
-        dependencyVersion(extensionPackage.imports.purgecss)
-      }`;
+      `${ENGINE_SEMANTICS_VERSION};ext-css-purgecss@${extensionPackage.version};${providerSourceIdentity()}`;
     freeze(this);
   }
 
@@ -262,7 +260,7 @@ const extCSSPurgeCSS: ExtensionFactory = (config) => {
     contracts: { provides: ["CSSPurgingEngine"] },
     capabilities: [{
       type: "env:read",
-      keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+      keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
     }],
     setup(ctx) {
       ctx.provide(CSSPurgingEngineName, engine);

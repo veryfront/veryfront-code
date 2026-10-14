@@ -61,6 +61,18 @@ describe("getSkillToolProps", () => {
     assertEquals(getSkillToolProps(tool), { skill: "guide.md", state: "loaded" });
   });
 
+  it("derives the skill from provider-safe nested load input", () => {
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "tool-load-skill",
+      toolName: "veryfront__load_skill",
+      state: "output-available",
+      input: { load: { skillId: "invoice" } },
+      output: { loaded: true },
+    };
+    assertEquals(getSkillToolProps(tool), { skill: "invoice", state: "loaded" });
+  });
+
   it("derives a stopped state from an interrupted child tool part", () => {
     const tool = {
       type: "dynamic-tool",
@@ -87,5 +99,24 @@ describe("getSkillToolProps", () => {
     };
     const props = getSkillToolProps(tool);
     assert(props.skill === "unknown", "expected the unknown fallback skill label");
+  });
+
+  it("ignores inherited or accessor skill input fields", () => {
+    const input = Object.create({ skillId: "forged" });
+    Object.defineProperty(input, "load", {
+      enumerable: true,
+      get() {
+        throw new Error("load accessor must not be invoked");
+      },
+    });
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "tool-load-skill",
+      toolName: "veryfront__load_skill",
+      state: "output-available",
+      input,
+      output: {},
+    };
+    assertEquals(getSkillToolProps(tool), { skill: "unknown", state: "loaded" });
   });
 });

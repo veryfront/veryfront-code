@@ -1,4 +1,26 @@
-import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
+import {
+  isPrivateJsonCircularError,
+  privateJsonStringify,
+  validatePrivateJsonDataWithCycles,
+} from "#veryfront/security/private-json.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import {
+  encodePrivateText,
+  PrivateTextEncoder,
+  privateTextSlice,
+} from "#veryfront/security/private-text.ts";
+import {
+  primordialArrayFlatMap,
+  primordialArrayMap,
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
   getCanonicalPrivateConversationRunEventType,
@@ -18,7 +40,16 @@ const MAX_SUMMARY_ARRAY_ITEMS = 8;
 const MAX_SUMMARY_OBJECT_KEYS = 24;
 const MAX_SUMMARY_STRING_BYTES = 8 * 1024;
 
-const encoder = new TextEncoder();
+const encoder = new PrivateTextEncoder();
+const ArrayIsArray = Array.isArray;
+const MathFloor = Math.floor;
+const MathMax = Math.max;
+const MathMin = Math.min;
+const ObjectCreate = Object.create;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ReflectOwnKeys = Reflect.ownKeys;
+const NativeTypeError = TypeError;
 
 type ConversationRunEventRecord = Record<string, unknown> & { type: string };
 
@@ -29,12 +60,36 @@ function hasStringField<TField extends "delta" | "content">(
   return typeof event[field] === "string";
 }
 
+function measureConversationRunEventJsonByteLength(value: unknown): number {
+  return privateByteLength(encodePrivateText(
+    privateJsonStringify(
+      value,
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    ),
+    encoder,
+  ));
+}
+
 /** Return conversation run event JSON byte length. */
 export function getConversationRunEventJsonByteLength(value: unknown): number {
   try {
-    return encoder.encode(JSON.stringify(value)).byteLength;
+    return measureConversationRunEventJsonByteLength(value);
   } catch {
     return Number.POSITIVE_INFINITY;
+  }
+}
+
+function measurePublicConversationRunEventJsonByteLength(value: unknown): number {
+  try {
+    return measureConversationRunEventJsonByteLength(value);
+  } catch (error) {
+    if (isPrivateJsonCircularError(error)) {
+      validatePrivateJsonDataWithCycles(value, MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES);
+      return Number.POSITIVE_INFINITY;
+    }
+    throw error;
   }
 }
 
@@ -78,13 +133,18 @@ export function normalizeConversationRunEvent(
     return [event];
   }
   event = normalizeChildRunLifecycleEvent(event);
-  if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
+  // Invalid private serialization must fail the mandatory observation sink;
+  // only valid oversized data may become a bounded omission or summary.
+  if (
+    measurePublicConversationRunEventJsonByteLength(event) <=
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+  ) {
     return [event];
   }
 
   // Every summarizer output passes through enforceEventSizeLimit so the byte-limit
   // invariant holds regardless of which branch (or future event type) ran.
-  return summarizeOversizedEvent(event).map(enforceEventSizeLimit);
+  return primordialArrayMap(summarizeOversizedEvent(event), enforceEventSizeLimit);
 }
 
 function summarizeOversizedEvent(
@@ -149,7 +209,7 @@ function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationR
     return event;
   }
 
-  for (const field of ["delta", "content"] as const) {
+  for (const field of primordialArrayValues(["delta", "content"] as const)) {
     if (typeof event[field] === "string") {
       const clamped = truncateEventStringFieldToLimit(event, field, " [truncated]");
       if (clamped) {
@@ -165,7 +225,7 @@ function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationR
 export function normalizeConversationRunEvents(
   events: ConversationRunEventRecord[],
 ): ConversationRunEventRecord[] {
-  return events.flatMap(normalizeConversationRunEvent);
+  return primordialArrayFlatMap(events, normalizeConversationRunEvent);
 }
 
 function summarizeToolResultEvent(event: ConversationRunEventRecord): ConversationRunEventRecord {
@@ -239,7 +299,7 @@ function truncateEventStringFieldToLimit(
 
   const buildCandidate = (prefixLength: number): ConversationRunEventRecord => {
     if (prefixLength >= value.length) return event;
-    const truncatedValue = `${value.slice(0, prefixLength)}${suffix}`;
+    const truncatedValue = `${privateTextSlice(value, 0, prefixLength)}${suffix}`;
     return mirrorField
       ? { ...event, [field]: truncatedValue, [mirrorField]: truncatedValue }
       : { ...event, [field]: truncatedValue };
@@ -263,7 +323,7 @@ function truncateEventStringFieldToLimit(
   let high = value.length;
   let best = 0;
   while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
+    const mid = MathFloor((low + high) / 2);
     if (
       getConversationRunEventJsonByteLength(buildCandidate(mid)) <=
         MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
@@ -352,9 +412,11 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
     let bestEndIndex = -1;
 
     while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
+      const mid = MathFloor((low + high) / 2);
       if (
-        getConversationRunEventJsonByteLength(buildPart(value.slice(startIndex, mid))) <=
+        getConversationRunEventJsonByteLength(
+          buildPart(privateTextSlice(value, startIndex, mid)),
+        ) <=
           MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
       ) {
         bestEndIndex = mid;
@@ -370,7 +432,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
       return [event];
     }
 
-    parts.push(buildPart(value.slice(startIndex, bestEndIndex)));
+    primordialArrayPush(parts, buildPart(privateTextSlice(value, startIndex, bestEndIndex)));
     startIndex = bestEndIndex;
   }
 
@@ -378,7 +440,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
 }
 
 function splitUtf8String(value: string, maxBytes: number): string[] {
-  if (encoder.encode(value).byteLength <= maxBytes) {
+  if (privateByteLength(encodePrivateText(value, encoder)) <= maxBytes) {
     return [value];
   }
 
@@ -391,9 +453,9 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
     let bestEndIndex = startIndex + 1;
 
     while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const slice = value.slice(startIndex, mid);
-      if (encoder.encode(slice).byteLength <= maxBytes) {
+      const mid = MathFloor((low + high) / 2);
+      const slice = privateTextSlice(value, startIndex, mid);
+      if (privateByteLength(encodePrivateText(slice, encoder)) <= maxBytes) {
         bestEndIndex = mid;
         low = mid + 1;
       } else {
@@ -401,7 +463,7 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
       }
     }
 
-    parts.push(value.slice(startIndex, bestEndIndex));
+    primordialArrayPush(parts, privateTextSlice(value, startIndex, bestEndIndex));
     startIndex = bestEndIndex;
   }
 
@@ -409,21 +471,25 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
 }
 
 function truncateUtf8String(value: string, maxBytes: number, suffix: string): string {
-  if (encoder.encode(value).byteLength <= maxBytes) {
+  if (privateByteLength(encodePrivateText(value, encoder)) <= maxBytes) {
     return value;
   }
 
-  const suffixBytes = encoder.encode(suffix).byteLength;
+  const suffixBytes = privateByteLength(encodePrivateText(suffix, encoder));
   if (suffixBytes >= maxBytes) {
-    return suffix.slice(0, Math.max(1, maxBytes));
+    return privateTextSlice(suffix, 0, MathMax(1, maxBytes));
   }
 
   const prefixBudget = maxBytes - suffixBytes;
-  const [prefix] = splitUtf8String(value, prefixBudget);
+  const prefix = splitUtf8String(value, prefixBudget)[0];
   return `${prefix}${suffix}`;
 }
 
-function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new WeakSet()): unknown {
+function summarizeValue(
+  value: unknown,
+  depth = 0,
+  seen = createPrivateWeakStore<object, true>(),
+): unknown {
   if (typeof value === "string") {
     return truncateUtf8String(value, MAX_SUMMARY_STRING_BYTES, "… [truncated]");
   }
@@ -432,7 +498,7 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
     return value;
   }
 
-  if (seen.has(value)) {
+  if (seen.get(value) === true) {
     return "[circular]";
   }
 
@@ -440,36 +506,95 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
     return "[truncated nested data]";
   }
 
-  seen.add(value);
+  seen.set(value, true);
 
-  if (Array.isArray(value)) {
-    const items = value
-      .slice(0, MAX_SUMMARY_ARRAY_ITEMS)
-      .map((item) => summarizeValue(item, depth + 1, seen));
-    if (value.length > MAX_SUMMARY_ARRAY_ITEMS) {
-      items.push(`[truncated ${value.length - MAX_SUMMARY_ARRAY_ITEMS} more items]`);
+  if (ArrayIsArray(value)) {
+    const lengthDescriptor = ObjectGetOwnPropertyDescriptor(value, "length");
+    const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
+    const keys = ReflectOwnKeys(value);
+    for (let index = 0; index < keys.length; index++) {
+      if (!ObjectHasOwn(keys, index)) continue;
+      const key = keys[index];
+      if (typeof key !== "string" || key === "length") continue;
+      const property = ObjectGetOwnPropertyDescriptor(value, key);
+      if (property?.enumerable === true && !ObjectHasOwn(property, "value")) {
+        throw new NativeTypeError("Private JSON requires data properties");
+      }
+    }
+    const itemCount = MathMin(length, MAX_SUMMARY_ARRAY_ITEMS);
+    const items: unknown[] = [];
+    defineOwnDataProperty(items, "length", itemCount, {
+      enumerable: false,
+      writable: true,
+      configurable: false,
+    });
+    for (let index = 0; index < itemCount; index++) {
+      const property = ObjectGetOwnPropertyDescriptor(value, `${index}`);
+      if (property?.enumerable === true) {
+        if (!ObjectHasOwn(property, "value")) {
+          throw new NativeTypeError("Private JSON requires data properties");
+        }
+        defineOwnDataProperty(items, `${index}`, summarizeValue(property.value, depth + 1, seen), {
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+    }
+    if (length > MAX_SUMMARY_ARRAY_ITEMS) {
+      primordialArrayPush(
+        items,
+        `[truncated ${length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
+      );
     }
     return items;
   }
 
-  const entries = Object.entries(value);
-  const summarizedEntries = entries
-    .slice(0, MAX_SUMMARY_OBJECT_KEYS)
-    .map(([key, entryValue]) => [key, summarizeValue(entryValue, depth + 1, seen)] as const);
-  const summarizedObject = Object.fromEntries(summarizedEntries);
+  const keys = ReflectOwnKeys(value);
+  const summarizedObject = ObjectCreate(null) as Record<string, unknown>;
+  let entryCount = 0;
+  for (let index = 0; index < keys.length; index++) {
+    if (!ObjectHasOwn(keys, index)) continue;
+    const key = keys[index];
+    if (typeof key !== "string") continue;
+    const property = ObjectGetOwnPropertyDescriptor(value, key);
+    if (property?.enumerable !== true) continue;
+    if (!ObjectHasOwn(property, "value")) {
+      throw new NativeTypeError("Private JSON requires data properties");
+    }
+    if (entryCount < MAX_SUMMARY_OBJECT_KEYS) {
+      defineOwnDataProperty(
+        summarizedObject,
+        key,
+        summarizeValue(property.value, depth + 1, seen),
+        {
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        },
+      );
+    }
+    entryCount++;
+  }
 
-  if (entries.length > MAX_SUMMARY_OBJECT_KEYS) {
-    return {
-      ...summarizedObject,
-      _truncatedKeys: entries.length - MAX_SUMMARY_OBJECT_KEYS,
-    };
+  if (entryCount > MAX_SUMMARY_OBJECT_KEYS) {
+    defineOwnDataProperty(
+      summarizedObject,
+      "_truncatedKeys",
+      entryCount - MAX_SUMMARY_OBJECT_KEYS,
+      {
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      },
+    );
   }
 
   return summarizedObject;
 }
 
 function describeValueType(value: unknown): string {
-  if (Array.isArray(value)) {
+  if (ArrayIsArray(value)) {
     return "array";
   }
 

@@ -348,7 +348,7 @@ describe("ext-document-kreuzberg extension", () => {
     const ext = factory();
     assertEquals(ext.capabilities, [
       { type: "fs:read" },
-      { type: "process:spawn", commands: ["deno"] },
+      { type: "process:spawn", commands: ["deno", "node", "bun", "taskkill"] },
       { type: "env:read" },
       { type: "native:ffi" },
     ]);
@@ -756,10 +756,93 @@ describe("ext-document-kreuzberg extension", () => {
         Error,
         "Native extraction process exited without a result",
       );
+      if (!(error instanceof Error)) throw new Error("Expected extraction Error");
       assertStringIncludes(error.message, "SIGABRT");
     } finally {
       await fixture.cleanup();
     }
+  });
+
+  it("cancels an actual native child and preserves the abort reason", async () => {
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) {}
+      Deno.stdout.writeSync(new TextEncoder().encode(JSON.stringify({
+        type: "progress", event: { unit: "page", current: 1, total: 2, characters: 0 }
+      }) + "\\n"));
+      setInterval(() => {}, 1000);
+    `);
+    const controller = new AbortController();
+    const reason = new Error("cancel native extraction");
+    try {
+      let rejected: unknown;
+      try {
+        await extractWithNativeProcessDeno(
+          new ArrayBuffer(0),
+          "application/pdf",
+          {
+            signal: controller.signal,
+            hardTimeoutMs: 1000,
+            onProgress: () => {
+              controller.abort(reason);
+            },
+          },
+          "progress",
+          { scriptUrl: fixture.scriptUrl },
+        );
+      } catch (error) {
+        rejected = error;
+      }
+      assertEquals(rejected, reason);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("cancels the actual fallback worker without leaving operations alive", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel fallback worker");
+    const extractor = new KreuzbergDocumentExtractor({ isDenoRuntime: true });
+    const pending = extractor.extractInWorker(
+      new TextEncoder().encode("<html><body>cancel worker</body></html>").buffer,
+      "text/html",
+      { signal: controller.signal },
+    );
+    controller.abort(reason);
+    let rejected: unknown;
+    try {
+      await pending;
+    } catch (error) {
+      rejected = error;
+    }
+    assertEquals(rejected, reason);
+  });
+
+  it("does not fall back to another extraction after cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel extraction before fallback");
+    let fallbacks = 0;
+    const extractor = new KreuzbergDocumentExtractor({
+      isDenoRuntime: true,
+      logger: silentLogger(),
+      extractWithNativeProcessDeno: async () => {
+        controller.abort(reason);
+        throw reason;
+      },
+      extractInWorkerDeno: async () => {
+        fallbacks++;
+        return "late result";
+      },
+    });
+    let rejected: unknown;
+    try {
+      await extractor.extractInWorker(new ArrayBuffer(0), "application/pdf", {
+        signal: controller.signal,
+      });
+    } catch (error) {
+      rejected = error;
+    }
+    assertEquals(rejected, reason);
+    assertEquals(fallbacks, 0);
   });
 
   it("enforces the hard timeout when an async progress callback never settles", async () => {
@@ -870,7 +953,9 @@ describe("ext-document-kreuzberg extension", () => {
         Error,
         "Native extraction process exited without a result",
       );
+      if (!(error instanceof Error)) throw new Error("Expected extraction Error");
       assertStringIncludes(error.message, "Cannot find native binding");
+      if (!(error instanceof Error)) throw new Error("Expected extraction Error");
       assertStringIncludes(error.message, "<REDACTED>");
       assertEquals(error.message.includes("fixture-user"), false);
       assertEquals(error.message.includes("loader.js"), false);
@@ -900,6 +985,7 @@ describe("ext-document-kreuzberg extension", () => {
         Error,
         "Cannot load binding",
       );
+      if (!(error instanceof Error)) throw new Error("Expected extraction Error");
       assertStringIncludes(error.message, "<REDACTED>");
       assertEquals(error.message.includes("fixture-user"), false);
       assertEquals(error.message.includes("binding.node"), false);

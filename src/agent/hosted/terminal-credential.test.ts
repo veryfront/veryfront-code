@@ -303,8 +303,10 @@ describe("private terminal credential routing", () => {
           throw new Error("Ordinary admission must retain its transport");
         },
         fetch: (async (_url, init) => {
+          assert(init && "body" in init, "fetch must receive request options");
           await acknowledgement;
-          const count = JSON.parse(String(init?.body)).events.length;
+          const count =
+            JSON.parse(String(init && "body" in init ? init.body : undefined)).events.length;
           cursor += count;
           return Response.json({
             run_id: "33333333-3333-4333-8333-333333333333",

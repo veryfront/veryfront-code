@@ -252,13 +252,27 @@ export function createManagedDurableBrokerHandler(options: {
             prepared.executionSignal,
           ),
       );
-      if (!prepared.start.prepare) return prepared;
+      const toolExposureCheckpoint = parsedRequest.serverResolvedToolExposureCheckpoint;
+      const persistence = toolExposureCheckpoint &&
+          prepared.start.persistence.persistToolExposureCheckpoint
+        ? {
+          ...prepared.start.persistence,
+          initialToolExposureCheckpoint: toolExposureCheckpoint,
+        }
+        : prepared.start.persistence;
+      if (!prepared.start.prepare) {
+        if (persistence === prepared.start.persistence) return prepared;
+        const start = { ...prepared.start, persistence };
+        inheritHostedAgentPauseCapability(start, prepared.start);
+        return { ...prepared, start };
+      }
       const {
         serverResolvedResumeToolCall: _untrustedAdapterResumeToolCall,
         ...basePrepare
       } = prepared.start.prepare;
       const start = {
         ...prepared.start,
+        persistence,
         prepare: {
           ...basePrepare,
           ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),

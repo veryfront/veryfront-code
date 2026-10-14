@@ -2,9 +2,16 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fileURLToPath } from "node:url";
 import {
+  buildTemporaryJunitPaths,
+  buildTestFileCommandArgGroups,
   buildTestFileCommandArgs,
+  getJunitPath,
+  hasDenoNoRun,
   LOOPBACK_ALLOW_NET,
+  mergeDenoJunitReports,
   PROVIDER_EGRESS_DENY_NET,
+  rewriteSplitJunitPathForCommandArgGroups,
+  runTestFileCommandGroups,
   TEST_FILE_ENV,
   type TestTargetFileSystem,
 } from "./run-test-file.ts";
@@ -47,6 +54,246 @@ describe("test:file task command", () => {
       "--filter",
       "coverage",
     ]);
+  });
+
+  it("splits mixed source and script targets across their matching configs", () => {
+    const groups = buildTestFileCommandArgGroups([
+      "src/config/cicd-coverage-workflow.test.ts",
+      "scripts/security/audit-npm.test.ts",
+      "--filter",
+      "audit",
+    ]);
+
+    assertEquals(groups.length, 2);
+    assertEquals(groups[0]!.includes("--preload=src/testing/preload.ts"), true);
+    assertEquals(groups[0]!.includes("--config=scripts/test.deno.json"), false);
+    assertEquals(
+      groups[0]!.includes("src/config/cicd-coverage-workflow.test.ts"),
+      true,
+    );
+    assertEquals(
+      groups[0]!.includes("scripts/security/audit-npm.test.ts"),
+      false,
+    );
+    assertEquals(groups[0]!.slice(-2), ["--filter", "audit"]);
+
+    assertEquals(groups[1]!.includes("--config=scripts/test.deno.json"), true);
+    assertEquals(
+      groups[1]!.includes("--preload=src/testing/preload.ts"),
+      false,
+    );
+    assertEquals(
+      groups[1]!.includes("scripts/security/audit-npm.test.ts"),
+      true,
+    );
+    assertEquals(
+      groups[1]!.includes("src/config/cicd-coverage-workflow.test.ts"),
+      false,
+    );
+    assertEquals(groups[1]!.slice(-2), ["--filter", "audit"]);
+  });
+
+  it("uses distinct temporary JUnit reports for split mixed target runs", () => {
+    const groups = buildTestFileCommandArgGroups([
+      "src/config/cicd-coverage-workflow.test.ts",
+      "scripts/security/audit-npm.test.ts",
+      "--junit-path",
+      "reports/junit.xml",
+      "--filter",
+      "--junit-path=needle",
+    ]);
+
+    const rewritten = rewriteSplitJunitPathForCommandArgGroups(groups, [
+      "/tmp/source-junit.xml",
+      "/tmp/scripts-junit.xml",
+    ]);
+
+    assertEquals(rewritten.requestedJunitPath, "reports/junit.xml");
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("/tmp/source-junit.xml"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("reports/junit.xml"),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("--junit-path=needle"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes(
+        "src/config/cicd-coverage-workflow.test.ts",
+      ),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes(
+        "scripts/security/audit-npm.test.ts",
+      ),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("/tmp/scripts-junit.xml"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("reports/junit.xml"),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("--junit-path=needle"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes(
+        "scripts/security/audit-npm.test.ts",
+      ),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes(
+        "src/config/cicd-coverage-workflow.test.ts",
+      ),
+      false,
+    );
+  });
+
+  it("does not treat forwarded no-run text as cache-only mode", () => {
+    assertEquals(
+      hasDenoNoRun([
+        "src/config/cicd-coverage-workflow.test.ts",
+        "scripts/security/audit-npm.test.ts",
+        "--filter",
+        "--no-run",
+      ]),
+      false,
+    );
+    assertEquals(
+      hasDenoNoRun([
+        "src/config/cicd-coverage-workflow.test.ts",
+        "scripts/security/audit-npm.test.ts",
+        "--filter",
+        "--no-run",
+        "--no-run",
+      ]),
+      true,
+    );
+  });
+
+  it("keeps running split target groups after the first failure", async () => {
+    const calls: string[][] = [];
+    const failedExitCode = await runTestFileCommandGroups({
+      commandArgGroups: [["source-group"], ["script-group"]],
+      environment: TEST_FILE_ENV,
+      redirectTestStdoutToStderr: false,
+      runCommand: ({ commandArgs }) => {
+        calls.push(commandArgs);
+        return Promise.resolve(
+          commandArgs[0] === "source-group"
+            ? { success: false, code: 7 }
+            : { success: true, code: 0 },
+        );
+      },
+    });
+
+    assertEquals(failedExitCode, 7);
+    assertEquals(calls, [["source-group"], ["script-group"]]);
+  });
+
+  it("treats bare JUnit path as stdout without swallowing following options", () => {
+    assertEquals(
+      getJunitPath([
+        "src/foo.test.ts",
+        "scripts/foo.test.ts",
+        "--junit-path",
+        "--filter",
+        "needle",
+      ]),
+      "-",
+    );
+
+    const groups = buildTestFileCommandArgGroups([
+      "src/foo.test.ts",
+      "scripts/foo.test.ts",
+      "--junit-path",
+      "--filter",
+      "needle",
+    ]);
+    assertEquals(groups.length, 2);
+    assertEquals(groups[0]!.slice(-3), ["--junit-path", "--filter", "needle"]);
+    assertEquals(groups[1]!.slice(-3), ["--junit-path", "--filter", "needle"]);
+
+    const rewritten = rewriteSplitJunitPathForCommandArgGroups(groups, [
+      "/tmp/source.xml",
+      "/tmp/scripts.xml",
+    ]);
+    assertEquals(rewritten.requestedJunitPath, "-");
+    assertEquals(groups[0]!.includes("--filter"), true);
+    assertEquals(rewritten.commandArgGroups[0]!.slice(-4), [
+      "--junit-path",
+      "/tmp/source.xml",
+      "--filter",
+      "needle",
+    ]);
+    assertEquals(rewritten.commandArgGroups[1]!.slice(-4), [
+      "--junit-path",
+      "/tmp/scripts.xml",
+      "--filter",
+      "needle",
+    ]);
+
+    const explicitStdoutGroups = buildTestFileCommandArgGroups([
+      "src/foo.test.ts",
+      "scripts/foo.test.ts",
+      "--junit-path",
+      "-",
+    ]);
+    const explicitStdoutRewrite = rewriteSplitJunitPathForCommandArgGroups(
+      explicitStdoutGroups,
+      ["/tmp/source.xml", "/tmp/scripts.xml"],
+    );
+    assertEquals(explicitStdoutRewrite.requestedJunitPath, "-");
+    assertEquals(explicitStdoutRewrite.commandArgGroups[0]!.slice(-2), [
+      "--junit-path",
+      "/tmp/source.xml",
+    ]);
+    assertEquals(explicitStdoutRewrite.commandArgGroups[1]!.slice(-2), [
+      "--junit-path",
+      "/tmp/scripts.xml",
+    ]);
+  });
+
+  it("uses safe temporary JUnit paths when merged reports print to stdout", () => {
+    const paths = buildTemporaryJunitPaths("-", 2, {
+      id: "fixed",
+      tempDirectory: "/tmp/sdk5015",
+    });
+
+    assertEquals(paths, [
+      "/tmp/sdk5015/veryfront-test-file-junit-fixed.part-0-fixed.xml",
+      "/tmp/sdk5015/veryfront-test-file-junit-fixed.part-1-fixed.xml",
+    ]);
+  });
+
+  it("merges split Deno JUnit reports without dropping either suite", () => {
+    const merged = mergeDenoJunitReports([
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="0.25"><testsuite name="source" tests="1" failures="0" errors="0" skipped="0" time="0.25"></testsuite></testsuites>
+`,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="1" errors="0" skipped="1" time="0.75"><testsuite name="scripts" tests="2" failures="1" errors="0" skipped="1" time="0.75"></testsuite></testsuites>
+`,
+    ]);
+
+    assertEquals(
+      merged.includes(
+        '<testsuites tests="3" failures="1" errors="0" skipped="1" time="1">',
+      ),
+      true,
+    );
+    assertEquals(merged.includes('name="source"'), true);
+    assertEquals(merged.includes('name="scripts"'), true);
   });
 
   it("keeps integration paths on the provider deny-list", () => {

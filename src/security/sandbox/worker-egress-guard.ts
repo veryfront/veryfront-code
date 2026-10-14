@@ -20,6 +20,13 @@
  * @module security/sandbox/worker-egress-guard
  */
 
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import {
   chainPrivatePromise,
   createPrivateDeferred,
@@ -38,6 +45,24 @@ import {
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectCreate = Object.create;
+
+function sealHostResponse(response: Response): Response {
+  return defineOwnDataProperty(response, "then", undefined, { configurable: true });
+}
+
+function bindResponseMetadata(response: Response, url: string, redirected: boolean): void {
+  const define = (key: string, value: string | boolean): void => {
+    const descriptor = IntrinsicReflectApply(ObjectCreate, Object, [null]) as PropertyDescriptor;
+    descriptor.configurable = true;
+    descriptor.enumerable = true;
+    descriptor.value = value;
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [response, key, descriptor]);
+  };
+  define("url", url);
+  define("redirected", redirected);
+}
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeResponse = Response;
@@ -584,18 +609,19 @@ function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promi
 
   const completion = createPrivateDeferred<T>();
   const { resolve, reject } = completion;
-  const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  if (signal.aborted) {
+  const onAbort = () =>
+    reject(getAbortSignalReason(signal) ?? new DOMException("Aborted", "AbortError"));
+  if (isAbortSignalAborted(signal)) {
     onAbort();
   } else {
-    signal.addEventListener("abort", onAbort, { once: true });
+    addAbortSignalListenerOnce(signal, onAbort);
   }
 
   void chainPrivatePromise(operation, (value) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     resolve(value);
   }, (error) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     reject(error);
   });
   return completion.promise;
@@ -1229,7 +1255,10 @@ async function fetchThroughHttpBroker(
   });
   // Indexed, not destructured: see the per-hop send in guardedEgressFetch.
   const brokerArguments = nativeFetchArguments(broker.url, brokerInit);
-  const brokerResponse = await fetchImpl(brokerArguments[0], brokerArguments[1]);
+  const brokerResponse = await chainPrivatePromise(
+    fetchImpl(brokerArguments[0], brokerArguments[1]),
+    sealHostResponse,
+  );
   if (IntrinsicReflectApply(HeadersGet, brokerResponse.headers, [BROKER_ERROR_HEADER]) === "1") {
     let message = "Worker network egress failed";
     try {
@@ -1263,11 +1292,8 @@ async function fetchThroughHttpBroker(
     statusText: brokerResponse.statusText,
     headers: responseHeaders,
   });
-  Object.defineProperties(response, {
-    url: { configurable: true, enumerable: true, value: targetUrl },
-    redirected: { configurable: true, enumerable: true, value: false },
-  });
-  return response;
+  bindResponseMetadata(response, targetUrl, false);
+  return sealHostResponse(response);
 }
 
 /** Fetch shape consumed by the worker egress guard. */
@@ -1463,12 +1489,15 @@ export async function guardedEgressFetch(
               () => {
                 // Checked in the same turn as the call, after the last await.
                 assertNativeRequestProcessing();
-                return pinnedFetch(
-                  parsedUrl,
-                  addresses,
-                  requestInit,
-                  undefined,
-                  deps.onRequestDispatched,
+                return chainPrivatePromise(
+                  pinnedFetch(
+                    parsedUrl,
+                    addresses,
+                    requestInit,
+                    undefined,
+                    deps.onRequestDispatched,
+                  ),
+                  sealHostResponse,
                 );
               },
             );
@@ -1491,7 +1520,7 @@ export async function guardedEgressFetch(
           );
           const response = doFetch(fetchArguments[0], fetchArguments[1]);
           deps.onRequestDispatched?.();
-          return response;
+          return chainPrivatePromise(response, sealHostResponse);
         });
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
@@ -1524,10 +1553,7 @@ export async function guardedEgressFetch(
     }
 
     if (!REDIRECT_STATUSES.has(response.status)) {
-      Object.defineProperties(response, {
-        url: { configurable: true, enumerable: true, value: url },
-        redirected: { configurable: true, enumerable: true, value: didRedirect },
-      });
+      bindResponseMetadata(response, url, didRedirect);
       return response;
     }
     const location = response.headers.get("location");

@@ -275,6 +275,8 @@ export interface AgentConfig<TOutput = any> {
   outputSchema?: Schema<TOutput> | JsonSchema;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
+  /** Allow parallel provider tool calls. Omit to retain the provider default. */
+  parallelToolCalls?: boolean;
   /** Provider-neutral reasoning / thinking configuration for hosted runtimes. */
   thinking?: RuntimeAgentThinkingConfig;
   streaming?: boolean;

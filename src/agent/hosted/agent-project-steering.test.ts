@@ -196,7 +196,7 @@ Deno.test("createHostedAgentProjectSteering binds project instruction and skill 
 
     assertEquals(skills.length, 0);
     assertEquals(calls[0]?.authHeader, "Bearer auth-token");
-    assertEquals(calls[0]?.url.searchParams.get("branch"), "branch-1");
+    assertEquals(calls[0]?.url.searchParams.get("ref"), "branch:branch-1");
     assertEquals(calls[1]?.url.pathname, "/projects/project-1/files");
   });
 });

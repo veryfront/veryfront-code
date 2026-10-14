@@ -7,6 +7,7 @@ import { getV8FlagsEnv } from "#veryfront/config/env.ts";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 import type { ObservableCallbackBinding } from "./observable-callbacks.ts";
+import { takeProcessEventLoopMaxLagMs } from "../event-loop-stall-detector.ts";
 
 const BYTES_PER_MEBIBYTE = 1024 * 1024;
 type MemoryUsage = NonNullable<ReturnType<typeof getMemoryUsage>>;
@@ -63,6 +64,7 @@ export interface MemoryInstruments {
   heapUsageGauge: ObservableGauge | null;
   heapTotalGauge: ObservableGauge | null;
   heapPercentGauge: ObservableGauge | null;
+  eventLoopMaxLagGauge: ObservableGauge | null;
 }
 
 function createMemoryCallback(
@@ -98,12 +100,26 @@ export function createMemoryInstruments(meter: Meter, config: MetricsConfig): Me
     description: "V8 heap usage as percentage of configured limit",
     unit: "percent",
   });
-  return { memoryUsageGauge, heapUsageGauge, heapTotalGauge, heapPercentGauge };
+  const eventLoopMaxLagGauge = meter.createObservableGauge(
+    `${config.prefix}.event_loop.max_lag`,
+    {
+      description: "Largest event-loop lag since the previous collection",
+      unit: "ms",
+    },
+  );
+  return {
+    memoryUsageGauge,
+    heapUsageGauge,
+    heapTotalGauge,
+    heapPercentGauge,
+    eventLoopMaxLagGauge,
+  };
 }
 
 export function createMemoryObservableBindings(
   instruments: MemoryInstruments,
   readMemoryUsage: MemoryUsageReader = getMemoryUsage,
+  takeMaxLagMs: () => number = takeProcessEventLoopMaxLagMs,
 ): ObservableCallbackBinding[] {
   const bindings: ObservableCallbackBinding[] = [];
   if (instruments.memoryUsageGauge) {
@@ -144,6 +160,12 @@ export function createMemoryObservableBindings(
         const percent = (memoryUsage.heapUsed / heapLimitBytes) * 100;
         result.observe(Math.round(percent * 100) / 100);
       },
+    });
+  }
+  if (instruments.eventLoopMaxLagGauge) {
+    bindings.push({
+      instrument: instruments.eventLoopMaxLagGauge,
+      callback: (result) => result.observe(takeMaxLagMs()),
     });
   }
   return bindings;

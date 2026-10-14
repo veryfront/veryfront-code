@@ -5,7 +5,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import {
   createCanonicalVeryfrontApiTransport,
@@ -23,7 +23,7 @@ const baseConfig = {
 describe("Veryfront API transport retry boundaries", () => {
   it("removes competing API keys when the host selects bearer authentication", async () => {
     await withMockFetch((_url, init) => {
-      const headers = new Headers(init?.headers);
+      const headers = new Headers(observeFetchRequestInit(init).headers);
       assertEquals(headers.get("Authorization"), "Bearer token");
       assertEquals(headers.get("X-API-Key"), null);
       return Promise.resolve(Response.json({ data: [] }));
@@ -64,8 +64,8 @@ describe("Veryfront API transport retry boundaries", () => {
 
   it("supports anonymous requests without reading or forwarding credentials", async () => {
     await withMockFetch((_url, init) => {
-      assertEquals(new Headers(init?.headers).get("Authorization"), null);
-      assertEquals(new Headers(init?.headers).get("X-API-Key"), null);
+      assertEquals(new Headers(observeFetchRequestInit(init).headers).get("Authorization"), null);
+      assertEquals(new Headers(observeFetchRequestInit(init).headers).get("X-API-Key"), null);
       return Promise.resolve(Response.json({ data: [] }));
     }, async () => {
       const transport = createVeryfrontApiTransport({

@@ -15,6 +15,8 @@ import {
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+
 /**
  * Veryfront Cloud provider IDs offered for autocompletion.
  *
@@ -90,7 +92,7 @@ export type VeryfrontCloudModelThinkingConfig = {
 };
 
 function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+  return typeof value === "number" && numberIsSafeInteger(value) && value > 0;
 }
 
 function requireThinkingBudgetTokens(value: unknown): number | undefined {

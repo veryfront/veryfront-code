@@ -46,6 +46,7 @@ describe("command-help", () => {
     it("renders knowledge help", () => {
       const output = captureConsoleLog(() => showCommandHelp("knowledge"));
       assertStringIncludes(output, "veryfront knowledge ingest <source...> [options]");
+      assertStringIncludes(output, "--branch, -b <name-or-id>");
       assertStringIncludes(output, "Primary subcommand: ingest");
       assertStringIncludes(output, "built-in Kreuzberg document extension");
     });

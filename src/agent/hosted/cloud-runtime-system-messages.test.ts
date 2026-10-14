@@ -7,6 +7,7 @@ import {
 } from "./cloud-runtime-system-messages.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { BuildVeryfrontCloudRuntimeInstructionsOptions } from "veryfront/agent";
 
 function createAgent(
@@ -19,6 +20,16 @@ function createAgent(
     instructions: "Base instructions\n\n<!-- veryfront-runtime-context -->\n\nStatic tail",
     ...overrides,
   };
+}
+
+function createLargeSkillCatalog(count = 1_000): RuntimeSkillDefinition[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `skill-${index.toString().padStart(4, "0")}-${"x".repeat(80)}`,
+    name: `Skill ${index}`,
+    description: "A bounded hosted catalog entry with a deliberately long identifier.",
+    instructions: "Use this skill carefully.",
+    allowedTools: [],
+  }));
 }
 
 describe("cloud runtime system messages", () => {
@@ -202,6 +213,87 @@ describe("cloud runtime system messages", () => {
     assertStringIncludes(dynamicMsg?.content ?? "", "Use the project policy.");
     assertStringIncludes(dynamicMsg?.content ?? "", 'project_reference: "project-123"');
     assertStringIncludes(dynamicMsg?.content ?? "", "Runtime facts");
+  });
+
+  it("advertises bounded skill discovery through the exposed hosted loader name", () => {
+    const skills = createLargeSkillCatalog();
+
+    const canonicalText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+      availableToolNames: ["tool_search", "veryfront__load_skill"],
+    }).map((message) => message.content).join("\n");
+    assertStringIncludes(canonicalText, "Call veryfront__load_skill({ inventory:");
+    assertEquals(canonicalText.includes("Call load_skill({ inventory:"), false);
+
+    const legacyText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+      availableToolNames: ["load_skill", "tool_search"],
+    }).map((message) => message.content).join("\n");
+    assertStringIncludes(legacyText, "Call load_skill({ inventory:");
+    assertEquals(legacyText.includes("Call veryfront__load_skill({ inventory:"), false);
+
+    const collisionText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+      availableToolNames: ["load_skill", "tool_search", "veryfront__load_skill"],
+    }).map((message) => message.content).join("\n");
+    assertStringIncludes(collisionText, "Call veryfront__load_skill({ inventory:");
+    assertEquals(collisionText.includes("Call load_skill({ inventory:"), false);
+
+    const defaultText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+    }).map((message) => message.content).join("\n");
+    assertStringIncludes(defaultText, "Call load_skill({ inventory:");
+
+    const disabledText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+      availableToolNames: ["tool_search"],
+    }).map((message) => message.content).join("\n");
+    assertEquals(disabledText.includes("<available_skills>"), false);
+    assertEquals(disabledText.includes("Call load_skill({ inventory:"), false);
+    assertEquals(disabledText.includes("Call veryfront__load_skill({ inventory:"), false);
+  });
+
+  it("does not advertise skill discovery when the run explicitly exposes no tools", () => {
+    const loaderHints: (RuntimeSkillLoaderToolName | undefined)[] = [
+      undefined,
+      "load_skill",
+      "veryfront__load_skill",
+    ];
+    for (const skillLoaderToolName of loaderHints) {
+      const text = buildInteractiveVeryfrontCloudRuntimeInstructions({
+        agentConfig: createAgent(),
+        projectId: "project-123",
+        branchId: null,
+        instructions: "",
+        skills: createLargeSkillCatalog(),
+        skillLoaderToolName,
+        availableToolNames: [],
+      }).map((message) => message.content).join("\n");
+
+      assertEquals(text.includes("<available_skills>"), false);
+      assertEquals(text.includes("Call load_skill({ inventory:"), false);
+      assertEquals(text.includes("Call veryfront__load_skill({ inventory:"), false);
+    }
   });
 
   it("preserves an authoritative empty skill set through hosted assembly", () => {

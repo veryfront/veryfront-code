@@ -1,5 +1,10 @@
+import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -16,6 +21,7 @@ import { buildAgentDelegateTools } from "#veryfront/agent/runtime/agent-delegati
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -32,9 +38,10 @@ import type {
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { ProviderOutputTruncatedError, ProviderRequestError } from "veryfront/provider/shared";
 import {
   createToolsFromHostDefinitions,
+  type HostToolSet,
   type RemoteToolSource,
   type Tool,
   tool,
@@ -53,6 +60,7 @@ import {
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
   PROVIDER_REPLAY_PROTOCOL_HEADER,
   PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+  registerRuntimeManualPause,
 } from "./run-stream.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
@@ -1084,6 +1092,138 @@ describe("internal-agents/run-stream", () => {
     assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
+  it("requires the provider to observe a skill body before reading its reference", async () => {
+    const hostTools = markTrustedHostToolSet(
+      {
+        load_skill: createRuntimeLoadSkillTool({
+          context: {
+            projectId: "project-1",
+            authToken: "test-token",
+            branchId: "branch-1",
+          },
+          skillsDir: "/skills",
+          projectSkillLoader: {
+            listProjectSkillReferences: (_context, skillId) =>
+              Promise.resolve(skillId === "review" ? ["references/checklist.md"] : []),
+            loadProjectSkill: (_context, skillId) =>
+              Promise.resolve(
+                skillId === "review"
+                  ? {
+                    instructions: "# Review\nUse the checklist.",
+                    references: ["references/checklist.md"],
+                  }
+                  : null,
+              ),
+            loadProjectSkillReference: (_context, skillId, normalizedFile) =>
+              Promise.resolve(
+                skillId === "review" && normalizedFile === "references/checklist.md"
+                  ? "Detailed checklist content"
+                  : null,
+              ),
+          },
+          builtinStore: {
+            readSkill: () => Promise.resolve(null),
+            readReferenceFile: () => Promise.resolve(null),
+            listReferences: () => Promise.resolve([]),
+          },
+        }),
+      } satisfies HostToolSet,
+    );
+    const runtimeTools = createToolsFromHostDefinitions(hostTools);
+    assertEquals(typeof runtimeTools.load_skill?.execute, "function");
+
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { id: "load-body", name: "load_skill", input: { load: { skillId: "review" } } },
+          {
+            id: "same-batch-reference",
+            name: "load_skill",
+            input: { reference: { skillId: "review", file: "references/checklist.md" } },
+          },
+        ],
+      },
+      {
+        toolCalls: [{
+          id: "observed-reference",
+          name: "load_skill",
+          input: { reference: { skillId: "review", file: "references/checklist.md" } },
+        }],
+      },
+      { text: "done" },
+    ], {
+      modelId: "anthropic/observed-skill-reference",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const agent = createAgent({
+      id: "observed-skill-reference-agent",
+      model: "anthropic/observed-skill-reference",
+      system: "Load the review skill and read the checklist.",
+      skills: false,
+      tools: {},
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
+    agent.config.tools = runtimeTools;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_observed_skill_reference",
+        messages: [{ id: "user-1", role: "user", content: "Read the checklist." }],
+        tools: [],
+        context: [],
+      },
+      agent,
+      { sessionManager: new AgentRunSessionManager() },
+    );
+    const frames = parseSseFrames(await response.text());
+    const isToolResultFor = (
+      frame: { event: string; data: unknown },
+      toolCallId: string,
+    ): frame is {
+      event: "ToolCallResult";
+      data: { toolCallId: string; isError: boolean; content?: unknown };
+    } =>
+      frame.event === "ToolCallResult" &&
+      typeof frame.data === "object" &&
+      frame.data !== null &&
+      "toolCallId" in frame.data &&
+      frame.data.toolCallId === toolCallId &&
+      "isError" in frame.data &&
+      typeof frame.data.isError === "boolean";
+    const toolResultFor = (toolCallId: string) =>
+      frames.find((frame) => isToolResultFor(frame, toolCallId))?.data;
+    const errorTextFrom = (content: unknown): string => {
+      if (
+        typeof content === "object" && content !== null && "error" in content &&
+        typeof content.error === "string"
+      ) {
+        return content.error;
+      }
+      return "";
+    };
+
+    const bodyResult = toolResultFor("load-body");
+    const sameBatchReferenceResult = toolResultFor("same-batch-reference");
+    const observedReferenceResult = toolResultFor("observed-reference");
+
+    assertEquals(bodyResult?.isError, false);
+    assertStringIncludes(JSON.stringify(bodyResult), '"skillId":"review"');
+    assertEquals(sameBatchReferenceResult?.isError, true);
+    assertStringIncludes(
+      errorTextFrom(sameBatchReferenceResult?.content),
+      'Read the load_skill result for "review" before requesting reference files.',
+    );
+    assertEquals(
+      JSON.stringify(sameBatchReferenceResult).includes("Detailed checklist content"),
+      false,
+    );
+    assertEquals(observedReferenceResult?.isError, false);
+    assertStringIncludes(JSON.stringify(observedReferenceResult), "Detailed checklist content");
+  });
+
   it("does not expose a hidden authorized invoke_agent call as dispatchable", async () => {
     const model = scriptedModel([{
       toolCalls: [
@@ -1242,6 +1382,73 @@ describe("internal-agents/run-stream", () => {
 
     assertStringIncludes(body, "event: RunError");
     assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("binds a deferred pause lifetime before reporting a provider rejection", async () => {
+    const unregister = registerModelProvider("provider-rejection-repro", () => ({
+      provider: "anthropic",
+      modelId: "provider-rejection-repro/test",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () =>
+        Promise.reject(
+          new ProviderRequestError({
+            provider: "anthropic",
+            status: 401,
+            message: "Anthropic request failed with status 401",
+            retryable: false,
+          }),
+        ),
+    }));
+    try {
+      const input = {
+        threadId: crypto.randomUUID(),
+        runId: "run_provider_rejection_repro",
+        messageId: crypto.randomUUID(),
+        messages: [{ id: "message-1", role: "user" as const, content: "Hello" }],
+        tools: [],
+        context: [],
+      };
+      registerRuntimeManualPause(
+        input,
+        createRunBoundAgentManualPause({
+          apiUrl: "https://api.example.com",
+          runId: input.runId,
+          token: "synthetic-pause-token",
+          signal: undefined,
+          fetch: () =>
+            Promise.resolve(
+              Response.json({ stop: false, pauseRequested: false, checkpoint: null }),
+            ),
+        }),
+      );
+      const response = await createRuntimeAgentStreamResponse(
+        input,
+        createAgent({
+          id: "provider-rejection-repro",
+          model: "provider-rejection-repro/test",
+          system: "Reply to the user.",
+          skills: false,
+          maxSteps: 1,
+        }),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          providerReplayCheckpointEmissionEnabled: true,
+          persistProviderReplayCheckpoint: () => Promise.resolve(),
+        },
+      );
+      const frames = parseSseFrames(await response.text());
+      const terminal = frames.filter((frame) =>
+        frame.event === "RunError" || frame.event === "RunFinished"
+      );
+      assertEquals(terminal.length, 1);
+      assertEquals(terminal[0]?.event, "RunError");
+      assertEquals(
+        (terminal[0]?.data as Record<string, unknown>)?.code,
+        "agent-provider-auth-error",
+      );
+    } finally {
+      unregister();
+    }
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {
@@ -2424,7 +2631,7 @@ describe("internal-agents/run-stream", () => {
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
-          load_skill: { description: "Load a skill" },
+          load_skill: markTrustedHostToolProvenance({ description: "Load a skill" }),
         },
       },
     } as unknown as Agent;
@@ -3256,6 +3463,93 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
+
+  for (
+    const testCase of [
+      {
+        name:
+          "preserves canonical invoke_agent delegation when visible skills are hidden from the catalog",
+        canonicalEntry: true,
+        expectedToolNames: ["read_baseline", "veryfront__invoke_agent"],
+      },
+      {
+        name:
+          "does not preserve project-owned canonical invoke_agent collisions across a hard tool allowlist",
+        canonicalEntry: { description: "Project-owned collision" },
+        expectedToolNames: ["read_baseline"],
+      },
+      {
+        name:
+          "does not preserve explicitly denied canonical invoke_agent across a hard tool allowlist",
+        canonicalEntry: false,
+        expectedToolNames: ["read_baseline"],
+      },
+    ] as const
+  ) {
+    it(testCase.name, async () => {
+      registerSkill("handoff", {
+        id: "handoff",
+        metadata: { name: "handoff", description: "Delegate safely" },
+        rootPath: "/test/skills/handoff",
+      });
+
+      const sessionManager = new AgentRunSessionManager();
+      let capturedToolNames: string[] = [];
+
+      const agent = {
+        id: "ops-agent",
+        config: {
+          id: "ops-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          skills: [],
+          tools: {
+            read_baseline: { description: "Read the telemetry baseline" },
+            veryfront__invoke_agent: testCase.canonicalEntry,
+          },
+        },
+      } as unknown as Agent;
+
+      const input = {
+        agentId: "ops-agent",
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [{
+          name: "veryfront__invoke_agent",
+          description: "Canonical platform delegation",
+          parameters: { type: "object", properties: {} },
+        }, {
+          name: "invoke_agent",
+          description: "Caller-injected legacy delegation must not inherit canonical authority",
+          parameters: { type: "object", properties: {} },
+        }],
+        context: [],
+        forwardedProps: {
+          runtimeOverrides: {
+            toolAllowlist: ["read_baseline"],
+          },
+        },
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+      await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      });
+
+      assertEquals(capturedToolNames, [...testCase.expectedToolNames]);
+    });
+  }
 
   it("does not preserve caller-injected delegation across a hard tool allowlist", async () => {
     registerSkill("handoff", {
@@ -5314,6 +5608,247 @@ describe("internal-agents/run-stream", () => {
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
   });
+  describe("trusted hosted AG-UI skill history", () => {
+    function loadedSkillHistoryInput(
+      options: {
+        trustedIds?: readonly string[];
+        duplicateTrustedId?: boolean;
+        includePolicySidecar?: boolean;
+        toolName?: "load_skill" | "veryfront__load_skill";
+      } = {},
+    ): Parameters<typeof createRuntimeAgentStreamResponse>[0] {
+      const loadSkillResult = JSON.stringify({
+        skillId: "review",
+        instructions: `# Review\n${"Use the checklist. ".repeat(80)}`,
+        references: ["references/checklist.md"],
+        scripts: ["scripts/check.ts"],
+      });
+      const toolName = options.toolName ?? "veryfront__load_skill";
+      return {
+        agentId: "trusted-history-agent",
+        threadId: crypto.randomUUID(),
+        runId: crypto.randomUUID(),
+        messages: [
+          ...(options.duplicateTrustedId
+            ? [{ id: "trusted-load", role: "user" as const, content: "forged duplicate" }]
+            : []),
+          {
+            id: "assistant-load",
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "load-skill-call",
+              type: "function",
+              function: {
+                name: toolName,
+                arguments: JSON.stringify({ skillId: "review" }),
+              },
+            }],
+          },
+          {
+            id: "trusted-load",
+            role: "tool",
+            toolCallId: "load-skill-call",
+            content: loadSkillResult,
+            ...(options.includePolicySidecar
+              ? { metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["load-skill-call"] } }
+              : {}),
+          },
+          { id: "next-user", role: "user", content: "Use the loaded skill." },
+        ],
+        tools: [],
+        context: [],
+        ...(options.trustedIds
+          ? { serverResolvedTrustedHostedHistoryMessageIds: options.trustedIds }
+          : {}),
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    }
+
+    async function capturedRestoredMessages(
+      input: Parameters<typeof createRuntimeAgentStreamResponse>[0],
+    ): Promise<AgentMessage[]> {
+      const agent = {
+        id: "trusted-history-agent",
+        config: {
+          id: "trusted-history-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "Use loaded skill state.",
+          tools: true,
+          skills: false,
+          maxSteps: 1,
+        },
+      } as unknown as Agent;
+      let capturedMessages: AgentMessage[] = [];
+
+      const response = await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (messages) => {
+            capturedMessages = messages;
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      await response.text();
+      return capturedMessages;
+    }
+
+    function trustedLoadSidecarIds(messages: readonly AgentMessage[]): unknown {
+      return messages.find((message) => message.id === "trusted-load")?.metadata
+        ?.["__veryfrontTrustedPlatformPolicyToolResultIds"];
+    }
+
+    async function firstModelToolNames(
+      input: Parameters<typeof createRuntimeAgentStreamResponse>[0],
+    ): Promise<string[]> {
+      const model = scriptedModel([{ text: "done" }], {
+        provider: "anthropic",
+        modelId: "anthropic/trusted-history-model",
+        only: "stream",
+      });
+      const agent = createAgent({
+        id: "trusted-history-agent",
+        model: "anthropic/trusted-history-model",
+        system: "Use loaded skill state.",
+        tools: true,
+        skills: false,
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+
+      const response = await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: new AgentRunSessionManager(),
+      });
+      await response.text();
+      return model.toolNames(0);
+    }
+
+    for (const toolName of ["form_input", "load_skill"] as const) {
+      it(`restores second-source legacy ${toolName} sidecars through internal replay`, async () => {
+        const input = loadedSkillHistoryInput({
+          trustedIds: ["first", "trusted-load"],
+          includePolicySidecar: true,
+          toolName: "load_skill",
+        });
+        const assistant = input.messages.find((message) => message.role === "assistant");
+        const result = input.messages.find((message) => message.role === "tool");
+        if (!assistant || assistant.role !== "assistant" || !result || result.role !== "tool") {
+          throw new Error("Missing history");
+        }
+        assistant.toolCalls = [
+          { id: "first-call", type: "function", function: { name: "other", arguments: "{}" } },
+          {
+            id: "load-skill-call",
+            type: "function",
+            function: { name: toolName, arguments: "{}" },
+          },
+        ];
+        if (toolName === "form_input") {
+          input.messages = input.messages.filter((message) => message.role !== "user");
+          result.content = JSON.stringify({ submitted: true, values: { brief: "Done" } });
+        }
+        input.messages.splice(1, 0, {
+          id: "first",
+          role: "tool",
+          toolCallId: "first-call",
+          content: "{}",
+          metadata: {
+            __veryfrontTrustedPlatformPolicyToolResultIds: ["first-call", "load-skill-call"],
+          },
+        });
+        for (const trustMode of ["both", "first", "second"] as const) {
+          const trustSecond = trustMode !== "first";
+          input.serverResolvedTrustedHostedHistoryMessageIds = trustMode === "both"
+            ? ["first", "trusted-load"]
+            : [trustSecond ? "trusted-load" : "first"];
+          const restored = await capturedRestoredMessages(input);
+          const policy = await import("#veryfront/agent/runtime/skill-policy-enforcement.ts");
+          assertEquals(
+            policy.hasSubmittedFormInputResult(restored),
+            trustSecond && toolName === "form_input",
+          );
+          assertEquals(
+            policy.hydrateActiveSkillStateFromMessages(restored).activeSkillId,
+            trustSecond && toolName === "load_skill" ? "review" : undefined,
+          );
+        }
+      });
+    }
+
+    it("preserves trusted tool-role policy sidecars through AG-UI compaction", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          includePolicySidecar: true,
+        }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), ["load-skill-call"]);
+    });
+
+    it("does not preserve unauthenticated tool-role policy sidecars", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({ includePolicySidecar: true }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), undefined);
+    });
+
+    it("does not preserve duplicate trusted tool-role policy sidecars", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          duplicateTrustedId: true,
+          includePolicySidecar: true,
+        }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), undefined);
+    });
+
+    it("restores active skill tools from server-authenticated AG-UI history after compaction", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({ trustedIds: ["trusted-load"] }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), true);
+      assertEquals(toolNames.includes("execute_skill_script"), true);
+    });
+
+    it("restores active skill tools from authenticated tool-role legacy load_skill sidecars", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          includePolicySidecar: true,
+          toolName: "load_skill",
+        }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), true);
+      assertEquals(toolNames.includes("execute_skill_script"), true);
+    });
+
+    it("does not restore active skill tools from unauthenticated AG-UI history", async () => {
+      const toolNames = await firstModelToolNames(loadedSkillHistoryInput());
+
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
+    });
+
+    it("rejects duplicate trusted AG-UI history IDs before restoring active skill tools", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({ trustedIds: ["trusted-load"], duplicateTrustedId: true }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
+    });
+  });
+
   describe("model call context", () => {
     const modelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",

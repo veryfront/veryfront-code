@@ -15,6 +15,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import {
   buildDenoSuiteCommandArgs,
+  buildDenoSuiteProcessEnv,
   DENO_SUITE_PROFILES,
   handleDenoSuiteStatus,
   LOOPBACK_ALLOW_NET,
@@ -47,6 +48,7 @@ const UNIT_CWD_FILES = [
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
@@ -76,6 +78,27 @@ describe("child-run CPU measurement isolation", () => {
   });
 });
 
+describe("native command deadline measurement isolation", () => {
+  it("runs native command latency assertions alone in unit and coverage batches", () => {
+    const commandTest = "src/platform/compat/process/command.test.ts";
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", commandTest, "src/b.test.ts"],
+        100,
+      ),
+      [["src/a.test.ts"], [commandTest], ["src/b.test.ts"]],
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [commandTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [commandTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
 describe("suite planning parity", () => {
   it("preserves every legacy command inventory", async () => {
     const expected: Record<SuitePlanId, string[]> = {
@@ -95,7 +118,12 @@ describe("suite planning parity", () => {
         "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
         "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
       ],
-      "e2e:binary": ["tests/integration/compiled-binary-e2e.test.ts"],
+      "e2e:binary": [
+        "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-3.test.ts",
+      ],
       "runtime:node": await legacyRuntimeFiles("node"),
       "runtime:bun": await legacyRuntimeFiles("bun"),
     };
@@ -249,6 +277,18 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps hosted executor intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain hosted executor intrinsic coverage`,
+      );
+    }
+  });
+
   it("keeps the cross-runtime SSR pipeline fixture in Node and Bun", async () => {
     const fixture =
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
@@ -277,29 +317,28 @@ describe("suite planning parity", () => {
     }
   });
 
-  it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
-    const paths = Array.from(
-      { length: 27 },
-      (_, index) =>
-        `src/example-${String(26 - index).padStart(2, "0")}.test.ts`,
-    );
-    const shards = await Promise.all(
-      Array.from(
-        { length: 8 },
+  for (
+    const [suite, total] of [["coverage:unit", 16], [
+      "runtime:node",
+      4,
+    ]] as const
+  ) {
+    it(`keeps all ${suite} files exactly once across ${total} nonempty shards`, async () => {
+      const original = await planSuiteFiles({ suite });
+      const shards = Array.from(
+        { length: total },
         (_, index) =>
-          planSuiteFiles({
-            suite: "coverage:unit",
-            paths,
-            shard: { index: index + 1, total: 8 },
-          }),
-      ),
-    );
-    const flattened = shards.flatMap((plan) => plan.files);
-
-    assertEquals(new Set(flattened).size, paths.length);
-    assertEquals(sorted(flattened), sorted(paths));
-    for (const plan of shards) assertEquals(plan.files, sorted(plan.files));
-  });
+          selectOrdinalShard(original.files, { index: index + 1, total }),
+      );
+      const flattened = shards.flat();
+      assertEquals(sorted(flattened), original.files);
+      assertEquals(new Set(flattened).size, flattened.length);
+      for (const shard of shards) {
+        assert(shard.length > 0);
+        assertEquals(shard, sorted(shard));
+      }
+    });
+  }
 
   it("balances recorded durations deterministically without dropping files", () => {
     const files = ["a", "b", "c", "d", "e", "new"];
@@ -470,9 +509,10 @@ describe("migration command surface", () => {
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
   });
 
-  it("gives cwd-mutating fixtures their own process without serializing peers", () => {
+  it("gives process-sensitive fixtures their own process without serializing peers", () => {
     const mutators = [
       ...UNIT_CWD_FILES,
+      "cli/commands/dev/dev-output.integration.test.ts",
       "tests/integration/adapters/shell-adapter.test.ts",
       "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
       "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
@@ -500,6 +540,32 @@ describe("migration command surface", () => {
       DENO_SUITE_PROFILES["unit:cwd-exclusion"].env.DENO_JOBS,
       "2",
       "the two-file exclusion probe must overlap even when the parent suite uses DENO_JOBS=1",
+    );
+  });
+
+  it("runs the binary e2e files together unless the caller bounds DENO_JOBS", () => {
+    assertEquals(buildDenoSuiteProcessEnv("e2e:binary", {}).DENO_JOBS, "4");
+    assertEquals(
+      buildDenoSuiteProcessEnv("e2e:binary", { DENO_JOBS: "1" }).DENO_JOBS,
+      "1",
+    );
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:cwd-exclusion", { DENO_JOBS: "1" })
+        .DENO_JOBS,
+      "2",
+    );
+  });
+
+  it("gives every binary e2e invocation its own run id", () => {
+    const first = buildDenoSuiteProcessEnv("e2e:binary", {
+      VERYFRONT_BINARY_E2E_RUN_ID: "inherited",
+    }).VERYFRONT_BINARY_E2E_RUN_ID;
+    const second = buildDenoSuiteProcessEnv("e2e:binary", {})
+      .VERYFRONT_BINARY_E2E_RUN_ID;
+    assert(first && second && first !== second && first !== "inherited");
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:serial", {}).VERYFRONT_BINARY_E2E_RUN_ID,
+      undefined,
     );
   });
 
@@ -863,7 +929,7 @@ async function legacyIntegrationRootFiles(): Promise<string[]> {
       .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !path.startsWith("tests/integration/compiled-binary-e2e.")
       ),
   );
 }
@@ -905,7 +971,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
+      "tests/integration/agent/external-worker-client-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
@@ -919,6 +988,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
@@ -934,7 +1004,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
+      "tests/integration/agent/external-worker-client-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
@@ -948,6 +1021,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

@@ -102,6 +102,7 @@ async function lintScaffold(projectDir: string): Promise<string[]> {
  * `/C:/repo/deno.json`, which `deno` cannot open.
  */
 const REPO_CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
+const SCAFFOLD_LOCK = fromFileUrl(new URL("./scaffold-quality.deno.lock", import.meta.url));
 
 /**
  * Framework definitions outside the client app.
@@ -248,10 +249,17 @@ describe("scaffolded integrations", () => {
       const files = await scaffoldIntegrations(rootDir);
       assertEquals(files.some((file) => file.endsWith("/neon/lib/neon-client.ts")), true);
       assertEquals(
-        // The scaffolds' own npm packages resolve from Deno's global cache, so
-        // they neither touch the lockfile nor land in the repo's node_modules,
-        // where their types would leak into the other checks.
-        await typeCheckFiles(rootDir, files, ["--no-lock", "--node-modules-dir=none"]),
+        // Keep scaffold dependencies separate from the framework lock and
+        // node_modules. Extend this graph deliberately with
+        // VERYFRONT_UPDATE_SCAFFOLD_LOCK=1 deno task test:file templates/scaffold-quality.test.ts.
+        // New entries must clear a seven-day age floor; CI only reads the frozen graph.
+        await typeCheckFiles(rootDir, files, [
+          `--lock=${SCAFFOLD_LOCK}`,
+          ...(Deno.env.get("VERYFRONT_UPDATE_SCAFFOLD_LOCK") === "1"
+            ? ["--frozen=false", "--minimum-dependency-age=P7D"]
+            : ["--frozen"]),
+          "--node-modules-dir=none",
+        ]),
         "",
         "every `veryfront init --integrations <name>` scaffold must type-check",
       );

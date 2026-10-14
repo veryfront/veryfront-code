@@ -1,3 +1,4 @@
+import { isPersistedReasoningPart } from "./streamed-assistant-message.ts";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { isTerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -1315,9 +1316,8 @@ export function processStreamInternal(
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never
         // executes and its card is stranded at input-available.
         const wouldTimeOutIdle = !hasActiveLocalToolInput && !shouldStopForCommittedLocalToolCall;
-        // Cloud completion is bounded by the provider HTTP deadline and caller
-        // signal. Short compatibility idle windows must not cancel its request
-        // before the provider emits final metadata and usage.
+        // Hosted streams wait for terminal metadata within the provider deadline and
+        // caller signal, rather than the short local-model compatibility idle windows.
         const next = callbacks?.streamRequiresFinish && !sawProviderFinishPart
           ? await awaitAbortable(
             readNextStreamPart(streamIterator, state, abortSignal),
@@ -1362,6 +1362,14 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state, abortSignal);
         throwIfAborted(abortSignal);
         if (next === "timeout") {
+          if (
+            wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
+            !somePrivateArray(state.reasoningParts, isPersistedReasoningPart)
+          ) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream timed out before producing output"),
+            );
+          }
           if (
             callbacks?.requireProviderFinish && !sawProviderFinishPart &&
             somePrivateArray(

@@ -85,6 +85,58 @@ function installDom(): { host: HTMLElement; restore: () => void } {
 }
 
 describe("ToolCall", () => {
+  for (const name of ["load_skill", "load_skill_reference", "execute_skill_script"]) {
+    for (const prefix of ["", "veryfront__"]) {
+      it(`renders ${prefix}${name} as a compact skill row`, () => {
+        const tool: ChatDynamicToolPart = {
+          ...skillTool,
+          toolName: `${prefix}${name}`,
+          input: { skillId: "review", reference: "assets/spec.md", script: "build.sh" },
+        };
+        const html = renderToString(<ToolCall tool={tool} defaultExpanded />);
+        assertEquals(html.includes("Parameters"), false);
+        assertEquals(html.includes('aria-expanded="true"'), false);
+        assertStringIncludes(html, "review");
+      });
+    }
+  }
+
+  it("renders provider-safe nested skill load input in the compact skill row", () => {
+    const tool: ChatDynamicToolPart = {
+      ...skillTool,
+      toolName: "veryfront__load_skill",
+      input: { load: { skillId: "invoice" } },
+    };
+    const html = renderToString(<ToolCall tool={tool} defaultExpanded />);
+    assertEquals(html.includes("Parameters"), false);
+    assertEquals(html.includes("unknown"), false);
+    assertStringIncludes(html, "invoice");
+  });
+
+  it("renders canonical delegation and streamed child content in the child-agent card", () => {
+    const tool: ChatDynamicToolPart = { ...invokeAgentTool, toolName: "veryfront__invoke_agent" };
+    const message = {
+      ...runningInvokeAgentMessage,
+      parts: [tool, {
+        type: "data-veryfront.invoke_agent.stream" as const,
+        data: {
+          toolCallId: tool.toolCallId,
+          agentId: "case-ingest",
+          event: { type: "text-delta", delta: "Canonical child work in progress." },
+        },
+      }],
+    };
+    const html = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={tool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Running");
+    assertStringIncludes(html, "Canonical child work in progress.");
+    assertEquals(html.includes("Parameters"), false);
+  });
+
   it("renders invoke_agent as a child-agent card by default", () => {
     const html = renderToString(<ToolCall tool={invokeAgentTool} className="custom-card" />);
 

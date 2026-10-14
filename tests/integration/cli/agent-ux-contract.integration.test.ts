@@ -13,6 +13,13 @@ const repoRoot = fromFileUrl(new URL("../../..", import.meta.url));
 const cliPath = fromFileUrl(new URL("../../../cli/main.ts", import.meta.url));
 const configPath = fromFileUrl(new URL("../../../deno.json", import.meta.url));
 
+function removeDenoDependencyDownloads(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => line.length > 0 && !line.startsWith("Download https://registry.npmjs.org/"))
+    .join("\n");
+}
+
 async function runCli(args: string[]): Promise<CliResult> {
   const tempDir = await makeTempDir({ prefix: "cli-agent-ux-contract-" });
   const controller = new AbortController();
@@ -20,7 +27,7 @@ async function runCli(args: string[]): Promise<CliResult> {
 
   try {
     const result = await new Deno.Command(Deno.execPath(), {
-      args: ["run", "--frozen", "--allow-all", "--config", configPath, cliPath, ...args],
+      args: ["run", "--quiet", "--frozen", "--allow-all", "--config", configPath, cliPath, ...args],
       cwd: repoRoot,
       env: {
         VERYFRONT_API_TOKEN: "",
@@ -39,7 +46,7 @@ async function runCli(args: string[]): Promise<CliResult> {
     return {
       code: result.code,
       stdout: decoder.decode(result.stdout),
-      stderr: decoder.decode(result.stderr),
+      stderr: removeDenoDependencyDownloads(decoder.decode(result.stderr)),
     };
   } finally {
     clearTimeout(timeout);

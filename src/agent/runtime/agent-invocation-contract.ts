@@ -423,6 +423,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "forwardedProps must be less than 192 KB" },
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
   }).superRefine((input, ctx) => {
     if (input.sourceProject) {
@@ -567,6 +568,9 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   serverResolvedProviderReplayCheckpoints?: RuntimeAgentRunInvocation[
     "serverResolvedProviderReplayCheckpoints"
   ];
+  serverResolvedTrustedHostedHistoryMessageIds?: RuntimeAgentRunInvocation[
+    "serverResolvedTrustedHostedHistoryMessageIds"
+  ];
   resumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
 };
 
@@ -601,6 +605,12 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
     ...(input.serverResolvedProviderReplayCheckpoints !== undefined
       ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
+      : {}),
+    ...(input.serverResolvedTrustedHostedHistoryMessageIds !== undefined
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          input.serverResolvedTrustedHostedHistoryMessageIds,
+      }
       : {}),
     ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   };

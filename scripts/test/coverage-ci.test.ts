@@ -1,11 +1,18 @@
 import { fromFileUrl } from "#std/path";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  annotateLcovWorkspace,
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
   LOOPBACK_ALLOW_NET,
   mergeLcovReports,
+  normalizeLcovArtifacts,
+  normalizeLcovSourcePaths,
 } from "./coverage-ci.ts";
 
 /**
@@ -51,8 +58,14 @@ describe("coverage CI command", () => {
 
     // The unit suite runs cli/ tests on every shard; before cli/ was included
     // here that coverage was collected and then dropped at report time.
-    assert(args.includes("--include=src/"));
-    assert(args.includes("--include=cli/"));
+    const patterns = args.filter((arg) => arg.startsWith("--include="))
+      .map((arg) => new RegExp(arg.slice("--include=".length)));
+    const root = new URL("../../", import.meta.url).href;
+    assert(patterns.some((pattern) => pattern.test(`${root}src/task.ts`)));
+    assert(patterns.some((pattern) => pattern.test(`${root}cli/router.ts`)));
+    assert(
+      !patterns.some((pattern) => pattern.test("file:///cache/src/task.ts")),
+    );
   });
 
   it("keeps published modules whose name contains 'tests'", () => {
@@ -285,6 +298,423 @@ describe("mergeLcovReports", () => {
         "LF:1",
         "end_of_record",
       ].join("\n"),
+    );
+  });
+});
+
+describe("coverage source paths", () => {
+  it("maps verified checkout files across producer roots without changing coverage records", () => {
+    const roots = [
+      "/home/runner/work/veryfront-code/veryfront-code",
+      "/home/runner/_work/veryfront-code/veryfront-code",
+      "C:\\runner\\veryfront-code",
+    ];
+    const records =
+      "\nFN:10,run\nFNDA:2,run\nDA:10,2\nBRDA:10,0,0,2\nBRDA:10,0,1,-\nend_of_record\n";
+    for (const root of roots) {
+      const separator = root.includes("\\") ? "\\" : "/";
+      const report = `SF:${root}${separator}src${separator}task.ts${records}`;
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          roots,
+          (path) => path === "src/task.ts",
+        ),
+        `SF:src/task.ts${records}`,
+      );
+    }
+  });
+
+  it("recognizes only supported legacy runner roots and retains extension records", () => {
+    for (
+      const root of [
+        "/home/runner/work/veryfront-code/veryfront-code",
+        "/home/runner/_work/veryfront-code/veryfront-code",
+        "D:/a/veryfront-code/veryfront-code",
+      ]
+    ) {
+      const source =
+        "extensions/ext-document-kreuzberg/src/node-native-extraction.ts";
+      const records = "\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n";
+      assertEquals(
+        normalizeLcovSourcePaths(`SF:${root}/${source}${records}`, [
+          "/aggregator/repo",
+        ], (path) => path === source),
+        `SF:${source}${records}`,
+      );
+    }
+  });
+
+  it("coalesces the same source across checkout roots without losing hits", () => {
+    const roots = ["/hosted/repo", "/self-hosted/repo"];
+    const reports = roots.map((root, index) =>
+      `SF:${root}/src/task.ts\r\nDA:10,${index + 1}\r\nBRDA:10,0,0,${
+        index + 1
+      }\r\nend_of_record\r\n`
+    );
+    const normalized = reports.map((report) =>
+      normalizeLcovSourcePaths(report, roots, (path) => path === "src/task.ts")
+    );
+    assert(normalized.every((report) => report.includes("\r\n")));
+    const merged = mergeLcovReports(normalized);
+    assertEquals(merged.match(/^SF:/gm)?.length, 1);
+    assert(merged.includes("DA:10,3\n"));
+    assert(merged.includes("BRDA:10,0,0,3\n"));
+  });
+
+  it("maps GitHub checkout roots without producer provenance", () => {
+    const report = [
+      "SF:/home/runner/work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+      "DA:10,2",
+      "BRDA:10,0,0,1",
+      "end_of_record",
+      "SF:/home/runner/_work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+      "DA:10,3",
+      "BRDA:10,0,1,2",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/local/checkout"],
+        (path) => path === "scripts/test/coverage-ci.ts",
+      ),
+      [
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:10,2",
+        "BRDA:10,0,0,1",
+        "end_of_record",
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:10,3",
+        "BRDA:10,0,1,2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("drops generated Veryfront cache records without dropping source records", () => {
+    const report = [
+      "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+      "DA:1,99",
+      "BRDA:1,0,0,99",
+      "end_of_record",
+      "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+      "DA:2,7",
+      "BRDA:2,0,0,7",
+      "end_of_record",
+      "SF:src/eval/runner.ts",
+      "DA:3,3",
+      "BRDA:3,0,0,1",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/local/checkout"],
+        (path) => path === "src/eval/runner.ts",
+      ),
+      [
+        "SF:src/eval/runner.ts",
+        "DA:3,3",
+        "BRDA:3,0,0,1",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps sources of a producer checkout located under a cache-shaped path", () => {
+    const report = [
+      "SF:/home/runner/.cache/veryfront/checkout/src/server/entry.mjs",
+      "DA:1,4",
+      "end_of_record",
+      "SF:/home/runner/.cache/veryfront/checkout/.cache/veryfront/src/page.tsx.mjs",
+      "DA:2,5",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/home/runner/.cache/veryfront/checkout"],
+        (path) => path === "src/server/entry.mjs",
+      ),
+      ["SF:src/server/entry.mjs", "DA:1,4", "end_of_record"].join("\n"),
+    );
+  });
+
+  it("rejects checkout escapes before classifying generated cache records", () => {
+    for (
+      const source of [
+        "/checkout/../.cache/veryfront/hidden.mjs",
+        "/checkout/.cache/veryfront/../../../.cache/veryfront/hidden.mjs",
+        "C:\\checkout\\..\\.cache\\veryfront\\hidden.mjs",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:1,4\nend_of_record`, [
+            "/checkout",
+            "C:/checkout",
+          ], () => false),
+        Error,
+        "LCOV source path escapes the project",
+      );
+    }
+  });
+
+  it("rejects escapes in legacy checkout paths without producer provenance", () => {
+    for (
+      const source of [
+        "/home/runner/work/code/code/../.cache/veryfront/hidden.mjs",
+        "C:/a/code/code/../.cache/veryfront/hidden.mjs",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:1,4\nend_of_record`, [
+            "/aggregator",
+          ], () => false),
+        Error,
+        "LCOV source path escapes the project",
+      );
+    }
+  });
+
+  it("classifies cache paths only after resolving in-checkout dot segments", () => {
+    const report =
+      "SF:/checkout/.cache/veryfront/../../src/main.mjs\nDA:1,4\nend_of_record";
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/checkout"],
+        (path) => path === "src/main.mjs",
+      ),
+      "SF:src/main.mjs\nDA:1,4\nend_of_record",
+    );
+  });
+
+  it("uses the most-specific verified producer root regardless of root ordering", () => {
+    for (
+      const roots of [["/checkout", "/checkout/.cache/veryfront/producer"], [
+        "/checkout/.cache/veryfront/producer",
+        "/checkout",
+      ]]
+    ) {
+      const report = [
+        "SF:/checkout/.cache/veryfront/producer/src/main.mjs",
+        "DA:1,4",
+        "end_of_record",
+        "SF:/checkout/.cache/veryfront/producer/.cache/veryfront/generated.mjs",
+        "DA:2,5",
+        "end_of_record",
+      ].join("\n");
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          roots,
+          (path) => path === "src/main.mjs",
+        ),
+        "SF:src/main.mjs\nDA:1,4\nend_of_record",
+      );
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(
+            "SF:/checkout/.cache/veryfront/producer/src/missing.ts\nDA:1,4",
+            roots,
+            () => false,
+          ),
+        Error,
+        "LCOV source path does not exist",
+      );
+    }
+  });
+
+  it("drops generated cache records across runner homes and path separators", () => {
+    for (
+      const cacheRoot of [
+        "/home/veryfront/.cache/veryfront",
+        "/Users/developer/.cache/veryfront",
+        "C:\\Users\\runner\\.cache\\veryfront",
+      ]
+    ) {
+      const report = [
+        `SF:${cacheRoot}/veryfront-mdx-esm/build/page.tsx.mjs`,
+        "DA:1,99",
+        "end_of_record",
+        `SF:${cacheRoot}/src/app/page.tsx.mjs`,
+        "DA:2,7",
+        "end_of_record",
+        "SF:src/task.ts",
+        "DA:3,3",
+        "end_of_record",
+      ].join("\n");
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          ["/local/checkout"],
+          (path) => path === "src/task.ts",
+        ),
+        "SF:src/task.ts\nDA:3,3\nend_of_record",
+      );
+    }
+  });
+
+  it("preserves verified relative paths and rejects foreign or nonexistent sources", () => {
+    const root = "/home/runner/_work/veryfront-code/veryfront-code";
+    const exists = (path: string) => path === "src/task.ts";
+    const relative = "SF:src/task.ts\nDA:10,2\nend_of_record\n";
+    assertEquals(normalizeLcovSourcePaths(relative, [root], exists), relative);
+    for (
+      const source of [
+        "/home/runner/.cache/veryfront/src/task.ts",
+        "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
+        "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
+        "/foreign/src/task.ts",
+        "/home/veryfront/.cache/veryfront/src/task.ts",
+        "/home/veryfront/.cache/veryfront-other/src/task.mjs",
+        "src/.cache/veryfront/task.mjs",
+        `${root}-other/src/task.ts`,
+        `${root}/src/missing.ts`,
+        `${root}/../outside.ts`,
+        "../src/task.ts",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:10,2\n`, [root], exists),
+        Error,
+        "LCOV source",
+      );
+    }
+  });
+
+  it("fails closed when checkout source paths cannot be verified", () => {
+    const root = "/home/runner/_work/veryfront-code/veryfront-code";
+
+    assertThrows(
+      () =>
+        normalizeLcovSourcePaths(
+          `SF:${root}/src/missing.ts\nDA:10,2\nend_of_record\n`,
+          [root],
+          (path) => path === "src/task.ts",
+        ),
+      Error,
+      "LCOV source path does not exist in the project: src/missing.ts",
+    );
+
+    assertThrows(
+      () =>
+        normalizeLcovSourcePaths(
+          `SF:${root}/../outside.ts\nDA:10,2\nend_of_record\n`,
+          [root],
+          () => true,
+        ),
+      Error,
+      "LCOV source path escapes the project",
+    );
+  });
+});
+
+describe("coverage artifact producer provenance", () => {
+  it("uses the actual custom producer workspace for primary and nested reports only", () => {
+    const root = "/custom/runner/checkouts/repo";
+    const record =
+      `SF:${root}/src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n`;
+    const reports = [
+      {
+        path: "coverage-profiles/shard-1/lcov.info",
+        content: annotateLcovWorkspace(record, root),
+      },
+      { path: "coverage-profiles/shard-1/history/lcov.info", content: record },
+      { path: "coverage-profiles/shard-1/cli/lcov.info", content: record },
+      { path: "coverage-profiles/shard-10/lcov.info", content: record },
+    ];
+    const normalized = normalizeLcovArtifacts(
+      reports.slice(0, 3),
+      "/aggregator/repo",
+      (source) => source === "src/task.ts",
+    );
+    for (const report of normalized.slice(0, 3)) {
+      assert(
+        report.includes(
+          "SF:src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n",
+        ),
+      );
+    }
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          reports,
+          "/aggregator/repo",
+          (source) => source === "src/task.ts",
+        ),
+      Error,
+      "LCOV source",
+    );
+  });
+  it("rejects invalid or conflicting provenance without borrowing sibling roots", () => {
+    const root = "/custom/checkouts/repo";
+    for (
+      const invalid of [
+        "/",
+        "C:/",
+        "relative/repo",
+        "/custom/../repo",
+        "C:\\runner\\..\\repo",
+      ]
+    ) {
+      assertThrows(
+        () => annotateLcovWorkspace("SF:src/task.ts\n", invalid),
+        Error,
+        "Invalid",
+      );
+    }
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          [
+            {
+              path: "artifacts/shard/lcov.info",
+              content: "# veryfront-coverage-workspace: invalid-json\n",
+            },
+          ],
+          "/aggregator/repo",
+          () => true,
+        ),
+      Error,
+      "Invalid",
+    );
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          [
+            {
+              path: "artifacts/shard/lcov.info",
+              content: annotateLcovWorkspace("", root),
+            },
+            {
+              path: "artifacts/shard/history/lcov.info",
+              content: annotateLcovWorkspace("", "/different/repo"),
+            },
+          ],
+          "/aggregator/repo",
+          () => true,
+        ),
+      Error,
+      "Conflicting",
+    );
+    const native = "SF:src/native.ts\nDA:2,4\nend_of_record\n";
+    assertEquals(
+      normalizeLcovArtifacts(
+        [
+          { path: "artifacts/native/lcov.info", content: native },
+        ],
+        "/aggregator/repo",
+        (source) => source === "src/native.ts",
+      ),
+      [native],
     );
   });
 });

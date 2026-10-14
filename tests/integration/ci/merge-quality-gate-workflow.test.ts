@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
+import { normalizeLcovSourcePaths } from "../../../scripts/test/coverage-ci.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -74,10 +76,11 @@ function asRecord(value: unknown, context: string): YamlRecord {
 }
 
 async function readWorkflow(): Promise<YamlRecord> {
-  return asRecord(
+  const workflow = asRecord(
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "cicd workflow",
   );
+  return { ...workflow, jobs: await inlinePublicPoolJobs(workflow) };
 }
 
 async function readRepoFile(path: string): Promise<string> {
@@ -261,6 +264,10 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(String(run.run), "planIntegrationShard({ index, total: 3 })");
     assertStringIncludes(String(run.run), "DENO_SUITE_PROFILES[suite]");
     assertStringIncludes(String(run.run), "buildDenoSuiteCommandArgs(suite, files");
+    // The shard must execute the reviewed dependency graph, not resolve new
+    // transitive versions that can conflict with the dependency-age policy.
+    assertStringIncludes(String(run.run), 'passthroughArgs: ["--frozen"]');
+    assertEquals(String(run.run).includes("--no-lock"), false);
     assertStringIncludes(String(run.run), "buildTestProcessEnv(Deno.env.toObject(), profile.env)");
     assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
     const aggregate = asRecord(jobs.tests, "integration aggregate");
@@ -461,10 +468,10 @@ describe("merge quality gate workflow", () => {
     const mergeIndex = producerSteps.findIndex((step) =>
       step.name === "Merge coverage reports for SonarQube"
     );
-    const normalizeIndex = producerSteps.findIndex((step) => step.name === "Normalize lcov paths");
     const uploadIndex = producerSteps.findIndex((step) =>
       step.name === "Upload merged Sonar coverage"
     );
+    const coverageScript = await readRepoFile("scripts/test/coverage-ci.ts");
 
     assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
       actions: "read",
@@ -519,7 +526,7 @@ describe("merge quality gate workflow", () => {
     );
     assert(
       mergeIndex > setupIndex,
-      "sonar coverage must merge every report before normalizing",
+      "sonar coverage must merge and normalize every report before upload",
     );
     const mergeRun = String(producerSteps[mergeIndex].run);
     assertStringIncludes(
@@ -536,19 +543,57 @@ describe("merge quality gate workflow", () => {
       "coverage-profiles/coverage-integration-client",
     );
     assert(
-      normalizeIndex > mergeIndex,
-      "sonar coverage must normalize merged coverage",
+      !producerSteps.some((step) => step.name === "Normalize lcov paths"),
+      "sonar coverage path normalization must stay inside the merge task",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      'sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|"',
+      coverageScript,
+      "export function normalizeLcovSourcePaths",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      "coverage/lcov.info",
+      coverageScript,
+      String.raw`/^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/`,
+    );
+    assertStringIncludes(
+      coverageScript,
+      "function githubWorkspaceRoots",
+    );
+    assertEquals(
+      normalizeLcovSourcePaths(
+        [
+          "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+          "DA:1,99",
+          "end_of_record",
+          "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+          "DA:2,7",
+          "end_of_record",
+          "SF:/home/runner/_work/veryfront-code/veryfront-code/src/eval/runner.ts",
+          "DA:3,5",
+          "end_of_record",
+        ].join("\n"),
+        ["/local/checkout"],
+        (path) => path === "src/eval/runner.ts",
+      ),
+      [
+        "SF:src/eval/runner.ts",
+        "DA:3,5",
+        "end_of_record",
+      ].join("\n"),
+    );
+    assertStringIncludes(
+      coverageScript,
+      "normalizeLcovArtifacts(",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "checkoutSourceExists",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "LCOV source path does not exist in the project",
     );
     assert(
-      uploadIndex > normalizeIndex,
+      uploadIndex > mergeIndex,
       "sonar coverage must upload the normalized report",
     );
     assertEquals(
@@ -773,6 +818,56 @@ done
     assertEquals(config.exclude, ["node_modules", "dist", ".cache", "npm"]);
   });
 
+  it("collects context ownership coverage in the head-owned Sonar job while keeping the pool trusted", async () => {
+    const jobs = asRecord(
+      asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow").jobs,
+      "jobs",
+    );
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards");
+    assertEquals(shards.uses, "veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main");
+    const sonar = asRecord(jobs["sonar-coverage"], "Sonar coverage");
+    assert(Array.isArray(sonar.steps));
+    const steps = sonar.steps.map((step) => asRecord(step, "Sonar coverage step"));
+    const collectorIndex = steps.findIndex((step) =>
+      step.name === "Collect context ownership coverage from checked-out source"
+    );
+    const mergeIndex = steps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
+    assert(
+      collectorIndex >= 0 && collectorIndex < mergeIndex,
+      "Head-owned tests must produce raw coverage before the final merge",
+    );
+    const collector = steps[collectorIndex];
+    const merge = steps[mergeIndex];
+    assert(collector);
+    assert(merge);
+    const command = String(collector.run);
+    assertStringIncludes(
+      command,
+      "deno task test:file --coverage=coverage-profiles/coverage-context-ownership",
+    );
+    for (
+      const target of [
+        "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+        "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+      ]
+    ) assertStringIncludes(command, target);
+    assertStringIncludes(
+      command,
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(command.includes("coverage:ci:merge"), false);
+    assertStringIncludes(
+      String(merge.run),
+      "coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(
+      steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
+      1,
+    );
+  });
+
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
@@ -783,6 +878,14 @@ done
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+    );
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+    );
     assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
     assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
     const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
@@ -918,8 +1021,8 @@ done
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
-    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
+    assertEquals(matrix.shard, Array.from({ length: 16 }, (_, i) => i + 1));
+    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/16");
     assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     const steps = (coverageShards.steps as unknown[]).map((step) =>
       asRecord(step, "coverage shard step")
@@ -928,7 +1031,7 @@ done
     assert(run, "every shard must execute the coverage suite");
     assertStringIncludes(
       String(run.run),
-      "--shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "--shard=${{ matrix.shard }}/16 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     const codecov = asRecord(jobs["codecov-upload"], "codecov job");
     const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
@@ -939,10 +1042,20 @@ done
       "coverage-profiles/coverage-shard-1/lcov.info",
       "coverage-profiles/coverage-shard-1/history/lcov.info",
       "coverage-profiles/coverage-shard-1/cli/lcov.info",
-      ...[2, 3, 4, 5, 6, 7, 8].map((shard) =>
+      ...Array.from({ length: 15 }, (_, i) => i + 2).map((shard) =>
         `coverage-profiles/coverage-shard-${shard}/lcov.info`
       ),
     ]);
+    const testedRun = asRecord(jobs["tested-run"], "tested-run job");
+    const decide = (testedRun.steps as unknown[])
+      .map((step) => asRecord(step, "tested-run step"))
+      .find((step) => step.id === "decide");
+    assert(decide, "reuse must verify every coverage artifact");
+    const artifacts = String(decide.run).match(/\bcoverage-shard-\d+\b/g);
+    assertEquals(
+      artifacts,
+      Array.from({ length: 16 }, (_, i) => `coverage-shard-${i + 1}`),
+    );
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
@@ -1304,4 +1417,90 @@ describe("trusted merge-group cancellation workflow", () => {
       await Deno.remove(directory, { recursive: true });
     }
   });
+});
+
+it("merge-group binary e2e owns its process group and preserves other event behavior", async () => {
+  const workflow = asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+  const job = asRecord(asRecord(workflow.jobs, "jobs")["tests-binary-e2e"], "binary e2e");
+  const steps = (job.steps as unknown[]).map((step) => asRecord(step, "step"));
+  const native = steps.find((step) => step.name === "Run cancellable binary e2e");
+  assert(native, "merge-group binary e2e must use a native cancellable step");
+  assertEquals(native.if, "${{ github.event_name == 'merge_group' }}");
+  assertEquals(native["timeout-minutes"], 30);
+  assertEquals(native.shell, "bash");
+  const script = String(native.run);
+  for (
+    const requirement of [
+      "start_new_session=True",
+      "signal.SIGINT",
+      "signal.SIGTERM",
+      "os.killpg",
+      "signal.SIGKILL",
+      "VERYFRONT_BINARY_FRESH",
+      "test:e2e:binary",
+    ]
+  ) {
+    assertStringIncludes(script, requirement);
+  }
+  const retry = steps.find((step) => String(step.uses).startsWith("nick-fields/retry@"));
+  assert(retry);
+  assertEquals(retry.if, "${{ github.event_name != 'merge_group' }}");
+  assertEquals(retry.with, {
+    timeout_minutes: 30,
+    max_attempts: 2,
+    retry_wait_seconds: 30,
+    command: "VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary\n",
+  });
+});
+
+it("binary e2e cancellation stops signal-ignoring descendants and preserves exit codes", async () => {
+  const workflow = asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+  const job = asRecord(asRecord(workflow.jobs, "jobs")["tests-binary-e2e"], "binary e2e");
+  const step = (job.steps as YamlRecord[]).find((step) =>
+    step.name === "Run cancellable binary e2e"
+  );
+  assert(step, "cancellation supervisor must exist");
+  const script = String(step.run);
+  assert(script.startsWith("exec python3 -u - <<'PY'\n"));
+  const harness = String.raw`
+import os, pathlib, select, signal, subprocess, sys, tempfile, time
+
+step_script = sys.argv[1]
+temp_parent = "/private/tmp" if sys.platform == "darwin" and pathlib.Path("/private/tmp").is_dir() else None
+with tempfile.TemporaryDirectory(dir=temp_parent) as directory:
+    deno = pathlib.Path(directory) / "deno"
+    env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
+    def fixture(body):
+        deno.write_text("#!" + sys.executable + "\n" + body)
+        deno.chmod(0o755)
+    for code in (0, 17):
+        fixture("import os, sys\nassert os.environ['VERYFRONT_BINARY_FRESH'] == '1'\nassert sys.argv[1:] == ['task', 'test:e2e:binary']\nsys.exit(" + str(code) + ")\n")
+        result = subprocess.run(["bash", "-c", step_script], env=env, timeout=10)
+        assert result.returncode == code, result.returncode
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        descendant = "import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(120)"
+        fixture("import signal,subprocess,sys,time\nsignal.signal(signal.SIGINT,signal.SIG_IGN)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nsubprocess.Popen([sys.executable,'-u','-c'," + repr(descendant) + "])\ntime.sleep(120)\n")
+        process = subprocess.Popen(["bash", "-c", step_script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            assert select.select([process.stdout], [], [], 10)[0], "descendant not ready"
+            assert process.stdout.readline().strip() == "ready"
+            started = time.monotonic()
+            process.send_signal(signum)
+            # EOF requires both descendants to release their inherited pipes.
+            output, errors = process.communicate(timeout=5)
+            assert process.returncode == 128 + signum, (process.returncode, errors)
+            assert time.monotonic() - started < 5
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+print("success, failure, SIGINT, SIGTERM: passed")
+`;
+  const result = await new Deno.Command("bash", {
+    args: ["-c", 'exec python3 -c "$1" "$2"', "binary-e2e-fixture", harness, script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+  assertStringIncludes(new TextDecoder().decode(result.stdout), "SIGTERM: passed");
 });

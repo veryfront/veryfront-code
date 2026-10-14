@@ -1,3 +1,4 @@
+import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "./tool-result-ownership.ts";
 import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -83,6 +84,7 @@ export function serializeConversationToolResultContent(value: unknown): {
 
 /**
  * Carry a chunk's provider-execution marker into the durable record.
+ * Explicit false preserves local ownership when a later result marks itself provider-executed.
  *
  * The version 1 reader replays a stored result as a provider tool result only
  * when the durable call records that it was provider-executed; a call that
@@ -93,8 +95,9 @@ export function serializeConversationToolResultContent(value: unknown): {
  */
 function providerExecutionMarker(
   chunk: { providerExecuted?: boolean },
-): { providerExecuted?: true } {
-  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
+): { providerExecuted?: boolean } {
+  const providerExecuted = chunk.providerExecuted;
+  return typeof providerExecuted === "boolean" ? { providerExecuted } : {};
 }
 
 function encodeCustomDataEvent(
@@ -102,7 +105,7 @@ function encodeCustomDataEvent(
   parentMessageId: string | null,
 ): ConversationRunEvent[] {
   const name = chunk.type.slice("data-".length);
-  if (name.length === 0) {
+  if (name.length === 0 || name === TOOL_RESULT_OWNERSHIP_CORRECTION) {
     return [];
   }
 
@@ -141,6 +144,8 @@ export class ConversationRunEventEncoder {
   private readonly toolInputs = new Map<string, unknown>();
   private activeMessageId: string | null = null;
   private activeTextContentId: string | null = null;
+  private readonly openReasoningContentIds = new Map<string, string>();
+  private readonly reasoningSegmentCounts = new Map<string, number>();
   private textContentIndex = 0;
   private activeStepName: string | null = null;
   private activeStepId: string | null = null;
@@ -239,11 +244,27 @@ export class ConversationRunEventEncoder {
     };
   }
 
-  private getReasoningMessagePayload(chunk: { id: string }) {
-    return {
-      messageId: this.activeMessageId ?? chunk.id,
-      contentId: chunk.id,
-    };
+  // A reasoning segment is identified by its ordinal under the assistant message,
+  // `<messageId>:reasoning:<n>`, not by the provider's block id: providers restart
+  // block ids (`thinking-0`) every step, so the provider id collides across a
+  // multi-step run. veryfront-api derives the reasoning span from this content id,
+  // and the live AG-UI encoder numbers the same segments the same way.
+  private getReasoningMessagePayload(chunk: {
+    type: "reasoning-start" | "reasoning-delta" | "reasoning-end";
+    id: string;
+  }) {
+    const messageId = this.activeMessageId ?? chunk.id;
+    let contentId = this.openReasoningContentIds.get(chunk.id);
+    if (contentId === undefined) {
+      const ordinal = this.reasoningSegmentCounts.get(messageId) ?? 0;
+      this.reasoningSegmentCounts.set(messageId, ordinal + 1);
+      contentId = `${messageId}:reasoning:${ordinal}`;
+      this.openReasoningContentIds.set(chunk.id, contentId);
+    }
+    if (chunk.type === "reasoning-end") {
+      this.openReasoningContentIds.delete(chunk.id);
+    }
+    return { messageId, contentId };
   }
 
   // Tool call state is only needed until the call resolves; keeping it for the
@@ -341,6 +362,9 @@ export class ConversationRunEventEncoder {
         }];
 
       case "reasoning-end":
+        // An end with no segment open has nothing to close; emitting one would consume
+        // an ordinal and shift every later segment's id.
+        if (!this.openReasoningContentIds.has(chunk.id)) return [];
         return [{
           type: conversationRunEventTypes.reasoningMessageEnd,
           ...this.getReasoningMessagePayload(chunk),
@@ -460,6 +484,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           content: "Tool output denied",
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)

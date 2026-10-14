@@ -40,7 +40,14 @@ example. Read it in
 - **deferred**: the agent has no explicit `tools` binding. The model initially
   sees only `tool_search` plus the `load_skill` bootstrap tool when the run
   authorizes it. `form_input` remains authorized but deferred until a search
-  loads it. Bootstrap tools are filtered against the authorized set, so a run
+  loads it. When both `load_skill` and its `veryfront__load_skill` compatibility
+  name are authorized, only the canonical schema bootstraps; the compatibility
+  name remains searchable and can be loaded explicitly. A host exposing only the
+  compatibility name still bootstraps that loader. The runtime picks the loader
+  by framework provenance, not by name, so a project tool that owns either
+  loader name is never bootstrapped. Explicit bootstrap overrides
+  and eager bindings retain their declared tools. Bootstrap tools are filtered
+  against the authorized set, so a run
   that does not authorize `load_skill` exposes `tool_search` alone. That is why
   the measurement below reports one initially exposed tool. Its deterministic
   fixture authorizes exactly 64 generated tools and does not authorize
@@ -69,12 +76,49 @@ mechanism.
 
 ### `tool_search`
 
+Use one of two input forms:
+
+- `{"query":"get_agent"}` searches or loads an exact authorized executable tool.
+  Its input schema becomes visible on the next model step.
+- `{"inventory":{"limit":10}}` browses executable tool metadata without loading
+  schemas or changing exposure. Results distinguish `available` and `deferred`
+  tools. Follow `nextCursor` with `{"inventory":{"cursor":"10","limit":10}}`.
+  Page sizes range from 1 to 20, default 10. Descriptions are previews of at most
+  240 characters plus an ellipsis. Inventory does not inspect parameter schemas.
+
+Choose `query` or `inventory`, not both. Inventory contains only this run's
+provider-visible authorized tools, not project tool definitions. It preserves
+provider-hidden tool filtering and execution permissions. Use an exact returned
+name to load a deferred tool. A search miss directs the model to browse instead
+of repeatedly guessing resource display names. If the catalog changes and a
+cursor is outside the current inventory, restart without a cursor.
+
+For queries with three or more terms, a candidate supported only by parameter
+descriptions must match at least half the terms. One incidental field description
+does not identify a capability. Name and tool-description matches retain their
+existing ranking, including integration catalog navigation.
+
+### Bounded reference results
+
+Agents can enable `toolResultContext` to replace oversized tool results with a
+preview and a run-local retrieval reference. The runtime exposes `get_tool_result`
+only after a stored reference exists. Reads use bounded sections; events and
+persisted history retain the original result.
+
+Root skill instructions remain inline. Advertised reference-file results from
+`load_skill` and `veryfront__load_skill` follow the configured limits instead of
+bypassing them. Loading a reference still requires the parent skill and its
+authorized reference path. Result retrieval does not widen file access.
+
 - Schema-free results: `{ name, description, status: "available" | "loaded" }`.
   Input schemas are never returned by a search.
 - Searches the run's authorized catalog only, under the same project and
   integration gating as the eager path.
 - Deterministic, case-insensitive matching. Underscores are treated as spaces.
-  Ranking: exact name, then name substring, then description substring.
+  A literal exact name loads only that authorized tool. Capability phrases retain
+  broad matching ranked by name, then description and parameter descriptions.
+  An already-visible tool wins when it matches more strongly. Equally relevant
+  deferred tools still load, so a visible catalog reader does not hide actions.
 - Bounded on every axis: query bytes, candidate count, per-schema depth, node
   count and byte size, and total loaded schema budget. See the `TOOL_SEARCH_*`
   constants in `tool-exposure.ts`.
@@ -142,3 +186,8 @@ measurement against a 64-tool fixture on Anthropic:
   (`activatedRemoteToolNames`, `toolDiscoveryContext`, `pinnedToolNames`,
   `getActivatedToolNames`) are retained and marked deprecated, because removing
   them would silently widen the catalog for callers that rely on them.
+
+The skill loader keeps its provider schema stable across load states. A repeated
+skill body request returns a compact already-loaded marker, including when the
+skill has references. The runtime validates skill IDs and authorizes reference
+paths before reading files. Repeated body requests do not read or resend the body.

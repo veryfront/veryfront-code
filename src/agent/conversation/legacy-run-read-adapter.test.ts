@@ -698,7 +698,7 @@ describe("conversation run lifecycle read adapter", () => {
       ]);
       assertEquals(
         events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
-        providerExecuted ? true : undefined,
+        providerExecuted,
       );
       const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
       assertEquals(result.status, "ok");
@@ -712,6 +712,30 @@ describe("conversation run lifecycle read adapter", () => {
           (providerResults[0]?.event as { output?: unknown }).output,
           "Provider fetch failed",
         );
+        assertEquals((providerResults[0]?.event as { isError?: boolean }).isError, true);
+      }
+    }
+  });
+
+  it("replays provider ownership first learned on a version 1 denied result", () => {
+    for (const providerExecuted of [true, false]) {
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "tool-input-start", toolCallId: "fetch-1", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "fetch-1", toolName: "web_fetch", input: {} },
+        { type: "tool-output-denied", toolCallId: "fetch-1", providerExecuted },
+      ]);
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        providerExecuted,
+      );
+      const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return;
+      const providerResults = result.frames.filter((frame) =>
+        frame.event.type === "provider_tool_result"
+      );
+      assertEquals(providerResults.length, providerExecuted ? 1 : 0);
+      if (providerExecuted) {
         assertEquals((providerResults[0]?.event as { isError?: boolean }).isError, true);
       }
     }

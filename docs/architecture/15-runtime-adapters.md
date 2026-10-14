@@ -107,6 +107,14 @@ retained map. The read endpoint returns that history with a response limit of 1 
 The project and canonical branch scope are derived by the API, with the requested
 branch retained in the response for matching.
 
+The Veryfront filesystem reads the history through
+`VeryfrontApiClient.dependencies.getHistory({ branch, signal })`. The client
+checks that the response names the client's project and the requested branch.
+`VeryfrontApiClient.readDependencyMetadataHistory(branch, signal)` remains as a
+deprecated alias of `dependencies.getHistory`. The framework import rewriter
+posts its pins through a separate host-owned transport, not through
+`dependencies.resolve`, so the host-private token never reaches project code.
+
 The optional reader accepts an `AbortSignal`. The registry's five-second deadline
 aborts the underlying metadata request, so cooperative reads release their admission
 slots when the endpoint stalls. Concurrent keys from one source share the same

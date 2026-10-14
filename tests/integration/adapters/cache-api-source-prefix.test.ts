@@ -43,21 +43,29 @@ function createCacheApi() {
   const patterns: string[] = [];
   const fetchMock: typeof fetch = (input, init) => {
     const url = new URL(String(input));
-    const body = JSON.parse(String(observeFetchRequestInit(init).body ?? "{}"));
-    if (url.pathname.endsWith("/set")) {
-      assertEquals(isValidCacheKey(body.key), true, `API-unsafe key ${body.key}`);
-      entries.set(body.key, body.value);
-      return Promise.resolve(Response.json({ success: true }));
-    }
-    if (url.pathname.endsWith("/get")) {
+    const requestInit = observeFetchRequestInit(init);
+    const method = requestInit.method ?? "GET";
+    const body = JSON.parse(String(requestInit.body ?? "{}"));
+    const [, encodedKey] = url.pathname.split("/cache/entries/");
+    if (encodedKey !== undefined) {
+      const key = decodeURIComponent(encodedKey);
+      if (method === "PUT") {
+        assertEquals(isValidCacheKey(key), true, `API-unsafe key ${key}`);
+        entries.set(key, body.value);
+        return Promise.resolve(Response.json({ key, expires_at: null }));
+      }
+      assertEquals(method, "GET");
+      const value = entries.get(key) ?? null;
       return Promise.resolve(
-        Response.json({ value: entries.get(url.searchParams.get("key")!) ?? null }),
+        Response.json({ project_id: "p", key, found: value !== null, value, expires_at: null }),
       );
     }
-    assertEquals(url.pathname.endsWith("/del-pattern"), true);
-    assertEquals(isValidCachePattern(body.pattern), true, `API-unsafe glob ${body.pattern}`);
-    patterns.push(body.pattern);
-    const matcher = globToRegExp(body.pattern);
+    assertEquals(method, "DELETE");
+    assertEquals(url.pathname.endsWith("/cache/entries"), true);
+    const pattern = url.searchParams.get("pattern") ?? "";
+    assertEquals(isValidCachePattern(pattern), true, `API-unsafe glob ${pattern}`);
+    patterns.push(pattern);
+    const matcher = globToRegExp(pattern);
     let deleted = 0;
     for (const key of [...entries.keys()]) {
       if (matcher.test(key)) {
@@ -65,7 +73,7 @@ function createCacheApi() {
         deleted++;
       }
     }
-    return Promise.resolve(Response.json({ deleted }));
+    return Promise.resolve(Response.json({ pattern, status: "deleted", deleted_count: deleted }));
   };
   return { entries, patterns, fetchMock };
 }

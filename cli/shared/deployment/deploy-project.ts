@@ -1467,10 +1467,14 @@ type EnvironmentAccess =
 
 function classifyEnvironmentAccessFailure(error: unknown): EnvironmentAccess {
   const status = getErrorStatus(error);
-  if (status === 404 || status === 405 || status === 501) {
+  if (status === 405 || status === 501) {
     return { kind: "unavailable", failure: "unsupported", status };
   }
-  if (status === 401 || status === 403) return { kind: "unavailable", failure: "refused", status };
+  // The exchange hides every denial as 404 not_found: a key without access, a key
+  // for another project, and an unknown project or environment look the same.
+  if (status === 401 || status === 403 || status === 404) {
+    return { kind: "unavailable", failure: "refused", status };
+  }
   if (status === 429) return { kind: "unavailable", failure: "rate_limited", status };
   return { kind: "unavailable", failure: "unreachable", ...(status ? { status } : {}) };
 }

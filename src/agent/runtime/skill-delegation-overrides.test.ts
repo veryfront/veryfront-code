@@ -113,6 +113,26 @@ describe("skill delegation overrides", () => {
     );
   });
 
+  it("maps skill model, thinking, and step defaults onto canonical invoke_agent", () => {
+    assertEquals(
+      applySkillDelegationOverridesToToolInput(
+        "veryfront__invoke_agent",
+        {
+          prompt: "Research reference system",
+          description: "Research reference system",
+        },
+        { model: "opus", thinking: false, maxSteps: 160 },
+      ),
+      {
+        prompt: "Research reference system",
+        description: "Research reference system",
+        model: "opus",
+        thinking: 0,
+        max_steps: 160,
+      },
+    );
+  });
+
   it("maps skill model and thinking defaults onto invoke_agent when omitted", () => {
     assertEquals(
       applySkillDelegationOverridesToToolInput(

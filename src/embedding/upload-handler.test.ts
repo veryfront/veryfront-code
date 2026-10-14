@@ -402,8 +402,9 @@ describe("createUploadHandler", () => {
         calls.push({ method, url, body });
 
         return Response.json({
-          file_upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
-          file_path: ".veryfront/rag/uploads/doc-123.blob",
+          upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
+          path: ".veryfront/rag/uploads/doc-123.blob",
+          status: "pending",
           upload_id: "upload-123",
           required_headers: {},
         });
@@ -437,9 +438,9 @@ describe("createUploadHandler", () => {
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
       assertEquals(calls[0]?.body, {
-        file_path: ".veryfront/rag/uploads/doc-123.blob",
+        path: ".veryfront/rag/uploads/doc-123.blob",
         content_type: "text/plain",
-        size: 11,
+        size_bytes: 11,
       });
       assertEquals(calls[1]?.method, "PUT");
       assertEquals(calls[1]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
@@ -449,9 +450,9 @@ describe("createUploadHandler", () => {
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
       const metadataCreateBody = calls[2]?.body as Record<string, unknown>;
-      assertEquals(metadataCreateBody.file_path, ".veryfront/rag/uploads/doc-123.meta.json");
+      assertEquals(metadataCreateBody.path, ".veryfront/rag/uploads/doc-123.meta.json");
       assertEquals(metadataCreateBody.content_type, "application/json");
-      assertEquals(typeof metadataCreateBody.size, "number");
+      assertEquals(typeof metadataCreateBody.size_bytes, "number");
       assertEquals(calls[3]?.method, "PUT");
       assertEquals(calls[3]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
     });
@@ -478,8 +479,9 @@ describe("createUploadHandler", () => {
         request.url === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`
       ) {
         return Response.json({
-          file_upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
-          file_path: ".veryfront/rag/uploads/doc-123.blob",
+          upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
+          path: ".veryfront/rag/uploads/doc-123.blob",
+          status: "pending",
           upload_id: "upload-123",
           required_headers: {},
         });

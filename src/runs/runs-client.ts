@@ -415,7 +415,9 @@ export class VeryfrontRunsClient {
       ),
       ScheduleReferenceListSchema,
     );
-    const schedule = listed.schedules.find((candidate) =>
+    // `data` is the canonical list key. `schedules` is the legacy key that API
+    // deployments without `data` still return.
+    const schedule = (listed.data ?? listed.schedules ?? []).find((candidate) =>
       candidate.status === "active" &&
       candidate.definition_source === "source" &&
       candidate.source_trigger_id === input.sourceTriggerId

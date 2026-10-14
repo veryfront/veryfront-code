@@ -80,3 +80,73 @@ describe("SkillBadge — restyles", () => {
     assertStringIncludes(html, "vf-custom-skill");
   });
 });
+
+for (const prefix of ["", "veryfront__"]) {
+  for (
+    const [name, input, pending, complete] of [
+      [
+        "load_skill",
+        { skillId: "code-review" },
+        "Loading skill: code-review...",
+        "Skill: code-review",
+      ],
+      [
+        "load_skill_reference",
+        { reference: "assets/spec.md" },
+        "Reading: assets/spec.md...",
+        "Reference: assets/spec.md",
+      ],
+      ["execute_skill_script", { script: "build.sh" }, "Running: build.sh...", "Script: build.sh"],
+    ] as const
+  ) {
+    for (const state of ["input-available", "output-available"] as const) {
+      it(`renders ${prefix}${name} in ${state}`, () => {
+        const tool: ChatDynamicToolPart = {
+          type: "dynamic-tool",
+          toolCallId: "alias-call",
+          toolName: `${prefix}${name}`,
+          state,
+          input,
+        };
+        assertStringIncludes(
+          renderToString(<SkillBadge tool={tool} />),
+          state === "output-available" ? complete : pending,
+        );
+      });
+    }
+  }
+}
+
+describe("SkillBadge — provider-facing load wrapper", () => {
+  for (const toolName of ["load_skill", "veryfront__load_skill"]) {
+    it(`reads ${toolName} skill IDs nested under load`, () => {
+      const pending: ChatDynamicToolPart = {
+        type: "dynamic-tool",
+        toolCallId: "nested-call",
+        toolName,
+        state: "input-available",
+        input: { load: { skillId: "invoice" } },
+      };
+      assertStringIncludes(
+        renderToString(<SkillBadge tool={pending} />),
+        "Loading skill: invoice...",
+      );
+      assertStringIncludes(
+        renderToString(<SkillBadge tool={{ ...pending, state: "output-available" }} />),
+        "Skill: invoice",
+      );
+    });
+  }
+
+  it("ignores accessor-backed skill IDs", () => {
+    const load = Object.defineProperty({}, "skillId", { enumerable: true, get: () => "forged" });
+    const tool: ChatDynamicToolPart = {
+      type: "dynamic-tool",
+      toolCallId: "accessor-call",
+      toolName: "veryfront__load_skill",
+      state: "output-available",
+      input: { load },
+    };
+    assertStringIncludes(renderToString(<SkillBadge tool={tool} />), "Skill: unknown");
+  });
+});

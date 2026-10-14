@@ -1,3 +1,4 @@
+import { resolveToolResultOwnershipCorrections } from "./tool-result-ownership.ts";
 import {
   createInitialReducerState,
   finalizeStreamProjection,
@@ -169,7 +170,8 @@ function readVersion1(
     if (event.type === "TOOL_CALL_RESULT") occurrence.results.push(index);
     occurrences.set(event.toolCallId, occurrence);
   }
-  const recoveredProviderEnds = new Set<number>();
+  const ownershipCorrections = resolveToolResultOwnershipCorrections(events);
+  const recoveredProviderEnds = new Set<number>(ownershipCorrections.ends);
   for (const { starts, ends, results } of occurrences.values()) {
     if (starts.length !== 1 || ends.length !== 1 || results.length !== 1) continue;
     const [start, end, result] = [starts[0]!, ends[0]!, results[0]!];
@@ -207,6 +209,7 @@ function readVersion1(
   };
 
   for (const [eventIndex, event] of events.entries()) {
+    if (ownershipCorrections.consumed.has(eventIndex)) continue;
     const type = typeof event.type === "string" ? event.type : null;
     const contentId = typeof event.contentId === "string" ? event.contentId : undefined;
     const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
@@ -407,6 +410,7 @@ function readVersion2(
   events: readonly Readonly<Record<string, unknown>>[],
 ): ConversationRunLifecycleReadResult {
   const frames: StreamLifecycleFrame[] = [];
+  const ownershipCorrections = resolveToolResultOwnershipCorrections(events, true);
   const validator: Version2Validator = {
     lastSequence: 0,
     keys: new Set(),
@@ -435,7 +439,7 @@ function readVersion2(
   const readRequiredString = (value: unknown): string | null =>
     typeof value === "string" && value.length > 0 ? value : null;
 
-  for (const event of events) {
+  for (const [eventIndex, event] of events.entries()) {
     if (event.stream_protocol_version !== 2) {
       return invalid("VERSION_2_LIFECYCLE_VIOLATION");
     }
@@ -458,6 +462,10 @@ function readVersion2(
     validator.keys.add(idempotencyKey);
 
     const type = typeof event.type === "string" ? event.type : null;
+    if (ownershipCorrections.invalid.has(eventIndex)) {
+      return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+    }
+    if (ownershipCorrections.consumed.has(eventIndex)) continue;
     switch (type) {
       case "TEXT_MESSAGE_START": {
         const contentId = readRequiredString(event.contentId);
@@ -596,6 +604,7 @@ function readVersion2(
             toolCallId,
             toolName,
             input: parsed.value,
+            ...(ownershipCorrections.ends.has(eventIndex) ? { providerExecuted: true } : {}),
           });
         } else {
           push({
@@ -617,7 +626,7 @@ function readVersion2(
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.completedToolNames.delete(toolCallId);
-        if (event.providerExecuted === true) {
+        if (event.providerExecuted === true || ownershipCorrections.results.has(eventIndex)) {
           push({
             type: "provider_tool_start",
             toolCallId,

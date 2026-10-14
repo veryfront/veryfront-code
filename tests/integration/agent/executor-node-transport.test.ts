@@ -4,6 +4,7 @@ import {
   createExecutorNodeClock,
   executorNodeClock,
 } from "#veryfront/agent/hosted/executor-node-deadline.ts";
+import type { HostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
 import { randomBytes } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
@@ -23,7 +24,11 @@ const binding = { allocationId: "synthetic-allocation", generation: 1, invocatio
 const host = "127.0.0.1";
 const timeoutMs = 3_000;
 
-async function pair(signal?: AbortSignal, lifetime = timeoutMs) {
+async function pair(
+  signal?: AbortSignal,
+  lifetime = timeoutMs,
+  clock?: HostedExecutorSessionClock,
+) {
   const key = randomBytes(32);
   const listener = await listenExecutorTransport({
     host,
@@ -31,6 +36,7 @@ async function pair(signal?: AbortSignal, lifetime = timeoutMs) {
     binding,
     key,
     timeoutMs: lifetime,
+    clock,
   });
   try {
     const client = await connectExecutorTransport({
@@ -40,6 +46,7 @@ async function pair(signal?: AbortSignal, lifetime = timeoutMs) {
       key,
       signal,
       timeoutMs: lifetime,
+      clock,
     });
     const server = await listener.connection;
     return { listener, client, server };
@@ -648,26 +655,60 @@ if (typeof Deno !== "undefined") {
     });
 
     it("bounds attachment wait and the established connection lifetime", async () => {
+      let now = 0;
+      const scheduled = new Map<object, { callback: () => void; deadline: number }>();
+      const clock: HostedExecutorSessionClock = {
+        now: () => now,
+        schedule(callback, delayMs) {
+          const handle = {};
+          scheduled.set(handle, { callback, deadline: now + delayMs });
+          return handle;
+        },
+        cancel: (handle) => {
+          scheduled.delete(handle as object);
+        },
+      };
+      const expireAt = (deadline: number) => {
+        now = deadline;
+        for (const [handle, timer] of [...scheduled]) {
+          if (timer.deadline <= now) {
+            scheduled.delete(handle);
+            timer.callback();
+          }
+        }
+      };
       const listener = await listenExecutorTransport({
         host,
         port: 0,
         binding,
         key: randomBytes(32),
         timeoutMs: 50,
+        clock,
       });
-      await assertRejects(() => listener.connection, Error, "Executor transport deadline exceeded");
+      const attachmentRejected = assertRejects(
+        () => listener.connection,
+        Error,
+        "Executor transport deadline exceeded",
+      );
+      expireAt(50);
+      await attachmentRejected;
       listener.close();
-      const connected = await pair(undefined, 100);
+      // Establish real TLS before advancing its allocation clock: CPU load
+      // must not consume the lifetime this assertion is meant to exercise.
+      const connected = await pair(undefined, 100, clock);
       try {
-        await assertRejects(
+        const lifetimeRejected = assertRejects(
           () => connected.client.readable.getReader().read(),
           Error,
-          "Executor transport",
+          "Executor transport deadline exceeded",
         );
+        expireAt(150);
+        await lifetimeRejected;
       } finally {
         connected.listener.close();
         connected.client.close();
       }
+      assertEquals(scheduled.size, 0);
     });
 
     it("revokes an attached transport when the listener is aborted", async () => {

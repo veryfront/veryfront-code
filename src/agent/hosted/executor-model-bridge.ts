@@ -55,6 +55,8 @@ export interface ExecutorModelDispatchPermit {
   assertActive(): void;
   /** Enter the owner-selected scope for this exact provider invocation. */
   run?<T>(operation: () => T): T;
+  /** Called after the provider accepts the dispatch. */
+  dispatchSucceeded?(): void;
 }
 
 /** Generic broker hook; hosted callers use the required persistence wrapper. */
@@ -229,6 +231,7 @@ export function createExecutorModelBroker(options: {
           const dispatch = () =>
             call.model.doGenerate({ ...call.options, abortSignal: context.signal });
           result = await (permit?.run ? permit.run(dispatch) : dispatch());
+          permit?.dispatchSucceeded?.();
         } catch (error) {
           return modelFailureOrThrow(error, context);
         }
@@ -258,6 +261,7 @@ export function createExecutorModelBroker(options: {
           const dispatch = () =>
             call.model.doStream({ ...call.options, abortSignal: context.signal });
           result = await (permit?.run ? permit.run(dispatch) : dispatch());
+          permit?.dispatchSucceeded?.();
         } catch (error) {
           yield modelFailureOrThrow(error, context);
           return;

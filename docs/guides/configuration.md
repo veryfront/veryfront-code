@@ -325,23 +325,21 @@ source:
 Naming the default `https://api.veryfront.com` needs no confirmation, in any
 equivalent spelling.
 
-Veryfront blocks requests to hosts that resolve to private network addresses.
-`veryfront eval` makes one exception: the API host you set in your shell with
-`VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL` can resolve to a private address,
-as a staging, VPN, or self-hosted API does. The exception covers only that exact
-origin (scheme, host, and port). A host set in a project `.env` file or
-`veryfront.json` does not qualify, and redirects stay rejected. For other
-commands, add the origin to `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS`:
-
-```bash
-export VERYFRONT_API_URL="https://api.example.com"
-export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="https://api.example.com"
-```
+Veryfront blocks private network destinations by default. CLI API transports
+permit the exact API origin configured by the operator. Hosted runtimes and
+`veryfront serve` also permit an HTTP API origin set through `VERYFRONT_API_URL`
+or `VERYFRONT_API_BASE_URL` before startup. Project `.env` files and later writes
+cannot authorize HTTP origins. Origin-bound API transports reject redirects;
+other outbound requests keep their existing policies. Use HTTPS unless the API
+is on a private network you control.
 
 In CI, set the API URL variable used by the command next to
 `VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
 self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
+
+Use an API key as the `VERYFRONT_API_TOKEN` value in CI. See
+[API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.
 
 ### Provider stream idle deadline
 

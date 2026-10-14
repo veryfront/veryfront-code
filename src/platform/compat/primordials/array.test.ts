@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   primordialArrayAt,
   primordialArrayFilter,
+  primordialArrayFlatMap,
   primordialArrayIndexOf,
   primordialArrayJoin,
   primordialArrayMap,
@@ -10,6 +11,7 @@ import {
   primordialArrayPush,
   primordialArraySet,
   primordialArrayShift,
+  primordialArraySlice,
   primordialArraySort,
   primordialArraySplice,
   primordialArrayValues,
@@ -163,4 +165,34 @@ describe("platform/compat/primordials/array", () => {
     assertEquals(shifted, 8);
     assertEquals(queue, []);
   });
+});
+
+Deno.test("copies sparse ranges and flattens results while array traversal hooks are poisoned", () => {
+  const slice = Array.prototype.slice;
+  const flatMap = Array.prototype.flatMap;
+  const iterator = Array.prototype[Symbol.iterator];
+  const source = [1, , 3, 4];
+  let copied: number[] = [];
+  let flattened: number[] = [];
+  try {
+    Array.prototype.slice = () => {
+      throw new Error("poisoned slice");
+    };
+    Array.prototype.flatMap = () => {
+      throw new Error("poisoned flatMap");
+    };
+    Array.prototype[Symbol.iterator] = () => {
+      throw new Error("poisoned iterator");
+    };
+    copied = primordialArraySlice(source, -3.8, Infinity) as number[];
+    flattened = primordialArrayFlatMap(source, (value, index) => [value, , index]) as number[];
+    assertEquals(primordialArraySlice(source, NaN, -1).length, 3);
+    assertEquals(primordialArraySlice(source, 3, 1).length, 0);
+  } finally {
+    Array.prototype.slice = slice;
+    Array.prototype.flatMap = flatMap;
+    Array.prototype[Symbol.iterator] = iterator;
+  }
+  assertEquals(copied, [, 3, 4]);
+  assertEquals(flattened, [1, 0, 3, 2, 4, 3]);
 });

@@ -186,17 +186,17 @@ describe("bounded connection wait", () => {
       const url = new URL(String(input));
       const headers = { "x-veryfront-project-id": project.id };
       if (url.pathname === `/projects/${project.id}`) return Response.json(project);
-      if (url.pathname === "/integrations/tools/list") {
+      if (url.pathname === "/integration-tools") {
         return Response.json({ tools: [] }, { headers });
       }
       const generation = generations[Math.min(statusReads, 1)];
-      if (url.pathname === "/oauth/status/github") {
+      if (url.pathname === `/projects/${project.id}/integrations/github/connection-status`) {
         assertEquals(url.searchParams.get("scope"), "user");
         statusReads++;
         return Response.json({
           connected: true,
           integration: "github",
-          scope: "project",
+          scope: "user",
           connection_id: id,
           connection_generation_id: generations[Math.min(statusReads - 1, 1)],
         });
