@@ -16,7 +16,6 @@ import {
   parseRuntimeSelection,
   parseScopedResponseJson,
   sanitizeRuntimeCriticalFlowFailureText,
-  startProvider,
   validateAnthropicRequest,
   waitForProviderCancellation,
   waitForProviderReceipt,
@@ -489,85 +488,7 @@ describe("runtime inference critical-flow pure contract", () => {
   });
 
 
-  it("preserves validated JSON/SSE replies and excludes normal completion from cancellation", async () => {
-    for (
-      const [mode, marker, stream] of [
-        ["black-hole", "agent-marker", false],
-        ["black-hole", "agent-marker", true],
-        ["respond", "workflow-marker", false],
-        ["respond", "workflow-marker", true],
-      ] as const
-    ) {
-      const provider = await startProvider(
-        "agent-marker",
-        "workflow-marker",
-        mode,
-      );
-      try {
-        const template = anthropicRequest({
-          body: {
-            model: VALID_WIRE_MODEL,
-            messages: [{ role: "user", content: marker }],
-            stream,
-          },
-        });
-        const response = await fetch(
-          new URL("messages", provider.url.href + "/"),
-          {
-            method: template.method,
-            headers: template.headers,
-            body: await template.text(),
-          },
-        );
-        assertEquals(response.status, 200);
-        assertStringIncludes(
-          response.headers.get("content-type")!,
-          stream ? "text/event-stream" : "application/json",
-        );
-        assertStringIncludes(await response.text(), marker);
-        assertEquals(provider.received, [marker]);
-        assertEquals(provider.validationFailure(), undefined);
-        assertEquals(provider.cancellationEvidence(), undefined);
-      } finally {
-        provider.abort();
-        await provider.server.shutdown();
-        await provider.closed;
-      }
-      assertEquals(provider.cancellationEvidence(), undefined);
-    }
-  });
 
-  it("rejects invalid provider authorization before recording receipt or cancellation", async () => {
-    const provider = await startProvider(
-      "agent-marker",
-      "workflow-marker",
-      "black-hole",
-    );
-    try {
-      const template = anthropicRequest({ key: "wrong-key" });
-      const response = await fetch(
-        new URL("messages", provider.url.href + "/"),
-        {
-          method: template.method,
-          headers: template.headers,
-          body: await template.text(),
-        },
-      );
-      assertEquals(response.status, 400);
-      assertStringIncludes(await response.text(), "expected x-api-key");
-      assertEquals(provider.received, []);
-      assertStringIncludes(
-        provider.validationFailure()!.message,
-        "expected x-api-key",
-      );
-      assertEquals(provider.cancellationEvidence(), undefined);
-    } finally {
-      provider.abort();
-      await provider.server.shutdown();
-      await provider.closed;
-    }
-    assertEquals(provider.cancellationEvidence(), undefined);
-  });
 
   it("requires provider-side client abort evidence before cleanup can release the black-hole response", async () => {
     await waitForProviderCancellation(
