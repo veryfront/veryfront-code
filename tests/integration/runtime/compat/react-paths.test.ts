@@ -625,6 +625,9 @@ describe("react-paths", () => {
     const { PageRenderer } = await import("#veryfront/rendering/page-renderer.ts");
     const { LayoutOrchestrator } = await import("#veryfront/rendering/orchestrator/layout.ts");
     const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const { RSCDevServerHandler } = await import(
+      "#veryfront/server/services/rsc/orchestrators/handler.ts"
+    );
     const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
     const adapter = createMockAdapter();
     const config = { react: { version: "^19.2.0" } };
@@ -644,13 +647,21 @@ describe("react-paths", () => {
       layoutCache: { clear: () => {} },
     }]);
     const ssr = new SSRRenderer("development", adapter, "/memo-peer-project", undefined, config);
+    const rsc = new RSCDevServerHandler("/memo-peer-project", {
+      adapter,
+      config,
+      isLocalProject: true,
+    });
     const select = (renderer: object) =>
       Reflect.apply(Reflect.get(renderer, "getReactVersion"), renderer, []);
-    for (const renderer of [page, layout, ssr]) assertEquals(await select(renderer), "19.2.4");
+    for (const renderer of [page, layout, ssr, rsc]) assertEquals(await select(renderer), "19.2.4");
     const restoreReact = overrideInstalledVersion("react", "19.2.5");
     const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
     try {
-      for (const renderer of [page, layout, ssr]) assertEquals(await select(renderer), "19.2.5");
+      rsc.invalidate();
+      for (const renderer of [page, layout, ssr, rsc]) {
+        assertEquals(await select(renderer), "19.2.5");
+      }
     } finally {
       restoreDom();
       restoreReact();

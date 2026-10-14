@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import { buildClientManifest } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
@@ -59,7 +60,6 @@ export class RSCDevServerHandler {
   private clientManifest: Map<string, ClientComponentMeta> | null = null;
   private rendererPromise: Promise<void> | null = null;
   private readonly adapter?: RuntimeAdapter;
-  private reactVersionPromise: Promise<string> | null = null;
   private invalidationGeneration = 0;
 
   private readonly manifestHandler: ManifestHandler;
@@ -109,7 +109,7 @@ export class RSCDevServerHandler {
         serverExternalPackages: options.config?.build?.serverExternalPackages,
         dependencyPinningSource: this.dependencyPinningSource,
         isLocalProject,
-        reactVersion: (snapshot) => this.getReactVersionForSnapshot(snapshot),
+        reactVersion: (snapshot, peers) => this.getReactVersionForSnapshot(snapshot, peers),
       },
     );
     this.streamHandler = new StreamHandler(this.renderHandler);
@@ -219,22 +219,24 @@ export class RSCDevServerHandler {
     });
   }
 
-  private getReactVersion(): Promise<string> {
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+  private getReactVersion(reactPeers?: LocalReactPeerSnapshot): Promise<string> {
+    return resolveProjectReactVersion({
       adapter: this.adapter,
+      reactPeers,
       projectDir: this.projectDir,
       dependencyPinningSource: this.dependencyPinningSource,
       config: this.config,
     });
-    return this.reactVersionPromise;
   }
 
   private getReactVersionForSnapshot(
     dependencySnapshot: DependencyPinningSnapshot,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
     if (dependencySnapshot.cacheKey.startsWith("on:")) {
       return resolveProjectReactVersion({
         adapter: this.adapter,
+        reactPeers,
         projectDir: this.projectDir,
         dependencyPinningSource: this.dependencyPinningSource,
         config: this.config,
@@ -243,6 +245,6 @@ export class RSCDevServerHandler {
         dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       });
     }
-    return this.getReactVersion();
+    return this.getReactVersion(reactPeers);
   }
 }

@@ -1,3 +1,8 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
 import type * as React from "react";
 import { serverLogger } from "#veryfront/utils";
 import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
@@ -43,7 +48,10 @@ export interface RenderHandlerModuleOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Server-trusted local-project identity for dev-only module-server fallback. */
   isLocalProject?: boolean;
-  reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
+  reactVersion?: (
+    snapshot: DependencyPinningSnapshot,
+    peers?: LocalReactPeerSnapshot,
+  ) => Promise<string>;
   runtimeAdapter?: () => Promise<RuntimeAdapter>;
   moduleLoader?: typeof loadModuleFromSource;
 }
@@ -86,7 +94,10 @@ export class RenderHandler {
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
           return await runtime.get();
         }))();
-      const reactVersion = await this.moduleOptions.reactVersion?.(dependencySnapshot);
+      const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+        ? captureLocalReactPeers()
+        : undefined;
+      const reactVersion = await this.moduleOptions.reactVersion?.(dependencySnapshot, reactPeers);
       const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:") && request
         ? new URL(request.url).origin
         : undefined;
@@ -96,12 +107,13 @@ export class RenderHandler {
         dependencySnapshot,
         reactVersion,
         moduleServerOrigin,
+        reactPeers,
       );
       const props = this.buildProps(pathname, searchParams);
-      const reactRuntime = getRuntimeModuleLoader(adapter)
+      const reactRuntime = getRuntimeModuleLoader(adapter) || reactPeers
         ? {
-          react: await getProjectReact(reactVersion, adapter),
-          server: await getReactDOMServer(reactVersion, adapter),
+          react: await getProjectReact(reactVersion, adapter, reactPeers),
+          server: await getReactDOMServer(reactVersion, adapter, reactPeers),
         }
         : undefined;
       const renderedPayload = await this.renderPayload(
@@ -129,6 +141,7 @@ export class RenderHandler {
     dependencySnapshot: DependencyPinningSnapshot,
     reactVersion?: string,
     moduleServerOrigin?: string,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<React.ComponentType<RenderProps>> {
     const componentPath = await resolveComponentPath(
       pathname,
@@ -151,6 +164,7 @@ export class RenderHandler {
       dependencySnapshot,
       reactVersion,
       moduleServerOrigin,
+      reactPeers,
     );
     const Component = (module.default ?? module.Page ?? module) as unknown;
 
@@ -172,6 +186,7 @@ export class RenderHandler {
     dependencySnapshot: DependencyPinningSnapshot,
     reactVersion?: string,
     moduleServerOrigin?: string,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<Record<string, unknown>> {
     const prepared = getRuntimeModuleLoader(adapter);
     if (prepared) return await prepared.importModule({ kind: "source", path: componentPath });
@@ -197,6 +212,7 @@ export class RenderHandler {
         contentSourceId: this.moduleOptions.contentSourceId,
         mode: this.mode,
         reactVersion,
+        reactPeers,
         serverExternalPackages: this.moduleOptions.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
@@ -216,6 +232,7 @@ export class RenderHandler {
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
       reactVersion,
+      reactPeers,
       serverExternalPackages: this.moduleOptions.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
