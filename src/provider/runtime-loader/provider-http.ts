@@ -8,6 +8,7 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
 import { resolveVeryfrontCloudSurface } from "../veryfront-cloud/model-catalog.ts";
+import { recordProviderErrorDiagnostic } from "./provider-error-diagnostic.ts";
 
 /**
  * Which provider runtime a request is being sent to.
@@ -791,10 +792,17 @@ export async function buildProviderError(
       response,
     );
   }
-  return markProviderErrorGatewayProvenance(
-    buildProviderErrorFromBody(provider, response, rawBody, truncated),
-    response,
-  );
+  const error = buildProviderErrorFromBody(provider, response, rawBody, truncated);
+  if (!truncated && response.status === 400) {
+    const structured = parseProviderErrorBody(rawBody).errorRecord;
+    recordProviderErrorDiagnostic(
+      error,
+      structured?.type,
+      structured?.code ?? structured?.status,
+      structured?.param,
+    );
+  }
+  return markProviderErrorGatewayProvenance(error, response);
 }
 
 /** Preserve gateway provenance for callers that invoke buildProviderError directly. */

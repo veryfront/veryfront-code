@@ -1,5 +1,6 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import {
@@ -35,6 +36,42 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-chat-stream", () => {
+  it("classifies an explicit streamed context error without treating it as malformed content", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: {
+          message:
+            'Engine protocol predict stream returned an error: {"code":500,"message":"Context size has been exceeded.","type":"server_error"}',
+        },
+      }))), ProviderRequestError);
+    assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assertEquals(parseProviderError(error), {
+      code: "CONTEXT_LENGTH_EXCEEDED",
+      message: "Conversation is too long",
+    });
+  });
+
+  it("keeps unknown streamed errors private and rejects malformed error envelopes", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "private provider diagnostic" },
+      }))), ProviderRequestError);
+    assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assert(error instanceof ProviderRequestError);
+    assertEquals(error.message.includes("private provider diagnostic"), false);
+    assertEquals(parseProviderError(error), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+    for (const malformed of [null, "not an envelope", {}, { message: 7 }]) {
+      await assertRejects(
+        () => collectParts(streamFromText(data({ error: malformed }))),
+        ProviderStreamProtocolError,
+        "event had neither choices nor usage",
+      );
+    }
+  });
+
   // Verbatim frame shape from DeepSeek v4 Flash on Azure AI Foundry for a tool
   // whose parameter schema is empty: the opening fragment carries the id and
   // name with empty arguments, the next carries the object `{}`, and a third

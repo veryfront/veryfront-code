@@ -1,5 +1,6 @@
 import {
   mergeUsage,
+  ProviderRequestError,
   ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
@@ -246,6 +247,19 @@ export async function* streamOpenAICompatibleParts(
     const record = readRecord(event);
     if (!record) {
       throw invalidOpenAIStream(context, "event was not an object");
+    }
+    // Providers can report a failed generation inside an HTTP 200 SSE stream.
+    // Preserve its cause for curated classification without exposing provider
+    // text in the public error or claiming the model content was malformed.
+    const errorRecord = readRecord(record.error);
+    if (errorRecord && typeof errorRecord.message === "string") {
+      throw new ProviderRequestError({
+        provider: context.providerKind ?? "openai",
+        status: 200,
+        message: "Provider reported a failed generation in its response stream",
+        retryable: false,
+        cause: errorRecord,
+      });
     }
     const usageRecord = readRecord(record.usage);
     usage = mergeOpenAIUsage(usage, record);

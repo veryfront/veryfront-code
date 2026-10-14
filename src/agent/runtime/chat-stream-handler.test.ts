@@ -1134,6 +1134,54 @@ describe("chat-stream-handler", () => {
 
       assertEquals(state.finishReason, null);
       assertEquals(events, []);
+      const expected = {
+        message: "Provider did not produce semantic progress",
+        code: "FIRST_PROGRESS_TIMEOUT",
+      };
+      assertEquals(resolveRelayableExecutionFailure(error), expected);
+      assertEquals(resolveRuntimeExecutionErrorEvent(error), {
+        type: "error",
+        error: expected.message,
+        code: expected.code,
+      });
+    });
+
+    it("applies host-owned lifecycle budgets to the legacy idle watchdog", async () => {
+      const { controller, encoder } = createSSECollector();
+      const firstProgressState = createStreamState();
+      await assertRejects(
+        () =>
+          processStream(
+            { fullStream: pendingAsyncIterable(), textStream: emptyAsyncIterable() },
+            firstProgressState,
+            controller,
+            encoder,
+            "t",
+            { streamLifecyclePolicy: { firstProgressTimeoutMs: 10 } },
+          ),
+        Error,
+        "Provider stream failed",
+      );
+
+      const semanticIdleState = createStreamState();
+      await processStream(
+        {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "text-delta", text: "Ready." };
+              await new Promise(() => {});
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        semanticIdleState,
+        controller,
+        encoder,
+        "t",
+        { streamLifecyclePolicy: { semanticIdleTimeoutMs: 10 } },
+      );
+      assertEquals(semanticIdleState.accumulatedText, "Ready.");
+      assertEquals(semanticIdleState.finishReason, "stop");
     });
 
     for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
@@ -2435,6 +2483,26 @@ describe("chat-stream-handler", () => {
         const event = resolveRuntimeStreamErrorEvent(providerError);
         assertEquals(event, testCase.expected);
         assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
+    it("keeps fixed codes for active lifecycle progress deadlines", () => {
+      for (
+        const [code, publicMessage] of [
+          ["FIRST_PROGRESS_TIMEOUT", "Provider did not produce semantic progress"],
+          ["SEMANTIC_IDLE_TIMEOUT", "Provider stopped producing semantic progress"],
+        ] as const
+      ) {
+        const event = resolveRuntimeStreamErrorEvent(
+          new StreamLifecycleFailure({
+            code,
+            phase: "streaming",
+            source: "provider",
+            retryable: true,
+            publicMessage,
+          }),
+        );
+        assertEquals(event, { type: "error", error: publicMessage, code });
       }
     });
 
