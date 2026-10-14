@@ -1,7 +1,9 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import {
+  captureLocalReactPeers,
   getLocalReactPath,
+  type LocalReactPeerSnapshot,
   resolveInstalledReactRange,
 } from "#veryfront/platform/compat/react-paths.ts";
 
@@ -22,8 +24,11 @@ export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
   reactVersion?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<string> {
-  reactVersion ??= (forSSR ? resolveInstalledReactRange() : undefined) ?? DEFAULT_REACT_VERSION;
+  if (forSSR) reactPeers ??= captureLocalReactPeers();
+  reactVersion ??= reactPeers?.versions.react ??
+    (forSSR ? resolveInstalledReactRange() : undefined) ?? DEFAULT_REACT_VERSION;
   const reactImports = getReactImportMap(reactVersion);
 
   if (!forSSR) {
@@ -37,7 +42,8 @@ export async function resolveReactImports(
 
   return replaceSpecifiers(
     code,
-    (specifier) => getLocalReactPath(specifier, reactVersion) ?? ssrImports[specifier] ?? null,
+    (specifier) =>
+      getLocalReactPath(specifier, reactVersion, reactPeers) ?? ssrImports[specifier] ?? null,
   );
 }
 

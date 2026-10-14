@@ -1,3 +1,4 @@
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
 import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Module Writer
@@ -275,13 +276,14 @@ export async function buildMdxModuleCacheIdentity(
 async function cacheHttpImports(
   code: string,
   importMap: ImportMapConfig,
-  context: Pick<MdxPreparationContext, "reactVersion" | "serverExternalPackages">,
+  context: Pick<MdxPreparationContext, "reactVersion" | "serverExternalPackages" | "reactPeers">,
   sourceCapture?: ModuleSourceCapture,
 ): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion: context.reactVersion,
+    reactPeers: context.reactPeers,
     localReact: !sourceCapture,
     serverExternalPackages: context.serverExternalPackages,
   }, sourceCapture);
@@ -397,6 +399,10 @@ async function writeModuleESM(
   moduleCache?: ESMLoaderContext["moduleCache"],
   sourceCapture?: ModuleSourceCapture,
 ): Promise<PreparedMdxModule | MDXModule> {
+  context = {
+    ...context,
+    reactPeers: sourceCapture ? undefined : context.reactPeers ?? captureLocalReactPeers(),
+  };
   const loadStart = performance.now();
   const projectSlug = context.projectSlug || "unknown";
 
@@ -454,7 +460,8 @@ async function writeModuleESM(
     rewritten = await rewriteMdxRootDependencyImports(rewritten, importMap, {
       projectDir,
       projectId: effectiveContext.projectId,
-      reactVersion: effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+      reactVersion: effectiveContext.reactVersion ?? effectiveContext.reactPeers?.versions.react ??
+        resolveInstalledReactRange() ??
         REACT_DEFAULT_VERSION,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
@@ -493,7 +500,14 @@ async function writeModuleESM(
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
       rewritten = await withSpan(
         SpanNames.MDX_TRANSFORM_JSX,
-        () => transformJsxImports(rewritten, adapter, esmCacheDir, projectDir),
+        () =>
+          transformJsxImports(
+            rewritten,
+            adapter,
+            esmCacheDir,
+            projectDir,
+            effectiveContext.reactPeers,
+          ),
         { "mdx.project_slug": projectSlug },
       );
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
@@ -532,10 +546,13 @@ async function writeModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths START`, {
       projectSlug,
     });
-    if (!sourceCapture) rewritten = await transformReactToLocalPaths(rewritten);
+    if (!sourceCapture) {
+      rewritten = await transformReactToLocalPaths(rewritten, effectiveContext.reactPeers);
+    }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    const effectiveReactVersion = effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+    const effectiveReactVersion = effectiveContext.reactVersion ??
+      effectiveContext.reactPeers?.versions.react ?? resolveInstalledReactRange() ??
       REACT_DEFAULT_VERSION;
     const cacheIdentity = await buildMdxModuleCacheIdentity(
       esmCacheDir,
@@ -670,6 +687,8 @@ async function writeModuleESM(
             cacheDir,
             importMap,
             reactVersion: effectiveContext.reactVersion,
+            reactPeers: effectiveContext.reactPeers,
+            localReact: !sourceCapture,
             serverExternalPackages: effectiveContext.serverExternalPackages,
           }, sourceCapture);
           rewritten = refreshResult.code;
@@ -748,7 +767,9 @@ async function writeModuleESM(
           filePath: filePath,
           projectDir,
           target: "ssr" as const,
-          reactVersion: effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+          reactPeers: effectiveContext.reactPeers,
+          reactVersion: effectiveContext.reactVersion ??
+            effectiveContext.reactPeers?.versions.react ?? resolveInstalledReactRange() ??
             REACT_DEFAULT_VERSION,
         } as Parameters<typeof ssrVfModulesPlugin.transform>[0];
 

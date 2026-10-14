@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Specifier resolution helpers for the SSR VF Modules stage.
  *
@@ -14,6 +15,7 @@ export interface FrameworkSpecifierResolverInput {
   veryfrontReplacements: ReadonlyMap<string, string>;
   relativeReplacements: ReadonlyMap<string, string>;
   reactVersion: string;
+  reactPeers?: LocalReactPeerSnapshot;
   reactImportMap?: Record<string, string>;
 }
 
@@ -26,8 +28,9 @@ export function resolveReactSpecifier(
   specifier: string,
   reactVersion: string,
   reactImportMap: Record<string, string> = getReactImportMap(reactVersion),
+  reactPeers?: LocalReactPeerSnapshot,
 ): string | null {
-  const localPath = getLocalReactPath(specifier, reactVersion);
+  const localPath = getLocalReactPath(specifier, reactVersion, reactPeers);
   if (localPath) return localPath;
   const mapped = reactImportMap[specifier];
   if (mapped) return mapped;
@@ -70,11 +73,12 @@ export function reactReExportToEsmUrl(
   resolvedPath: string,
   reactVersion: string,
   reactImportMap?: Record<string, string>,
+  reactPeers?: LocalReactPeerSnapshot,
 ): string | null {
   if (!resolvedPath.startsWith(REACT_REEXPORT_DIR)) return null;
   const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(REACT_REEXPORT_DIR.length)];
   if (!specifier) return null;
-  return resolveReactSpecifier(specifier, reactVersion, reactImportMap);
+  return resolveReactSpecifier(specifier, reactVersion, reactImportMap, reactPeers);
 }
 
 /**
@@ -102,6 +106,6 @@ export function createFrameworkSpecifierResolver(
       return input.relativeReplacements.get(specifier) ?? null;
     }
 
-    return resolveReactSpecifier(specifier, input.reactVersion, reactImportMap);
+    return resolveReactSpecifier(specifier, input.reactVersion, reactImportMap, input.reactPeers);
   };
 }

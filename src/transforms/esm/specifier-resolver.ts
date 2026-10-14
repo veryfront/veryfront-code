@@ -189,7 +189,11 @@ async function resolveSpecifier(
       : specifier;
     const match = matchConfiguredServerExternalSpecifier(candidate, ["react", "react-dom"]);
     const runtimeSpecifier = match?.runtimeSpecifier ?? candidate;
-    const localReactPath = getLocalReactPath(runtimeSpecifier, options.reactVersion);
+    const localReactPath = getLocalReactPath(
+      runtimeSpecifier,
+      options.reactVersion,
+      options.reactPeers,
+    );
     if (localReactPath) {
       const authoredVersion = parseConfiguredExternalEsmShUrl(candidate)?.version ??
         parseBarePackageSpecifier(
@@ -197,7 +201,9 @@ async function resolveSpecifier(
         )
           ?.version ??
         null;
-      if (authoredVersion !== null) getLocalReactPath(runtimeSpecifier, authoredVersion);
+      if (authoredVersion !== null) {
+        getLocalReactPath(runtimeSpecifier, authoredVersion, options.reactPeers);
+      }
       return localReactPath;
     }
   }

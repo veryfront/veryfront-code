@@ -393,7 +393,11 @@ it("module fetch graph captures one effective peer version with its scope", asyn
   const capture = () => {
     captures++;
     const snapshot = version;
-    return { reactVersion: snapshot, scope: Promise.resolve(`scope:${snapshot}`) };
+    return {
+      reactVersion: snapshot,
+      scope: Promise.resolve(`scope:${snapshot}`),
+      peers: { roots: {}, paths: {}, versions: { react: snapshot, "react-dom": snapshot } },
+    };
   };
   const first = getModuleFetcherReactRuntimeIdentity(context, capture);
   version = "19.2.5";

@@ -5,6 +5,7 @@ import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   getLocalReactPath,
+  type LocalReactPeerSnapshot,
   resolveInstalledReactRange,
 } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
@@ -99,6 +100,8 @@ export function resolveSSRImportTargetModulePathCompat(
 }
 
 export interface SSRRewriteOptions {
+  /** Captured physical peers shared with this graph cache identity. */
+  reactPeers?: LocalReactPeerSnapshot;
   /** Project slug for multi-project routing */
   projectSlug?: string | null;
   /** Branch name for branch-aware routing */
@@ -163,8 +166,12 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   return false;
 }
 
-function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  const localPath = getLocalReactPath(specifier, version);
+function resolveReactForRuntime(
+  specifier: string,
+  version?: string,
+  peers?: LocalReactPeerSnapshot,
+): string | null {
+  const localPath = getLocalReactPath(specifier, version, peers);
   if (localPath) return localPath;
 
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
@@ -295,6 +302,7 @@ function rewriteBareImports(
   ) => void,
   serverExternalPackages?: readonly string[],
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): string {
   const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
 
@@ -321,7 +329,7 @@ function rewriteBareImports(
       return `from "${runtimeSpecifier}"`;
     }
 
-    const reactUrl = resolveReactForRuntime(bareSpecifier, v);
+    const reactUrl = resolveReactForRuntime(bareSpecifier, v, reactPeers);
     if (reactUrl) return `from "${reactUrl}"`;
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
@@ -545,6 +553,7 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
     options.dependencyPinningConfiguredVersions,
+    options.reactPeers,
   );
   result = rewriteInternalModuleImportsSync(result, options);
   return result;
@@ -593,6 +602,7 @@ export async function rewriteSSRImportsCompatAsync(
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
     options.dependencyPinningConfiguredVersions,
+    options.reactPeers,
   );
   result = await rewriteInternalModuleImportsAsync(result, options);
   return result;

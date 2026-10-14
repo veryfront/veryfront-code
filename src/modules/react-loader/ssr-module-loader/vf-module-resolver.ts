@@ -1,3 +1,5 @@
+import type { captureSSRReactRuntimeIdentity } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * VF module resolver for SSR transformed code.
@@ -35,6 +37,7 @@ interface ResolveVfModuleImportsOptions {
    */
   dev: boolean;
   reactVersion?: string;
+  reactRuntimeIdentity?: ReturnType<typeof captureSSRReactRuntimeIdentity>;
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
@@ -95,6 +98,15 @@ export async function resolveVfModuleImports(
       contentSourceId: options.contentSourceId,
       dev: options.dev,
       reactVersion: options.reactVersion,
+      ...(options.reactRuntimeIdentity
+        ? {
+          reactRuntimeIdentity: {
+            ...options.reactRuntimeIdentity,
+            reactVersion: options.reactVersion ?? options.reactRuntimeIdentity.reactVersion ??
+              REACT_DEFAULT_VERSION,
+          },
+        }
+        : {}),
       moduleServerOrigin: options.moduleServerOrigin,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,

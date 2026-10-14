@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
@@ -8,6 +9,8 @@ import type { DependencyPinningSourceInput } from "./package-registry.ts";
 import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
 
 export interface TransformOptions {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   dev?: boolean;
   projectId: string;
   /** Internal request-scoped cancellation for transform dependencies. */

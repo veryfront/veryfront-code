@@ -1,3 +1,5 @@
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Loader Helpers
  *
@@ -207,6 +209,16 @@ export async function processVfModuleImports(
       // untree-shaken code carrying an inline sourcemap of the project source.
       dev: context.mode === "development",
       reactVersion: context.reactVersion,
+      ...(context.reactPeers
+        ? {
+          reactRuntimeIdentity: {
+            reactVersion: context.reactVersion ?? context.reactPeers.versions.react ??
+              REACT_DEFAULT_VERSION,
+            peers: context.reactPeers,
+            scope: getSSRReactRuntimeCacheScope(context.reactPeers),
+          },
+        }
+        : {}),
       serverExternalPackages: context.serverExternalPackages,
       moduleServerOrigin: context.moduleServerOrigin,
       dependencyPinningCacheKey: context.dependencyPinningCacheKey,

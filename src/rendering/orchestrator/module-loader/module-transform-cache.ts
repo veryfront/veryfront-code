@@ -1,6 +1,10 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
-import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Transform-cache and retry phase for the SSR module loader.
  *
@@ -61,6 +65,7 @@ interface BundleValidationResult {
 }
 
 interface TransformOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   projectId: string;
   dev: boolean;
   ssr: boolean;
@@ -144,6 +149,7 @@ const defaultDeps: ModuleTransformCacheDeps = {
 export interface TransformModuleCodeWithCacheInput {
   /** React peer scope captured once by the enclosing module graph. */
   runtimeScope?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   fileContent: string;
   filePath: string;
   projectDir: string;
@@ -217,8 +223,15 @@ export async function transformModuleCodeWithCache(
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
   const contentHash = hashCodeHex(input.fileContent);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
-  const reactVersion = input.reactVersion ?? resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION;
-  const runtimeScope = input.runtimeScope ?? await getSSRReactRuntimeCacheScope();
+  const captured = input.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  const reactPeers = input.reactPeers ?? captured!.peers;
+  const reactVersion = input.reactVersion ?? reactPeers.versions.react ??
+    resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION;
+  const runtimeScope = captured
+    ? (input.runtimeScope === undefined
+      ? await captured.scope
+      : `${input.runtimeScope}\0${await captured.scope}`)
+    : input.runtimeScope ?? await getSSRReactRuntimeCacheScope(reactPeers);
   const cacheVariant = buildDependencyPinningCacheVariant(
     input.dependencyPinningCacheKey,
     input.moduleServerOrigin,
@@ -255,6 +268,7 @@ export async function transformModuleCodeWithCache(
     dev: input.mode === "development",
     ssr: true,
     reactVersion,
+    reactPeers,
     moduleServerOrigin,
     serverExternalPackages: input.serverExternalPackages,
     dependencyPinningCacheKey: input.dependencyPinningCacheKey,

@@ -7,7 +7,10 @@ const wrapper = await Deno.readTextFile(
   new URL("../../../scripts/build/bin-wrapper.js", import.meta.url),
 );
 const engine = await Deno.readTextFile(
-  new URL("../../../scripts/build/node-engine-precondition.js", import.meta.url),
+  new URL(
+    "../../../scripts/build/node-engine-precondition.js",
+    import.meta.url,
+  ),
 );
 
 async function fixture(local: boolean) {
@@ -15,11 +18,16 @@ async function fixture(local: boolean) {
   const global = join(root, "global", "veryfront");
   const project = join(root, "project");
   await Deno.mkdir(project, { recursive: true });
-  await Deno.writeTextFile(join(project, "package.json"), JSON.stringify({ type: "module" }));
+  await Deno.writeTextFile(
+    join(project, "package.json"),
+    JSON.stringify({ type: "module" }),
+  );
   async function install(directory: string, version: string, origin: string) {
     await Deno.mkdir(join(directory, "bin"), { recursive: true });
     await Deno.mkdir(join(directory, "esm", "cli"), { recursive: true });
-    await Deno.mkdir(join(directory, "node_modules", "react"), { recursive: true });
+    await Deno.mkdir(join(directory, "node_modules", "react"), {
+      recursive: true,
+    });
     await Deno.writeTextFile(
       join(directory, "package.json"),
       JSON.stringify({
@@ -30,7 +38,10 @@ async function fixture(local: boolean) {
       }),
     );
     await Deno.writeTextFile(join(directory, "bin", "veryfront.js"), wrapper);
-    await Deno.writeTextFile(join(directory, "bin", "node-engine-precondition.js"), engine);
+    await Deno.writeTextFile(
+      join(directory, "bin", "node-engine-precondition.js"),
+      engine,
+    );
     await Deno.writeTextFile(
       join(directory, "node_modules", "react", "package.json"),
       JSON.stringify({ name: "react", version, main: "index.cjs" }),
@@ -49,11 +60,37 @@ async function fixture(local: boolean) {
     );
   }
   await install(global, "19.2.4", "global");
-  if (local) await install(join(project, "node_modules", "veryfront"), "19.2.5", "project");
+  if (local) {
+    await install(
+      join(project, "node_modules", "veryfront"),
+      "19.2.5",
+      "project",
+    );
+  }
   return { root, global, project };
 }
 
 describe("project runtime delegation", () => {
+  it("keeps launcher Boolean option arity aligned with the canonical CLI parser", async () => {
+    const source = await Deno.readTextFile(
+      new URL("../../../cli/shared/args.ts", import.meta.url),
+    );
+    const canonical = source.match(
+      /export const BOOLEAN_FLAGS[^=]*= new Set\(\[([\s\S]*?)\]\);/,
+    );
+    const launcher = wrapper.match(
+      /const booleanFlags = new Set\(\[([\s\S]*?)\]\);/,
+    );
+    const names = (text: string | undefined) => {
+      if (text === undefined) {
+        throw new Error("Boolean option declarations missing");
+      }
+      return Array.from(text.matchAll(/"([^"\n]+)"/g), (match) => match[1])
+        .sort();
+    };
+    assertEquals(names(launcher?.[1]), names(canonical?.[1]));
+  });
+
   it("uses the project framework and its exact peer graph before global modules load", async () => {
     const f = await fixture(true);
     try {
@@ -98,6 +135,9 @@ describe("project runtime delegation", () => {
           ["schedule", "run", "owned-task", "-d", f.project],
           ["-d", f.project, "schedule", "run", "owned-task"],
           ["dev", "-d", "--project", f.project],
+          ["--branch", "dev", "-d", f.project, "pull"],
+          ["--environment", "start", "--dir", f.project, "deploy"],
+          ["--debug", "dev", "--project", f.project],
         ]
       ) {
         const result = await new Deno.Command("node", {
@@ -150,7 +190,12 @@ describe("project runtime delegation", () => {
         args: ["dev"],
       });
       const outside = await new Deno.Command("node", {
-        args: [join(f.global, "bin", "veryfront.js"), "dev", "--project", f.project],
+        args: [
+          join(f.global, "bin", "veryfront.js"),
+          "dev",
+          "--project",
+          f.project,
+        ],
         cwd: f.root,
         stdout: "piped",
         stderr: "piped",
@@ -180,7 +225,10 @@ describe("project runtime delegation", () => {
         stderr: "piped",
       }).output();
       assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
-      assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)).origin, "global");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(result.stdout)).origin,
+        "global",
+      );
     } finally {
       await Deno.remove(f.root, { recursive: true });
     }
@@ -204,7 +252,13 @@ describe("project runtime delegation", () => {
       }).output();
       assertEquals(result.code, 1);
       assertEquals(new TextDecoder().decode(result.stdout), "");
-      assertEquals(new TextDecoder().decode(result.stderr).includes("pnpEnableEsmLoader"), true);
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(
+        stderr.trim(),
+        "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
+      );
+      assertEquals(stderr.includes(f.root), false);
+      assertEquals(stderr.includes(" at "), false);
     } finally {
       await Deno.remove(f.root, { recursive: true });
     }
@@ -213,11 +267,19 @@ describe("project runtime delegation", () => {
   it("refuses an escaping project CLI entry without falling back to global code", async () => {
     const f = await fixture(true);
     try {
-      const packageFile = join(f.project, "node_modules", "veryfront", "package.json");
+      const packageFile = join(
+        f.project,
+        "node_modules",
+        "veryfront",
+        "package.json",
+      );
       const pkg = JSON.parse(await Deno.readTextFile(packageFile));
       pkg.bin.veryfront = "../../outside.js";
       await Deno.writeTextFile(packageFile, JSON.stringify(pkg));
-      await Deno.writeTextFile(join(f.project, "outside.js"), 'console.log("escaped");');
+      await Deno.writeTextFile(
+        join(f.project, "outside.js"),
+        'console.log("escaped");',
+      );
       const result = await new Deno.Command("node", {
         args: [join(f.global, "bin", "veryfront.js"), "dev"],
         cwd: f.project,
@@ -226,7 +288,10 @@ describe("project runtime delegation", () => {
       }).output();
       assertEquals(result.code, 1);
       assertEquals(new TextDecoder().decode(result.stdout), "");
-      assertEquals(new TextDecoder().decode(result.stderr).includes("escapes its package"), true);
+      assertEquals(
+        new TextDecoder().decode(result.stderr).includes("escapes its package"),
+        true,
+      );
     } finally {
       await Deno.remove(f.root, { recursive: true });
     }

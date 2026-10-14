@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Shared constants, types, and caches for the SSR VF Modules stage.
  */
@@ -141,6 +142,8 @@ export const transformingFiles = new Set<string>();
 export const MAX_RELATIVE_IMPORT_DEPTH = 64;
 
 export interface TransformContext {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   /** One installed-peer scope captured by the root framework traversal. */
   reactRuntimeScope?: Promise<string>;
   reactVersion: string;

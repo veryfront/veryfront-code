@@ -41,6 +41,7 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    reactPeers: options.reactPeers,
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
@@ -61,7 +62,8 @@ export async function createTransformContext(
   const [contentHash, reactVersion] = await Promise.all([
     computeShortContentHash(source),
     Promise.resolve(
-      options.reactVersion ?? (options.ssr ? resolveInstalledReactRange() : undefined) ??
+      options.reactVersion ?? options.reactPeers?.versions.react ??
+        (options.ssr ? resolveInstalledReactRange() : undefined) ??
         DEFAULT_REACT_VERSION,
     ),
   ]);
@@ -82,7 +84,8 @@ export function createTransformContextSync(
     projectDir,
     contentHash,
     options,
-    options.reactVersion ?? (options.ssr ? resolveInstalledReactRange() : undefined) ??
+    options.reactVersion ?? options.reactPeers?.versions.react ??
+      (options.ssr ? resolveInstalledReactRange() : undefined) ??
       DEFAULT_REACT_VERSION,
   );
 }

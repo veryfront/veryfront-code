@@ -58,11 +58,11 @@ function freshPeerRoot(packageName: string): string {
   throw new TypeError("Local React package resolution is unavailable");
 }
 
-function resolveFreshPeer(specifier: string): string {
+function resolveFreshPeer(specifier: string, capturedRoot?: string): string {
   const packageName = specifier === "react-dom" || specifier.startsWith("react-dom/")
     ? "react-dom"
     : "react";
-  const root = freshPeerRoot(packageName);
+  const root = capturedRoot ?? freshPeerRoot(packageName);
   const require = createRequire(pathToFileURL(join(root, "package.json")));
   const manifest = JSONParse(readFileSync(join(root, "package.json"), "utf8"));
   // A fresh physical issuer avoids Node's SDK-relative symlink path cache.
@@ -85,8 +85,10 @@ export function getLocalReactVersions(): Readonly<Record<string, string>> {
   });
 }
 
-function localPackageVersion(packageName: string): string {
-  const manifest = JSONParse(readFileSync(localPackageManifestPath(packageName), "utf8"));
+function localPackageVersion(packageName: string, root?: string): string {
+  const manifest = JSONParse(
+    readFileSync(root ? join(root, "package.json") : localPackageManifestPath(packageName), "utf8"),
+  );
   if (manifest.name !== packageName) {
     throw new ReactPackageIdentityError("Installed React peer package identity does not match");
   }
@@ -167,10 +169,81 @@ export function getLocalReactPaths(
   return localReactPathsCache;
 }
 
+/** Immutable local package identity owned by one SSR transform graph. */
+export interface LocalReactPeerSnapshot {
+  readonly roots: Readonly<Record<string, string>>;
+  readonly paths: Readonly<Record<string, string>>;
+  readonly versions: Readonly<Record<string, string>>;
+}
+
+export function captureLocalReactPeers(): LocalReactPeerSnapshot {
+  if (!isNode && !isBun) {
+    return ObjectFreeze({
+      roots: EMPTY_REACT_PATHS,
+      paths: EMPTY_REACT_PATHS,
+      versions: EMPTY_REACT_PATHS,
+    });
+  }
+  const roots = ObjectFreeze({
+    react: freshPeerRoot("react"),
+    "react-dom": freshPeerRoot("react-dom"),
+  });
+  const versions = ObjectFreeze({
+    react: localPackageVersion("react", roots.react),
+    "react-dom": localPackageVersion("react-dom", roots["react-dom"]),
+  });
+  const paths: Record<string, string> = {};
+  for (const specifier of REACT_SPECIFIERS) {
+    const name = specifier === "react-dom" || specifier.startsWith("react-dom/")
+      ? "react-dom"
+      : "react";
+    try {
+      paths[specifier] = pathToFileURL(resolveFreshPeer(specifier, roots[name])).href;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== "MODULE_NOT_FOUND" && code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
+    }
+  }
+  // A concurrent package-store replacement must not mix roots during capture.
+  if (freshPeerRoot("react") !== roots.react || freshPeerRoot("react-dom") !== roots["react-dom"]) {
+    throw new TypeError("Local React peer roots changed during graph capture");
+  }
+  return ObjectFreeze({ roots, paths: ObjectFreeze(paths), versions });
+}
+
 /** Resolve SSR React imports against the same peers as the framework renderer. */
-export function getLocalReactPath(specifier: string, reactVersion?: string): string | undefined {
+export function getLocalReactPath(
+  specifier: string,
+  reactVersion?: string,
+  peers?: LocalReactPeerSnapshot,
+): string | undefined {
   if (!isReactSpecifier(specifier)) return undefined;
   assertReactPackageDeclaration(reactVersion);
+  if (peers && (isNode || isBun)) {
+    const packageName =
+      specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])
+        ? "react-dom"
+        : "react";
+    const version = peers.versions[packageName];
+    if (
+      !version || (reactVersion !== undefined && versionAdmission(version, reactVersion) === false)
+    ) {
+      throw new TypeError("Local React runtime does not match the selected project version");
+    }
+    const path = peers.paths[specifier];
+    if (path) return path;
+    const root = peers.roots[packageName];
+    if (!root) throw new TypeError("Local React peer root is unavailable in captured graph");
+    try {
+      return pathToFileURL(resolveFreshPeer(specifier, root)).href;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+        throw new TypeError("Local React peer subpath is unavailable in captured graph");
+      }
+      throw error;
+    }
+  }
   if ((isNode || isBun) && reactVersion !== undefined) {
     const packageName =
       specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])

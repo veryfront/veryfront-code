@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  captureLocalReactPeers,
   clearReactPathsCache,
   getLocalReactPaths,
 } from "#veryfront/platform/compat/react-paths.ts";
@@ -138,6 +139,484 @@ describe("react-paths", () => {
       Reflect.set(Module, "_resolveFilename", original);
       getLocalReactPaths({ fresh: true });
       clearReactPathsCache();
+    }
+  });
+
+  it("uses one captured peer path for all rewrites after a same-version relocation", async () => {
+    if (!isNode) return;
+    const { captureSSRReactRuntimeIdentity } = await import(
+      "#veryfront/transforms/esm/http-cache-helpers.ts"
+    );
+    const { rewriteSSRImportsCompat } = await import(
+      "#veryfront/transforms/import-rewriter/ssr-adapter.ts"
+    );
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `graph-peer-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      const captured = captureSSRReactRuntimeIdentity();
+      const options = { reactVersion: captured.reactVersion, reactPeers: captured.peers };
+      const source = 'import React from "react"; import { jsx } from "react/jsx-runtime";';
+      const first = rewriteSSRImportsCompat(source, options);
+      generation = "new";
+      assertEquals(rewriteSSRImportsCompat(source, options), first);
+      const next = captureSSRReactRuntimeIdentity();
+      assertEquals(
+        rewriteSSRImportsCompat(source, {
+          reactVersion: next.reactVersion,
+          reactPeers: next.peers,
+        }) === first,
+        false,
+      );
+      assertEquals(await captured.scope === await next.scope, false);
+      assertThrows(
+        () => rewriteSSRImportsCompat('import x from "react/unavailable";', options),
+        TypeError,
+      );
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+    }
+  });
+
+  it("keeps recursive fetched modules on one peer generation during dependency replacement", async () => {
+    if (!isNode) return;
+    const { createModuleFetcherContext, fetchAndCacheModule } = await import(
+      "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const directory = mkdtempSync(join(tmpdir(), "recursive-peer-"));
+    const adapter = createMockAdapter();
+    const sources = new Map([
+      [
+        "/virtual/parent.ts",
+        'import React from "react"; import { child } from "./child.js"; export const value = React.version + child;',
+      ],
+      ["/virtual/child.ts", 'import React from "react"; export const child = React.version;'],
+    ]);
+    adapter.fs.resolveFile = (path: string) =>
+      Promise.resolve(sources.has(`/virtual/${path}.ts`) ? `/virtual/${path}.ts` : null);
+    let generation = "old";
+    adapter.fs.readFile = (path: string) => {
+      if (path === "/virtual/child.ts") generation = "new";
+      const source = sources.get(path);
+      if (source === undefined) throw Object.assign(new Error("Not found"), { code: "ENOENT" });
+      return Promise.resolve(source);
+    };
+    const original = Reflect.get(Module, "_resolveFilename");
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `recursive-peer-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      const context = createModuleFetcherContext(directory, adapter, "/virtual", "recursive-peer");
+      const result = await fetchAndCacheModule("/_vf_modules/parent.js", context);
+      assertEquals(typeof result, "string");
+      const emitted: string[] = [];
+      const inspect = (folder: string) => {
+        for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+          const path = join(folder, entry.name);
+          if (entry.isDirectory()) inspect(path);
+          else if (path.endsWith(".mjs") || path.endsWith(".js")) {
+            emitted.push(fs.readFileSync(path, "utf8"));
+          }
+        }
+      };
+      inspect(directory);
+      assertEquals(generation, "new");
+      assertEquals(emitted.filter((code) => code.includes("recursive-peer-old")).length >= 2, true);
+      assertEquals(emitted.some((code) => code.includes("recursive-peer-new")), false);
+      const fresh = createModuleFetcherContext(
+        join(directory, "fresh"),
+        adapter,
+        "/virtual",
+        "recursive-peer-new",
+      );
+      const next = await fetchAndCacheModule("/_vf_modules/child.js", fresh);
+      assertEquals(typeof next, "string");
+      assertEquals(
+        fs.readFileSync(String(next).replace(/^file:\/\//, ""), "utf8").includes(
+          "recursive-peer-new",
+        ),
+        true,
+      );
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("scopes MDX JSX artifacts and React imports to their captured peers", async () => {
+    if (!isNode) return;
+    const { transformJsxImports } = await import(
+      "#veryfront/transforms/mdx/esm-module-loader/import-transformer.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const adapter = createMockAdapter();
+    const directory = mkdtempSync(join(tmpdir(), "jsx-peer-snapshot-"));
+    const source = join(directory, "component.tsx");
+    fs.writeFileSync(
+      source,
+      "export default function Component() { return <h1>same-source</h1>; }",
+    );
+    adapter.fs.files.set(source, fs.readFileSync(source, "utf8"));
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `jsx-peer-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    const code = `import Component from "file://${source}";`;
+    const artifact = (result: string) => {
+      const match = result.match(/file:\/\/([^"']+)/);
+      const captured = match?.[1];
+      if (!captured) throw new Error("JSX artifact missing");
+      return captured;
+    };
+    try {
+      const old = captureLocalReactPeers();
+      const first = await transformJsxImports(code, adapter, directory, directory, old);
+      assertEquals(fs.readFileSync(artifact(first), "utf8").includes("jsx-peer-old"), true);
+      generation = "new";
+      assertEquals(await transformJsxImports(code, adapter, directory, directory, old), first);
+      const next = await transformJsxImports(
+        code,
+        adapter,
+        directory,
+        directory,
+        captureLocalReactPeers(),
+      );
+      assertEquals(next === first, false);
+      assertEquals(fs.readFileSync(artifact(next), "utf8").includes("jsx-peer-new"), true);
+      assertEquals(fs.readFileSync(artifact(first), "utf8").includes("jsx-peer-old"), true);
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves supported exported subpaths from captured peer roots", () => {
+    if (!isNode) return;
+    const peers = captureLocalReactPeers();
+    for (const specifier of ["react/compiler-runtime", "react-dom/static"]) {
+      assertEquals(
+        getLocalReactPath(specifier, "19.2.4", peers),
+        getLocalReactPath(specifier, "19.2.4"),
+      );
+    }
+    assertThrows(() => getLocalReactPath("react/unavailable", "19.2.4", peers), TypeError);
+  });
+
+  it("keeps logical reference cache identity independent of host peer availability", async () => {
+    if (!isNode) return;
+    const { computePipelineConfigIdentity } = await import(
+      "#veryfront/transforms/pipeline/cache-identity.ts"
+    );
+    const original = fs.readFileSync;
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      if (/\/(?:react|react-dom)\/package.json$/.test(String(args[0]))) {
+        throw new Error("Host peers unavailable");
+      }
+      return Reflect.apply(original, fs, args);
+    }) as typeof fs.readFileSync;
+    const sync = Reflect.get(Module, "syncBuiltinESMExports") as () => void;
+    sync();
+    try {
+      const input = {
+        ssrImports: "references" as const,
+        reactVersion: "19.2.4",
+        jsxImportSource: "react",
+        studioEmbed: false,
+        dev: false,
+        ssr: true,
+        projectDir: "/project",
+        customPlugins: [],
+      };
+      assertEquals(
+        (await computePipelineConfigIdentity(input)).length === 64,
+        true,
+      );
+      await assertRejects(
+        () => computePipelineConfigIdentity({ ...input, ssrImports: "files" }),
+        Error,
+        "Host peers unavailable",
+      );
+    } finally {
+      fs.readFileSync = original;
+      sync();
+    }
+  });
+
+  it("keeps framework HTTP dependencies on the parent captured peers", async () => {
+    if (!isNode) return;
+    const { transformFrameworkCode } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/transform.ts"
+    );
+    const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const { withMockFetch } = await import("#veryfront/testing/mock-fetch.ts");
+    const { createFileSystem } = await import("#veryfront/platform/compat/fs.ts");
+    const directory = mkdtempSync(join(tmpdir(), "http-graph-peer-"));
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `http-graph-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      const peers = captureLocalReactPeers();
+      generation = "new";
+      await runWithCacheDir(directory, () =>
+        withMockFetch(
+          () =>
+            Promise.resolve(
+              new Response(
+                'import React from "https://esm.sh/react@19.2.4"; export default React;',
+                { headers: { "content-type": "application/javascript" } },
+              ),
+            ),
+          async () => {
+            const code = await transformFrameworkCode(
+              'import React from "react"; import dep from "https://example.invalid/dependency.mjs"; export { React, dep };',
+              join(directory, "framework.ts"),
+              {
+                reactVersion: "19.2.4",
+                reactPeers: peers,
+                projectDir: directory,
+                fs: createFileSystem(),
+              },
+            );
+            assertEquals(code.includes("http-graph-old"), true);
+            const all: string[] = [];
+            const scan = (folder: string) => {
+              for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+                const path = join(folder, entry.name);
+                if (entry.isDirectory()) scan(path);
+                else if (/\.(?:js|mjs)$/.test(path)) all.push(fs.readFileSync(path, "utf8"));
+              }
+            };
+            scan(directory);
+            assertEquals(all.some((value) => value.includes("http-graph-old")), true);
+            assertEquals(all.some((value) => value.includes("http-graph-new")), false);
+          },
+        ));
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("builds default-version logical references without host peer manifests", async () => {
+    if (!isNode) return;
+    const { runPipeline } = await import("#veryfront/transforms/pipeline/index.ts");
+    const original = fs.readFileSync;
+    const sync = Reflect.get(Module, "syncBuiltinESMExports") as () => void;
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      if (/\/(?:react|react-dom)\/package.json$/.test(String(args[0]))) {
+        throw new Error("Host peers unavailable");
+      }
+      return Reflect.apply(original, fs, args);
+    }) as typeof fs.readFileSync;
+    sync();
+    try {
+      const result = await runPipeline("export const value = 1;", "/project/page.ts", "/project", {
+        projectId: "logical-reference-host-free",
+        ssr: true,
+        dependencyPinningCacheKey: "off",
+        preloadedImportMap: { imports: {} },
+      }, { ssrImports: "references" });
+      assertEquals(result.code.includes("value"), true);
+    } finally {
+      fs.readFileSync = original;
+      sync();
+    }
+  });
+
+  it("keeps SSR loader parent and dependency transforms on the graph peers", async () => {
+    if (!isNode) return;
+    const { SSRModuleLoader } = await import(
+      "#veryfront/modules/react-loader/ssr-module-loader/loader.ts"
+    );
+    const { createDependencyHashCache } = await import("#veryfront/cache/dependency-graph.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const directory = mkdtempSync(join(tmpdir(), "ssr-loader-peer-"));
+    const parent = join(directory, "parent.ts");
+    const child = join(directory, "child.ts");
+    const source =
+      'import React from "react"; import { child } from "./child.ts"; export const value = React.version + child;';
+    fs.writeFileSync(parent, source);
+    fs.writeFileSync(child, 'import React from "react"; export const child = React.version;');
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(parent, source);
+    adapter.fs.files.set(child, fs.readFileSync(child, "utf8"));
+    let generation = "old";
+    const read = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.readFile = (path: string) => {
+      if (path === child) generation = "new";
+      return read(path);
+    };
+    const original = Reflect.get(Module, "_resolveFilename");
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `ssr-loader-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      await runWithCacheDir(directory, async () => {
+        const loader = new SSRModuleLoader({
+          projectId: "ssr-loader-peer",
+          contentSourceId: "release",
+          projectDir: directory,
+          adapter,
+          dev: false,
+          reactVersion: "19.2.4",
+        });
+        const transform = Reflect.get(loader, "transformWithDependencies");
+        await Reflect.apply(transform, loader, [parent, source, 0, createDependencyHashCache()]);
+        assertEquals(generation, "new");
+        const emitted: string[] = [];
+        const scan = (folder: string) => {
+          for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+            const path = join(folder, entry.name);
+            if (entry.isDirectory()) scan(path);
+            else if (/\.(?:mjs|js)$/.test(path)) emitted.push(fs.readFileSync(path, "utf8"));
+          }
+        };
+        scan(directory);
+        assertEquals(emitted.filter((code) => code.includes("ssr-loader-old")).length >= 2, true);
+        assertEquals(emitted.some((code) => code.includes("ssr-loader-new")), false);
+      });
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps rendering orchestrator dependency transforms on one captured peer graph", async () => {
+    if (!isNode) return;
+    const { transformModuleWithDeps } = await import(
+      "#veryfront/rendering/orchestrator/module-loader/index.ts"
+    );
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const directory = mkdtempSync(join(tmpdir(), "orchestrator-peer-"));
+    const output = join(directory, "output");
+    fs.mkdirSync(output);
+    const parent = join(directory, "parent.ts");
+    const child = join(directory, "child.ts");
+    fs.writeFileSync(
+      parent,
+      'import React from "react"; import { child } from "./child.ts"; export const value = React.version + child;',
+    );
+    fs.writeFileSync(child, 'import React from "react"; export const child = React.version;');
+    const actual = await runtime.get();
+    let generation = "old";
+    const scopedFs = Object.create(actual.fs);
+    scopedFs.readFile = (path: string) => {
+      if (path === child) generation = "new";
+      return actual.fs.readFile(path);
+    };
+    const adapter = { ...actual, fs: scopedFs };
+    const original = Reflect.get(Module, "_resolveFilename");
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `orchestrator-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      await runWithCacheDir(directory, async () => {
+        await transformModuleWithDeps(parent, output, actual, {
+          projectId: "orchestrator-peer",
+          projectDir: directory,
+          contentSourceId: "release",
+          adapter,
+          mode: "production",
+          moduleCache: new Map(),
+          esmCache: new Map(),
+          reactVersion: "19.2.4",
+        });
+        assertEquals(generation, "new");
+        const emitted: string[] = [];
+        const scan = (folder: string) => {
+          for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+            const path = join(folder, entry.name);
+            if (entry.isDirectory()) scan(path);
+            else if (/\.(?:js|mjs)$/.test(path)) emitted.push(fs.readFileSync(path, "utf8"));
+          }
+        };
+        scan(output);
+        assertEquals(emitted.filter((code) => code.includes("orchestrator-old")).length >= 2, true);
+        assertEquals(emitted.some((code) => code.includes("orchestrator-new")), false);
+      });
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 

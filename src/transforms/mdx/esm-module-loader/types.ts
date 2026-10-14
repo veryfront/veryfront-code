@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -8,6 +9,7 @@ import type { DeferredImportErrorDescriptor } from "./utils/stub-module.ts";
 import type { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 
 export interface ESMLoaderContext {
+  reactPeers?: LocalReactPeerSnapshot;
   esmCacheDir?: string;
   moduleCache: LRUCache<string, MDXModule>;
   adapter?: RuntimeAdapter;
@@ -85,7 +87,11 @@ export interface ModuleFetcherContext {
   /** React peer identity captured once for this request-scoped fetch graph. */
   reactRuntimeScope?: Promise<string>;
   /** Version and scope derived from one request-owned installed-peer snapshot. */
-  reactRuntimeIdentity?: { reactVersion: string; scope: Promise<string> };
+  reactRuntimeIdentity?: {
+    reactVersion: string;
+    scope: Promise<string>;
+    peers: LocalReactPeerSnapshot;
+  };
   /** Borrowed capture for generation preparation; returned paths identify captured sources. */
   sourceCapture?: ModuleSourceCapture;
   /** Completed source bindings retained only for this capture's lifetime. */

@@ -1,5 +1,9 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
-import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /****
  * Module Loader
  *
@@ -346,7 +350,16 @@ async function transformModuleWithDepsUnmemoized(
   // cache-hit branch therefore replays what the first resolution found.
   unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
-  config = { ...config, runtimeScope: config.runtimeScope ?? await getSSRReactRuntimeCacheScope() };
+  const captured = config.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  config = {
+    ...config,
+    reactPeers: config.reactPeers ?? captured!.peers,
+    runtimeScope: captured
+      ? (config.runtimeScope === undefined
+        ? await captured.scope
+        : `${config.runtimeScope}\0${await captured.scope}`)
+      : config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
+  };
   const ownsCycleManifest = cycleManifest === undefined;
   let sourceGraph = cycleManifest ? sourceGraphByCycleManifest.get(cycleManifest) : undefined;
   let recoveryNonce: string | undefined;
@@ -572,6 +585,7 @@ async function transformModuleWithDepsUnmemoized(
   const effectiveProjectId = projectId ?? projectDir;
   let { code: transformedCode } = await transformModuleCodeWithCache({
     runtimeScope: config.runtimeScope,
+    reactPeers: config.reactPeers,
     fileContent,
     filePath,
     projectDir,
@@ -714,6 +728,7 @@ export interface ModuleLoaderConfig {
   reactVersion?: string;
   /** React peer identity captured for one recursive transformation graph. */
   runtimeScope?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */
@@ -882,6 +897,16 @@ export async function loadModule(
     markModuleLoadProgress(config, "module:imported", filePath);
     return module;
   }
+  const captured = config.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  config = {
+    ...config,
+    reactPeers: config.reactPeers ?? captured!.peers,
+    runtimeScope: captured
+      ? (config.runtimeScope === undefined
+        ? await captured.scope
+        : `${config.runtimeScope}\0${await captured.scope}`)
+      : config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
+  };
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
   markModuleLoadProgress(config, "module:cache-ready", filePath);

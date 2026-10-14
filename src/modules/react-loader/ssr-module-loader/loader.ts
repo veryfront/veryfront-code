@@ -1,4 +1,7 @@
-import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * SSR Module Loader Class
  *
@@ -240,11 +243,28 @@ async function getMdxEsmCacheVariant(
 }
 
 const reactScopesByGraph = new WeakMap<DependencyHashCache, Promise<string>>();
+const reactIdentitiesByGraph = new WeakMap<
+  DependencyHashCache,
+  ReturnType<typeof captureSSRReactRuntimeIdentity>
+>();
+
+function getGraphReactRuntimeIdentity(
+  graph: DependencyHashCache,
+): ReturnType<typeof captureSSRReactRuntimeIdentity> {
+  let identity = reactIdentitiesByGraph.get(graph);
+  if (!identity) {
+    identity = captureSSRReactRuntimeIdentity();
+    reactIdentitiesByGraph.set(graph, identity);
+  }
+  return identity;
+}
 
 function getGraphReactRuntimeScope(
   graph: DependencyHashCache,
-  readScope: () => Promise<string> = getSSRReactRuntimeCacheScope,
+  readScope?: () => Promise<string>,
 ): Promise<string> {
+  if (!readScope) return getGraphReactRuntimeIdentity(graph).scope;
+  // Preserve the narrow scope-provider seam used by singleflight tests.
   let scope = reactScopesByGraph.get(graph);
   if (!scope) {
     scope = readScope();
@@ -830,7 +850,8 @@ export class SSRModuleLoader {
       code = injectNodePositions(code, { filePath: relativeFilePath });
     }
 
-    const runtimeScope = await getGraphReactRuntimeScope(dependencyHashCache);
+    const reactRuntimeIdentity = getGraphReactRuntimeIdentity(dependencyHashCache);
+    const runtimeScope = await reactRuntimeIdentity.scope;
     const contentHash = await this.cache.hashContentAsync(code);
     const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`, runtimeScope);
     const filePathCacheKey = this.cache.getCacheKey(filePath, runtimeScope);
@@ -1064,6 +1085,7 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
           moduleServerOrigin: this.options.moduleServerOrigin,
           reactVersion: this.options.reactVersion,
+          reactPeers: reactRuntimeIdentity.peers,
           serverExternalPackages: this.options.serverExternalPackages,
           dependencyHashCache,
           dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
@@ -1133,6 +1155,7 @@ export class SSRModuleLoader {
             projectDir: this.options.projectDir,
             dev: this.options.dev,
             reactVersion: this.options.reactVersion,
+            reactRuntimeIdentity,
             moduleServerOrigin: this.options.moduleServerOrigin,
             dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
             dependencyPinningDependencies: this.options.dependencyPinningDependencies,

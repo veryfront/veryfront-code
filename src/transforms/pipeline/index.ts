@@ -1,3 +1,5 @@
+import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Transforms Pipeline
  *
@@ -219,6 +221,13 @@ export function runPipeline(
     throw new TypeError("Logical SSR references require an SSR transform");
   }
 
+  options = {
+    ...options,
+    reactVersion: options.reactVersion ??
+      (ssrImports === "references" ? DEFAULT_REACT_VERSION : undefined),
+    reactPeers: options.reactPeers ??
+      (options.ssr && ssrImports === "files" ? captureLocalReactPeers() : undefined),
+  };
   return withSpan(
     "transform.pipeline",
     async () => {
@@ -263,6 +272,7 @@ export function runPipeline(
           computePipelineConfigIdentity({
             ssrImports,
             reactVersion: ctx.reactVersion,
+            reactPeers: ctx.reactPeers,
             jsxImportSource: ctx.jsxImportSource,
             moduleServerUrl: ctx.moduleServerUrl,
             moduleServerOrigin: ctx.moduleServerOrigin,

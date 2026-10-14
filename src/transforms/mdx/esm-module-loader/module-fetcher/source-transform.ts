@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
@@ -34,6 +35,8 @@ function isRecursiveReactRuntimeEntry(normalizedPath: string): boolean {
 }
 
 export interface TransformResolvedModuleSourceInput {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   sourceCode: string;
   actualFilePath: string;
   projectDir: string;
@@ -105,6 +108,8 @@ export async function transformResolvedModuleSource(
         undefined,
         importMap,
         importMapFingerprint,
+        undefined,
+        input.reactPeers,
       );
     } catch (transformError) {
       logTransformFailure(input, transformError);
@@ -127,6 +132,7 @@ export async function transformResolvedModuleSource(
         dev: input.dev,
         ssr: true,
         reactVersion: input.reactVersion,
+        ...(input.reactPeers ? { reactPeers: input.reactPeers } : {}),
         serverExternalPackages: input.serverExternalPackages,
         moduleServerOrigin: input.moduleServerOrigin,
         dependencyPinningCacheKey: input.dependencyPinningCacheKey,
@@ -165,6 +171,7 @@ export async function transformResolvedModuleSource(
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion: input.reactVersion,
+    ...(input.reactPeers ? { reactPeers: input.reactPeers } : {}),
     serverExternalPackages: input.serverExternalPackages,
   });
 

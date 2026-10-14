@@ -61,16 +61,99 @@ function selectedProjectDirectory() {
   const args = process.argv.slice(2);
   // -d is a directory for CommonArgs.projectDir commands, but debug for dev.
   const directoryAliasCommands = new Set([
-    "analyze-chunks", "clean", "deploy", "env", "files", "integration", "knowledge",
-    "project", "pull", "push", "routes", "schedule", "up", "uploads", "webhook",
+    "analyze-chunks",
+    "clean",
+    "deploy",
+    "env",
+    "files",
+    "integration",
+    "knowledge",
+    "project",
+    "pull",
+    "push",
+    "routes",
+    "schedule",
+    "up",
+    "uploads",
+    "webhook",
   ]);
   let command;
-  const valueFlags = new Set(["--project", "--project-dir", "--dir", "--port", "-p", "--output", "-o"]);
+  // Mirror the canonical CLI Boolean arity; unknown options take a value.
+  // The source-parity test rejects drift from cli/shared/args.ts.
+  const booleanFlags = new Set([
+    "accept-dispatch",
+    "adopt-new-deps",
+    "all",
+    "auto",
+    "binary",
+    "build",
+    "cache",
+    "check",
+    "clear",
+    "color",
+    "compress",
+    "debug",
+    "delete",
+    "deploy",
+    "dry-run",
+    "force",
+    "github",
+    "global",
+    "google",
+    "headless",
+    "help",
+    "hmr",
+    "json",
+    "list",
+    "microsoft",
+    "ndjson",
+    "no-adopt-pins",
+    "no-animation",
+    "no-browser",
+    "no-color",
+    "no-compress",
+    "no-gpg-sign",
+    "no-hmr",
+    "no-input",
+    "no-split",
+    "no-ssg",
+    "no-tui",
+    "okf-bundle",
+    "open",
+    "parallel",
+    "prefetch",
+    "prune",
+    "quiet",
+    "recursive",
+    "remote",
+    "require-export",
+    "site",
+    "skip-env-prompt",
+    "skip-install",
+    "split",
+    "ssg",
+    "strict",
+    "studio",
+    "token",
+    "update",
+    "verbose",
+    "verify",
+    "version",
+    "yes",
+  ]);
+  const shortBooleanFlags = new Set(["h", "v", "q", "f", "s", "j", "y"]);
   for (let index = 0; index < args.length && args[index] !== "--"; index++) {
     const arg = args[index];
-    if (valueFlags.has(arg) || (arg === "-d" && args[index + 1] && !args[index + 1].startsWith("-"))) {
-      index++;
-    } else if (!arg.startsWith("-")) { command = arg; break; }
+    if (!arg.startsWith("-")) {
+      command = arg;
+      break;
+    }
+    const key = arg.replace(/^-+/, "").split("=")[0];
+    if (
+      !arg.includes("=") && !booleanFlags.has(key) &&
+      !shortBooleanFlags.has(key) && args[index + 1] &&
+      !args[index + 1].startsWith("-")
+    ) index++;
   }
   let project;
   let projectDirectory;
@@ -173,30 +256,54 @@ async function runJsFallback() {
   await import("../esm/cli/main.js");
 }
 
-const pnpStartup = findProjectPnp();
-let needsPnpStartup = false;
-if (pnpStartup && !process.versions.pnp) {
-  const issuer = join(selectedProjectDirectory(), "package.json");
-  const api = createRequire(issuer)(pnpStartup);
-  if (typeof api.resolveToUnqualified !== "function") {
-    throw new Error("Invalid project Plug'n'Play API");
+function prepareProjectLaunch() {
+  const pnpStartup = findProjectPnp();
+  let needsPnpStartup = false;
+  if (pnpStartup && !process.versions.pnp) {
+    const issuer = join(selectedProjectDirectory(), "package.json");
+    const api = createRequire(issuer)(pnpStartup);
+    if (typeof api.resolveToUnqualified !== "function") {
+      throw new Error("Invalid project Plug'n'Play API");
+    }
+    try {
+      needsPnpStartup =
+        typeof api.resolveToUnqualified("veryfront", issuer) === "string";
+    } catch (error) {
+      if (error?.pnpCode !== "UNDECLARED_DEPENDENCY") throw error;
+    }
   }
-  try {
-    needsPnpStartup =
-      typeof api.resolveToUnqualified("veryfront", issuer) === "string";
-  } catch (error) {
-    if (error?.pnpCode !== "UNDECLARED_DEPENDENCY") throw error;
+  if (needsPnpStartup) {
+    const loader = join(dirname(pnpStartup), ".pnp.loader.mjs");
+    if (!existsSync(loader)) {
+      throw new Error(
+        "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
+      );
+    }
+    return { pnpStartup, loader };
   }
+  return { projectCli: resolveProjectCli() };
 }
-if (needsPnpStartup) {
-  // Install PnP before Node initializes its ESM/CJS filesystem bindings. Late
-  // monkey-patching cannot safely load zip-backed CommonJS peers on Node 24.
-  const loader = join(dirname(pnpStartup), ".pnp.loader.mjs");
-  if (!existsSync(loader)) {
-    throw new Error(
-      "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
-    );
-  }
+let launch;
+try {
+  launch = prepareProjectLaunch();
+} catch (error) {
+  const messages = new Set([
+    "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
+    "Invalid project Veryfront package identity",
+    "Project Veryfront installation has no valid CLI entry",
+    "Project Veryfront CLI entry escapes its package",
+    "Invalid project Plug'n'Play API",
+    "Project Plug'n'Play framework resolution failed",
+  ]);
+  const message =
+    typeof error?.message === "string" && messages.has(error.message)
+      ? error.message
+      : "Project CLI setup failed; verify the project directory and reinstall its dependencies";
+  console.error(message);
+  process.exit(1);
+}
+if (launch.pnpStartup) {
+  const { pnpStartup, loader } = launch;
   const child = spawn(process.execPath, [
     ...process.execArgv,
     "--require",
@@ -222,7 +329,7 @@ if (needsPnpStartup) {
     else process.exit(code ?? 1);
   });
 } else {
-  const projectCli = resolveProjectCli();
+  const { projectCli } = launch;
   if (projectCli) {
     // Select the whole project framework graph before global polyfills or React
     // imports load. This keeps framework contexts and the renderer on one peer.

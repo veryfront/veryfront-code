@@ -526,6 +526,7 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        reactPeers: identity.peers,
         serverExternalPackages: context.serverExternalPackages,
         moduleServerOrigin,
         dependencyPinningCacheKey,
@@ -596,6 +597,7 @@ export function createModuleFetcherContext(
   projectId: string,
   options?: {
     sourceCapture?: ModuleFetcherContext["sourceCapture"];
+    reactRuntimeIdentity?: ModuleFetcherContext["reactRuntimeIdentity"];
     contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;

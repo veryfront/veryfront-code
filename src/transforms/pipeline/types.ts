@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Transform pipeline types.
@@ -46,6 +47,8 @@ export type TransformTarget = "ssr" | "browser";
  * Options passed to the transform pipeline.
  */
 export interface TransformOptions {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   /** Development mode (enables sourcemaps, disables minification) */
   dev?: boolean;
   /** Project identifier for caching */
@@ -100,6 +103,7 @@ export interface TransformOptions {
  * Mutable - stages update ctx.code as they process.
  */
 export interface TransformContext {
+  reactPeers?: LocalReactPeerSnapshot;
   /** Import representation selected by the pipeline configuration. */
   ssrImports?: PipelineConfig["ssrImports"];
   /** Current code being transformed */

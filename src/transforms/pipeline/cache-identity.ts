@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
 import { fingerprintImportMap, getSSRReactRuntimeCacheScope } from "../esm/http-cache-helpers.ts";
@@ -439,6 +440,7 @@ function encodeCustomPluginIdentities(
 }
 
 export interface PipelineConfigIdentityInput {
+  reactPeers?: LocalReactPeerSnapshot;
   ssrImports?: PipelineConfig["ssrImports"];
   reactVersion: string;
   jsxImportSource: string;
@@ -507,8 +509,10 @@ export async function computePipelineConfigIdentity(
   if (ssrImports === "references") identity += "ssr-imports=references-v1;";
   identity += `base=${encodeIdentityPrimitive(baseIdentity)};`;
   identity += `ssr=${encodeIdentityPrimitive(ssr)};`;
-  if (ssr) {
-    identity += `react-runtime=${encodeIdentityPrimitive(await getSSRReactRuntimeCacheScope())};`;
+  if (ssr && ssrImports !== "references") {
+    identity += `react-runtime=${
+      encodeIdentityPrimitive(await getSSRReactRuntimeCacheScope(input.reactPeers))
+    };`;
   }
   identity += `project=${encodeIdentityPrimitive(projectDir)};`;
   const moduleServerUrl = boundedOption(
