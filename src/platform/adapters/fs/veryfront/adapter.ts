@@ -60,7 +60,7 @@ import {
   DEFAULT_CACHE_TTL_MS,
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
-import { isNotFoundLikeError } from "./read-operations-helpers.ts";
+import { createNotFoundLikeError, isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { getCurrentRequestContext } from "./request-context.ts";
@@ -1726,6 +1726,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     } catch (error) {
       if (!this.#shouldRecoverBranchMiss(path, error)) throw error;
 
+      const listingReadSequence = this.#appliedListingReadSequence;
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
         await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
@@ -1739,6 +1740,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
           error: refreshError instanceof Error ? refreshError.message : String(refreshError),
         });
         throw error;
+      }
+
+      // Pending invalidation bypasses the file-list index on the retry. Use
+      // only a newly applied, current-source listing to certify an absent root
+      // config; a failed or discarded refresh cannot establish this authority.
+      const normalizedPath = this.normalizer.normalize(path);
+      const files = this.sourceSnapshotFiles;
+      if (
+        this.#appliedListingReadSequence > listingReadSequence &&
+        this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
+        files !== undefined &&
+        IntrinsicReflectApply(ArrayPrototypeSome, VERYFRONT_CONFIG_FILES, [
+          (candidate: string) => candidate === normalizedPath,
+        ]) &&
+        !IntrinsicReflectApply(ArrayPrototypeSome, files, [
+          (file: SourceSnapshotFile) => file.path === normalizedPath,
+        ])
+      ) {
+        throw createNotFoundLikeError(normalizedPath);
       }
 
       try {

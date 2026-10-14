@@ -39,6 +39,8 @@ import {
 } from "#veryfront/config/loader.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { createNotFoundLikeError } from "./read-operations-helpers.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { isNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { VeryfrontAPIOperations } from "../../veryfront-api-client/operations.ts";
 
 describe("VeryfrontFSAdapter", () => {
@@ -2995,6 +2997,97 @@ describe("VeryfrontFSAdapter", () => {
               : await read();
           assertEquals(content, "export default {};");
           assertEquals(listingPasses, 2);
+        } finally {
+          removePendingInvalidation(prefix);
+          adapter.dispose();
+        }
+      });
+    }
+
+    for (
+      const scenario of [
+        "absent config",
+        "refresh denied",
+        "listed config",
+        "ordinary file",
+        "superseded refresh",
+      ] as const
+    ) {
+      it(`preserves source authority for an invalidated missing file: ${scenario}`, async () => {
+        const adapter = createAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: false },
+          },
+        });
+        const internals = adapter as unknown as {
+          clearMemoryCaches: () => void;
+          client: {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+            getFileContent: () => Promise<string>;
+          };
+          wsManager: { connect: () => void };
+        };
+        const client = internals.client;
+        client.initialize = () => Promise.resolve();
+        client.getProjectSlug = () => "test-project";
+        client.getProjectId = () => "project-123";
+        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+        let listingPasses = 0;
+        let contentReads = 0;
+        client.listAllFiles = () => {
+          listingPasses++;
+          if (scenario === "superseded refresh" && listingPasses === 2) {
+            internals.clearMemoryCaches();
+          }
+          if (listingPasses > 1 && scenario === "refresh denied") {
+            return Promise.reject(
+              API_CLIENT_ERROR.create({ detail: "Project unavailable", status: 404 }),
+            );
+          }
+          return Promise.resolve(
+            scenario === "listed config" || (scenario === "superseded refresh" && listingPasses > 2)
+              ? [{ path: "veryfront.config.js" }]
+              : [],
+          );
+        };
+        client.getFileContent = () => {
+          contentReads++;
+          return Promise.reject(
+            API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }),
+          );
+        };
+        internals.wsManager.connect = () => {};
+        const prefix = buildFileCacheKeyPrefix({
+          sourceType: "branch",
+          projectSlug: "test-project",
+          branch: "main",
+        });
+        try {
+          await adapter.initialize();
+          addPendingInvalidation(prefix);
+          const error = await assertRejects(() =>
+            adapter.readTextFile(
+              scenario === "ordinary file" ? "/data/missing.json" : "/veryfront.config.js",
+            )
+          );
+          assertEquals(isNotFoundError(error), scenario === "absent config");
+          assertEquals(
+            (error as { slug?: string }).slug,
+            scenario === "absent config" ? "file-not-found" : "api-client-error",
+          );
+          assertEquals(listingPasses, scenario === "superseded refresh" ? 3 : 2);
+          assertEquals(
+            contentReads,
+            scenario === "absent config" || scenario === "refresh denied" ? 1 : 2,
+          );
         } finally {
           removePendingInvalidation(prefix);
           adapter.dispose();
