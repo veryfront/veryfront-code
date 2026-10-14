@@ -202,6 +202,35 @@ describe("listAllUploads", () => {
       ["file", "contracts/q1.pdf"],
     ]);
   });
+
+  it("reads folder items from every page when no response has a folders array", async () => {
+    const pages = [
+      {
+        data: [
+          { type: "folder", path: "contracts/" },
+          { type: "file", path: "contracts/q1.pdf", size: 10 },
+        ],
+        page_info: { next: "cursor-2" },
+      },
+      {
+        data: [
+          { type: "folder", path: "invoices/" },
+          { type: "file", path: "invoices/a.pdf", size: 20 },
+        ],
+        page_info: { next: null },
+      },
+    ];
+    const client = createMockClient({ get: () => Promise.resolve(pages.shift()) });
+
+    const uploads = await listAllUploads(client, "my-project");
+
+    assertEquals(uploads.map((upload) => [upload.type, upload.path]), [
+      ["folder", "contracts/"],
+      ["folder", "invoices/"],
+      ["file", "contracts/q1.pdf"],
+      ["file", "invoices/a.pdf"],
+    ]);
+  });
 });
 
 describe("resolveUploadOutputPath", () => {

@@ -244,6 +244,7 @@ export async function listAllUploads(
 ): Promise<UploadItem[]> {
   const uploads: UploadItem[] = [];
   let folders: UploadItem[] | undefined;
+  const legacyFolders: UploadItem[] = [];
   let cursor: string | undefined;
 
   do {
@@ -259,15 +260,20 @@ export async function listAllUploads(
       params,
     );
     // Folders are unpaginated: every page carries the same `folders` array, so
-    // the first page supplies them. The `type: "folder"` items in `data` repeat
-    // it and are read only when the response has no `folders` array.
-    folders ??= response.folders?.map((folder) => ({ type: "folder" as const, ...folder })) ??
-      response.data.filter((item) => item.type === "folder");
+    // the first page that has one supplies them. The `type: "folder"` items in
+    // `data` repeat it. They are read only while no page has carried a
+    // `folders` array, and then from every page, because an API without the
+    // array pages its folder items with the uploads.
+    if (response.folders) {
+      folders ??= response.folders.map((folder) => ({ type: "folder" as const, ...folder }));
+    } else if (!folders) {
+      legacyFolders.push(...response.data.filter((item) => item.type === "folder"));
+    }
     uploads.push(...response.data.filter((item) => item.type !== "folder"));
     cursor = response.page_info?.next ?? undefined;
   } while (cursor);
 
-  return [...(folders ?? []), ...uploads];
+  return [...(folders ?? legacyFolders), ...uploads];
 }
 
 export function resolveUploadOutputPath(uploadPath: string, outputDir: string): string {
