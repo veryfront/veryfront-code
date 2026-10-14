@@ -1,3 +1,4 @@
+import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import type { InferSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { boundedJsonByteLength, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -29,6 +30,7 @@ const definitionKeys = createPrivateSet([
   "parameters",
   "title",
   "annotations",
+  "discovery",
 ]);
 
 // Reserve the channel envelope, including escaped binding strings and the prefix.
@@ -187,7 +189,7 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
   const record = {};
   for (let index = 0; index < entries.length; index++) {
     const key = entries[index]![0], entry = entries[index]![1];
-    if (entry !== undefined || (key !== "title" && key !== "annotations")) {
+    if (entry !== undefined || (key !== "title" && key !== "annotations" && key !== "discovery")) {
       defineOwnDataProperty(record, key, entry, { enumerable: true });
     }
   }
@@ -201,12 +203,17 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
     (data.title !== undefined && typeof data.title !== "string") ||
     (data.annotations !== undefined && !isToolAnnotations(data.annotations))
   ) throw new TypeError("Invalid executor tool definition");
+  const discovery = normalizeToolDiscoveryMetadata(data.discovery);
+  if (data.discovery !== undefined && discovery === undefined) {
+    throw new TypeError("Invalid executor tool discovery metadata");
+  }
   return {
     name: data.name,
     description: data.description,
     parameters: data.parameters,
     ...(data.title === undefined ? {} : { title: data.title }),
     ...(data.annotations === undefined ? {} : { annotations: data.annotations }),
+    ...(discovery === undefined ? {} : { discovery }),
   };
 }
 

@@ -496,7 +496,7 @@ it("tool_search miss asks for a refined search while authorized tools stay defer
     read_release_marker: noopTool("read_release_marker", "Read the release marker"),
   };
   assertEquals(await toolSearchNextSteps([["zzz unrelated capability"]], tools), [
-    "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then query one exact name. A project resource title is not a tool name.",
+    "No executable tool matched this query. Use tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name.",
   ]);
 
   // A search in the same step that loaded the last deferred tool leaves nothing to discover.
@@ -524,7 +524,7 @@ it("tool_search does not recommend executing the first available phrase match", 
 for (const mode of ["generate", "stream"] as const) {
   it(`browses authorized executable names before exact loading and execution (${mode})`, async () => {
     const model = scriptedModel([
-      { toolCalls: [{ id: "browse", name: "tool_search", input: { inventory: { limit: 2 } } }] },
+      { toolCalls: [{ id: "browse", name: "tool_search", input: { inventory: "all", limit: 2 } }] },
       { toolCalls: [{ id: "load", name: "tool_search", input: { query: "read_release_marker" } }] },
       { toolCalls: [{ id: "read", name: "read_release_marker", input: {} }] },
       { text: "Verified marker" },
@@ -560,6 +560,84 @@ for (const mode of ["generate", "stream"] as const) {
     assertEquals(model.toolNames(0), ["tool_search"]);
     assertEquals(model.toolNames(1), ["tool_search"]);
     assertEquals(model.toolNames(2), ["read_release_marker"]);
+    assertEquals(executions, 1);
+    assert(resultText.includes("Verified marker"));
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
+  it(`enforces one tool_search mode, then searches and loads by exact schema (${mode})`, async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "both",
+          name: "tool_search",
+          input: { query: "marker", inventory: "all" },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "stray-option",
+          name: "tool_search",
+          input: { search: "release marker", limit: 2 },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "nested-inventory",
+          name: "tool_search",
+          input: { inventory: { limit: 2 } },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "find",
+          name: "tool_search",
+          input: { search: "release marker" },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "inspect",
+          name: "tool_search",
+          input: { schema: "read_release_marker" },
+        }],
+      },
+      { toolCalls: [{ id: "read", name: "read_release_marker", input: {} }] },
+      { text: "Verified marker" },
+    ], { modelId: "hosted/schema-tools", only: mode });
+    let executions = 0;
+    const assistant = agent({
+      id: "schema-runtime-test",
+      model: "hosted/schema-tools",
+      system: "Verify the marker using executable tools.",
+      tools: {
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return { marker: "verified" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 7,
+      resolveModelTransport: () => ({ model }),
+    });
+    const resultText = mode === "generate"
+      ? (await assistant.generate({ input: "Read the release marker" })).text
+      : await (await assistant.stream({ input: "Read the release marker" })).toDataStreamResponse()
+        .text();
+    assert(JSON.stringify(model.calls[1]).includes("exactly one of"));
+    assert(JSON.stringify(model.calls[2]).includes("limit applies only with inventory"));
+    assert(JSON.stringify(model.calls[3]).includes("cursor, and limit as top-level fields"));
+    const searchContext = JSON.stringify(model.calls[4]);
+    assert(searchContext.includes("read_release_marker"));
+    assertEquals(model.toolNames(4), ["tool_search"]);
+    assert(JSON.stringify(model.calls[5]).includes("inputSchema"));
+    assertEquals(model.toolNames(5), ["read_release_marker"]);
     assertEquals(executions, 1);
     assert(resultText.includes("Verified marker"));
   });

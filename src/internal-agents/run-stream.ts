@@ -1,4 +1,6 @@
 import { bindHostedAgentPauseLifetime } from "#veryfront/agent/hosted/manual-pause-credential.ts";
+import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
+import type { ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import {
   invalidateHostedAgentPauseSettlement,
   isHostedAgentPauseAcknowledged,
@@ -983,6 +985,7 @@ interface ForwardedToolDef {
   description: string;
   inputSchema?: Record<string, unknown>;
   parameters?: Record<string, unknown>;
+  discovery?: ToolDiscoveryMetadata;
 }
 
 function getForwardedIntegrationToolDefinitions(
@@ -1000,11 +1003,15 @@ function getForwardedIntegrationToolDefinitions(
       def !== null &&
       typeof def.name === "string" &&
       typeof def.description === "string",
-  ).map((def) => ({
-    name: def.name,
-    description: def.description,
-    parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
-  }));
+  ).map((def) => {
+    const forwarded: ForwardedToolDef = {
+      name: def.name,
+      description: def.description,
+      parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
+    };
+    copyToolDiscoveryMetadata(def, forwarded);
+    return forwarded;
+  });
 }
 
 function getRemoteToolDiscoveryContext(input: {

@@ -24,12 +24,12 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`;
 const RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE =
   "No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.";
 const RUNTIME_TOOL_SEARCH_GUIDANCE =
-  "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.";
+  "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.";
 
 const RUNTIME_DEFERRED_TOOL_HEADER =
   "Authorized but not loaded. You cannot call these until they are loaded:";
 const RUNTIME_DEFERRED_TOOL_FOOTER =
-  "Load one by calling tool_search with its exact name. It becomes callable on the next model step. You must not call a deferred tool directly.";
+  `Load one by calling tool_search with schema: "<exact name>". It becomes callable on the next model step. You must not call a deferred tool directly.`;
 const MAX_DEFERRED_TOOL_SUMMARIES = 20;
 const MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH = 240;
 
@@ -80,7 +80,7 @@ function createDeferredToolSection(deferredTools: readonly DeferredToolSummary[]
   );
   const omittedCount = deferredTools.length - displayedToolCount;
   const omittedGuidance = omittedCount > 0
-    ? `\n\n${omittedCount} additional authorized deferred tools are omitted from this prompt. Use tool_search with exact names or capability phrases to load omitted tools.`
+    ? `\n\n${omittedCount} additional authorized deferred tools are omitted from this prompt. Use tool_search search or inventory to find omitted tools.`
     : "";
 
   return `\n\n${RUNTIME_DEFERRED_TOOL_HEADER}

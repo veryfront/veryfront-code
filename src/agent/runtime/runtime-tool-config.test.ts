@@ -338,6 +338,46 @@ describe("agent/runtime-tool-config", () => {
       );
     });
 
+    it("carries normalized discovery metadata and drops invalid discovery", () => {
+      assertEquals(
+        getRuntimeForwardedIntegrationToolDefs(runtimeConfig({
+          __vfForwardedIntegrationToolDefs: [
+            {
+              name: "search_docs",
+              description: "Search docs",
+              parameters: { type: "object" },
+              discovery: {
+                version: 1,
+                type: "integration",
+                domain: "docs",
+                resource: "pages",
+                extra: "dropped",
+              } as never,
+            },
+            {
+              name: "bad_discovery",
+              description: "Bad discovery",
+              parameters: { type: "object" },
+              discovery: { version: 1, type: "other" } as never,
+            },
+          ],
+        })),
+        [
+          {
+            name: "search_docs",
+            description: "Search docs",
+            parameters: { type: "object" },
+            discovery: { version: 1, type: "integration", domain: "docs", resource: "pages" },
+          },
+          {
+            name: "bad_discovery",
+            description: "Bad discovery",
+            parameters: { type: "object" },
+          },
+        ],
+      );
+    });
+
     it("returns undefined when no forwarded definitions are present", () => {
       assertEquals(getRuntimeForwardedIntegrationToolDefs(runtimeConfig()), undefined);
       assertEquals(
