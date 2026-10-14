@@ -108,6 +108,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
     | "historicalToolInputRetention"
+    | "trustedToolReplayMessageIds"
     | "onUnresolvableAttachment"
   >
   & {
@@ -797,6 +798,9 @@ export async function prepareHostedChatExecution<
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
       trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
+      trustedToolReplayMessageIds: input.request.serverEnvelopeVerified === true
+        ? normalized.effectiveMessages.map((message) => message.id)
+        : undefined,
       legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
@@ -933,6 +937,7 @@ export async function prepareHostedChatRuntimeMessages(
 ): Promise<AgentRuntimeMessage[]> {
   if (!options.authToken || !options.apiUrl) {
     const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+      trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
@@ -964,6 +969,7 @@ export async function prepareHostedChatRuntimeMessages(
   const apiUrl = options.apiUrl;
 
   const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+    trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,

@@ -399,10 +399,11 @@ function convertToolMessage(
 /** Convert UI messages to provider model messages. */
 export function convertUiMessagesToProviderModelMessages(
   messages: readonly ChatProviderModelInputMessage[],
+  trustedToolReplayMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
   const knownToolNamesById = new Map<string, string>();
-  const replayMatches = findProviderVisibleToolReplayMatches(messages);
+  const replayMatches = findProviderVisibleToolReplayMatches(messages, trustedToolReplayMessageIds);
 
   for (const message of messages) {
     if (message.role === "assistant") {

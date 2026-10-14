@@ -341,8 +341,8 @@ describe("Runs target SDK", () => {
 
   it("accepts a deleteRun acknowledgement body as well as an empty 204", async () => {
     const { sdk, requests } = sdkWith([
-      Response.json({ ok: true }, { status: 200 }),
       fixtureResponse("deleteRun"),
+      new Response(null, { status: 204 }),
     ]);
     const acknowledged: RunsOutput<"deleteRun"> = await sdk.deleteRun({ path: { run_id: RUN_ID } });
     const empty: RunsOutput<"deleteRun"> = await sdk.deleteRun({ path: { run_id: RUN_ID } });

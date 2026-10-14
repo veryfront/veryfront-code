@@ -346,7 +346,8 @@ function setPrepareChatExecutionResultAttributes(
   });
 }
 
-function createHostedChatContextBudgetOptions(
+/** Creates context budget options from the deployed hosted service configuration. */
+export function createHostedChatContextBudgetOptions(
   context: NodeVeryfrontCloudAgentServiceContext,
   req: ParsedHostedChatRequest,
   agentConfig: { model?: string },
