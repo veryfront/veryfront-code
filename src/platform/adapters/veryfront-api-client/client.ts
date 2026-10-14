@@ -120,6 +120,13 @@ export interface VeryfrontApiStyleArtifacts {
  * manage the compiled-CSS record that the Veryfront runtime uses;
  * `resolveStyleArtifact()`, `upsertStyleArtifact()` and `ensureStyleArtifactBuild()`
  * are their deprecated aliases.
+ * `listReleaseFiles()`, `listAllReleaseFiles()` and `getReleaseFile()` read the files a
+ * release pins; the release is an ID, a version or `latest`, and the results keep their
+ * snake_case fields. `startReleaseAssetManifestBuild()`, `writeReleaseAsset()`,
+ * `writeReleaseAssetManifest()` and `updateReleaseAssetManifestState()` build a release's
+ * asset manifest; `beginReleaseAssetManifestBuild()`, `uploadReleaseAsset()`,
+ * `putReleaseAssetManifest()` and `reportReleaseAssetManifestState()` are their deprecated
+ * aliases.
  */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
@@ -716,15 +723,15 @@ export class VeryfrontApiClient {
   // Release Asset Manifest Operations
   // =============================================================================
 
-  beginReleaseAssetManifestBuild(
+  startReleaseAssetManifestBuild(
     version: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.beginReleaseAssetManifestBuild(projectRef, version, signal);
+    return this.operations.startReleaseAssetManifestBuild(projectRef, version, signal);
   }
 
-  uploadReleaseAsset(
+  writeReleaseAsset(
     version: string,
     contentHash: string,
     contentType: string,
@@ -732,7 +739,7 @@ export class VeryfrontApiClient {
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.uploadReleaseAsset(
+    return this.operations.writeReleaseAsset(
       projectRef,
       version,
       contentHash,
@@ -742,29 +749,71 @@ export class VeryfrontApiClient {
     );
   }
 
-  putReleaseAssetManifest(
+  writeReleaseAssetManifest(
     version: string,
     manifest: unknown,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.putReleaseAssetManifest(projectRef, version, manifest, signal);
+    return this.operations.writeReleaseAssetManifest(projectRef, version, manifest, signal);
   }
 
-  reportReleaseAssetManifestState(
+  updateReleaseAssetManifestState(
     version: string,
     state: "partial" | "failed",
     error?: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.reportReleaseAssetManifestState(
+    return this.operations.updateReleaseAssetManifestState(
       projectRef,
       version,
       state,
       error,
       signal,
     );
+  }
+
+  /** @deprecated Use `client.startReleaseAssetManifestBuild(...)`. */
+  beginReleaseAssetManifestBuild(
+    version: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["startReleaseAssetManifestBuild"]> {
+    return this.startReleaseAssetManifestBuild(version, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.writeReleaseAsset(...)`. */
+  uploadReleaseAsset(
+    version: string,
+    contentHash: string,
+    contentType: string,
+    bytes: Uint8Array,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeReleaseAsset"]> {
+    return this.writeReleaseAsset(version, contentHash, contentType, bytes, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.writeReleaseAssetManifest(...)`. */
+  putReleaseAssetManifest(
+    version: string,
+    manifest: unknown,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeReleaseAssetManifest"]> {
+    return this.writeReleaseAssetManifest(version, manifest, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.updateReleaseAssetManifestState(...)`. */
+  reportReleaseAssetManifestState(
+    version: string,
+    state: "partial" | "failed",
+    error?: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["updateReleaseAssetManifestState"]> {
+    return this.updateReleaseAssetManifestState(version, state, error, projectRef, signal);
   }
 
   getReleaseAssetManifest(
