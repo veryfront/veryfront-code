@@ -7,6 +7,7 @@ import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudOpenAITransportPlan,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   buildModelCallContextRequest,
@@ -915,6 +916,49 @@ describe("model call request projection", () => {
     // A provider served on the Anthropic surface records what anthropic/* records.
     assertEquals(project("acme"), project("anthropic"));
     assertEquals(project("acme")?.reasoning?.enabled, true);
+  });
+
+  it("records dropped reasoning when the catalog omits the function-tool capability", () => {
+    __resetVeryfrontCloudCatalogForTests();
+    for (const modelId of ["gpt-5.4", "gpt-5.5", "gpt-6-sol"]) {
+      const model = { provider: "veryfront-cloud", modelProvider: "openai", modelId };
+      const capability = resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`openai/${modelId}`);
+      const plan = modelId === "gpt-6-sol"
+        ? resolveVeryfrontCloudOpenAITransportPlan("openai", modelId)
+        : { transport: "chat-completions", pinned: true };
+      if (modelId === "gpt-6-sol") assertEquals(plan.pinned, false);
+      // Match provider facts: adaptive plans do not set a pinned transport.
+      registerVeryfrontCloudModelFacts(model as never, () =>
+        ({
+          provider: "openai",
+          surface: "openai",
+          native: true,
+          transportPlan: plan,
+          ...(plan.pinned ? { openAITransport: plan.transport } : {}),
+          ...(capability === undefined ? {} : { openAIChatReasoningWithFunctionTools: capability }),
+        }) as never);
+      for (const useTools of [false, true]) {
+        const options: ModelRuntimeCallOptions = {
+          prompt,
+          reasoning: { enabled: true, effort: "medium" },
+          ...(useTools ? { tools } : {}),
+        };
+        const projected = buildModelCallContextRequest(model, options);
+        const body = buildOpenAIChatRequest(
+          modelId,
+          "veryfront-cloud",
+          options,
+          false,
+          createWarningCollector(),
+          capability === undefined ? {} : { reasoningWithFunctionTools: capability },
+        );
+        assertEquals(body.reasoning_effort, useTools ? undefined : "medium");
+        assertEquals(
+          projected?.reasoning,
+          useTools ? { enabled: false } : { enabled: true, effort: "medium" },
+        );
+      }
+    }
   });
 
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
