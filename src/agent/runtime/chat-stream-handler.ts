@@ -1333,10 +1333,14 @@ export function processStreamInternal(
         const shouldStopForCommittedLocalToolCallNow = shouldStopForCommittedLocalToolCall &&
           pendingProviderExecutedToolCallIds.size === 0 &&
           (!callbacks?.requireProviderFinish || sawProviderFinishPart);
+        // Persisted reasoning is semantic progress, as the timeout classification
+        // below already treats it, so it moves the stream onto the idle budget.
+        const hasSemanticProgress = hasStreamOutput(state) ||
+          somePrivateArray(state.reasoningParts, isPersistedReasoningPart);
         const shouldStopForIdleOutput = !hasActiveLocalToolInput &&
-          !shouldStopForCommittedLocalToolCallNow && hasStreamOutput(state);
+          !shouldStopForCommittedLocalToolCallNow && hasSemanticProgress;
         const shouldStopForIdleStart = !hasActiveLocalToolInput &&
-          !shouldStopForCommittedLocalToolCallNow && !hasStreamOutput(state);
+          !shouldStopForCommittedLocalToolCallNow && !hasSemanticProgress;
         // A timeout means "the turn is over" only when nothing local is in flight
         // and nothing local was committed. Classifying a committed local tool call
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never

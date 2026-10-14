@@ -1184,6 +1184,35 @@ describe("chat-stream-handler", () => {
       assertEquals(semanticIdleState.finishReason, "stop");
     });
 
+    it("applies the semantic-idle budget after reasoning-only progress", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        processStream(
+          {
+            fullStream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "reasoning-delta", id: "r1", delta: "Thinking." };
+                await new Promise(() => {});
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          { streamLifecyclePolicy: { firstProgressTimeoutMs: 5_000, semanticIdleTimeoutMs: 10 } },
+        ).then(() => "completed"),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("waited for the first-progress budget"), 1_000);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      assertEquals(outcome, "completed");
+      assertEquals(state.finishReason, "stop");
+    });
+
     for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
       it(`preserves ${kind}-only idle completion when provider finish is optional`, async () => {
         const { controller, encoder } = createSSECollector();
