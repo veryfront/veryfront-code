@@ -26,7 +26,9 @@ import {
   defaultTextMapSetter,
   getTracer,
   getTracerProviderRevision,
+  hasObservedSpanError,
   type Link,
+  observeSpanError,
   propagation as shimPropagation,
   type Span,
   SpanKind,
@@ -277,6 +279,7 @@ function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDe
   let telemetryError: Error | undefined;
   runTelemetryOperation(
     () => {
+      observeSpanError(span);
       telemetryError = sanitizeErrorForTelemetry(error, detail);
     },
     "Failed to sanitize error for telemetry",
@@ -614,6 +617,16 @@ export function setActiveSpanErrorStatus(error: unknown): void {
   if (!span) return;
 
   setSpanErrorStatus(span, error, "withoutStack");
+}
+
+/** Marks verified domain completion without replacing an observed execution failure. */
+export function markSpanCompleted(span: Span): void {
+  const raw = unwrapPublicSpan(span);
+  if (hasObservedSpanError(raw)) return;
+  runTelemetryOperation(
+    () => raw.setStatus({ code: SpanStatusCode.OK }),
+    "Failed to set completed span status",
+  );
 }
 
 /**
