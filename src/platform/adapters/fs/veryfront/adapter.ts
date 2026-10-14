@@ -96,6 +96,9 @@ const NumberPrototypeToFixed = Number.prototype.toFixed;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicMap = Map;
+const IntrinsicWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 const IntrinsicUint8Array = Uint8Array;
 const IntrinsicPromise = Promise;
 const PromiseAll = IntrinsicPromise.all;
@@ -928,11 +931,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Read sequence of the newest listing applied to the snapshot. */
   #appliedListingReadSequence = 0;
   #appliedListingRecoveryScope: string | undefined;
+  readonly #requestConfigAbsenceProofs = new IntrinsicWeakMap<object, {
+    recoveryScope: string;
+    readSequence: number;
+    snapshotVersion: number;
+  }>();
   #configAbsenceProof: {
     recoveryScope: string;
     readSequence: number;
     snapshotVersion: number;
-    requestContext: ReturnType<typeof getCurrentRequestContext>;
   } | undefined;
   /** Newest refresh requested per reserved data path, so older replies stand down. */
   #reservedDataRequestSequence = 0;
@@ -1720,9 +1727,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   #canReuseConfigAbsenceProof(path: string): boolean {
-    const proof = this.#configAbsenceProof;
+    const context = getCurrentRequestContext();
+    const proof = context
+      ? IntrinsicReflectApply(WeakMapPrototypeGet, this.#requestConfigAbsenceProofs, [context])
+      : this.#configAbsenceProof;
     return proof !== undefined &&
-      proof.requestContext === getCurrentRequestContext() &&
       proof.recoveryScope === this.#getBranchMissRecoveryScope() &&
       proof.readSequence === this.#appliedListingReadSequence &&
       proof.snapshotVersion === this.sourceSnapshotVersion &&
@@ -1794,12 +1803,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
             this.#appliedListingReadSequence > listingReadSequence &&
             this.#isConfigAbsentFromCurrentListing(normalizedPath, recoveryScope)
           ) {
-            this.#configAbsenceProof = {
+            const proof = {
               recoveryScope,
               readSequence: this.#appliedListingReadSequence,
               snapshotVersion: this.sourceSnapshotVersion,
-              requestContext: getCurrentRequestContext(),
             };
+            const context = getCurrentRequestContext();
+            if (context) {
+              IntrinsicReflectApply(WeakMapPrototypeSet, this.#requestConfigAbsenceProofs, [
+                context,
+                proof,
+              ]);
+            } else {
+              this.#configAbsenceProof = proof;
+            }
             throw createNotFoundLikeError(normalizedPath);
           }
           this.branchMissRecoveryFailures.set(recoveryKey, currentTime());

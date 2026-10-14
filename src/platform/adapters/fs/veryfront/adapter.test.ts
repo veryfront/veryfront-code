@@ -3124,6 +3124,95 @@ describe("VeryfrontFSAdapter", () => {
       });
     }
 
+    it("retains config absence evidence for concurrent requests sharing a recovery listing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      const listingStarted = Promise.withResolvers<void>();
+      const secondReadStarted = Promise.withResolvers<void>();
+      const listing = Promise.withResolvers<Array<{ path: string }>>();
+      let lists = 0;
+      client.listAllFiles = () => {
+        if (++lists === 1) return Promise.resolve([]);
+        listingStarted.resolve();
+        return listing.promise;
+      };
+      let reads = 0;
+      client.getFileContent = () => {
+        if (++reads === 2) secondReadStarted.resolve();
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const firstDone = Promise.withResolvers<void>();
+      const secondDone = Promise.withResolvers<void>();
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        const first = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "test-token",
+          branch: "main",
+        }, async () => {
+          const missing = await assertRejects(() => adapter.readTextFile("/veryfront.config.js"));
+          assertEquals(isNotFoundError(missing), true);
+          firstDone.resolve();
+          await secondDone.promise;
+          const next = await assertRejects(() => adapter.readTextFile("/veryfront.config.ts"));
+          assertEquals(isNotFoundError(next), true);
+        });
+        await listingStarted.promise;
+        const second = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "test-token",
+          branch: "main",
+        }, async () => {
+          const missing = await assertRejects(() => adapter.readTextFile("/veryfront.config.js"));
+          assertEquals(isNotFoundError(missing), true);
+          await firstDone.promise;
+          secondDone.resolve();
+        });
+        // Both requests join the same in-flight listing before it publishes.
+        await secondReadStarted.promise;
+        await Promise.resolve();
+        listing.resolve([]);
+        await Promise.all([first, second]);
+        assertEquals(lists, 2);
+      } finally {
+        listing.resolve([]);
+        firstDone.resolve();
+        secondDone.resolve();
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
+
     it("does not certify config absence from another request authority's winning listing", async () => {
       const adapter = createAdapter({
         veryfront: {
