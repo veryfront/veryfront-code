@@ -363,3 +363,27 @@ it("does not protect a stale schema after a search that loaded nothing", () => {
   const fitted = fitDeferredToolSchemasToBudget({ plan, sourceMessages: searchMiss, inspect });
   assertEquals(fitted.evictedNames, ["create_agent"]);
 });
+
+it("amortizes the tool_search schema across several small schema evictions", () => {
+  const state = createToolExposureState(["small_a", "small_b"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("load_skill"), definition("small_a", 1), definition("small_b", 1)],
+    mode: "deferred",
+    state,
+    bootstrapToolNames: new Set(["load_skill"]),
+  });
+  const searchCost = 100;
+  // Each eviction saves 70 tokens; tool_search costs 100 once.
+  const inspect = (candidate: typeof plan) => {
+    const estimate = 1_000 -
+      70 *
+        ["small_a", "small_b"].filter((name) =>
+          !candidate.visible.some((tool) => tool.name === name)
+        ).length +
+      (candidate.visible.some((tool) => tool.name === "tool_search") ? searchCost : 0);
+    return { fits: estimate <= 970, outputExceeded: false, estimatedInputTokens: estimate };
+  };
+  const fitted = fitDeferredToolSchemasToBudget({ plan, sourceMessages: [], inspect });
+  assertEquals(fitted.evictedNames, ["small_a", "small_b"]);
+  assertEquals(inspect(fitted.plan).fits, true);
+});

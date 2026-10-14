@@ -89,7 +89,21 @@ export function fitDeferredToolSchemasToBudget(input: {
     return { plan, evictedNames };
   }
 
+  const initial = { plan, budget };
   const protectedNames = protectedToolNames(input.sourceMessages, plan);
+  // The first eviction also exposes tool_search. That one-time cost is
+  // credited to the first eviction so several small schemas can amortize it
+  // together; the batch is undone if it never pays off.
+  let searchSchemaCredit = 0;
+  if (!plan.visible.some((entry) => entry.name === TOOL_SEARCH_TOOL_NAME)) {
+    const withSearch = input.inspect({
+      ...plan,
+      visible: [...plan.visible, createToolSearchDefinition()],
+    }).estimatedInputTokens;
+    if (withSearch !== null && budget.estimatedInputTokens !== null) {
+      searchSchemaCredit = Math.max(0, withSearch - budget.estimatedInputTokens);
+    }
+  }
   for (const name of plan.loadedToolNames) {
     if (protectedNames.has(name)) continue;
     const tool = plan.visible.find((entry) => entry.name === name);
@@ -109,12 +123,21 @@ export function fitDeferredToolSchemasToBudget(input: {
     if (
       currentEstimate === null || nextBudget.outputExceeded ||
       nextBudget.estimatedInputTokens === null ||
-      (nextBudget.estimatedInputTokens >= currentEstimate && !nextBudget.fits)
+      (nextBudget.estimatedInputTokens >= currentEstimate + searchSchemaCredit &&
+        !nextBudget.fits)
     ) continue;
+    searchSchemaCredit = 0;
     plan = candidate;
     budget = nextBudget;
     evictedNames.push(name);
     if (budget.fits) break;
+  }
+  if (
+    !budget.fits && budget.estimatedInputTokens !== null &&
+    initial.budget.estimatedInputTokens !== null &&
+    budget.estimatedInputTokens >= initial.budget.estimatedInputTokens
+  ) {
+    return { plan: initial.plan, evictedNames: [] };
   }
   return { plan, evictedNames };
 }

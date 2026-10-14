@@ -512,3 +512,49 @@ it("keeps a resumed result delivered after the latest user message inline", () =
   });
   assertStrictEquals(fitted[2], resumed);
 });
+
+it("amortizes the reader schema across several moderate historical results", () => {
+  const reader = createToolResultReadDefinition();
+  const context = createToolResultContext();
+  const measure = (messages: Message[], limit: number, withReader: boolean) =>
+    inspectFinalRequestBudget({
+      system: "Mandatory guidance",
+      messages,
+      tools: withReader
+        ? {
+          get_tool_result: {
+            description: reader.description,
+            inputSchema: { jsonSchema: reader.parameters },
+          },
+        }
+        : {},
+      limit: { context: limit, output: 4_096 },
+      requestedOutputTokens: 4_096,
+      explicitOutputTokens: true,
+    });
+  const user: Message = { id: "user", role: "user", parts: [{ type: "text", text: "Next" }] };
+  const readerCost = measure([user], 1_000_000, true).estimatedInputTokens! -
+    measure([user], 1_000_000, false).estimatedInputTokens!;
+  // Each result alone saves less than the reader schema costs; together they do.
+  const moderate = (id: string) => [
+    {
+      id: `${id}-call`,
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCallId: id, toolName: "read_data", args: {} }],
+    } as Message,
+    toolMessage(id, "read_data", "x".repeat(Math.ceil((readerCost * 0.7 + 80) * 4 / 1.1))),
+  ];
+  const source = [...moderate("a"), ...moderate("b"), user];
+  const initial = measure(source, 1_000_000, false).estimatedInputTokens!;
+  const limit = initial + 4_096 - Math.ceil(readerCost * 0.2);
+  const inspect = (messages: Message[]) => measure(messages, limit, context.size > 0);
+  assertEquals(inspect(source).fits, false);
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: source,
+    modelMessages: source,
+    context,
+    inspect,
+  });
+  assertEquals(inspect(fitted).fits, true);
+  assertEquals(context.size, 2);
+});
