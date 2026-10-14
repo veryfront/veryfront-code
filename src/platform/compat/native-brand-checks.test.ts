@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("native brand checks", () => {
@@ -48,6 +48,45 @@ describe("native brand checks", () => {
       assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
       assertEquals(trapCalls, 0);
       assertEquals(accesses, 1);
+    } finally {
+      Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+    }
+  });
+
+  it("fails closed when the host loader is missing or does not return a function", async () => {
+    const hostProcess = (globalThis as typeof globalThis & {
+      process?: { getBuiltinModule?: (specifier: string) => unknown };
+    }).process;
+    if (!hostProcess) throw new Error("host process must be available in server tests");
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    if (!previous) throw new Error("host builtin loader must be available in server tests");
+    const hasBunFallback = (globalThis as typeof globalThis & { Bun?: unknown }).Bun != null;
+    try {
+      for (const shape of ["missing", "empty", "invalid-accessor"]) {
+        if (shape === "missing") {
+          Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+        } else {
+          Object.defineProperty(
+            hostProcess,
+            "getBuiltinModule",
+            shape === "empty"
+              ? { configurable: true, value: undefined }
+              : { configurable: true, get: () => ({}) },
+          );
+        }
+        const load = () => import(`./native-brand-checks.ts?unavailable-host-loader-${shape}`);
+        if (hasBunFallback) {
+          // Bun's lexical require still provides its host builtin module.
+          const isolated = await load();
+          assertEquals(isolated.nativeBrandChecks?.isNativeError(new Error("fixture")), true);
+        } else {
+          await assertRejects(
+            load,
+            Error,
+            "does not expose complete node:util/types brand checks",
+          );
+        }
+      }
     } finally {
       Object.defineProperty(hostProcess, "getBuiltinModule", previous);
     }
