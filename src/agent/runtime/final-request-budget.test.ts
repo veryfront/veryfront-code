@@ -756,3 +756,73 @@ it("still rejects oversized ordinary text that contains a data URL", () => {
     VeryfrontError,
   );
 });
+
+it("enforces the received hosted catalog limit on the real managed model proxy", async () => {
+  const { createExecutorChannel } = await import("../executor/channel.ts");
+  const { createExecutorModelBroker, createExecutorModelRuntimeResolver } = await import(
+    "../hosted/executor-model-bridge.ts"
+  );
+  const { rememberReceivedVeryfrontCloudCatalog, forgetReceivedVeryfrontCloudCatalog } =
+    await import("#veryfront/provider/veryfront-cloud/catalog-client.ts");
+  const { runWithVeryfrontCloudContextAsync } = await import(
+    "#veryfront/provider/veryfront-cloud/context.ts"
+  );
+  const modelId = "veryfront-cloud/acme/hosted-budget";
+  const model = scriptedModel([{ text: "must not dispatch" }], {
+    modelId,
+    provider: "veryfront-cloud",
+    only: "generate",
+  });
+  const forward = new TransformStream<Uint8Array, Uint8Array>();
+  const backward = new TransformStream<Uint8Array, Uint8Array>();
+  const binding = { allocationId: "budget", generation: 1, invocationId: "budget" };
+  const caller = createExecutorChannel({
+    binding,
+    transport: { readable: backward.readable, writable: forward.writable },
+  });
+  const broker = createExecutorChannel({
+    binding,
+    transport: { readable: forward.readable, writable: backward.writable },
+    operations: createExecutorModelBroker({
+      allowedModelIds: new Set([modelId]),
+      resolveModelRuntime: () => model,
+    }),
+  });
+  const key = rememberReceivedVeryfrontCloudCatalog([{
+    id: "hosted-budget",
+    modelId: "acme/hosted-budget",
+    provider: "acme",
+    surface: "openai",
+    aliases: [],
+    operations: ["chat-completions"],
+    limit: { context: 128, output: 32 },
+  }]);
+  try {
+    const resolver = await createExecutorModelRuntimeResolver({
+      channel: caller,
+      allowedModelIds: new Set([modelId]),
+    });
+    const runtime = agent({
+      id: "hosted-budget",
+      system: "Help",
+      model: modelId,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model: resolver(modelId)! }),
+    });
+    const failure = await assertRejects(
+      () =>
+        runWithVeryfrontCloudContextAsync(
+          { catalogScopeKey: key },
+          () => runtime.generate({ input: "x".repeat(2000), maxOutputTokens: 32 }),
+        ),
+      VeryfrontError,
+    );
+    assert(failure instanceof VeryfrontError);
+    assertEquals(failure.slug, "agent-context-window-exceeded");
+    assertEquals(model.callCount, 0);
+  } finally {
+    forgetReceivedVeryfrontCloudCatalog(key);
+    caller.close();
+    await broker.closed;
+  }
+});
