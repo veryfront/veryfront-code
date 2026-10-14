@@ -555,6 +555,18 @@ function parseGoogleRetryInfoMs(
  * truncated, or non-JSON bodies all become absent metadata and fall back to
  * status-based classification.
  */
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+
+/** Return an own data property of a parsed response body, never an inherited or accessor value. */
+function readOwnBodyField(record: Record<string, unknown> | undefined, key: string): unknown {
+  if (record === undefined) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value")
+    ? descriptor.value
+    : undefined;
+}
+
 function parseProviderErrorBody(rawBody: string): ParsedProviderErrorBody {
   const parsedBody = (() => {
     try {
@@ -563,14 +575,19 @@ function parseProviderErrorBody(rawBody: string): ParsedProviderErrorBody {
       return undefined;
     }
   })();
-  const errorRecord = readRecord(parsedBody?.error);
-  const errorType = typeof errorRecord?.type === "string" ? errorRecord.type : undefined;
-  const errorCode = typeof errorRecord?.code === "string"
-    ? errorRecord.code
+  // Read only own data fields so an inherited accessor cannot run or supply
+  // values when the provider omits a field.
+  const errorRecord = readRecord(readOwnBodyField(parsedBody, "error"));
+  const type = readOwnBodyField(errorRecord, "type");
+  const code = readOwnBodyField(errorRecord, "code");
+  const status = readOwnBodyField(errorRecord, "status");
+  const errorType = typeof type === "string" ? type : undefined;
+  const errorCode = typeof code === "string"
+    ? code
     : errorType !== undefined
     ? errorType
-    : typeof errorRecord?.status === "string"
-    ? errorRecord.status
+    : typeof status === "string"
+    ? status
     : undefined;
 
   return { parsedBody, errorRecord, errorType, errorCode };
@@ -795,12 +812,13 @@ export async function buildProviderError(
   const error = buildProviderErrorFromBody(provider, response, rawBody, truncated);
   if (!truncated && response.status === 400) {
     const structured = parseProviderErrorBody(rawBody).errorRecord;
+    const code = readOwnBodyField(structured, "code");
     recordProviderErrorDiagnostic(
       error,
-      structured?.type,
+      readOwnBodyField(structured, "type"),
       // Google puts the numeric HTTP code in `code` and the classification in `status`.
-      typeof structured?.code === "string" ? structured.code : structured?.status,
-      structured?.param,
+      typeof code === "string" ? code : readOwnBodyField(structured, "status"),
+      readOwnBodyField(structured, "param"),
     );
   }
   return markProviderErrorGatewayProvenance(error, response);

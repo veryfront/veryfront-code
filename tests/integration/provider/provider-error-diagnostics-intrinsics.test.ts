@@ -5,6 +5,10 @@ import {
   readProviderErrorDiagnostic,
   recordProviderErrorDiagnostic,
 } from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
+import {
+  buildProviderError,
+  ProviderRequestError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 it("diagnostics do not invoke a replaced Object.freeze or trust its return value", () => {
   const original = Object.freeze;
@@ -68,4 +72,39 @@ it("diagnostic parameter filters do not dispatch through a poisoned regexp exec"
   }
   assertEquals(calls, 0);
   assertEquals(readProviderErrorDiagnostic(error), undefined);
+});
+
+it("provider rejection diagnostics read only own data fields from the response body", async () => {
+  const keys = ["param", "status", "error"] as const;
+  const originals = keys.map((key) => Object.getOwnPropertyDescriptor(Object.prototype, key));
+  let calls = 0;
+  let error: unknown;
+  try {
+    for (const key of keys) {
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        get() {
+          calls++;
+          return "model";
+        },
+      });
+    }
+    error = await buildProviderError(
+      "openai",
+      new Response(
+        JSON.stringify({ error: { type: "invalid_request_error", message: "private" } }),
+        { status: 400 },
+      ),
+    );
+  } finally {
+    keys.forEach((key, index) => {
+      const original = originals[index];
+      if (original) Object.defineProperty(Object.prototype, key, original);
+      else Reflect.deleteProperty(Object.prototype, key);
+    });
+  }
+  assertEquals(calls, 0);
+  assertEquals(error instanceof ProviderRequestError, true);
+  assertEquals(readProviderErrorDiagnostic(error)?.type, "invalid_request_error");
+  assertEquals(readProviderErrorDiagnostic(error)?.param, undefined);
 });
