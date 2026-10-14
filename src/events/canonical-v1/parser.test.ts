@@ -21,6 +21,41 @@ const row: LegacyMemberV1 = {
   },
 };
 describe("canonical-v1 compatibility read decoding", () => {
+  it("validates large mixed pages within each member's serialization budget", async () => {
+    const entries = Array.from({ length: 5 }, (_, index) => ({
+      ...row,
+      legacy: { ...row.legacy, payload: { message: "x".repeat(900_000) } },
+      metadata: { ...row.metadata, event_id: index + 1 },
+    }));
+    const page = await parseRunReadPageV1({ entries, next_cursor: "5", has_more: true });
+    assertEquals(page.entries.length, 5);
+    assertEquals(page.entries[4], entries[4]);
+  });
+  it("retains page shape, member budgets and accessor rejection", async () => {
+    for (
+      const input of [
+        { entries: Array.from({ length: 101 }, () => row), next_cursor: null, has_more: false },
+        { entries: [row], next_cursor: null, has_more: false, unknown: true },
+        {
+          entries: [{ ...row, legacy: { ...row.legacy, payload: "x".repeat(1_100_000) } }],
+          next_cursor: null,
+          has_more: false,
+        },
+        { entries: [row, { ...row, reason: "invalid" }], next_cursor: null, has_more: false },
+      ]
+    ) await assertRejects(() => parseRunReadPageV1(input), TypeError);
+    let calls = 0;
+    const input = { next_cursor: null, has_more: false };
+    Object.defineProperty(input, "entries", {
+      enumerable: true,
+      get() {
+        calls++;
+        return [row];
+      },
+    });
+    await assertRejects(() => parseRunReadPageV1(input), TypeError);
+    assertEquals(calls, 0);
+  });
   it("retains arbitrary source spelling and caller-visible payload", async () => {
     const page = await parseRunReadPageV1({ entries: [row], next_cursor: "42", has_more: true });
     assertEquals(page.entries[0], row);

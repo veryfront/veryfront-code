@@ -181,9 +181,41 @@ export async function parseStreamMemberV1(input: unknown): Promise<StreamMemberV
   member(value);
   return value;
 }
+function pageParts(input: unknown): { header: unknown; entries: unknown[] } {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError("Invalid canonical-v1 read page");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const descriptor = descriptors.entries;
+  if (!descriptor || !Object.hasOwn(descriptor, "value") || !Array.isArray(descriptor.value)) {
+    throw new TypeError("Invalid canonical-v1 page entries");
+  }
+  const rawEntries: unknown[] = descriptor.value;
+  const length = Object.getOwnPropertyDescriptor(rawEntries, "length")?.value;
+  if (!Number.isSafeInteger(length) || length < 0 || length > 100) {
+    throw new TypeError("Invalid canonical-v1 page entry count");
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    const entry = Object.getOwnPropertyDescriptor(rawEntries, String(index));
+    if (!entry || !Object.hasOwn(entry, "value")) {
+      throw new TypeError("Invalid canonical-v1 page entry");
+    }
+    entries.push(entry.value);
+  }
+  // Preserve all page fields and descriptors so the normative schema still rejects
+  // unknown fields and accessors, while its per-value budget excludes member bodies.
+  const header = Object.create(Object.getPrototypeOf(input), {
+    ...descriptors,
+    entries: { ...descriptor, value: [] },
+  });
+  return { header, entries };
+}
+
 export async function parseRunReadPageV1(input: unknown): Promise<RunReadPageV1> {
-  const value = await decode<RunReadPageV1>(input, "page");
-  value.entries.forEach(member);
+  const parts = pageParts(input);
+  const value = await decode<RunReadPageV1>(parts.header, "page");
+  for (const entry of parts.entries) value.entries.push(await parseRunReadMemberV1(entry));
   if (value.has_more !== (value.next_cursor !== null)) {
     throw new TypeError("Invalid canonical-v1 page continuation");
   }
