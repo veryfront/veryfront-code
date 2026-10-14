@@ -542,3 +542,53 @@ Deno.test("final-step child telemetry admits undefined output when the stream om
     }
   }
 });
+
+Deno.test("complete child handoffs bound multibyte telemetry before provenance admission", () => {
+  const output = Array.from({ length: 3000 }, () => "界".repeat(500));
+  const telemetryCases = [{
+    toolCalls: [{ toolName: "example", toolCallId: "budget", input: output }],
+    toolResults: [{ toolName: "example", toolCallId: "budget", input: output, output }],
+  }, {
+    toolCalls: Array.from({ length: 35_000 }, (_, index) => ({
+      toolName: "example",
+      toolCallId: String(index),
+      input: index,
+    })),
+    toolResults: [],
+  }];
+  for (const telemetry of telemetryCases) {
+    const raw = JSON.stringify(telemetry);
+    const local = buildChildRunSuccessResult({
+      description: "Synthetic budget",
+      steps: 1,
+      durationMs: 1,
+      ...telemetry,
+    }, buildChildRunResultSummary("durable child response"));
+    for (const result of [local, durableChildResult(undefined, telemetry)]) {
+      const message = resultMessage(false);
+      const part = message.parts[0] as ToolResultPart;
+      part.result = result;
+      markTrustedPlatformPolicyToolResultPart(part);
+      assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+      const replayed = JSON.parse(JSON.stringify(
+        prepareTrustedPlatformPolicyMessageForPersistence(message),
+      )) as Message;
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+      assertEquals(
+        hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart),
+        true,
+      );
+      for (const admitted of [message, replayed]) {
+        for (
+          const converted of [
+            convertAgentRuntimeMessagesToProviderMessages([admitted]),
+            convertToTextGenerationRuntimeMessages([admitted]),
+          ]
+        ) {
+          assertEquals(JSON.stringify(converted).split("durable child response").length - 1, 1);
+        }
+      }
+    }
+    assertEquals(JSON.stringify(telemetry), raw);
+  }
+});

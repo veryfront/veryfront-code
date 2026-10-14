@@ -748,6 +748,13 @@ removes its trusted ownership. Internal clones preserve that ownership only when
 the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
 Caller-supplied result shapes never grant platform control authority.
 
+Child handoffs retain copied tool telemetry when the complete result fits the JSON
+resource limits. If telemetry exceeds those limits, the handoff replaces telemetry
+values with explicit truncation markers. If the trace entries still exceed the
+limits, `toolTelemetryOmitted` reports the number of omitted calls and results.
+The accepted child response and raw child events remain unchanged. An oversized
+accepted response does not gain trusted ownership by dropping telemetry.
+
 For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or
 input-response evidence, or an original host-authored content digest retained
