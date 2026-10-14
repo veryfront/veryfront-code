@@ -419,7 +419,7 @@ describe("VeryfrontApiClient", () => {
           );
         },
         async () => {
-          const result = await client.resolveStyleArtifact({
+          const result = await client.styleArtifacts.get({
             styleProfileHash: "profile-1",
             branch: "main",
           });
@@ -458,7 +458,7 @@ describe("VeryfrontApiClient", () => {
           return new Response("Not found", { status: 404, statusText: "Not Found" });
         },
         async () => {
-          const result = await client.upsertStyleArtifact({
+          const result = await client.styleArtifacts.update({
             styleProfileHash: "profile-2",
             environmentName: "Preview",
             status: "ready",
@@ -495,7 +495,7 @@ describe("VeryfrontApiClient", () => {
           );
         },
         async () => {
-          const result = await client.resolveStyleArtifact({
+          const result = await client.styleArtifacts.get({
             styleProfileHash: "profile-3",
             branch: "main",
           });
@@ -535,7 +535,7 @@ describe("VeryfrontApiClient", () => {
           );
         },
         async () => {
-          const result = await client.ensureStyleArtifactBuild({
+          const result = await client.styleArtifacts.startBuild({
             styleProfileHash: "profile-4",
             environmentName: "Production",
           });
@@ -544,6 +544,40 @@ describe("VeryfrontApiClient", () => {
           assertEquals(result.buildRunId, "run_22222222-2222-4222-a222-222222222222");
         },
       );
+    });
+
+    it("keeps the deprecated style artifact methods as aliases of styleArtifacts", async () => {
+      const requests: string[] = [];
+      await withMockFetch(
+        (url, init) => {
+          const urlStr = typeof url === "string" ? url : url.toString();
+          requests.push(`${requestMethod(init) ?? "GET"} ${new URL(urlStr).pathname}`);
+          return Promise.resolve(
+            new Response(JSON.stringify({ status: "missing" }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        },
+        async () => {
+          const input = { styleProfileHash: "profile-5", branch: "main" };
+          await client.styleArtifacts.get(input, "other-project");
+          await client.resolveStyleArtifact(input, "other-project");
+          await client.styleArtifacts.update(input);
+          await client.upsertStyleArtifact(input);
+          await client.styleArtifacts.startBuild(input);
+          await client.ensureStyleArtifactBuild(input);
+        },
+      );
+
+      assertEquals(requests, [
+        "GET /projects/other-project/style-artifacts/current",
+        "GET /projects/other-project/style-artifacts/current",
+        "PUT /projects/test-project/style-artifacts/current",
+        "PUT /projects/test-project/style-artifacts/current",
+        "POST /projects/test-project/style-artifacts/current/builds",
+        "POST /projects/test-project/style-artifacts/current/builds",
+      ]);
     });
   });
 });

@@ -1,6 +1,6 @@
 ---
 title: "veryfront/resource"
-description: "Declare and register schema-backed URI resources exposable over MCP. URI templates support hierarchical, rootless, embedded, and query parameters; opaque identifiers remain literal. Captures are percent-decoded exactly once, malformed escapes do not match, and `mcp.enabled: false` hides list and read."
+description: "Declare and register schema-backed URI resources exposable over MCP. URI templates support hierarchical, rootless, embedded, and query parameters; opaque identifiers remain literal. Captures are percent-decoded exactly once, malformed escapes do not match, and `mcp.enabled: false` hides list and read. `resourceRegistry` is the local registry. To manage the resource definitions of a hosted project, use the project resources operations of the Veryfront API."
 order: 30
 ---
 

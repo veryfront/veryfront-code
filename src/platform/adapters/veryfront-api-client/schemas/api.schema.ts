@@ -373,6 +373,19 @@ const DEPENDENCY_HISTORY_ENDPOINT = {
   description: "Read up to 16 recent dependency snapshots for a project branch",
 } as const;
 
+const STYLE_ARTIFACT_ENDPOINT = {
+  method: "GET" as const,
+  path: "/projects/{projectRef}/style-artifacts/current",
+  description: "Get the current style artifact for a branch, environment, or release selector",
+} as const;
+
+const STYLE_ARTIFACT_BUILD_ENDPOINT = {
+  method: "POST" as const,
+  path: "/projects/{projectRef}/style-artifacts/current/builds",
+  description:
+    "Start a background style artifact build for a branch, environment, or release selector, unless one is ready or building",
+} as const;
+
 export const API_ENDPOINTS = {
   listProjects: {
     method: "GET" as const,
@@ -427,16 +440,16 @@ export const API_ENDPOINTS = {
     path: "/projects/{domain}",
     description: "Look up project by custom domain (resolved via project_reference)",
   },
-  resolveStyleArtifact: {
-    method: "GET" as const,
+  getStyleArtifact: STYLE_ARTIFACT_ENDPOINT,
+  updateStyleArtifact: {
+    method: "PUT" as const,
     path: "/projects/{projectRef}/style-artifacts/current",
     description:
-      "Resolve metadata for the latest ready style artifact for a branch, environment, or release selector",
+      "Record the state of the current style artifact for a branch, environment, or release selector",
   },
-  ensureStyleArtifactBuild: {
-    method: "POST" as const,
-    path: "/projects/{projectRef}/style-artifacts/current/builds",
-    description:
-      "Ensure a background style artifact build exists for a branch, environment, or release selector",
-  },
+  startStyleArtifactBuild: STYLE_ARTIFACT_BUILD_ENDPOINT,
+  /** @deprecated Use `getStyleArtifact`. */
+  resolveStyleArtifact: STYLE_ARTIFACT_ENDPOINT,
+  /** @deprecated Use `startStyleArtifactBuild`. */
+  ensureStyleArtifactBuild: STYLE_ARTIFACT_BUILD_ENDPOINT,
 } as const;
