@@ -18,7 +18,6 @@ on:
 
 permissions:
   actions: read
-  security-events: write
   contents: read
 
 concurrency:
@@ -46,11 +45,14 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Analyze
     runs-on: ubuntu-latest
-    # Cap the hosted analysis or result-upload job under the merge
-    # queue's check_response_timeout (1800s) so that a hung step fails fast and
-    # visibly, rather than stalling until the Actions default of 360 minutes —
-    # which would reproduce the very ejection this workflow exists to prevent.
-    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    # Public scanning (18m) plus hosted upload (5m) leaves 7m for scheduling
+    # within the queue's 30m check-response window. Hosted-only analysis keeps
+    # its existing budget when the public scan is skipped.
+    timeout-minutes: ${{ needs.public-analysis.result == 'skipped' && 25 || 5 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         id: checkout

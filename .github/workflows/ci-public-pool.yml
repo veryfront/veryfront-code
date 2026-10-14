@@ -478,7 +478,7 @@ jobs:
       source-root: ${{ github.workspace }}
     if: ${{ inputs.job == 'codeql' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ${{ vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'veryfront-public' || inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
-    timeout-minutes: 25
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -6,13 +6,34 @@ type Job = Record<string, unknown> & {
   steps?: Array<Record<string, unknown>>;
 };
 
-async function workflow(name: string): Promise<{ jobs: Record<string, Job> }> {
+async function workflow(
+  name: string,
+): Promise<{ permissions?: Record<string, string>; jobs: Record<string, Job> }> {
   return parse(
     await Deno.readTextFile(new URL(`../../../.github/workflows/${name}`, import.meta.url)),
-  ) as { jobs: Record<string, Job> };
+  ) as { permissions?: Record<string, string>; jobs: Record<string, Job> };
 }
 
 describe("CodeQL public analysis", () => {
+  it("limits upload permissions to Analyze and budgets both jobs for the queue", async () => {
+    const caller = await workflow("codeql.yml");
+    const pool = await workflow("ci-public-pool.yml");
+    assertEquals(caller.permissions, { actions: "read", contents: "read" });
+    assertEquals(caller.jobs.analyze.permissions, {
+      actions: "read",
+      contents: "read",
+      "security-events": "write",
+    });
+    assertEquals(pool.jobs.codeql["timeout-minutes"], 18);
+    assertEquals(
+      caller.jobs.analyze["timeout-minutes"],
+      "${{ needs.public-analysis.result == 'skipped' && 25 || 5 }}",
+    );
+    // 23 minutes of execution leaves seven minutes for runner scheduling in
+    // the merge queue's 30-minute check-response window.
+    assert(Number(pool.jobs.codeql["timeout-minutes"]) + 5 <= 23);
+  });
+
   it("calls the trusted pool only after the rollout switch is enabled", async () => {
     const jobs = (await workflow("codeql.yml")).jobs;
     const call = jobs["public-analysis"];
@@ -184,7 +205,7 @@ describe("CodeQL public analysis", () => {
     }
   });
 
-  it("uploads only the successful same-attempt artifact and retains hosted fallback", async () => {
+  it("uploads only the successful producer artifact and retains hosted fallback", async () => {
     const gate = (await workflow("codeql.yml")).jobs.analyze;
     const steps = gate.steps!;
     const init = steps.find((step) => String(step.uses).includes("codeql-action/init@"));
