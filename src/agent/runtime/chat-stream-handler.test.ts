@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 import {
   assert,
   assertEquals,
@@ -4738,6 +4739,32 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
 // error can contain a database URL or an internal path, which AGENTS.md forbids
 // in user-facing output.
 describe("resolveRelayableExecutionFailure", () => {
+  it("preserves only the registered final-request budget failure across public boundaries", () => {
+    const budget = AGENT_CONTEXT_WINDOW_EXCEEDED.create({
+      detail: "Private request details must not cross the public stream boundary",
+    });
+    const expected = {
+      type: "error" as const,
+      error: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
+      code: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+    };
+    assertEquals(resolveRuntimeExecutionErrorEvent(budget), expected);
+    assertEquals(resolveRuntimeStreamErrorEvent(budget), expected);
+    assertEquals(resolveRelayableExecutionFailure(budget), {
+      message: expected.error,
+      code: expected.code,
+    });
+    assertStrictEquals(resolveRelayableExecutionFailure(new Error(budget.message)), undefined);
+    assertStrictEquals(
+      resolveRelayableExecutionFailure({
+        slug: AGENT_CONTEXT_WINDOW_EXCEEDED.slug,
+        code: expected.code,
+        message: budget.message,
+      }),
+      undefined,
+    );
+  });
+
   it("withholds a non-provider failure's message from the relay", () => {
     const persistenceFailure = new Error(
       "finalize failed: postgres://user:pw@db.internal:5432/veryfront timed out",

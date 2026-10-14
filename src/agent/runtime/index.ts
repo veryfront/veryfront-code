@@ -452,6 +452,17 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { createToolResultContext, type ToolResultContext } from "./tool-result-context.ts";
 import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
+import {
+  enforceFinalRequestBudget,
+  inspectFinalRequestBudget,
+  type ServedRequestLimit,
+} from "./final-request-budget.ts";
+import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
+import { fitDeferredToolSchemasToBudget } from "./deferred-schema-budget.ts";
+import {
+  readServedVeryfrontCloudCatalogModel,
+  readVeryfrontCloudModelFacts,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import {
   createToolResultReadDefinition,
@@ -2229,6 +2240,160 @@ function getRequiredRuntimeToolNames(
   const reader = getRequiredToolResultReaderNames(exposeReader);
   if (bootstrapToolNames.length === 0) return reader;
   return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
+}
+
+type RuntimeStepRequestInput = {
+  messages: Message[];
+  plan: ToolExposurePlan;
+  toolResultContext: ToolResultContext | undefined;
+  supportsToolCalling: boolean;
+  agentWriteFinalResponseToolGuardEnabled: boolean;
+  providerTools: Parameters<typeof filterVisibleProviderTools>[0];
+  model: string;
+  languageModel: ModelRuntime;
+  /** Provider tool-schema rules for this step's model and wire surface. */
+  toolSchemaOptions: ReturnType<typeof resolveStepToolSchemaOptions>;
+  baseSystemPrompt: Parameters<typeof synchronizeRuntimeToolInventory>[0];
+  integrationToolDiscovery: Parameters<typeof withIntegrationToolDiscoveryStatus>[1];
+  runRuntimeContext: Parameters<typeof withAgentRunRuntimeContext>[1];
+  /** Authored startup tools provider schema capping must keep. */
+  bootstrapToolNames: readonly string[];
+};
+
+/** Assemble the exact provider request one model step would send for a plan and messages. */
+function assembleRuntimeStepRequest(input: RuntimeStepRequestInput) {
+  const exposeToolResultReader = canExposeToolResultReader({
+    plan: input.plan,
+    context: input.toolResultContext,
+  });
+  const tools = withToolResultReaderTool(input.plan.visible, exposeToolResultReader);
+  const visibleToolNames = collectVisibleToolNames(tools);
+  const stepProviderTools = input.supportsToolCalling &&
+      !input.agentWriteFinalResponseToolGuardEnabled
+    ? filterVisibleProviderTools(input.providerTools, visibleToolNames)
+    : [];
+  const runtimeTools = convertToolsToRuntimeTools(tools, {
+    model: input.model,
+    ...input.toolSchemaOptions,
+    providerTools: stepProviderTools,
+    requiredToolNames: getRequiredRuntimeToolNames(
+      exposeToolResultReader,
+      input.bootstrapToolNames,
+    ),
+  });
+  const systemPrompt = withIntegrationToolDiscoveryStatus(
+    synchronizeRuntimeToolInventory(
+      input.baseSystemPrompt,
+      runtimeTools,
+      input.agentWriteFinalResponseToolGuardEnabled
+        ? filterPrivateArray(
+          input.plan.deferred,
+          (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
+        )
+        : [],
+    ),
+    input.integrationToolDiscovery,
+  );
+  return {
+    tools,
+    runtimeTools,
+    systemPrompt,
+    providerSystemPrompt: withAgentRunRuntimeContext(systemPrompt, input.runRuntimeContext),
+    // A server-local runtime fetches attachments from this machine, where a
+    // loopback or private-network URL resolves; only a remote provider needs
+    // the URL to be reachable from the internet.
+    providerMessages: convertToTextGenerationRuntimeRequestMessages(input.messages, {
+      requireInternetReachableAttachments: !isLocalModelRuntime(input.languageModel),
+    }),
+  };
+}
+
+/** Served token limits for a Veryfront Cloud model, when its served catalog declares them. */
+function readServedModelLimit(
+  languageModel: ModelRuntime,
+  model: string,
+): ServedRequestLimit | undefined {
+  const catalogScopeKey = readVeryfrontCloudModelFacts(languageModel)?.catalogScopeKey;
+  return catalogScopeKey
+    ? readServedVeryfrontCloudCatalogModel(catalogScopeKey, model)?.limit
+    : undefined;
+}
+
+/**
+ * Fit one step's request to the served context window before dispatch: first
+ * project old tool results to retrievable references, then unload previously
+ * loaded deferred schemas. Source history and authorization stay unchanged.
+ */
+async function fitRuntimeStepRequestToServedBudget(input: {
+  sourceMessages: Message[];
+  modelMessages: Message[];
+  plan: ToolExposurePlan;
+  assembleRequest: (
+    messages: Message[],
+    plan?: ToolExposurePlan,
+  ) => ReturnType<typeof assembleRuntimeStepRequest>;
+  toolResultContext: ToolResultContext | undefined;
+  supportsToolCalling: boolean;
+  deferredToolLoading: boolean;
+  languageModel: ModelRuntime;
+  model: string;
+  responseFormat: unknown;
+  requestedOutputTokens: number;
+  explicitOutputTokens: boolean;
+  toolExposureState: ToolExposureState;
+  persistToolExposureCheckpoint: Parameters<
+    typeof persistToolExposureCheckpointBeforeContinuation
+  >[0]["persist"];
+  requireToolExposureCheckpointPersistence: boolean;
+}): Promise<{
+  modelMessages: Message[];
+  plan: ToolExposurePlan;
+  servedLimit: ServedRequestLimit | undefined;
+}> {
+  const servedLimit = readServedModelLimit(input.languageModel, input.model);
+  let modelMessages = input.modelMessages;
+  let plan = input.plan;
+  if (servedLimit?.context === undefined) return { modelMessages, plan, servedLimit };
+  const inspect = (messages: Message[], candidatePlan: ToolExposurePlan) => {
+    const request = input.assembleRequest(messages, candidatePlan);
+    return inspectFinalRequestBudget({
+      system: request.providerSystemPrompt,
+      messages: request.providerMessages,
+      tools: request.runtimeTools,
+      responseFormat: input.responseFormat,
+      limit: servedLimit,
+      requestedOutputTokens: input.requestedOutputTokens,
+      explicitOutputTokens: input.explicitOutputTokens,
+    });
+  };
+  if (input.supportsToolCalling && input.toolResultContext) {
+    modelMessages = projectHistoricalToolResultsForBudget({
+      sourceMessages: input.sourceMessages,
+      modelMessages,
+      context: input.toolResultContext,
+      inspect: (messages) => inspect(messages, plan),
+    });
+  }
+  if (input.deferredToolLoading) {
+    const fitted = fitDeferredToolSchemasToBudget({
+      plan,
+      sourceMessages: input.sourceMessages,
+      inspect: (candidatePlan) => inspect(modelMessages, candidatePlan),
+    });
+    if (fitted.evictedNames.length > 0) {
+      plan = fitted.plan;
+      input.toolExposureState.loadedToolNames.clear();
+      for (const name of fitted.plan.loadedToolNames) {
+        input.toolExposureState.loadedToolNames.add(name);
+      }
+      await persistToolExposureCheckpointBeforeContinuation({
+        checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, input.toolExposureState),
+        persist: input.persistToolExposureCheckpoint,
+        required: input.requireToolExposureCheckpointPersistence,
+      });
+    }
+  }
+  return { modelMessages, plan, servedLimit };
 }
 
 function shouldHandleToolResultRead(input: {
@@ -4269,7 +4434,7 @@ export class AgentRuntime {
         const toolContext = preparedStep.toolContext;
         // Keep this snapshot fixed while calls from the same provider response execute.
         const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
-        const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+        let effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
           ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
             reloadable: runtimeStepToolLoading.mode === "deferred",
           })
@@ -4323,81 +4488,96 @@ export class AgentRuntime {
           plan: effectiveToolExposurePlan,
           context: toolResultContext,
         });
-        const modelMessages = toolResultContext
-          ? createModelToolResultContextMessages(currentMessages, toolResultContext)
-          : currentMessages;
-        const exposeToolResultReader = canExposeToolResultReader({
-          plan: effectiveToolExposurePlan,
-          context: toolResultContext,
-        });
-        const tools = withToolResultReaderTool(
-          effectiveToolExposurePlan.visible,
-          exposeToolResultReader,
+        const baseSystemPrompt = currentSystemPrompt;
+        const assembleRequest = (
+          messages: Message[],
+          plan: ToolExposurePlan = effectiveToolExposurePlan,
+        ) =>
+          assembleRuntimeStepRequest({
+            messages,
+            plan,
+            toolResultContext,
+            supportsToolCalling,
+            agentWriteFinalResponseToolGuardEnabled,
+            providerTools,
+            model: effectiveModel,
+            languageModel,
+            toolSchemaOptions: resolveStepToolSchemaOptions(
+              this.config,
+              languageModel,
+              effectiveModel,
+            ),
+            baseSystemPrompt,
+            integrationToolDiscovery: preparedStep.integrationToolDiscovery,
+            runRuntimeContext,
+            bootstrapToolNames: preparedStep.configuredBootstrapToolNames,
+          });
+        const requestedOutputTokens = this.resolveMaxOutputTokens(
+          effectiveModel,
+          maxOutputTokensOverride,
         );
+        const fittedRequest = await fitRuntimeStepRequestToServedBudget({
+          sourceMessages: currentMessages,
+          modelMessages: toolResultContext
+            ? createModelToolResultContextMessages(currentMessages, toolResultContext)
+            : currentMessages,
+          plan: effectiveToolExposurePlan,
+          assembleRequest,
+          toolResultContext,
+          supportsToolCalling,
+          deferredToolLoading: runtimeStepToolLoading.mode === "deferred",
+          languageModel,
+          model: effectiveModel,
+          responseFormat: outputSchema?.responseFormat,
+          requestedOutputTokens,
+          explicitOutputTokens: maxOutputTokensOverride !== undefined,
+          toolExposureState,
+          persistToolExposureCheckpoint,
+          requireToolExposureCheckpointPersistence,
+        });
+        const modelMessages = fittedRequest.modelMessages;
+        effectiveToolExposurePlan = fittedRequest.plan;
+        const request = assembleRequest(modelMessages);
+        currentSystemPrompt = request.systemPrompt;
+        const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
         setSpanAttributes(loopSpan, {
           "tool.loading.mode": runtimeStepToolLoading.mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
-          "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+          "tool.catalog.deferred_count": effectiveToolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const visibleToolNames = collectVisibleToolNames(tools);
-        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-          ? filterVisibleProviderTools(providerTools, visibleToolNames)
-          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
           providerOptions,
-        );
-        const runtimeTools = convertToolsToRuntimeTools(tools, {
-          model: effectiveModel,
-          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
-          providerTools: stepProviderTools,
-          requiredToolNames: getRequiredRuntimeToolNames(
-            exposeToolResultReader,
-            preparedStep.configuredBootstrapToolNames,
-          ),
-        });
-        currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-          synchronizeRuntimeToolInventory(
-            currentSystemPrompt,
-            runtimeTools,
-            agentWriteFinalResponseToolGuardEnabled
-              ? filterPrivateArray(
-                effectiveToolExposurePlan.deferred,
-                (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
-              )
-              : [],
-          ),
-          preparedStep.integrationToolDiscovery,
         );
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          const providerSystemPrompt = withAgentRunRuntimeContext(
-            currentSystemPrompt,
-            runRuntimeContext,
-          );
           await validateProviderRequest(
             providerSystemPrompt,
             modelMessages,
           );
+          const { maxOutputTokens } = enforceFinalRequestBudget({
+            system: providerSystemPrompt,
+            messages: providerMessages,
+            tools: runtimeTools,
+            responseFormat: outputSchema?.responseFormat,
+            limit: fittedRequest.servedLimit,
+            requestedOutputTokens,
+            explicitOutputTokens: maxOutputTokensOverride !== undefined,
+          });
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
-            messages: convertToTextGenerationRuntimeRequestMessages(modelMessages, {
-              // A server-local runtime fetches attachments from this machine,
-              // where a loopback or private-network URL resolves; only a remote
-              // provider needs the URL to be reachable from the internet.
-              requireInternetReachableAttachments: !isLocalModelRuntime(languageModel),
-            }),
+            messages: providerMessages,
             tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
-            maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
+            maxOutputTokens,
             ...(temperature === undefined ? {} : { temperature }),
             ...(this.config.parallelToolCalls === undefined
               ? {}
@@ -5379,7 +5559,7 @@ export class AgentRuntime {
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+      let effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
         ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
           reloadable: toolLoadingResolution.mode === "deferred",
         })
@@ -5645,52 +5825,66 @@ export class AgentRuntime {
 
       // Include the parked result delivered to this request, but exclude new same-step results.
       const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
-      const modelMessages = toolResultContext
-        ? createModelToolResultContextMessages(currentMessages, toolResultContext)
-        : currentMessages;
-      const exposeToolResultReader = canExposeToolResultReader({
-        plan: effectiveToolExposurePlan,
-        context: toolResultContext,
-      });
-      const tools = withToolResultReaderTool(
-        effectiveToolExposurePlan.visible,
-        exposeToolResultReader,
+      const baseSystemPrompt = currentSystemPrompt;
+      const assembleRequest = (
+        messages: Message[],
+        plan: ToolExposurePlan = effectiveToolExposurePlan,
+      ) =>
+        assembleRuntimeStepRequest({
+          messages,
+          plan,
+          toolResultContext,
+          supportsToolCalling,
+          agentWriteFinalResponseToolGuardEnabled,
+          providerTools,
+          model: effectiveModel,
+          languageModel,
+          toolSchemaOptions: resolveStepToolSchemaOptions(
+            this.config,
+            languageModel,
+            effectiveModel,
+          ),
+          baseSystemPrompt,
+          integrationToolDiscovery: preparedStep.integrationToolDiscovery,
+          runRuntimeContext,
+          bootstrapToolNames: preparedStep.configuredBootstrapToolNames,
+        });
+      const requestedOutputTokens = this.resolveMaxOutputTokens(
+        effectiveModel,
+        maxOutputTokensOverride,
       );
+      const fittedRequest = await fitRuntimeStepRequestToServedBudget({
+        sourceMessages: currentMessages,
+        modelMessages: toolResultContext
+          ? createModelToolResultContextMessages(currentMessages, toolResultContext)
+          : currentMessages,
+        plan: effectiveToolExposurePlan,
+        assembleRequest,
+        toolResultContext,
+        supportsToolCalling,
+        deferredToolLoading: toolLoadingResolution.mode === "deferred",
+        languageModel,
+        model: effectiveModel,
+        responseFormat: outputSchema?.responseFormat,
+        requestedOutputTokens,
+        explicitOutputTokens: maxOutputTokensOverride !== undefined,
+        toolExposureState,
+        persistToolExposureCheckpoint,
+        requireToolExposureCheckpointPersistence,
+      });
+      const modelMessages = fittedRequest.modelMessages;
+      effectiveToolExposurePlan = fittedRequest.plan;
+      const request = assembleRequest(modelMessages);
+      currentSystemPrompt = request.systemPrompt;
+      const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
       setOtelActiveSpanAttributes({
         "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
         "tool.loading.provenance": toolLoadingResolution.provenance,
         "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
         "tool.catalog.visible_count": tools.length,
-        "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+        "tool.catalog.deferred_count": effectiveToolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const visibleToolNames = collectVisibleToolNames(tools);
-      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-        ? filterVisibleProviderTools(providerTools, visibleToolNames)
-        : [];
-
-      const runtimeTools = convertToolsToRuntimeTools(tools, {
-        model: effectiveModel,
-        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
-        providerTools: stepProviderTools,
-        requiredToolNames: getRequiredRuntimeToolNames(
-          exposeToolResultReader,
-          preparedStep.configuredBootstrapToolNames,
-        ),
-      });
-      currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-        synchronizeRuntimeToolInventory(
-          currentSystemPrompt,
-          runtimeTools,
-          agentWriteFinalResponseToolGuardEnabled
-            ? filterPrivateArray(
-              effectiveToolExposurePlan.deferred,
-              (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
-            )
-            : [],
-        ),
-        preparedStep.integrationToolDiscovery,
-      );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
       const acceptedRuntimeToolNames = collectAcceptedRuntimeToolNames(
         runtimeTools,
@@ -5701,25 +5895,22 @@ export class AgentRuntime {
         temperatureModelString ?? effectiveModel,
         providerOptions,
       );
-      const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
-      const providerSystemPrompt = withAgentRunRuntimeContext(
-        currentSystemPrompt,
-        runRuntimeContext,
-      );
       await validateProviderRequest(
         providerSystemPrompt,
         modelMessages,
       );
+      const { maxOutputTokens } = enforceFinalRequestBudget({
+        system: providerSystemPrompt,
+        messages: providerMessages,
+        tools: runtimeTools,
+        responseFormat: outputSchema?.responseFormat,
+        limit: fittedRequest.servedLimit,
+        requestedOutputTokens,
+        explicitOutputTokens: maxOutputTokensOverride !== undefined,
+      });
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
-      const providerMessages = convertToTextGenerationRuntimeRequestMessages(
-        modelMessages,
-        // A server-local runtime fetches attachments from this machine,
-        // where a loopback or private-network URL resolves; only a remote
-        // provider needs the URL to be reachable from the internet.
-        { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
-      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamTextForObservedAgentRuntime({
           model: streamModel,

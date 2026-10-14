@@ -19,21 +19,25 @@ function isToolResultPart(part: MessagePart): part is ToolResultPart {
   return part.type === "tool-result" && "result" in part;
 }
 
+/** Whether a load_skill result is a skill reference file read rather than skill instructions. */
+export function isSkillReferenceToolResult(
+  part: Pick<ToolResultPart, "toolName" | "result">,
+): boolean {
+  if (part.toolName !== "load_skill" && part.toolName !== "veryfront__load_skill") return false;
+  const result = part.result;
+  // A failed load or a root skill body keeps its guidance inline.
+  return getToolResultError(result) === undefined &&
+    typeof readToolResultOwnDataProperty(result, "instructions") !== "string" &&
+    typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
+    typeof readToolResultOwnDataProperty(result, "file") === "string" &&
+    typeof readToolResultOwnDataProperty(result, "content") === "string";
+}
+
 function shouldSkipToolResult(
   part: Pick<ToolResultPart, "toolName" | "result">,
   skippedToolNames: ReadonlySet<string>,
 ): boolean {
-  if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
-    const result = part.result;
-    if (
-      typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
-      typeof readToolResultOwnDataProperty(result, "file") === "string" &&
-      typeof readToolResultOwnDataProperty(result, "content") === "string"
-    ) {
-      return false;
-    }
-  }
-  return skippedToolNames.has(part.toolName);
+  return skippedToolNames.has(part.toolName) && !isSkillReferenceToolResult(part);
 }
 
 function transformPartForToolResultContext(

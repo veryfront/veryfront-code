@@ -90,6 +90,8 @@ import {
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import {
   EMPTY_RESPONSE_ERROR_CODE,
   isRuntimeEmptyResponseError,
@@ -252,11 +254,30 @@ function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEve
  * relayed; anything else returns undefined so the relay keeps its neutral
  * boundary message.
  */
+/** A pre-dispatch request budget rejection carries only its registered public title. */
+function registeredContextWindowErrorEvent(error: unknown): RuntimeStreamErrorEvent | undefined {
+  const snapshot = snapshotVeryfrontError(error);
+  return snapshot?.slug === AGENT_CONTEXT_WINDOW_EXCEEDED.slug &&
+      snapshot.category === AGENT_CONTEXT_WINDOW_EXCEEDED.category &&
+      snapshot.status === AGENT_CONTEXT_WINDOW_EXCEEDED.status &&
+      snapshot.title === AGENT_CONTEXT_WINDOW_EXCEEDED.title
+    ? {
+      type: "error",
+      error: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
+      code: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+    }
+    : undefined;
+}
+
 export function resolveRelayableExecutionFailure(
   error: unknown,
 ): { message: string; code?: string } | undefined {
   if (isRuntimeEmptyResponseError(error)) {
     return { message: error.message, code: EMPTY_RESPONSE_ERROR_CODE };
+  }
+  const contextWindowError = registeredContextWindowErrorEvent(error);
+  if (contextWindowError) {
+    return { message: contextWindowError.error, code: contextWindowError.code };
   }
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
@@ -290,6 +311,8 @@ export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStream
       code: EMPTY_RESPONSE_ERROR_CODE,
     };
   }
+  const contextWindowError = registeredContextWindowErrorEvent(error);
+  if (contextWindowError) return contextWindowError;
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
     const timeout = resolveProviderFirstProgressTimeout(providerFailure.cause);
@@ -310,6 +333,8 @@ export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStream
 /** Preserve only curated provider terminal details across the runtime stream boundary. */
 export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErrorEvent {
   try {
+    const contextWindowError = registeredContextWindowErrorEvent(error);
+    if (contextWindowError) return contextWindowError;
     if (error instanceof StreamLifecycleFailure) {
       const lifecycleCode = error.lifecycleError.code;
       return {
