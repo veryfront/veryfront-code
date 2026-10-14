@@ -202,8 +202,15 @@ export function createCanonicalEventsV1Facade(
       if (!(response instanceof Response) || !response.body) {
         throw new TypeError("canonical-v1 stream has no response body");
       }
+      let latestPersistedId = Number(lastEventId);
       for await (const member of readCanonicalMembers(response.body, options.signal)) {
         assertRequestedRunIdentity(member, runId);
+        if (member.kind !== "transient") {
+          if (member.metadata.event_id <= latestPersistedId) {
+            throw new TypeError("Durable stream event ID must increase");
+          }
+          latestPersistedId = member.metadata.event_id;
+        }
         yield member;
       }
     },

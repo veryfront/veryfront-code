@@ -415,3 +415,28 @@ it("rejects invalid UTF-8 in structured HTTP errors", async () => {
   });
   await assertRejects(() => facade.list("run_demo"), TypeError);
 });
+
+for (const ids of [[42], [41], [43, 43], [43, 42]]) {
+  it(`rejects durable stream IDs that do not advance checkpoint 42: ${ids}`, async () => {
+    const frames = ids.map((id) => {
+      const member = { ...legacy, metadata: { ...legacy.metadata, event_id: id } };
+      return `event: legacy\nid: ${id}\ndata: ${JSON.stringify(member)}\n\n`;
+    }).join("");
+    const facade = createCanonicalEventsV1Facade({
+      async request() {
+        return new Response(frames);
+      },
+    });
+    const yielded: number[] = [];
+    await assertRejects(
+      async () => {
+        for await (const member of facade.stream("run_demo", "42")) {
+          if (member.kind !== "transient") yielded.push(member.metadata.event_id);
+        }
+      },
+      TypeError,
+      "Durable stream event ID must increase",
+    );
+    assertEquals(yielded, ids.length === 1 ? [] : [43]);
+  });
+}
