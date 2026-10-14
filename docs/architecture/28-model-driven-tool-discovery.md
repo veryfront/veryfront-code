@@ -103,7 +103,10 @@ existing ranking, including integration catalog navigation.
 Agents can enable `toolResultContext` to replace oversized tool results with a
 preview and a run-local retrieval reference. The runtime exposes `get_tool_result`
 only after a stored reference exists. Reads use bounded sections; events and
-persisted history retain the original result.
+persisted history retain the original result. JSON results can be narrowed with an
+RFC 6901 `pointer`, and `view: "structure"` lists one level of child pointer
+tokens and types without values. A section's `nextCursor` continues the same
+`ref`, `view`, and `pointer` selection.
 
 Root skill instructions remain inline. Advertised reference-file results from
 `load_skill` and `veryfront__load_skill` follow the configured limits instead of
