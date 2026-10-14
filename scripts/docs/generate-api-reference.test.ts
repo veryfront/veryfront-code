@@ -255,6 +255,30 @@ describe("generate-api-reference", () => {
           ?.split("### ")[0] ?? "";
       assertStringIncludes(conversationOptionsTable, "signal");
 
+      const integrationsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/integrations.md`,
+      );
+      const integrationsImport = integrationsReference.split("## Import")[1]
+        ?.split("## ")[0] ?? "";
+      assertEquals(
+        integrationsImport.includes("executeRemoteIntegrationTool"),
+        false,
+      );
+      assertStringIncludes(integrationsImport, "getConnectorNames");
+      // Deprecated APIs remain documented for existing callers.
+      assertStringIncludes(
+        integrationsReference,
+        "| `executeRemoteIntegrationTool`",
+      );
+
+      const taskReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/task.md`,
+      );
+      const taskImport = taskReference.split("## Import")[1]?.split("## ")[0] ??
+        "";
+      assertEquals(taskImport.includes("deriveTaskId"), false);
+      assertStringIncludes(taskImport, "runTask");
+
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
       );

@@ -8,12 +8,12 @@ order: 41
 
 ```ts
 import {
-  deriveTaskId,
   discoverProjectTaskRuntime,
-  discoverTasks,
   findProjectRuntimeTask,
-  findTaskById,
   formatProjectRuntimeDiscoveryErrors,
+  isTaskDefinition,
+  listProjectRuntimeTasks,
+  runTask,
 } from "veryfront/task";
 ```
 

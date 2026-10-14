@@ -12,8 +12,8 @@ import {
   createIntegrationErrorContext,
   createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
-  executeRemoteIntegrationTool,
   getConnector,
+  getConnectorNames,
 } from "veryfront/integrations";
 ```
 

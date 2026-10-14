@@ -196,7 +196,7 @@ interface ClassDef {
 interface DocNode {
   name: string;
   kind: string;
-  jsDoc?: { doc?: string };
+  jsDoc?: { doc?: string; tags?: Array<{ kind: string }> };
   functionDef?: FunctionDef;
   interfaceDef?: InterfaceDef;
   typeAliasDef?: { tsType?: TsType };
@@ -221,6 +221,7 @@ interface DenoDocLocation {
 
 interface ExportSummary {
   name: string;
+  deprecated?: boolean;
   description: string;
   sourceHref: string;
 }
@@ -1279,7 +1280,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function categorizeNodes(
   nodes: DocNode[],
-  importPath: string,
 ): CategorizedExports {
   const result: CategorizedExports = {
     functions: [],
@@ -1325,7 +1325,16 @@ function categorizeNodes(
     }
   }
 
+  const deprecatedNames = new Set(
+    nodes.filter((node) =>
+      node.jsDoc?.tags?.some((tag) => tag.kind === "deprecated")
+    )
+      .map((node) => node.name),
+  );
   for (const cat of Object.values(result) as ExportSummary[][]) {
+    for (const summary of cat) {
+      summary.deprecated = deprecatedNames.has(summary.name);
+    }
     cat.sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -2449,12 +2458,14 @@ function generateMD(
 
   // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
-  const allExportNames = new Set([
-    ...exports.functions.map((e) => e.name),
-    ...exports.components.map((e) => e.name),
-    ...exports.classes.map((e) => e.name),
-    ...exports.constants.map((e) => e.name),
-  ]);
+  const allExportNames = new Set(
+    [
+      ...exports.functions,
+      ...exports.components,
+      ...exports.classes,
+      ...exports.constants,
+    ].filter((entry) => !entry.deprecated).map((entry) => entry.name),
+  );
 
   // Explicit empty array = skip import section (e.g. CLI executable)
   const importNames: string[] = [];
@@ -2620,12 +2631,14 @@ function pickDeepImportSample(
     ...exports.components,
     ...exports.classes,
     ...exports.constants,
-  ].map((e) => e.name);
+  ].filter((entry) => !entry.deprecated).map((e) => e.name);
   if (runtime.length > 0) {
     return { names: runtime.slice(0, 3), typeOnly: false };
   }
   return {
-    names: exports.types.map((entry) => entry.name).slice(0, 3),
+    names: exports.types.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ).slice(0, 3),
     typeOnly: true,
   };
 }
@@ -2758,7 +2771,7 @@ async function main() {
       }
       nodes = await getDenoDoc(entry.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
-      exports = categorizeNodes(nodes, entry.importPath);
+      exports = categorizeNodes(nodes);
     }
 
     indexData.push({ entry, jsdoc });
@@ -2780,7 +2793,7 @@ async function main() {
       }
       const deepNodes = await getDenoDoc(deep.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));
-      const deepExports = categorizeNodes(deepNodes, deep.importPath);
+      const deepExports = categorizeNodes(deepNodes);
       deepRenders.push({ deep, jsdoc: deepJsdoc, exports: deepExports });
     }
 
