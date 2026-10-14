@@ -12,8 +12,8 @@ import {
   createIntegrationErrorContext,
   createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
+  executeRemoteIntegrationTool,
   getConnector,
-  getConnectorNames,
 } from "veryfront/integrations";
 ```
 
@@ -61,6 +61,7 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `createIntegrationErrorContext`            |                                                                                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/error-context.ts)              |
 | `createLocalIntegrationToolSource`         | Create an explicitly granted, catalog-backed local integration tool source.                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/local-tool-source.ts)          |
 | `createSalesforceServiceAccountToolSource` | Create a local Salesforce service-account tool source.                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
+| `executeRemoteIntegrationTool`             | Deprecated alias of `runRemoteIntegrationTool`.                                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `getConnector`                             | Return connector.                                                                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts)                      |
 | `getConnectorNames`                        | Return connector names.                                                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts)                      |
 | `getIcon`                                  | Return icon.                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts)                      |
@@ -123,12 +124,6 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `OAuthField`                                | Public API contract for oauth field.                                                                                                                                                                                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts)                     |
 | `RemoteIntegrationToolDiscoveryResult`      | Result of listing the integration tools available to the current run.                                                                                                                                                                                                                                                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts)               |
 | `SalesforceServiceAccountToolSourceOptions` | Options for the local Salesforce service-account source.                                                                                                                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/salesforce-service-account.ts) |
-
-### Constants
-
-| Name                           | Description                                     | Source                                                                                           |
-| ------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `executeRemoteIntegrationTool` | Deprecated alias of `runRemoteIntegrationTool`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts) |
 
 ## Deep imports
 
