@@ -33,7 +33,9 @@ async function captureSourceGraph(): Promise<
   await readFile("LICENSE");
   await walk("browser/");
   const rows: string[] = [];
-  for (const path of [...files.keys()].sort()) {
+  // Integrity rows use code-unit ordering, independent of the host locale.
+  const paths = [...files.keys()].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  for (const path of paths) {
     const bytes = files.get(path)!;
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)).toHex();
     rows.push(path + String.fromCharCode(0) + digest + String.fromCharCode(10));
