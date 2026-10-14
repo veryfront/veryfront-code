@@ -7,18 +7,19 @@ import {
   pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import type { ToolResultPart } from "../types.ts";
+import { hasTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
-import { normalizeConversationPlatformToolName } from "../platform-tool-names.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
-import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   privateTextEndsWith,
   privateTextIncludes,
   privateTextStartsWith,
   privateTextTrim,
 } from "#veryfront/security/private-text.ts";
-import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
@@ -33,8 +34,6 @@ import {
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
 const hasOwn = Object.hasOwn;
-const isArray = Array.isArray;
-const objectEntries = Object.entries;
 
 type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -346,40 +345,10 @@ function convertContentToAgentRuntimeParts(
   return parts;
 }
 
-function toJsonValue(value: unknown): JsonValue {
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (isArray(value)) {
-    return mapPrivateArray(value, (item) => toJsonValue(item));
-  }
-
-  if (isRecord(value)) {
-    const result: Record<string, JsonValue> = {};
-    const entries = objectEntries(value);
-    for (let index = 0; index < entries.length; index++) {
-      const entry = entries[index]!;
-      defineOwnDataProperty(result, entry[0], toJsonValue(entry[1]), {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    }
-    return result;
-  }
-
-  return privateJsonStringify(value);
-}
-
 function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } {
   return {
     type: "json",
-    value: toJsonValue(value),
+    value: toChatJsonValue(value),
   };
 }
 
@@ -499,15 +468,27 @@ function hasAcceptedChildResultText(value: unknown): value is Record<string, unk
         value.summary.text.length > 0));
 }
 
+/** @internal Recognize platform child results without claiming project-owned aliases. */
+export function isProviderChildToolResult(
+  part: { toolCallId: string; toolName: string; output: unknown },
+  sourcePart?: unknown,
+): boolean {
+  return (part.toolName === "invoke_agent" || part.toolName === "veryfront__invoke_agent") &&
+    isRecord(sourcePart) &&
+    hasTrustedPlatformPolicyToolResultPart(sourcePart as ToolResultPart) &&
+    readToolResultOwnDataProperty(sourcePart, "toolCallId") === part.toolCallId &&
+    readToolResultOwnDataProperty(sourcePart, "toolName") === part.toolName &&
+    readToolResultOwnDataProperty(sourcePart, "result") === part.output;
+}
+
 /** @internal Normalize provider-visible results while preserving durable tool history. */
 export function createProviderToolResultOutput(part: {
+  toolCallId: string;
   toolName: string;
   output: unknown;
-}): { type: "json"; value: JsonValue } {
-  const isChildResult = normalizeConversationPlatformToolName(part.toolName) === "invoke_agent";
-  const output = isChildResult
-    ? { type: "json" as const, value: toChatJsonValue(part.output) }
-    : toToolResultOutput(part.output);
+}, sourcePart?: unknown): { type: "json"; value: JsonValue } {
+  const isChildResult = isProviderChildToolResult(part, sourcePart);
+  const output = toToolResultOutput(part.output);
   let value = output.value;
   if (isChildResult) {
     let candidate: unknown = value;
@@ -580,12 +561,12 @@ export function createToolResultPart(part: {
   toolCallId: string;
   toolName: string;
   output: unknown;
-}): ChatToolResultPart {
+}, sourcePart?: unknown): ChatToolResultPart {
   return {
     type: "tool-result",
     toolCallId: part.toolCallId,
     toolName: part.toolName,
-    output: createProviderToolResultOutput(part),
+    output: createProviderToolResultOutput(part, sourcePart),
   };
 }
 
@@ -636,7 +617,7 @@ function collectAgentRuntimeProviderContentParts(
       toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
     );
     if (toolResultPart) {
-      pushPrivateArray(toolResultParts, createToolResultPart(toolResultPart));
+      pushPrivateArray(toolResultParts, createToolResultPart(toolResultPart, part));
       continue;
     }
 
@@ -754,7 +735,7 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
     );
     if (toolResultPart) {
-      pushToolResult(createToolResultPart(toolResultPart));
+      pushToolResult(createToolResultPart(toolResultPart, part));
       continue;
     }
 

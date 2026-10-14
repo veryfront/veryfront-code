@@ -214,7 +214,9 @@ prose stays in durable history, so intermediate trace descriptions cannot
 conflict with the accepted result. Completed child results keep root response
 hint instructions and metadata while omitting their suggested prose when accepted
 output or child response text is present. Successful local child summaries use
-the same hint cleanup. Failed children retain diagnostic prose.
+the same hint cleanup. Both aliases require framework-owned result provenance;
+project-owned or unmarked historical results retain their original fields. Runtime-written ownership metadata restores unique child results on replay.
+Failed children retain diagnostic prose.
 Distinct textual summaries and outputs retain their existing behavior.
 Result references limit inline payloads, not child generation or the total
 conversation size; reading every section can still grow model context.

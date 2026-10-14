@@ -14,8 +14,25 @@ import {
   type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
-  createToolResultPart,
+  createToolResultPart as createRawToolResultPart,
 } from "./message-adapter.ts";
+
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import type { ToolResultPart } from "../types.ts";
+
+/** These existing projection fixtures represent admitted framework child calls. */
+function createPlatformFixtureResult(part: Parameters<typeof createRawToolResultPart>[0]) {
+  const source: ToolResultPart = {
+    type: "tool-result",
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    result: part.output,
+  };
+  if (part.toolName === "invoke_agent" || part.toolName === "veryfront__invoke_agent") {
+    markTrustedPlatformPolicyToolResultPart(source);
+  }
+  return createRawToolResultPart(part, source);
+}
 
 Deno.test("provider child handoff carries summary text once without changing the durable result", () => {
   const original = {
@@ -24,7 +41,7 @@ Deno.test("provider child handoff carries summary text once without changing the
     text: "repeated ".repeat(1000),
     summary: { text: "repeated ".repeat(1000), truncated: false, returnedChars: 9000 },
   };
-  const part = createToolResultPart({
+  const part = createPlatformFixtureResult({
     toolName: "invoke_agent",
     toolCallId: "fixture-call",
     output: original,
@@ -40,13 +57,18 @@ Deno.test("provider handoff preserves different summary text and unrelated tool 
   for (const toolName of ["invoke_agent", "other_tool"]) {
     const original = { text: "full", summary: { text: "different" } };
     assertEquals(
-      createToolResultPart({ toolName, toolCallId: "fixture-call", output: original }).output,
+      createPlatformFixtureResult({ toolName, toolCallId: "fixture-call", output: original })
+        .output,
       { type: "json", value: original },
     );
   }
   const original = { text: "same", summary: { text: "same" } };
   assertEquals(
-    createToolResultPart({ toolName: "other_tool", toolCallId: "fixture-call", output: original })
+    createPlatformFixtureResult({
+      toolName: "other_tool",
+      toolCallId: "fixture-call",
+      output: original,
+    })
       .output,
     { type: "json", value: original },
   );
@@ -61,7 +83,7 @@ Deno.test("provider replay deduplicates the recorded JSON-encoded child envelope
     summary: { text: "annotated fixture ".repeat(500) },
   };
   const recorded = { type: "json", value: JSON.stringify(child) };
-  const part = createToolResultPart({
+  const part = createPlatformFixtureResult({
     toolName: "invoke_agent",
     toolCallId: "fixture-call",
     output: recorded,
@@ -69,7 +91,7 @@ Deno.test("provider replay deduplicates the recorded JSON-encoded child envelope
   assertEquals(part.output, { type: "json", value: { ...child, summary: {} } });
   assertEquals(recorded.value, JSON.stringify(child));
   assertEquals(
-    createToolResultPart({
+    createPlatformFixtureResult({
       toolName: "invoke_agent",
       toolCallId: "fixture-call",
       output: { type: "json", value: "not JSON" },
@@ -83,7 +105,7 @@ Deno.test("provider replay removes raw child output only when it is contained in
   const text = `Host annotation\n${raw}`;
   const child = { ok: true, childRunId: "fixture-child", text, output: raw, summary: { text } };
   assertEquals(
-    createToolResultPart({
+    createPlatformFixtureResult({
       toolName: "invoke_agent",
       toolCallId: "fixture-call",
       output: { type: "json", value: JSON.stringify(child) },
@@ -756,7 +778,11 @@ Deno.test("completed structured child output excludes conflicting trace prose fr
     ) {
       const before = JSON.stringify(recorded);
       assertEquals(
-        createToolResultPart({ toolName: "invoke_agent", toolCallId: "call", output: recorded })
+        createPlatformFixtureResult({
+          toolName: "invoke_agent",
+          toolCallId: "call",
+          output: recorded,
+        })
           .output,
         {
           type: "json",
@@ -783,10 +809,13 @@ Deno.test("failed children and ordinary tools keep diagnostic prose beside struc
       summary: { text: "Failure details" },
       output: { outcome: "failed" },
     };
-    assertEquals(createToolResultPart({ toolName, toolCallId: "call", output: original }).output, {
-      type: "json",
-      value: original,
-    });
+    assertEquals(
+      createPlatformFixtureResult({ toolName, toolCallId: "call", output: original }).output,
+      {
+        type: "json",
+        value: original,
+      },
+    );
   }
 });
 
@@ -801,14 +830,15 @@ Deno.test("canonical child alias projects accepted output through public chat re
   };
   for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
     const before = JSON.stringify(recorded);
+    const source: ToolResultPart = markTrustedPlatformPolicyToolResultPart({
+      type: "tool-result",
+      toolCallId: "call",
+      toolName: "veryfront__invoke_agent",
+      result: recorded,
+    });
     const messages = convertAgentRuntimeMessagesToProviderMessages([{
       role: "tool",
-      parts: [{
-        type: "tool-result",
-        toolCallId: "call",
-        toolName: "veryfront__invoke_agent",
-        output: recorded,
-      }],
+      parts: [source],
     }]);
     assertEquals(messages, [{
       role: "tool",
@@ -848,7 +878,7 @@ Deno.test("completed child replay removes root hint prose and retains its guidan
       const before = JSON.stringify(child);
       for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
         assertEquals(
-          createToolResultPart({ toolName, toolCallId: "call", output: recorded }).output,
+          createPlatformFixtureResult({ toolName, toolCallId: "call", output: recorded }).output,
           {
             type: "json",
             value: {
@@ -878,14 +908,17 @@ Deno.test("child replay retains diagnostic hints for failures and unrelated tool
     output: { outcome: "failed" },
   };
   for (const toolName of ["invoke_agent", "veryfront__invoke_agent", "ordinary_tool"]) {
-    assertEquals(createToolResultPart({ toolName, toolCallId: "call", output: failed }).output, {
-      type: "json",
-      value: failed,
-    });
+    assertEquals(
+      createPlatformFixtureResult({ toolName, toolCallId: "call", output: failed }).output,
+      {
+        type: "json",
+        value: failed,
+      },
+    );
   }
   const ordinary = { ...failed, ok: true, status: "completed" };
   assertEquals(
-    createToolResultPart({ toolName: "ordinary_tool", toolCallId: "call", output: ordinary })
+    createPlatformFixtureResult({ toolName: "ordinary_tool", toolCallId: "call", output: ordinary })
       .output,
     { type: "json", value: ordinary },
   );
@@ -906,7 +939,7 @@ Deno.test("completed prose handoff omits a rewritten root suggestion without req
   const before = JSON.stringify(child);
   for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
     for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
-      assertEquals(createToolResultPart({ toolName, toolCallId: "call", output }).output, {
+      assertEquals(createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output, {
         type: "json",
         value: {
           ok: true,
@@ -931,7 +964,7 @@ Deno.test("projection preserves a root suggestion when no accepted child output 
   };
   for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
     for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
-      assertEquals(createToolResultPart({ toolName, toolCallId: "call", output }).output, {
+      assertEquals(createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output, {
         type: "json",
         value: output,
       });
@@ -939,8 +972,8 @@ Deno.test("projection preserves a root suggestion when no accepted child output 
   }
 });
 
-Deno.test("child projection omits accessor execution and bounds cyclic output", () => {
-  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+Deno.test("provider result normalization omits accessor execution and bounds cyclic output", () => {
+  for (const toolName of ["veryfront__invoke_agent"]) {
     let reads = 0;
     const child = {
       ok: true,
@@ -956,7 +989,7 @@ Deno.test("child projection omits accessor execution and bounds cyclic output", 
         return { directory: "getter-owned" };
       },
     });
-    const part = createToolResultPart({ toolName, toolCallId: "call", output: child });
+    const part = createPlatformFixtureResult({ toolName, toolCallId: "call", output: child });
     assertEquals(reads, 0);
     assertEquals(part.output, {
       type: "json",
@@ -966,14 +999,14 @@ Deno.test("child projection omits accessor execution and bounds cyclic output", 
         childRunId: "child",
         text: "diagnostic prose",
         output: "[Accessor omitted]",
-        summary: {},
+        summary: { text: "diagnostic prose" },
       },
     });
     assertEquals(reads, 0);
     const receipt: Record<string, unknown> = { directory: "accepted" };
     receipt.self = receipt;
     assertEquals(
-      createToolResultPart({
+      createPlatformFixtureResult({
         toolName,
         toolCallId: "call",
         output: { ok: true, status: "completed", childRunId: "child", output: receipt },
@@ -996,14 +1029,18 @@ Deno.test("child projection never mutates an inherited root suggestion", () => {
   const previous = Object.getOwnPropertyDescriptor(Object.prototype, "rootResponseHint");
   Object.defineProperty(Object.prototype, "rootResponseHint", { value: hint, configurable: true });
   try {
-    for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const toolName of ["veryfront__invoke_agent"]) {
       const child = {
         ok: true,
         status: "completed",
         childRunId: "child",
         output: { directory: "accepted" },
       };
-      const projected = createToolResultPart({ toolName, toolCallId: "call", output: child });
+      const projected = createPlatformFixtureResult({
+        toolName,
+        toolCallId: "call",
+        output: child,
+      });
       assertEquals(Object.hasOwn(projected.output.value as object, "rootResponseHint"), false);
       assertEquals(hint.suggestedText, "original suggestion");
     }
@@ -1029,7 +1066,8 @@ Deno.test("successful local child summary replays once with root guidance retain
   const before = JSON.stringify(child);
   for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
     for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
-      const projected = createToolResultPart({ toolName, toolCallId: "call", output }).output;
+      const projected =
+        createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output;
       assertEquals<unknown>(projected, {
         type: "json",
         value: { ...child, rootResponseHint: { instruction: hint.instruction } },

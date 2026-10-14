@@ -57,6 +57,7 @@ import {
   isFormInputToolName,
   isLoadSkillToolName,
   LOAD_SKILL_TOOL_ID,
+  normalizeConversationPlatformToolName,
 } from "../platform-tool-names.ts";
 export {
   CANONICAL_FORM_INPUT_TOOL_ID,
@@ -787,7 +788,8 @@ function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
       isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedSource(part) &&
       trustedToolCallIdSet.has(part.toolCallId) &&
       ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
-        (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
+        (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)) ||
+        normalizeConversationPlatformToolName(part.toolName) === "invoke_agent")
     ) {
       markTrustedPlatformPolicyToolResultPart(part);
     }
