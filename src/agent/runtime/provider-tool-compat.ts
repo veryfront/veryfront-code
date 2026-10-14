@@ -642,9 +642,9 @@ function getMergedRequiredNames(
     return [...new Set(requiredBySchema.flat())];
   }
 
-  return requiredBySchema[0]?.filter((name) =>
-    requiredBySchema.slice(1).every((required) => required.includes(name))
-  ) ?? [];
+  const rest = requiredBySchema.slice(1).map((required) => new Set(required));
+  return requiredBySchema[0]?.filter((name) => rest.every((required) => required.has(name))) ??
+    [];
 }
 
 function getMergedPropertySchema(
@@ -659,6 +659,16 @@ function getMergedPropertySchema(
     return true;
   });
   return distinct.length === 1 ? distinct[0] : { [keyword]: distinct };
+}
+
+/** Merge definition maps with own data properties, so `__proto__` names survive. */
+function mergeDefinitionMaps(maps: readonly unknown[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const map of maps) {
+    if (!isPlainRecord(map)) continue;
+    for (const [name, schema] of Object.entries(map)) defineDataProperty(merged, name, schema);
+  }
+  return merged;
 }
 
 function admitsUndeclaredProperties(schema: Record<string, unknown>): boolean {
@@ -708,14 +718,8 @@ function mergeObjectSchemas(
       schemas.every((schema) => schema.additionalProperties === false)
     ? false
     : undefined;
-  const defs = Object.assign(
-    {},
-    ...schemas.flatMap((schema) => isPlainRecord(schema.$defs) ? [schema.$defs] : []),
-  );
-  const definitions = Object.assign(
-    {},
-    ...schemas.flatMap((schema) => isPlainRecord(schema.definitions) ? [schema.definitions] : []),
-  );
+  const defs = mergeDefinitionMaps(schemas.map((schema) => schema.$defs));
+  const definitions = mergeDefinitionMaps(schemas.map((schema) => schema.definitions));
 
   return {
     type: "object",
