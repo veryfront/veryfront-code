@@ -223,6 +223,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   let epoch = 0;
   let clock = 0;
   let stopped = false;
+  let generationCleanup: Promise<void> | undefined;
 
   /** One retirement attempt. Rejects while the allocator has not confirmed the release. */
   function release(key: Readonly<WorkerGenerationIdentity>): Promise<void> {
@@ -513,7 +514,8 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     // result; generation cleanup then confirms each release. Report a cleanup that could
     // not confirm one, since no retry follows shutdown.
     const result = sessions.shutdown();
-    void generations.close().catch((error) => {
+    generationCleanup = result.then(() => sessions.settled).then(() => generations.close());
+    void generationCleanup.catch((error) => {
       logger.warn("Hosted HTTP generation cleanup did not confirm every release", {
         unconfirmed: error instanceof AggregateError ? error.errors.length : 1,
       });
@@ -536,7 +538,9 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       return scopes.size;
     },
     get settled() {
-      return sessions.settled;
+      // Read cleanup after the session pool settles, so a promise obtained before
+      // shutdown also retains the generation cleanup that shutdown starts.
+      return sessions.settled.then(() => generationCleanup);
     },
     shutdown,
     async fetch(request: Request, input: HostedHttpInput): Promise<Response> {

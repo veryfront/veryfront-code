@@ -701,6 +701,60 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("retains broker settlement until generation release observation completes", async () => {
+    const f = fixture(() => new Response("served"));
+    const release = f.input.session.allocator.release;
+    const entered = Promise.withResolvers<void>();
+    const observed = Promise.withResolvers<Awaited<ReturnType<typeof release>>>();
+    f.input.session.allocator.release = () => Promise.reject(new Error("allocator outage"));
+    f.input.session.allocator.observe = () => {
+      entered.resolve();
+      return observed.promise;
+    };
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    let settled = false;
+    try {
+      await (await broker.fetch(new Request("https://app.example"), f.input)).text();
+      const settlement = broker.settled.then(() => {
+        settled = true;
+      });
+      const shutdown = broker.shutdown();
+      await entered.promise;
+      await shutdown;
+      await tick();
+      assertEquals(settled, false, "generation observation still owns allocator work");
+      observed.resolve(
+        await release(
+          {
+            ...f.input.session.request,
+            generation: 1,
+            brokerInstanceId: "broker-a",
+            executionProfile: "http",
+          },
+          "canceled",
+          new AbortController().signal,
+        ),
+      );
+      await settlement;
+      assertEquals(settled, true);
+    } finally {
+      observed.resolve(
+        await release(
+          {
+            ...f.input.session.request,
+            generation: 1,
+            brokerInstanceId: "broker-a",
+            executionProfile: "http",
+          },
+          "canceled",
+          new AbortController().signal,
+        ),
+      );
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("retries an unconfirmed retirement and keeps its capacity until release is confirmed", async () => {
     const a = fixture(() => new Response("a"));
     const release = a.input.session.allocator.release;
@@ -760,7 +814,7 @@ describe("hosted HTTP generation broker", () => {
       );
       while (broker.generations > 0) await new Promise((resolve) => setTimeout(resolve, 10));
       owner.abort();
-      await broker.settled;
+      await assertRejects(() => broker.settled, AggregateError, "cleanup failed");
       // Shutdown makes one bounded confirmation attempt; no retry follows it.
       await new Promise((resolve) => setTimeout(resolve, 200));
       const settledObservations = observations;
@@ -768,7 +822,7 @@ describe("hosted HTTP generation broker", () => {
       assertEquals(observations, settledObservations);
     } finally {
       await broker.shutdown();
-      await broker.settled;
+      await assertRejects(() => broker.settled, AggregateError, "cleanup failed");
     }
   });
 
