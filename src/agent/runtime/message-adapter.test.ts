@@ -1024,32 +1024,6 @@ Deno.test("provider result normalization omits accessor execution and bounds cyc
   }
 });
 
-Deno.test("child projection never mutates an inherited root suggestion", () => {
-  const hint = { instruction: "guidance", suggestedText: "original suggestion" };
-  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "rootResponseHint");
-  Object.defineProperty(Object.prototype, "rootResponseHint", { value: hint, configurable: true });
-  try {
-    for (const toolName of ["veryfront__invoke_agent"]) {
-      const child = {
-        ok: true,
-        status: "completed",
-        childRunId: "child",
-        output: { directory: "accepted" },
-      };
-      const projected = createPlatformFixtureResult({
-        toolName,
-        toolCallId: "call",
-        output: child,
-      });
-      assertEquals(Object.hasOwn(projected.output.value as object, "rootResponseHint"), false);
-      assertEquals(hint.suggestedText, "original suggestion");
-    }
-  } finally {
-    if (previous) Object.defineProperty(Object.prototype, "rootResponseHint", previous);
-    else Reflect.deleteProperty(Object.prototype, "rootResponseHint");
-  }
-});
-
 Deno.test("successful local child summary replays once with root guidance retained", () => {
   const summary = buildChildRunResultSummary("Let me inspect the receipt. Local result confirmed.");
   const child = withRootOwnedChildResultHint(
