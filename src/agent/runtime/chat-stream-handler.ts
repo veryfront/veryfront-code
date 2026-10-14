@@ -1413,7 +1413,9 @@ export function processStreamInternal(
         if (next.done) {
           if (callbacks?.streamRequiresFinish && !sawProviderFinishPart) {
             throw createRuntimeProviderStreamFailure(
-              new Error("Provider stream ended before required finish"),
+              Object.assign(new Error("Provider stream ended before required finish"), {
+                retryable: true,
+              }),
             );
           }
           if (

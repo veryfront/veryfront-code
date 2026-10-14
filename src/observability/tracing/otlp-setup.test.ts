@@ -262,6 +262,9 @@ describe("observability/tracing/otlp-setup", () => {
     });
 
     markSpanFailed(null, "RUNTIME_ERROR");
+    for (const malformed of [1, true, "invalid", Symbol("invalid")]) {
+      markSpanFailed(malformed, "RUNTIME_ERROR");
+    }
     assertEquals(recordedMessages, []);
 
     markSpanFailed(span, "RUNTIME_ERROR");

@@ -272,7 +272,6 @@ function startSpanWithFallback(
 }
 
 function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDetail): void {
-  observeSpanError(span);
   // Sanitization runs on caller-supplied values on every error path, so it is guarded
   // like the span calls are: a throw here would turn a handled failure into a thrown one,
   // and telemetry must never change the outcome it reports on. Defence in depth -- probing
@@ -280,6 +279,7 @@ function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDe
   let telemetryError: Error | undefined;
   runTelemetryOperation(
     () => {
+      observeSpanError(span);
       telemetryError = sanitizeErrorForTelemetry(error, detail);
     },
     "Failed to sanitize error for telemetry",
