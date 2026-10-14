@@ -906,7 +906,10 @@ describe("react-paths", () => {
           selected = next;
           return component;
         });
-        const notFound = await tryNotFoundFallback(request, "", context, new ResponseBuilder());
+        const notFound = await runWithCacheDir(
+          directory,
+          () => tryNotFoundFallback(request, "", context, new ResponseBuilder()),
+        );
         assertEquals(notFound?.status, 404);
         assertEquals((await notFound?.text())?.includes("<strong>7</strong>"), true);
         selected = old;
@@ -915,9 +918,10 @@ describe("react-paths", () => {
           selected = next;
           return component;
         });
-        const errorPage = await tryErrorPageFallback(request, context, new ResponseBuilder(), {
-          statusCode: 500,
-        });
+        const errorPage = await runWithCacheDir(
+          directory,
+          () => tryErrorPageFallback(request, context, new ResponseBuilder(), { statusCode: 500 }),
+        );
         assertEquals(errorPage?.status, 500);
         assertEquals((await errorPage?.text())?.includes("<strong>7</strong>"), true);
       } finally {
