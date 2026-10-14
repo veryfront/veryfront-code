@@ -623,7 +623,7 @@ function sanitizeMoonshotSchemaValue(
   return sanitized;
 }
 
-type AnthropicCompositionKeyword = "allOf" | "anyOf";
+type ObjectCompositionKeyword = "allOf" | "anyOf";
 
 function getSchemaRequiredNames(schema: Record<string, unknown>): string[] {
   return Array.isArray(schema.required)
@@ -633,7 +633,7 @@ function getSchemaRequiredNames(schema: Record<string, unknown>): string[] {
 
 function getMergedRequiredNames(
   schemas: readonly Record<string, unknown>[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): string[] {
   if (schemas.length === 0) return [];
   const requiredBySchema = schemas.map(getSchemaRequiredNames);
@@ -648,7 +648,7 @@ function getMergedRequiredNames(
 
 function getMergedPropertySchema(
   schemas: readonly unknown[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): unknown {
   if (schemas.length === 1) return schemas[0];
   const [first, ...rest] = schemas;
@@ -659,9 +659,9 @@ function getMergedPropertySchema(
   return { [keyword]: schemas };
 }
 
-function mergeAnthropicObjectSchemas(
+function mergeObjectSchemas(
   schemas: readonly Record<string, unknown>[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): Record<string, unknown> {
   const mergedProperties = new Map<string, unknown[]>();
   for (const schema of schemas) {
@@ -726,6 +726,7 @@ function chargeRootNormalization(
   value: unknown,
   budget: RootNormalizationBudget,
   depth: number,
+  introduced = false,
 ): void {
   const pending = [{ value, depth }];
   while (pending.length) {
@@ -733,8 +734,10 @@ function chargeRootNormalization(
     const bytes = estimateSerializedNodeBytes(current.value);
     budget.remainingNodes--;
     budget.remainingBytes -= bytes;
-    budget.shared.remainingNodes--;
-    budget.shared.remainingBytes -= bytes;
+    if (introduced) {
+      budget.shared.remainingNodes--;
+      budget.shared.remainingBytes -= bytes;
+    }
     if (
       current.depth > 64 || budget.remainingNodes < 0 || budget.remainingBytes < 0 ||
       budget.shared.remainingNodes < 0 || budget.shared.remainingBytes < 0
@@ -753,14 +756,14 @@ function chargeRootNormalization(
   }
 }
 
-function sanitizeAnthropicSchemaRoot(
+function normalizeObjectSchemaRoot(
   schema: unknown,
   rootSchema: unknown = schema,
   seenRefs: ReadonlySet<string> = new Set(),
   budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
   depth = 0,
 ): Record<string, unknown> {
-  chargeRootNormalization(schema, budget, depth);
+  chargeRootNormalization(schema, budget, depth, depth > 0);
   if (!isPlainRecord(schema)) {
     return createPermissiveToolInputSchema();
   }
@@ -771,13 +774,27 @@ function sanitizeAnthropicSchemaRoot(
       const nextSeenRefs = new Set(seenRefs);
       nextSeenRefs.add(schema.$ref);
       const { $ref: _ref, ...siblings } = schema;
-      return sanitizeAnthropicSchemaRoot(
-        { ...resolved, ...siblings },
+      const target = normalizeObjectSchemaRoot(
+        resolved,
         rootSchema,
         nextSeenRefs,
         budget,
         depth + 1,
       );
+      const siblingRoot = normalizeObjectSchemaRoot(
+        siblings,
+        rootSchema,
+        seenRefs,
+        budget,
+        depth + 1,
+      );
+      const combined = {
+        ...target,
+        ...siblingRoot,
+        ...mergeObjectSchemas([target, siblingRoot], "allOf"),
+      };
+      chargeRootNormalization(combined, budget, depth, true);
+      return combined;
     }
   }
 
@@ -798,17 +815,17 @@ function sanitizeAnthropicSchemaRoot(
   ) {
     if (!Array.isArray(rawBranches) || rawBranches.length === 0) continue;
     const branches = rawBranches.map((branch) =>
-      sanitizeAnthropicSchemaRoot(branch, rootSchema, seenRefs, budget, depth + 1)
+      normalizeObjectSchemaRoot(branch, rootSchema, seenRefs, budget, depth + 1)
     );
-    const composed = mergeAnthropicObjectSchemas(branches, keyword);
-    chargeRootNormalization(composed, budget, depth);
+    const composed = mergeObjectSchemas(branches, keyword);
+    chargeRootNormalization(composed, budget, depth, true);
     sanitized = {
       ...sanitized,
-      ...mergeAnthropicObjectSchemas([sanitized, composed], "allOf"),
+      ...mergeObjectSchemas([sanitized, composed], "allOf"),
     };
   }
 
-  chargeRootNormalization(sanitized, budget, depth);
+  chargeRootNormalization(sanitized, budget, depth, depth > 0);
   return sanitized;
 }
 
@@ -821,6 +838,50 @@ const OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS = ["allOf", "anyOf", "oneOf", "not", "
  * drop root `not` and `enum`. Nested schemas are left as they are, and a
  * schema without these root keywords is returned by identity.
  */
+function hasRemovedRootReference(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasRemovedRootReference);
+  if (!isPlainRecord(value)) return false;
+  if (typeof value.$ref === "string") {
+    const token = value.$ref.startsWith("#/") ? value.$ref.slice(2).split("/")[0] : undefined;
+    if (token && (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token)) {
+      return true;
+    }
+  }
+  return Object.values(value).some(hasRemovedRootReference);
+}
+
+function rewriteSourceRootReferences(value: unknown, prefix: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => rewriteSourceRootReferences(item, prefix));
+  if (!isPlainRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map((
+      [key, item],
+    ) => [
+      key,
+      key === "$ref" && typeof item === "string" && (item === "#" || item.startsWith("#/"))
+        ? prefix + item.slice(1)
+        : rewriteSourceRootReferences(item, prefix),
+    ]),
+  );
+}
+
+function retainSourceRootReferences(
+  schema: JsonSchema,
+  normalized: Record<string, unknown>,
+  budget: RootNormalizationBudget,
+): Record<string, unknown> {
+  if (!hasRemovedRootReference(schema)) return normalized;
+  const definitions = isPlainRecord(normalized.$defs) ? normalized.$defs : {};
+  let name = "source_root";
+  for (let index = 1; Object.hasOwn(definitions, name); index++) name = `source_root_${index}`;
+  const prefix = `#/$defs/${name}`;
+  const source = rewriteSourceRootReferences(schema, prefix);
+  const result = rewriteSourceRootReferences(normalized, prefix) as Record<string, unknown>;
+  result.$defs = { ...(isPlainRecord(result.$defs) ? result.$defs : {}), [name]: source };
+  chargeRootNormalization(result, budget, 0, true);
+  return result;
+}
+
 function sanitizeOpenAISchemaRoot(
   schema: JsonSchema,
   shared: RootSchemaExpansionBudget,
@@ -834,14 +895,14 @@ function sanitizeOpenAISchemaRoot(
   const budget = createRootNormalizationBudget(shared);
   chargeRootNormalization(schema, budget, 0);
   const { not: _not, enum: _enum, ...root } = schema;
-  const normalized = sanitizeAnthropicSchemaRoot(
+  const normalized = normalizeObjectSchemaRoot(
     root,
     root,
     new Set(),
     budget,
   );
   const { not: _resolvedNot, enum: _resolvedEnum, ...normalizedRoot } = normalized;
-  return normalizedRoot as JsonSchema;
+  return retainSourceRootReferences(schema, normalizedRoot, budget) as JsonSchema;
 }
 
 /**
@@ -912,7 +973,7 @@ export function sanitizeProviderToolSchema(
   }
 
   if (profile.provider === "anthropic") {
-    return sanitizeAnthropicSchemaRoot(
+    return normalizeObjectSchemaRoot(
       propertyKeySafeSchema,
       propertyKeySafeSchema,
       new Set(),

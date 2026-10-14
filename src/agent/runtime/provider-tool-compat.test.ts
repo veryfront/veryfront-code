@@ -210,6 +210,54 @@ describe("provider-tool-compat", () => {
     assertEquals(Object.hasOwn(result, "enum"), false);
     assertEquals(result.properties?.mode, { type: "string", enum: ["a", "b"] });
   });
+  it("keeps the shared expansion allowance for a large reference-free Anthropic catalog", () => {
+    const budget = createRootSchemaExpansionBudget();
+    const schema = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 252 }, (_, index) => [`field${index}`, { type: "string" }]),
+      ),
+    } as never;
+    for (let index = 0; index < 198; index++) {
+      const normalized = sanitizeProviderToolSchema(schema, {
+        model: "anthropic/claude-opus-4-6",
+        rootExpansionBudget: budget,
+      });
+      assertEquals(Object.keys(normalized.properties ?? {}).length, 252);
+    }
+    assertEquals(budget.remainingNodes, 200_000);
+    assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
+  });
+  it("preserves references into removed root compositions", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        allOf: [{ properties: { value: { type: "string" } } }],
+        properties: { alias: { $ref: "#/allOf/0/properties/value" } },
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    const alias = result.properties?.alias as { $ref: string };
+    const tokens = alias.$ref.slice(2).split("/");
+    let referenced: unknown = result;
+    for (const token of tokens) referenced = Reflect.get(referenced as object, token);
+    assertEquals(referenced, { type: "string" });
+  });
+  it("retains both referenced and sibling root compositions", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        $ref: "#/$defs/input",
+        $defs: {
+          input: { allOf: [{ properties: { value: { type: "string" } }, required: ["value"] }] },
+        },
+        allOf: [{ properties: { extra: { type: "number" } }, required: ["extra"] }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(Object.keys(result.properties ?? {}).sort(), ["extra", "value"]);
+    assertEquals(result.required?.slice().sort(), ["extra", "value"]);
+  });
   it("folds root combinators out of OpenAI tool schemas", () => {
     const nested = {
       anyOf: [{ type: "string" }, { type: "object", properties: { text: { type: "string" } } }],
