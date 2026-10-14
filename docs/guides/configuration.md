@@ -371,6 +371,32 @@ Set this one in the host environment, not in a project `.env` file. It is an
 operator safety bound, so a value that came from a project `.env` file is
 ignored and the host's own setting stands.
 
+### Model stream progress budgets
+
+Hosted agent services can bound how long each model call waits for semantic
+progress. Semantic progress is text, reasoning, or tool output, so these budgets
+fire even when a provider keeps the connection busy with keepalive frames.
+
+| Variable                                           | Default | What it bounds                                                     |
+| -------------------------------------------------- | ------- | ------------------------------------------------------------------ |
+| `VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS` | `60000` | How long a model call waits for its first semantic output.         |
+| `VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS`  | `15000` | How long a model call waits between outputs after progress begins. |
+
+Each value must be a positive integer of at most `300000`. When the
+first-progress budget fires before any output, the run fails with the fixed
+`FIRST_PROGRESS_TIMEOUT` code.
+
+Both budgets, including the defaults that apply when a variable is unset, must
+stay below the hosted chat stream idle watchdog
+(`VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS`, default `120000`). Otherwise the
+watchdog fires first and reports a generic stall, so the agent service rejects
+the configuration when it creates the runtime. Delegated child agents inherit
+only a budget that is shorter than the child stream watchdog (`45000`); a longer
+budget leaves the child on the framework default.
+
+Set these in the host environment of the agent service. See
+[Agent service runtime](./agent-service-runtime.md#bound-model-stream-progress).
+
 ### Veryfront Cloud model routes
 
 `veryfront-cloud/*` models call the platform's vendor-neutral endpoints under
