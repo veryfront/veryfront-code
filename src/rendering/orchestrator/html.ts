@@ -421,6 +421,7 @@ export class HTMLGenerator {
     ]);
     const importMapJson = await buildImportMapJson({
       adapter: this.config.adapter,
+      reactPeers: context.options?.reactPeers,
       projectDir: this.config.projectDir,
       config: this.config.config,
       moduleServerOrigin: context.options?.url?.origin,
@@ -675,11 +676,16 @@ export class HTMLGenerator {
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
         dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
+        reactPeers: context.options?.reactPeers,
       });
       const { getProjectReact } = await import(
         "#veryfront/react/compat/ssr-adapter/index.ts"
       );
-      const React = await getProjectReact(reactVersion, this.config.adapter);
+      const React = await getProjectReact(
+        reactVersion,
+        this.config.adapter,
+        context.options?.reactPeers,
+      );
       const createElement = React.createElement as (
         component: unknown,
         props: unknown,
@@ -725,6 +731,7 @@ export class HTMLGenerator {
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
         dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
+        reactPeers: context.options?.reactPeers,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
       const { environment, contentSourceEnvironment, releaseId } =
@@ -761,6 +768,7 @@ export class HTMLGenerator {
         undefined,
         undefined,
         context.options?.dependencyPinningConfiguredVersions,
+        context.options?.reactPeers,
       );
       if (!loaded) return null;
 
@@ -876,6 +884,7 @@ export class HTMLGenerator {
       : undefined;
     return profileSyncPhase("html.build_options.finalize", () => ({
       adapter: this.config.adapter,
+      reactPeers: context.options?.reactPeers,
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,

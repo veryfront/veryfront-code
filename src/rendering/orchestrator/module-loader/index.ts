@@ -990,7 +990,7 @@ export async function loadModule(
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
           config.serverExternalPackages,
-          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(),
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
@@ -1006,7 +1006,7 @@ export async function loadModule(
           config.moduleServerOrigin,
           config.serverExternalPackages,
           config.mode === "development",
-          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(),
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
         ),
       );
 

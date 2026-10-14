@@ -692,6 +692,13 @@ export class SSRModuleLoader {
       SpanNames.SSR_LOAD_MODULE,
       async () => {
         const dependencyHashCache = createDependencyHashCache();
+        if (this.options.reactPeers) {
+          reactIdentitiesByGraph.set(dependencyHashCache, {
+            peers: this.options.reactPeers,
+            reactVersion: this.options.reactPeers.versions.react,
+            scope: getSSRReactRuntimeCacheScope(this.options.reactPeers),
+          });
+        }
         const runtimeScope = await getGraphReactRuntimeScope(dependencyHashCache);
         const circuitKey = this.cache.getCacheKey(filePath, runtimeScope);
         this.circuitBreaker.check(circuitKey, filePath);
@@ -729,7 +736,10 @@ export class SSRModuleLoader {
             });
 
             const retryDependencyHashCache = createDependencyHashCache();
-            reactScopesByGraph.set(retryDependencyHashCache, Promise.resolve(runtimeScope));
+            reactIdentitiesByGraph.set(
+              retryDependencyHashCache,
+              getGraphReactRuntimeIdentity(dependencyHashCache),
+            );
             const retryCacheEntry = await this.transformWithDependencies(
               filePath,
               source,

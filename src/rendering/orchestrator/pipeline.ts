@@ -1,3 +1,9 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Render Pipeline
@@ -218,7 +224,6 @@ export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
   private moduleLoaderConfig: ModuleLoaderConfig;
-  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
@@ -249,6 +254,7 @@ export class RenderPipeline {
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
@@ -261,15 +267,16 @@ export class RenderPipeline {
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
         dependencyPinningConfiguredVersions,
+        reactPeers,
       });
     }
 
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    return resolveProjectReactVersion({
       adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
+      reactPeers,
     });
-    return this.reactVersionPromise;
   }
 
   private planClientPageIsland(
@@ -313,6 +320,7 @@ export class RenderPipeline {
       | "dependencyPinningDependencies"
       | "dependencyPinningConfiguredVersions"
       | "dependencyPinningSource"
+      | "reactPeers"
     >,
   ): Promise<ModuleLoaderConfig> {
     const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -327,9 +335,11 @@ export class RenderPipeline {
       dependencySnapshot.cacheKey,
       dependencySnapshot.dependencies,
       dependencySnapshot.configuredVersions,
+      options?.reactPeers,
     );
     return {
       ...this.moduleLoaderConfig,
+      reactPeers: options?.reactPeers,
       projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
       contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
       reactVersion,
@@ -751,6 +761,12 @@ export class RenderPipeline {
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    options = {
+      ...options,
+      reactPeers: (!isNode && !isBun) || getRuntimeModuleLoader(this.config.adapter)
+        ? undefined
+        : options?.reactPeers ?? captureLocalReactPeers(),
+    };
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
     const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -854,6 +870,7 @@ export class RenderPipeline {
                   options?.abortSignal,
                   options?.environment,
                   options?.dependencyPinningConfiguredVersions,
+                  options?.reactPeers,
                 )
                 : Promise.resolve();
 
@@ -1027,6 +1044,7 @@ export class RenderPipeline {
                         options?.abortSignal,
                         options?.environment,
                         options?.dependencyPinningConfiguredVersions,
+                        options?.reactPeers,
                       ),
                     {
                       "render.slug": slug,

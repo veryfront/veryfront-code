@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * SSR Module Loader Types
@@ -24,6 +25,7 @@ export interface SSRModuleLoaderOptions {
   contentSourceId?: string;
   /** React version for transforms (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Bare npm package roots that the runtime resolves without bundling. */
   serverExternalPackages?: readonly string[];
   /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */

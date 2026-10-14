@@ -105,6 +105,7 @@ export class SSROrchestrator {
                 wantsStream,
                 nonce: options?.nonce,
                 renderContext,
+                reactPeers: options?.reactPeers,
                 debugMode: this.config.debugMode,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
@@ -253,6 +254,7 @@ export class SSROrchestrator {
         renderOptions?.abortSignal,
         renderOptions?.environment,
         renderOptions?.dependencyPinningConfiguredVersions,
+        renderOptions?.reactPeers,
       )
       : errorInfo.element;
 
@@ -261,6 +263,7 @@ export class SSROrchestrator {
         this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {
           mode: this.config.mode,
           wantsStream: false,
+          reactPeers: renderOptions?.reactPeers,
           nonce: renderOptions?.nonce,
           renderContext,
           debugMode: this.config.debugMode,

@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -19,6 +20,7 @@ import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/pac
 import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 
 interface PageRenderOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   params?: Record<string, string | string[]>;
   url?: URL;
   props?: ComponentProps;
@@ -78,7 +80,6 @@ export class PageRenderer {
   ) => Promise<PageBundle>;
   private readonly moduleServerUrl?: string;
   private readonly isLocalProject: boolean;
-  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(options: {
     projectDir: string;
@@ -119,6 +120,7 @@ export class PageRenderer {
     moduleServerOrigin?: string,
     environment: RenderEnvironment = this.environment,
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<MDXComponents> {
     const snapshotKey = await this.componentRegistry.prepareDependencySnapshot(
       dependencyPinningCacheKey,
@@ -128,6 +130,7 @@ export class PageRenderer {
       this.config.build?.serverExternalPackages,
       environment,
       dependencyPinningConfiguredVersions,
+      reactPeers,
     );
     return {
       ...createDefaultMDXComponents(),
@@ -139,12 +142,14 @@ export class PageRenderer {
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        reactPeers,
         adapter: this.adapter,
         projectDir: this.projectDir,
         config: this.config,
@@ -154,12 +159,12 @@ export class PageRenderer {
       });
     }
 
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    return resolveProjectReactVersion({
+      reactPeers,
       adapter: this.adapter,
       projectDir: this.projectDir,
       config: this.config,
     });
-    return this.reactVersionPromise;
   }
 
   private detectPageType(pageInfo: EntityInfo): {
@@ -225,6 +230,7 @@ export class PageRenderer {
           options?.dependencyPinningCacheKey,
           options?.dependencyPinningDependencies,
           options?.dependencyPinningConfiguredVersions,
+          options?.reactPeers,
         );
 
         if (pageType.type === "component") {
@@ -265,6 +271,7 @@ export class PageRenderer {
                   environment: options?.environment ?? this.environment,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
+                  reactPeers: options?.reactPeers,
                   dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                   dependencyPinningDependencies: options?.dependencyPinningDependencies,
                   dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
@@ -299,6 +306,7 @@ export class PageRenderer {
                 options?.url?.origin,
                 options?.environment ?? this.environment,
                 options?.dependencyPinningConfiguredVersions,
+                options?.reactPeers,
               ),
               this.compileMDX,
               this.adapter,
@@ -312,6 +320,7 @@ export class PageRenderer {
                 mode: this.mode,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
+                reactPeers: options?.reactPeers,
                 serverExternalPackages: this.config.build?.serverExternalPackages,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,

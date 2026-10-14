@@ -68,6 +68,7 @@ export async function loadModuleFromSource(
           dev,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          reactPeers: options?.reactPeers,
           serverExternalPackages: options?.serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,

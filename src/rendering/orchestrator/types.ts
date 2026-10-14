@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -39,6 +40,8 @@ export interface RendererOptions {
 }
 
 export interface RenderOptions {
+  /** Request snapshot shared by source loading and renderer imports. */
+  reactPeers?: LocalReactPeerSnapshot;
   params?: Record<string, string | string[]>;
   props?: Record<string, unknown>;
   delivery?: "string" | "stream";

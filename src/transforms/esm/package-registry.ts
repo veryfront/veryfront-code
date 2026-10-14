@@ -1,3 +1,5 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
@@ -1035,6 +1037,7 @@ async function readProjectDependencyVersionsUncoalesced(
 }
 
 export interface ProjectPackageVersionOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   /** Prepared module authority used to select the graph-owned React peer. */
   adapter?: RuntimeAdapter;
   projectDir?: string | null;
@@ -1126,8 +1129,8 @@ function hasEnabledDependencySnapshot(
 export async function resolveProjectPackageVersions(
   options: ProjectPackageVersionOptions,
 ): Promise<ResolvedProjectPackageVersions> {
-  if (getRuntimeModuleLoader(options.adapter)) {
-    const react = (await resolvePreparedReactVersion(options))!;
+  if (getRuntimeModuleLoader(options.adapter) || ((isNode || isBun) && options.reactPeers)) {
+    const react = await resolveProjectReactVersion(options);
     if (hasEnabledDependencySnapshot(options)) {
       const declaration = options.dependencyPinningDependencies?.veryfront;
       return { react, veryfront: declaration ? stripSemverRange(declaration) : undefined };
@@ -1262,6 +1265,18 @@ async function resolvePreparedReactVersion(
 export async function resolveProjectReactVersion(
   options: ProjectPackageVersionOptions,
 ): Promise<string> {
+  if ((isNode || isBun) && options.reactPeers && !getRuntimeModuleLoader(options.adapter)) {
+    const version = options.reactPeers.versions.react;
+    const declaration = await resolveProjectReactDeclaration(options);
+    if (
+      !version || !isValidReactVersion(version) ||
+      (declaration !== undefined && versionAdmission(version, declaration) === false)
+    ) {
+      throw new TypeError("Captured React runtime does not match the authored project declaration");
+    }
+    assertReactDOMPeerVersion(version, options.reactPeers.versions["react-dom"]);
+    return version;
+  }
   const preparedVersion = await resolvePreparedReactVersion(options);
   if (preparedVersion !== undefined) return preparedVersion;
   const {

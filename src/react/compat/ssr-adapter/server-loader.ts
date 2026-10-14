@@ -15,9 +15,11 @@ import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-load
 import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
 import {
   assertReactDOMPeerVersion,
+  assertReactPackageDeclaration,
   getLocalReactPath,
   getLocalReactPaths,
   getLocalReactVersions,
+  type LocalReactPeerSnapshot,
   resolveInstalledReactRange,
 } from "#veryfront/platform/compat/react-paths.ts";
 
@@ -52,7 +54,7 @@ function isReactDOMServer(
 
 /** Select an explicit runtime without reading or modifying the legacy module caches. */
 export async function resolveSSRRuntime(
-  options: Pick<SSROptions, "reactVersion" | "reactRuntime" | "renderContext">,
+  options: Pick<SSROptions, "reactVersion" | "reactRuntime" | "renderContext" | "reactPeers">,
   adapter?: RuntimeAdapter,
 ): Promise<{ server: ReactDOMServer; react: typeof import("react") | null }> {
   const supplied = options.reactRuntime;
@@ -68,9 +70,9 @@ export async function resolveSSRRuntime(
     return { react, server };
   }
   const [server, react] = await Promise.all([
-    getReactDOMServer(options.reactVersion, adapter),
-    options.renderContext || getRuntimeModuleLoader(adapter)
-      ? getProjectReact(options.reactVersion, adapter)
+    getReactDOMServer(options.reactVersion, adapter, options.reactPeers),
+    options.renderContext || options.reactPeers || getRuntimeModuleLoader(adapter)
+      ? getProjectReact(options.reactVersion, adapter, options.reactPeers)
       : Promise.resolve(null),
   ]);
   return { react, server };
@@ -96,7 +98,12 @@ function validateReactRuntimeVersion(
   }
 }
 
-type ServerModuleLoader = (url: string, label: string, reactVersion: string) => Promise<unknown>;
+type ServerModuleLoader = (
+  url: string,
+  label: string,
+  reactVersion: string,
+  reactPeers?: LocalReactPeerSnapshot,
+) => Promise<unknown>;
 
 const projectReactCache = new Map<string, typeof import("react")>();
 const reactDOMServerCache = new Map<string, ReactDOMServer>();
@@ -109,7 +116,14 @@ export function resetReactCache(): void {
   reactDOMServerCache.clear();
 }
 
-function resolveReactVersion(version?: string): string {
+function resolveReactVersion(version?: string, peers?: LocalReactPeerSnapshot): string {
+  if (peers?.versions.react) {
+    assertReactPackageDeclaration(version);
+    if (version !== undefined && versionAdmission(peers.versions.react, version) === false) {
+      throw new TypeError("Captured React runtime does not match the selected project version");
+    }
+    return peers.versions.react;
+  }
   const installed = resolveInstalledReactRange(version);
   if (installed) return installed;
   const normalized = normalizeReactVersion(version ? stripSemverRange(version) : undefined);
@@ -144,8 +158,13 @@ async function loadFromCachedHttpModule<T>(
   url: string,
   label: string,
   reactVersion: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<T> {
-  const localPath = getLocalReactPath(label === "React" ? "react" : label, reactVersion);
+  const localPath = getLocalReactPath(
+    label === "React" ? "react" : label,
+    reactVersion,
+    reactPeers,
+  );
   if (localPath) {
     const module = await import(localPath);
     if (label === "React") validateReactRuntimeVersion(module.default ?? module, reactVersion);
@@ -160,9 +179,9 @@ async function loadFromCachedHttpModule<T>(
 const encodeCachePart = JSON.stringify;
 
 /** Keep renderer modules and flights on the same fresh physical peer identity. */
-function rendererRuntimeCacheKey(version: string): string {
-  const paths = getLocalReactPaths({ fresh: true });
-  const versions = getLocalReactVersions();
+function rendererRuntimeCacheKey(version: string, peers?: LocalReactPeerSnapshot): string {
+  const paths = peers?.paths ?? getLocalReactPaths({ fresh: true });
+  const versions = peers?.versions ?? getLocalReactVersions();
   // Quote only primitives; inherited object/array toJSON hooks cannot merge keys.
   return `${encodeCachePart(version)}|${encodeCachePart(paths.react ?? "")}|${
     encodeCachePart(paths["react-dom/server"] ?? "")
@@ -178,6 +197,7 @@ export function __setServerModuleLoaderForTests(loader: ServerModuleLoader | nul
 export function getProjectReact(
   version?: string,
   adapter?: RuntimeAdapter,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<typeof import("react")> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -187,8 +207,8 @@ export function getProjectReact(
       return react;
     });
   }
-  const normalizedVersion = resolveReactVersion(version);
-  const cacheKey = rendererRuntimeCacheKey(normalizedVersion);
+  const normalizedVersion = resolveReactVersion(version, reactPeers);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion, reactPeers);
   const cached = projectReactCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
@@ -210,6 +230,7 @@ export function getProjectReact(
       reactUrl,
       "React",
       normalizedVersion,
+      reactPeers,
     ) as { default?: typeof import("react") };
     const loadedReact = (reactModule.default ?? reactModule) as typeof import("react");
     projectReactCache.set(cacheKey, loadedReact);
@@ -220,6 +241,7 @@ export function getProjectReact(
 export function getReactDOMServer(
   version?: string,
   adapter?: RuntimeAdapter,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<ReactDOMServer> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -237,8 +259,8 @@ export function getReactDOMServer(
       },
     );
   }
-  const normalizedVersion = resolveReactVersion(version);
-  const cacheKey = rendererRuntimeCacheKey(normalizedVersion);
+  const normalizedVersion = resolveReactVersion(version, reactPeers);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion, reactPeers);
   const cached = reactDOMServerCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
@@ -262,6 +284,7 @@ export function getReactDOMServer(
       serverUrl,
       "react-dom/server",
       normalizedVersion,
+      reactPeers,
     ) as typeof import("react-dom/server");
 
     // Node may retain a module instance when package files change in place.

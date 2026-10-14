@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type * as React from "react";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -27,6 +28,7 @@ export interface LoadComponentOptions {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Bare npm package roots that the runtime resolves without bundling. */
   serverExternalPackages?: readonly string[];
   /** Internal stable flag + package dependency-map key for cache isolation. */

@@ -1,3 +1,9 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
@@ -221,7 +227,9 @@ export class ComponentRegistry {
     serverExternalPackages?: readonly string[],
     environment: RenderEnvironment = this.renderModes.environment,
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
+    reactPeers ??= isNode || isBun ? captureLocalReactPeers() : undefined;
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
       dependencyPinningCacheKey,
@@ -238,6 +246,8 @@ export class ComponentRegistry {
     if (serverExternalPackagesIdentity) {
       snapshotKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
     }
+    const runtimeScope = await getSSRReactRuntimeCacheScope(reactPeers);
+    if (runtimeScope) snapshotKey += `:react-runtime:${runtimeScope}`;
     const sourceGeneration = this.componentSourceGeneration;
     if (
       this.dependencySnapshotGenerations.get(snapshotKey) === sourceGeneration
@@ -263,6 +273,7 @@ export class ComponentRegistry {
       moduleServerOrigin,
       serverExternalPackages,
       environment,
+      reactPeers,
     ).finally(() => {
       if (this.dependencySnapshotLoads.get(loadKey) === load) {
         this.dependencySnapshotLoads.delete(loadKey);
@@ -282,6 +293,7 @@ export class ComponentRegistry {
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
     environment: RenderEnvironment = this.renderModes.environment,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<void> {
     const adapter = this.adapter;
     if (!adapter) {
@@ -309,6 +321,7 @@ export class ComponentRegistry {
             moduleServerOrigin,
             serverExternalPackages,
             environment,
+            reactPeers,
           ),
         );
 
@@ -419,8 +432,10 @@ export class ComponentRegistry {
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
     environment: RenderEnvironment = this.renderModes.environment,
+    reactPeers?: LocalReactPeerSnapshot,
   ): LoadComponentOptions {
     return {
+      reactPeers,
       projectId: this.projectId ?? projectRoot,
       dev: this.renderModes.compileMode === "development",
       mode: environment,

@@ -292,6 +292,7 @@ async function generateHTMLShellPartsImpl(
 
   const importMapPromise = buildImportMap({
     adapter: options.adapter,
+    reactPeers: options.reactPeers,
     projectDir: options.projectDir,
     config: options.config,
     moduleServerOrigin: options.moduleServerOrigin,

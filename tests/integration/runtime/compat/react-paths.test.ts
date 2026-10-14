@@ -620,6 +620,299 @@ describe("react-paths", () => {
     }
   });
 
+  it("refreshes installed-peer selection in reused page, layout and SSR renderers", async () => {
+    if (!isNode) return;
+    const { PageRenderer } = await import("#veryfront/rendering/page-renderer.ts");
+    const { LayoutOrchestrator } = await import("#veryfront/rendering/orchestrator/layout.ts");
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const adapter = createMockAdapter();
+    const config = { react: { version: "^19.2.0" } };
+    const page = Reflect.construct(PageRenderer, [{
+      projectDir: "/memo-peer-project",
+      mode: "development",
+      environment: "production",
+      adapter,
+      config,
+      componentRegistry: {},
+      compileMDX: () => Promise.reject(new Error("Unused compiler")),
+    }]);
+    const layout = Reflect.construct(LayoutOrchestrator, [{
+      projectDir: "/memo-peer-project",
+      adapter,
+      config,
+      layoutCache: { clear: () => {} },
+    }]);
+    const ssr = new SSRRenderer("development", adapter, "/memo-peer-project", undefined, config);
+    const select = (renderer: object) =>
+      Reflect.apply(Reflect.get(renderer, "getReactVersion"), renderer, []);
+    for (const renderer of [page, layout, ssr]) assertEquals(await select(renderer), "19.2.4");
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      for (const renderer of [page, layout, ssr]) assertEquals(await select(renderer), "19.2.5");
+    } finally {
+      restoreDom();
+      restoreReact();
+    }
+  });
+
+  it("keeps captured peer selection and browser imports aligned after installed versions change", async () => {
+    if (!isNode) return;
+    const { resolveProjectReactVersion } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    const peers = captureLocalReactPeers();
+    const options = { reactPeers: peers, config: { react: { version: "^19.2.0" } } };
+    const { RenderPipeline } = await import("#veryfront/rendering/orchestrator/pipeline.ts");
+    const { ComponentRegistry } = await import("#veryfront/rendering/ssr/component-registry.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const adapter = createMockAdapter();
+    const pipeline = Reflect.construct(RenderPipeline, [{
+      adapter,
+      projectDir: "/request-peer-project",
+      config: options.config,
+      mode: "development",
+      environment: "preview",
+    }]);
+    const selectLoader = (reactPeers: typeof peers): Promise<
+      import("#veryfront/rendering/orchestrator/module-loader/index.ts").ModuleLoaderConfig
+    > =>
+      Reflect.apply(
+        Reflect.get(pipeline, "resolveModuleLoaderConfig"),
+        pipeline,
+        [{ reactPeers }],
+      );
+    adapter.fs.files.set(
+      "/request-peer-project/components/Button.tsx",
+      "export default () => null;",
+    );
+    const loadedPeers: Array<typeof peers | undefined> = [];
+    const { VirtualModuleSystem } = await import("#veryfront/rendering/virtual-module-system.ts");
+    const registry = new ComponentRegistry(
+      new VirtualModuleSystem(undefined, adapter),
+      3001,
+      adapter,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (_source, _path, _root, _adapter, selected) => {
+        loadedPeers.push(selected.reactPeers);
+        return Promise.resolve(() => null);
+      },
+    );
+    await registry.loadFromDirectory("/request-peer-project/components", true);
+    const prepare = (selected: typeof peers) =>
+      registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+        undefined,
+        selected,
+      );
+    const oldKey = await prepare(peers);
+
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      assertEquals(await resolveProjectReactVersion(options), "19.2.4");
+      const oldLoader = await selectLoader(peers);
+      assertEquals(oldLoader.reactVersion, "19.2.4");
+      assertEquals(oldLoader.reactPeers, peers);
+      const freshPeers = captureLocalReactPeers();
+      const freshLoader = await selectLoader(freshPeers);
+      assertEquals(freshLoader.reactVersion, "19.2.5");
+      const freshKey = await prepare(freshPeers);
+      assertEquals(freshKey === oldKey, false);
+      assertEquals(await prepare(peers), oldKey);
+      assertEquals(loadedPeers, [peers, freshPeers]);
+
+      const imports = JSON.parse((await buildImportMap(options)).json).imports;
+      assertEquals(imports.react.includes("react@19.2.4"), true);
+      assertEquals(imports["react-dom"].includes("react-dom@19.2.4"), true);
+      const { createHTMLContext, createHTMLGenerator } = await import(
+        "#veryfront/rendering/orchestrator/html.test-helpers.ts"
+      );
+      const html = await createHTMLGenerator({ mode: "development", isLocalProject: true })
+        .generateFullHTML(createHTMLContext({
+          html: "<main>Captured peers</main>",
+          options: { reactPeers: peers, environment: "preview" },
+        }));
+      assertEquals(html.includes("react@19.2.4"), true);
+      assertEquals(html.includes("react-dom@19.2.4"), true);
+      assertEquals(html.includes("react@19.2.5"), false);
+
+      assertEquals(
+        await resolveProjectReactVersion({ ...options, reactPeers: captureLocalReactPeers() }),
+        "19.2.5",
+      );
+      await assertRejects(
+        () => resolveProjectReactVersion({ ...options, config: { react: { version: "19.2.5" } } }),
+        Error,
+        "does not match",
+      );
+    } finally {
+      restoreDom();
+      restoreReact();
+    }
+  });
+
+  it("renders page hooks with the same captured physical peers after relocation", async () => {
+    if (!isNode) return;
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const { resetReactCache } = await import(
+      "#veryfront/react/compat/ssr-adapter/server-loader.ts"
+    );
+    const { pathToFileURL } = await import("node:url");
+    const { loadComponentFromSource } = await import(
+      "#veryfront/modules/react-loader/component-loader.ts"
+    );
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const base = captureLocalReactPeers();
+    const directory = mkdtempSync(join(tmpdir(), "request-render-peers-"));
+    const snapshots = new Map<string, typeof base>();
+    for (const generation of ["old", "new"]) {
+      const roots: Record<string, string> = {};
+      for (const name of ["react", "react-dom"]) {
+        const root = base.roots[name];
+        if (!root) throw new Error("Installed peers missing");
+        roots[name] = join(directory, generation, "node_modules", name);
+        fs.cpSync(root, roots[name], { recursive: true });
+      }
+      const paths: Record<string, string> = {};
+      for (const [specifier, uri] of Object.entries(base.paths)) {
+        const name = specifier.startsWith("react-dom") ? "react-dom" : "react";
+        paths[specifier] = uri.replace(
+          pathToFileURL(base.roots[name]!).href,
+          pathToFileURL(roots[name]!).href,
+        );
+      }
+      snapshots.set(generation, { roots, paths, versions: base.versions });
+    }
+    const old = snapshots.get("old")!;
+    const next = snapshots.get("new")!;
+    const module = await import(old.paths.react!);
+    const React = module.default ?? module;
+    const adapter = await runtime.get();
+    const pageSource =
+      'import React from "react"; export default function Page() { const [value] = React.useState(7); return React.createElement("strong", null, value); }';
+    const pagePath = join(directory, "page.tsx");
+    fs.writeFileSync(pagePath, pageSource);
+    const Component = await runWithCacheDir(
+      directory,
+      () =>
+        loadComponentFromSource(pageSource, pagePath, directory, adapter, {
+          projectId: "request-render-peers",
+          contentSourceId: "release",
+          dev: false,
+          ssr: true,
+          reactVersion: "19.2.4",
+          reactPeers: old,
+        }),
+    );
+    if (!Component) throw new Error("Loaded page component missing");
+    const physicalDirectory = fs.realpathSync(directory);
+    const original = Reflect.get(Module, "_resolveFilename");
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      const parent = args[0] as { filename?: string } | undefined;
+      if (
+        parent?.filename?.startsWith(directory) || parent?.filename?.startsWith(physicalDirectory)
+      ) return resolved;
+      const replacement = next.paths[request];
+      return replacement ? new URL(replacement).pathname : resolved;
+    });
+    resetReactCache();
+    try {
+      const renderer = new SSRRenderer("development");
+      const result = await renderer.renderToHTML(React.createElement(Component), {
+        mode: "development",
+        wantsStream: false,
+        reactPeers: old,
+      });
+      assertEquals(result.html, "<strong>7</strong>");
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      resetReactCache();
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains original peer paths when stale-cache import retries after relocation", async () => {
+    if (!isNode) return;
+    const { SSRModuleLoader } = await import(
+      "#veryfront/modules/react-loader/ssr-module-loader/loader.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const directory = mkdtempSync(join(tmpdir(), "retry-request-peers-"));
+    const path = join(directory, "page.ts");
+    const source = 'import React from "react"; export const value = React.version;';
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(path, source);
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `retry-request-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      await runWithCacheDir(directory, async () => {
+        const peers = captureLocalReactPeers();
+        const loader = new SSRModuleLoader({
+          projectDir: directory,
+          projectId: "retry-request-peers",
+          contentSourceId: "release",
+          adapter,
+          dev: false,
+          reactVersion: "19.2.4",
+          reactPeers: peers,
+        });
+        const imports: string[] = [];
+        Reflect.set(
+          loader,
+          "importModuleFromCacheEntry",
+          (_file: string, _name: string, entry: { tempPath: string }) => {
+            imports.push(fs.readFileSync(entry.tempPath, "utf8"));
+            if (imports.length === 1) {
+              generation = "new";
+              throw Object.assign(new Error("Cannot find module '/owned-missing-cache.mjs'"), {
+                code: "ERR_MODULE_NOT_FOUND",
+              });
+            }
+            return Promise.resolve({ value: "retry-success" });
+          },
+        );
+        const result = await loader.loadRawModule(path, source);
+        assertEquals(result.value, "retry-success");
+        assertEquals(imports.length, 2);
+        assertEquals(imports.every((code) => code.includes("retry-request-old")), true);
+        assertEquals(imports.some((code) => code.includes("retry-request-new")), false);
+      });
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reloads React and renderer caches when resolved paths change at fixed versions", async () => {
     if (!isNode) return;
     const { getProjectReact, getReactDOMServer, resetReactCache, __setServerModuleLoaderForTests } =

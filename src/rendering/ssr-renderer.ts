@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
@@ -114,6 +115,7 @@ function attachAllReady<T extends ReadableStream<Uint8Array>>(
 }
 
 export interface SSRRenderOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   mode: string;
   wantsStream: boolean;
   /** Realm-local renderer modules owned by the selected artifact generation. */
@@ -139,7 +141,6 @@ export class SSRRenderer {
   private readonly mode: string;
   private readonly projectDir?: string;
   private readonly config?: VeryfrontConfig;
-  private reactVersionPromise: Promise<string> | null = null;
   private resolvedReactVersion: string | null = null;
 
   constructor(
@@ -181,12 +182,11 @@ export class SSRRenderer {
       });
     }
 
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    this.resolvedReactVersion = await resolveProjectReactVersion({
       adapter: this.adapter,
       projectDir: this.projectDir,
       config: this.config,
     });
-    this.resolvedReactVersion = await this.reactVersionPromise;
     return this.resolvedReactVersion;
   }
 
@@ -198,7 +198,7 @@ export class SSRRenderer {
 
     let reactVersion: string;
     let reactRuntime = options.reactRuntime;
-    if (reactRuntime || getRuntimeModuleLoader(this.adapter)) {
+    if (reactRuntime || options.reactPeers || getRuntimeModuleLoader(this.adapter)) {
       const requestedVersion = await resolveProjectReactDeclaration({
         projectDir: this.projectDir,
         config: this.config,
@@ -210,6 +210,7 @@ export class SSRRenderer {
         reactRuntime,
         reactVersion: requestedVersion,
         renderContext: options.renderContext,
+        reactPeers: options.reactPeers,
       }, this.adapter);
       if (!runtime.react) {
         throw RENDER_ERROR.create({ detail: "Prepared React runtime is unavailable" });

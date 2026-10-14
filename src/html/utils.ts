@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { escapeHTML } from "./html-escape.ts";
@@ -252,6 +253,7 @@ function getCdnImportMap(
 }
 
 interface BuildImportMapOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter?: RuntimeAdapter;
   projectDir?: string;
   config?: VeryfrontConfig;
@@ -269,6 +271,7 @@ interface BuildImportMapOptions {
 async function resolveVersions(
   options: Pick<
     BuildImportMapOptions,
+    | "reactPeers"
     | "adapter"
     | "projectDir"
     | "config"
@@ -418,7 +421,8 @@ function applyDependencyPinningKeys(
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
-  return (!("adapter" in options) || typeof options.adapter === "string") &&
+  return (!("reactPeers" in options) || typeof options.reactPeers === "string") &&
+    (!("adapter" in options) || typeof options.adapter === "string") &&
     !("projectDir" in options) &&
     !("config" in options) &&
     !("moduleServerOrigin" in options) &&
@@ -443,6 +447,7 @@ export async function buildImportMap(
   }
 
   const {
+    reactPeers,
     adapter,
     projectDir,
     config,
@@ -457,6 +462,7 @@ export async function buildImportMap(
   } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
   const versions = await resolveVersions({
+    reactPeers,
     adapter,
     projectDir,
     config,

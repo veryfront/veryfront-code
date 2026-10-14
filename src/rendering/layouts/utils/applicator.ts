@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
@@ -38,6 +39,7 @@ export function applyLayoutsESM(
   isLocalProject?: boolean,
   signal?: AbortSignal,
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -89,6 +91,7 @@ export function applyLayoutsESM(
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningConfiguredVersions,
+                  reactPeers,
                   dependencyPinningSource,
                   moduleServerOrigin,
                   config,
@@ -125,6 +128,7 @@ export function applyLayoutsESM(
                 config?.build?.serverExternalPackages,
                 signal,
                 dependencyPinningConfiguredVersions,
+                reactPeers,
               ),
             spanAttrs,
           );
@@ -160,6 +164,7 @@ export function applyLayoutsESM(
             dependencyPinningCacheKey,
             dependencyPinningDependencies,
             dependencyPinningConfiguredVersions,
+            reactPeers,
             dependencyPinningSource,
             moduleServerOrigin,
             config,
@@ -230,6 +235,7 @@ export async function applyLayoutsFunctionBody(
   signal?: AbortSignal,
   isLocalProject?: boolean,
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<BundledReact.ReactElement> {
   assertESMLayoutBundle(layoutBundle?.compiledCode, "named layout");
   for (let index = 0; index < nestedLayouts.length; index++) {
@@ -264,5 +270,6 @@ export async function applyLayoutsFunctionBody(
     isLocalProject,
     signal,
     dependencyPinningConfiguredVersions,
+    reactPeers,
   );
 }

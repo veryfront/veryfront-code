@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Transforms Mdx
@@ -29,6 +30,7 @@ export interface MDXRenderOptions {
 
 /** Options for {@link MDXRenderer.loadModuleESM}. */
 export interface MDXLoadModuleOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter?: RuntimeAdapter;
   /** Original source identity, required by an executor-owned module loader. */
   sourcePath?: string;
@@ -135,6 +137,7 @@ export class MDXRenderer {
       contentSourceId,
       mode,
       reactVersion,
+      reactPeers,
       serverExternalPackages,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
@@ -160,6 +163,7 @@ export class MDXRenderer {
       contentSourceId,
       mode,
       reactVersion,
+      reactPeers,
       serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,

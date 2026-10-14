@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import * as BundledReact from "react";
 import { rendererLogger as logger, throwIfAborted } from "#veryfront/utils";
@@ -111,6 +112,7 @@ export async function loadReservedWithPath(
   signal?: AbortSignal,
   deps?: LoadReservedDeps,
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   throwIfAborted(signal);
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
@@ -163,6 +165,7 @@ export async function loadReservedWithPath(
             dependencyPinningCacheKey,
             dependencyPinningDependencies,
             dependencyPinningConfiguredVersions,
+            reactPeers,
             dependencyPinningSource,
             signal,
           });
@@ -202,6 +205,7 @@ export async function tryLoadReservedInDirs(
   signal?: AbortSignal,
   deps?: LoadReservedDeps,
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -220,6 +224,7 @@ export async function tryLoadReservedInDirs(
     signal,
     deps,
     dependencyPinningConfiguredVersions,
+    reactPeers,
   );
   return loaded?.component ?? null;
 }
