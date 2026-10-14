@@ -626,6 +626,7 @@ async function readNextStreamPartWithTimeout(
   setTimeoutFn: typeof setTimeout = setTimeout,
   clearTimeoutFn: typeof clearTimeout = clearTimeout,
   abortSignal?: AbortSignal,
+  detachOnAbort = false,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const pending = createPrivateDeferred<IteratorResult<unknown> | "timeout">();
@@ -636,7 +637,7 @@ async function readNextStreamPartWithTimeout(
       pending.reject,
     );
     timeoutId = setTimeoutFn(() => pending.resolve("timeout"), timeoutMs);
-    return await awaitAbortable(pending.promise, abortSignal);
+    return await (detachOnAbort ? awaitAbortable(pending.promise, abortSignal) : pending.promise);
   } finally {
     if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
@@ -1340,6 +1341,7 @@ export function processStreamInternal(
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
             abortSignal,
+            true,
           )
           : hasActiveLocalToolInput
           ? await readNextStreamPartWithTimeout(
