@@ -605,6 +605,64 @@ describe("getProviderToolProfile for providers only the served catalog lists", (
     });
   });
 
+  it("keeps a Google publisher's tool schema on the served OpenAI wire surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "google/local-model",
+        provider: "google",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/google/local-model", "openai"), {
+      provider: "openai",
+      maxTools: 128,
+      sanitizeSchema: false,
+    });
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        target: { oneOf: [{ type: "string" }, { type: "null" }] },
+      },
+    } as never;
+    assertEquals(
+      sanitizeProviderToolSchema(schema, {
+        model: "veryfront-cloud/google/local-model",
+        wireSurface: "openai",
+      }),
+      schema,
+    );
+  });
+
+  it("keeps a direct provider ID on its own profile when a wire surface is supplied", () => {
+    assertEquals(getProviderToolProfile("google/gemini-2.5-pro", "openai"), {
+      provider: "google",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("uses the authenticated wire surface over the served catalog surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "acme-labs/local-model",
+        provider: "acme-labs",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/local-model", "google"), {
+      provider: "google",
+      sanitizeSchema: true,
+    });
+  });
+
   it("applies the served surface before the kimi- model-name heuristic", () => {
     __setVeryfrontCloudCatalogForTests({
       models: [{

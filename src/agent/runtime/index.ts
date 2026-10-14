@@ -118,6 +118,7 @@ import {
 } from "./provider-metadata.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
@@ -4014,6 +4015,7 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
+          wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
           providerTools: stepProviderTools,
           requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
         });
@@ -5271,6 +5273,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
+        wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
         providerTools: stepProviderTools,
         requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
       });

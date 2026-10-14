@@ -7,6 +7,7 @@
  * @module agent/runtime/model-tool-converter
  */
 import type { ToolDefinition } from "#veryfront/tool";
+import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   getProviderNativeToolNames,
   resolveProviderNativeToolProvider,
@@ -31,6 +32,7 @@ import {
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
+  wireSurface?: VeryfrontCloudSurfaceId;
   providerTools?: string[];
   requiredToolNames?: readonly string[];
 }
@@ -122,6 +124,7 @@ export function convertToolsToRuntimeTools(
   );
   const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
+    wireSurface: options?.wireSurface,
     requiredToolNames: options?.requiredToolNames,
   });
   // One budget for the whole tool set: a per-schema cap bounds each tool in isolation,
@@ -143,6 +146,7 @@ export function convertToolsToRuntimeTools(
         inputSchema: createRuntimeJsonSchema(
           sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
             model: options?.model,
+            wireSurface: options?.wireSurface,
             moonshotExpansionBudget,
           }),
         ),
