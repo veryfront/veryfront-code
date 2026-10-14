@@ -422,6 +422,40 @@ describe("final model request budget", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
+    for (const override of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      it(`treats an invalid output override ${override} as implicit and caps it (${mode})`, async () => {
+        const model = servedModel(mode, 4096, [{ text: "acknowledged" }], 32);
+        const runtime = new AgentRuntime("invalid-output-override", {
+          model: model.modelId,
+          system: "Follow the request",
+          maxSteps: 1,
+          skills: false,
+          tools: {},
+        }, { resolveModelRuntime: () => model });
+        if (mode === "generate") {
+          await runtime.generate("Keep this request", undefined, undefined, override);
+        } else {
+          const stream = await runtime.stream(
+            [{
+              id: "user-invalid-override",
+              role: "user",
+              parts: [{ type: "text", text: "Keep this request" }],
+            }],
+            undefined,
+            undefined,
+            undefined,
+            override,
+          );
+          const wire = await new Response(stream).text();
+          assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), false);
+        }
+        assertEquals(model.callCount, 1);
+        assertEquals(model.calls[0]?.maxOutputTokens, 32);
+      });
+    }
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
     it(`evicts an older deferred schema, checkpoints it, and allows reactivation (${mode})`, async () => {
       const makeLargeTool = () =>
         tool({

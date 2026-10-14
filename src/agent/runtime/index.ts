@@ -3154,6 +3154,15 @@ export function streamWithAgentRuntimeDispatch(
   return getAgentRuntimeDispatch(runtime).stream(...args);
 }
 
+/**
+ * Whether a caller's output-token override is honored. Invalid overrides
+ * (zero, negative, NaN, infinite) fall back to the configured default and are
+ * therefore not an explicit output request.
+ */
+function isMaxOutputTokensOverride(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 /** Implement agent runtime. */
 export class AgentRuntime {
   #manualPause: AgentManualPause | undefined;
@@ -4540,7 +4549,7 @@ export class AgentRuntime {
           model: effectiveModel,
           responseFormat: outputSchema?.responseFormat,
           requestedOutputTokens,
-          explicitOutputTokens: maxOutputTokensOverride !== undefined,
+          explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
           toolExposureState,
           persistToolExposureCheckpoint,
           requireToolExposureCheckpointPersistence,
@@ -4579,7 +4588,7 @@ export class AgentRuntime {
             responseFormat: outputSchema?.responseFormat,
             limit: fittedRequest.servedLimit,
             requestedOutputTokens,
-            explicitOutputTokens: maxOutputTokensOverride !== undefined,
+            explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
           });
           const result = await generateText({
             model: languageModel,
@@ -5877,7 +5886,7 @@ export class AgentRuntime {
         model: effectiveModel,
         responseFormat: outputSchema?.responseFormat,
         requestedOutputTokens,
-        explicitOutputTokens: maxOutputTokensOverride !== undefined,
+        explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
         toolExposureState,
         persistToolExposureCheckpoint,
         requireToolExposureCheckpointPersistence,
@@ -5917,7 +5926,7 @@ export class AgentRuntime {
         responseFormat: outputSchema?.responseFormat,
         limit: fittedRequest.servedLimit,
         requestedOutputTokens,
-        explicitOutputTokens: maxOutputTokensOverride !== undefined,
+        explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
       });
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
@@ -7268,11 +7277,7 @@ export class AgentRuntime {
   }
 
   private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {
-    if (
-      typeof maxOutputTokensOverride === "number" &&
-      Number.isFinite(maxOutputTokensOverride) &&
-      maxOutputTokensOverride > 0
-    ) {
+    if (isMaxOutputTokensOverride(maxOutputTokensOverride)) {
       return Math.floor(maxOutputTokensOverride);
     }
 
