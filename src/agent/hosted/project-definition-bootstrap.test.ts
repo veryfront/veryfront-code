@@ -8,8 +8,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { hostedChatRequestSchema } from "./chat-request.ts";
 import { resolveNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agent-provider-bootstrap.ts";
 import {
+  appendProjectDefinitionBootstrap,
   isProjectDefinitionBootstrapEnabled,
   PROJECT_DEFINITION_BOOTSTRAP_ENV,
+  projectDefinitionSelection,
   readHostedProjectDefinitionBootstrap,
   readProjectDefinitionLookupResponse,
   renderProjectDefinitionBootstrap,
@@ -55,18 +57,11 @@ function result() {
 
 describe("project definition bootstrap", () => {
   it("stays disabled unless the experimental environment switch is exactly 1", () => {
-    const previous = Deno.env.get(PROJECT_DEFINITION_BOOTSTRAP_ENV);
-    try {
-      Deno.env.delete(PROJECT_DEFINITION_BOOTSTRAP_ENV);
-      assertEquals(isProjectDefinitionBootstrapEnabled(), false);
-      Deno.env.set(PROJECT_DEFINITION_BOOTSTRAP_ENV, "true");
-      assertEquals(isProjectDefinitionBootstrapEnabled(), false);
-      Deno.env.set(PROJECT_DEFINITION_BOOTSTRAP_ENV, "1");
-      assertEquals(isProjectDefinitionBootstrapEnabled(), true);
-    } finally {
-      if (previous === undefined) Deno.env.delete(PROJECT_DEFINITION_BOOTSTRAP_ENV);
-      else Deno.env.set(PROJECT_DEFINITION_BOOTSTRAP_ENV, previous);
-    }
+    const env = (value: string | undefined) => (name: string) =>
+      name === PROJECT_DEFINITION_BOOTSTRAP_ENV ? value : undefined;
+    assertEquals(isProjectDefinitionBootstrapEnabled(env(undefined)), false);
+    assertEquals(isProjectDefinitionBootstrapEnabled(env("true")), false);
+    assertEquals(isProjectDefinitionBootstrapEnabled(env("1")), true);
   });
 
   it("retains the trusted host policy in service startup options", async () => {
@@ -257,5 +252,164 @@ describe("project definition bootstrap", () => {
     assertStringIncludes(block ?? "", "safe-agent");
     assertEquals(authorizations, 2);
     assertEquals(requests, 1);
+  });
+
+  it("maps only consistent runtime source targets to a lookup selection", () => {
+    assertEquals(projectDefinitionSelection({}), selection);
+    assertEquals(projectDefinitionSelection({ runtimeTargetKind: "main_branch" }), {
+      sourceTargetKind: "main_branch",
+      targetBranchId: null,
+      targetEnvironmentId: null,
+    });
+    assertEquals(
+      projectDefinitionSelection({
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+      }),
+      {
+        sourceTargetKind: "environment",
+        targetBranchId: null,
+        targetEnvironmentId: "env-1",
+      },
+    );
+    assertEquals(
+      projectDefinitionSelection({ runtimeTargetKind: "preview_branch", branchId: "branch-1" }),
+      {
+        sourceTargetKind: "preview_branch",
+        targetBranchId: "branch-1",
+        targetEnvironmentId: null,
+      },
+    );
+    assertEquals(projectDefinitionSelection({ branchId: "branch-1" }), null);
+    assertEquals(
+      projectDefinitionSelection({ runtimeTargetKind: "main_branch", branchId: "branch-1" }),
+      null,
+    );
+    assertEquals(projectDefinitionSelection({ runtimeTargetKind: "environment" }), null);
+    assertEquals(projectDefinitionSelection({ runtimeTargetKind: "preview_branch" }), null);
+  });
+
+  it("sends the exact source selection and run identity, and fails closed on fetch errors", async () => {
+    const urls: URL[] = [];
+    const authorized: unknown[] = [];
+    const branchSelection = {
+      sourceTargetKind: "preview_branch" as const,
+      targetEnvironmentId: null,
+      targetBranchId: "branch-1",
+    };
+    const envSelection = {
+      sourceTargetKind: "environment" as const,
+      targetEnvironmentId: "env-1",
+      targetBranchId: null,
+    };
+    const base = {
+      projectId: "project 1",
+      agentId: "agent-1",
+      runId: "run-1",
+      authToken: "<TOKEN>",
+      apiUrl: "http://localhost:4000",
+      signal: new AbortController().signal,
+      policy: {
+        allowedProjectIds: ["project 1"],
+        authorize: (input: unknown) => {
+          authorized.push(input);
+          return Promise.resolve(true);
+        },
+      },
+    };
+    for (const lookupSelection of [branchSelection, envSelection]) {
+      await readHostedProjectDefinitionBootstrap({
+        ...base,
+        selection: lookupSelection,
+        fetch: (url: URL | RequestInfo) => {
+          urls.push(new URL(String(url)));
+          return Promise.resolve(Response.json({}));
+        },
+      });
+    }
+    assertEquals(authorized[0], { projectId: "project 1", agentId: "agent-1", runId: "run-1" });
+    assertEquals(urls[0]?.pathname, "/projects/project%201/definitions");
+    assertEquals(urls[0]?.searchParams.get("source_target_kind"), "preview_branch");
+    assertEquals(urls[0]?.searchParams.get("target_branch_id"), "branch-1");
+    assertEquals(urls[0]?.searchParams.has("target_environment_id"), false);
+    assertEquals(urls[1]?.searchParams.get("target_environment_id"), "env-1");
+    assertEquals(urls[1]?.searchParams.has("target_branch_id"), false);
+    assertEquals(urls[1]?.searchParams.get("limit"), "20");
+    assertEquals(
+      await readHostedProjectDefinitionBootstrap({
+        ...base,
+        selection,
+        fetch: () => Promise.reject(new Error("offline")),
+      }),
+      null,
+    );
+  });
+
+  it("rejects invalid block limits, project identities, and coverage entries", () => {
+    const base = {
+      projectId: "project-1",
+      selection,
+      observedAt: "2026-10-12T00:00:00.000Z",
+    };
+    for (const maxBlockBytes of [255, 4097, 1.5]) {
+      assertEquals(
+        renderProjectDefinitionBootstrap({ ...base, result: result(), maxBlockBytes }),
+        null,
+      );
+    }
+    assertEquals(
+      renderProjectDefinitionBootstrap({ ...base, projectId: "", result: result() }),
+      null,
+    );
+    assertEquals(
+      renderProjectDefinitionBootstrap({
+        ...base,
+        result: { ...result(), coverage: [{ kind: "agent", status: "unknown" }] },
+      }),
+      null,
+    );
+    assertEquals(
+      renderProjectDefinitionBootstrap({
+        ...base,
+        result: { ...result(), source_selection: { source_target_kind: "main_branch" } },
+      }),
+      null,
+    );
+  });
+
+  it("omits malformed and excess rows and reports unavailable readers", () => {
+    const rows = Array.from({ length: 25 }, (_, index) => ({
+      kind: "agent",
+      id: `agent-${index}`,
+      name: `A${index}`,
+      source_path: `agents/${index}.ts`,
+      reader: null,
+      reader_unavailable_reason: "reader not deployed",
+    }));
+    const block = renderProjectDefinitionBootstrap({
+      result: { ...result(), data: [{ kind: "agent" }, ...rows], total_matches: 26 },
+      projectId: "project-1",
+      selection,
+      observedAt: "2026-10-12T00:00:00.000Z",
+      maxBlockBytes: 4096,
+    });
+    assert(block !== null);
+    assertStringIncludes(block, `"readerUnavailableReason":"reader not deployed"`);
+    assertStringIncludes(block, "rows_omitted: 6");
+    assertEquals(block.includes("agent-20"), false);
+  });
+
+  it("appends the bootstrap block after string and array system prompts", () => {
+    assertEquals(appendProjectDefinitionBootstrap("base", "block"), [
+      { role: "system", content: "base" },
+      { role: "system", content: "block" },
+    ]);
+    assertEquals(
+      appendProjectDefinitionBootstrap([{ role: "system", content: "base" }], "block"),
+      [
+        { role: "system", content: "base" },
+        { role: "system", content: "block" },
+      ],
+    );
   });
 });

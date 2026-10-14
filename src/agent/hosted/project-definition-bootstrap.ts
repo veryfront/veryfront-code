@@ -11,9 +11,15 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 export const PROJECT_DEFINITION_BOOTSTRAP_ENV =
   "VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP";
 
-/** Return whether the experimental project definition bootstrap is enabled. */
-export function isProjectDefinitionBootstrapEnabled(): boolean {
-  return getEnv(PROJECT_DEFINITION_BOOTSTRAP_ENV) === "1";
+/**
+ * Return whether the experimental project definition bootstrap is enabled.
+ *
+ * `readEnv` defaults to the process environment; tests inject a reader.
+ */
+export function isProjectDefinitionBootstrapEnabled(
+  readEnv: (name: string) => string | undefined = getEnv,
+): boolean {
+  return readEnv(PROJECT_DEFINITION_BOOTSTRAP_ENV) === "1";
 }
 
 const encoder = new TextEncoder();
