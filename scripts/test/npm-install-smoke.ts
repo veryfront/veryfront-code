@@ -735,6 +735,37 @@ if (typeof extension.EsbuildBundler !== 'function') {
 }
 `;
 
+const DENO_NOT_FOUND_SCRIPT = `
+const { isNotFoundError, isCanonicalNotFoundError } = await import(
+  './node_modules/veryfront/esm/src/platform/compat/not-found-error.js'
+);
+const missing = new Deno.errors.NotFound('synthetic missing file');
+for (const error of [missing, new Error('wrapped', { cause: missing })]) {
+  if (!isNotFoundError(error) || !isCanonicalNotFoundError(error)) {
+    throw new Error('Packed classifier lost native Deno NotFound identity');
+  }
+}
+if (isCanonicalNotFoundError({ code: 'ENOENT' })) {
+  throw new Error('Packed strict classifier accepted an error-shaped record');
+}
+let hooks = 0;
+const hostile = new Proxy(missing, {
+  get() { hooks++; throw new Error('unexpected get'); },
+  getPrototypeOf() { hooks++; throw new Error('unexpected prototype read'); },
+  getOwnPropertyDescriptor() { hooks++; throw new Error('unexpected descriptor read'); },
+});
+const accessor = new Error('accessor');
+Object.defineProperty(accessor, 'cause', {
+  get() { hooks++; throw new Error('unexpected cause getter'); },
+});
+for (const error of [hostile, accessor]) {
+  if (isNotFoundError(error) || isCanonicalNotFoundError(error)) {
+    throw new Error('Packed classifier accepted hostile error hooks');
+  }
+}
+if (hooks !== 0) throw new Error('Packed classifier invoked project hooks');
+`;
+
 const AUTH_IMPORT_SCRIPT = `
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
   await m.importFirstPartyExtensionModule('ext-auth-jwt', '@veryfront/ext-auth-jwt');
@@ -847,6 +878,14 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
     fail(
       `Deno could not load the packed bundler extension\n${denoLoad.combined}`,
     );
+  }
+  const denoNotFound = await run("deno", [
+    "eval",
+    "--node-modules-dir=auto",
+    DENO_NOT_FOUND_SCRIPT,
+  ], { cwd: workDir, timeoutMs: 120_000 });
+  if (denoNotFound.code !== 0) {
+    fail(`Packed Deno absence classifier failed\n${denoNotFound.combined}`);
   }
 }
 

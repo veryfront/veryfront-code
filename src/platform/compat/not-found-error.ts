@@ -3,7 +3,7 @@ import {
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "./error-introspection.ts";
-import { isDeno } from "./runtime.ts";
+import { getDenoRuntime, isDeno } from "./runtime.ts";
 
 const MAX_CAUSE_DEPTH = 64;
 const MAX_PROTOTYPE_DEPTH = 32;
@@ -62,7 +62,9 @@ function readClassifiedDataValue(
 
 function captureDenoNotFoundPrototype(): object | undefined {
   if (!isDeno) return undefined;
-  const deno = readOwnDataValue(globalThis, "Deno");
+  // DNT rewrites globalThis to its merge Proxy in npm artifacts. Resolve the
+  // trusted host through the runtime seam, then inspect only data properties.
+  const deno = getDenoRuntime();
   if (typeof deno !== "object" || deno === null) return undefined;
   const errors = readOwnDataValue(deno, "errors");
   if (typeof errors !== "object" || errors === null) return undefined;
