@@ -1,5 +1,6 @@
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
+import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import type { AgentConfig } from "../types.ts";
 import { defineSchema } from "#veryfront/schemas";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -87,7 +88,12 @@ export type ProviderReplayInvokeAgentToolName = ProviderReplayInvokeAgentToolCal
 
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
-    { name: string; description: string; parameters: Record<string, unknown> }
+    {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+      discovery?: ToolDiscoveryMetadata;
+    }
   >;
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
@@ -337,18 +343,25 @@ export function getRuntimeForwardedIntegrationToolDefs(
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   return raw
     .filter(
-      (def): def is { name: string; description: string; parameters: Record<string, unknown> } =>
+      (
+        def,
+      ): def is NonNullable<RuntimeToolFilterConfig["__vfForwardedIntegrationToolDefs"]>[number] =>
         typeof def === "object" &&
         def !== null &&
         typeof def.name === "string" &&
         typeof def.description === "string",
     )
-    .map((def) => ({
-      name: def.name,
-      description: def.description,
-      parameters: typeof def.parameters === "object" && def.parameters !== null &&
-          !Array.isArray(def.parameters)
-        ? def.parameters
-        : { type: "object", properties: {} },
-    }));
+    .map((def) => {
+      const definition: ToolDefinition = {
+        name: def.name,
+        description: def.description,
+        parameters: typeof def.parameters === "object" && def.parameters !== null &&
+            !Array.isArray(def.parameters)
+          ? def.parameters
+          : { type: "object", properties: {} },
+      };
+      const discovery = normalizeToolDiscoveryMetadata(def.discovery);
+      if (discovery) definition.discovery = discovery;
+      return definition;
+    });
 }

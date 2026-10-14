@@ -2549,6 +2549,86 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
   });
 
+  it("carries normalized discovery metadata on forwarded integration tool definitions", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedForwardedDefs: unknown;
+
+    const agent = {
+      id: "support-agent",
+      config: {
+        id: "support-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { gmail__list_emails: true, slack__post: true },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "support-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails", "slack__post"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+              discovery: {
+                version: 1,
+                type: "integration",
+                domain: "gmail",
+                operation: "list",
+                extra: "dropped",
+              },
+            },
+            {
+              name: "slack__post",
+              description: "Post a message",
+              parameters: { type: "object", properties: {} },
+              discovery: { version: 2, type: "integration" },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        capturedForwardedDefs = (
+          runtimeAgent.config as Agent["config"] & { __vfForwardedIntegrationToolDefs?: unknown }
+        ).__vfForwardedIntegrationToolDefs;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(capturedForwardedDefs, [
+      {
+        name: "gmail__list_emails",
+        description: "List emails",
+        parameters: { type: "object", properties: {} },
+        discovery: { version: 1, type: "integration", domain: "gmail", operation: "list" },
+      },
+      {
+        name: "slack__post",
+        description: "Post a message",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+  });
+
   it("restricts the run tool surface to runtimeOverrides.toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
