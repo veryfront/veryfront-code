@@ -24,6 +24,7 @@ const SOURCE_FILES = [
 ];
 const TEST_FILES = [
   "tests/integration/runtime/compat/react-paths.test.ts",
+  "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
   "tests/integration/transforms/ssr-local-react.test.ts",
   "tests/integration/semantic-unit-boundary/src/platform/compat/native-stream-file.test.ts",
   "tests/integration/agent/executor-allocator-client.test.ts",

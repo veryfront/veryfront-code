@@ -42,6 +42,8 @@ export interface RendererOptions {
 export interface RenderOptions {
   /** Request snapshot shared by source loading and renderer imports. */
   reactPeers?: LocalReactPeerSnapshot;
+  /** Internal cache identity derived from the captured peers at render admission. */
+  reactRuntimeCacheScope?: string;
   params?: Record<string, string | string[]>;
   props?: Record<string, unknown>;
   delivery?: "string" | "stream";

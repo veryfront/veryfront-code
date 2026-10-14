@@ -1,3 +1,7 @@
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Renderer
  *
@@ -410,6 +414,12 @@ export class Renderer {
           environment: ctx.environment,
         });
 
+        const reactPeers = (!isNode && !isBun) || getRuntimeModuleLoader(ctx.adapter)
+          ? undefined
+          : options?.reactPeers ?? captureLocalReactPeers();
+        const reactRuntimeCacheScope = reactPeers
+          ? await getSSRReactRuntimeCacheScope(reactPeers)
+          : undefined;
         const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
         const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
         const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -439,6 +449,8 @@ export class Renderer {
         );
         const effectiveOptions = {
           ...options,
+          reactPeers,
+          reactRuntimeCacheScope,
           releaseAssetManifest: releaseManifest,
           dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
           dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
@@ -558,6 +570,7 @@ export class Renderer {
           cachePrefix: ctx.cachePrefix,
           addPagePrefix: true,
           colorScheme: options.colorScheme,
+          reactRuntimeScope: options.reactRuntimeCacheScope,
         },
       );
     }
@@ -584,6 +597,7 @@ export class Renderer {
         cachePrefix: ctx.cachePrefix,
         addPagePrefix: true,
         colorScheme: options?.colorScheme,
+        reactRuntimeScope: options?.reactRuntimeCacheScope,
       },
     );
   }
@@ -667,6 +681,8 @@ export class Renderer {
     return this.withDependencyPinningCacheKey(
       `${ctx.cachePrefix}:canonical`,
       options?.dependencyPinningCacheKey,
+      undefined,
+      { reactRuntimeScope: options?.reactRuntimeCacheScope },
     );
   }
 
@@ -694,6 +710,8 @@ export class Renderer {
       contentSourceId: ctx.contentSourceId,
       releaseId: ctx.releaseId,
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
+      reactPeers: options?.reactPeers,
+      reactRuntimeCacheScope: options?.reactRuntimeCacheScope,
       dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: options?.dependencyPinningDependencies,
       dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,

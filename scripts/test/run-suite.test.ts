@@ -962,6 +962,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
     ? [
       "src/**/*.test.ts",
       "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
       "tests/integration/transforms/ssr-local-react.test.ts",
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
@@ -996,6 +997,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
     : [
       "src/",
       "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
       "tests/integration/transforms/ssr-local-react.test.ts",
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",

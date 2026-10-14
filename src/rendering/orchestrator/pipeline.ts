@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   captureLocalReactPeers,
@@ -761,11 +762,15 @@ export class RenderPipeline {
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    const reactPeers = (!isNode && !isBun) || getRuntimeModuleLoader(this.config.adapter)
+      ? undefined
+      : options?.reactPeers ?? captureLocalReactPeers();
     options = {
       ...options,
-      reactPeers: (!isNode && !isBun) || getRuntimeModuleLoader(this.config.adapter)
-        ? undefined
-        : options?.reactPeers ?? captureLocalReactPeers(),
+      reactPeers,
+      reactRuntimeCacheScope: reactPeers
+        ? await getSSRReactRuntimeCacheScope(reactPeers)
+        : undefined,
     };
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
@@ -1542,6 +1547,7 @@ export class RenderPipeline {
     const composition: RenderCacheKeyComposition = {
       ...(this.config.renderCacheKeyComposition ?? {}),
       colorScheme: options?.colorScheme,
+      reactRuntimeScope: options?.reactRuntimeCacheScope,
     };
     const environment = options?.environment === "preview" ? "preview" : "production";
     if (options?.cacheKey) {
