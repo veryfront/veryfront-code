@@ -1507,7 +1507,84 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
-  it("refuses exact capture when assistant provider metadata is not represented", async () => {
+  it("records assistant provider metadata continuations without an exact capture receipt", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const recordedEvents: AgentRunEvent[] = [];
+    let dispatches = 0;
+    let dispatchedPrompt: unknown;
+    const providerMetadata = {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "thinking",
+          thinking: "private chain",
+          signature: "test-signature",
+        }]],
+      },
+    };
+    // Mirrors the durable sink: only events with a model call ID get a receipt.
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      recordedEvents.push(event);
+      if (event.modelCallId === undefined) return undefined;
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId,
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/anthropic/claude-test",
+        async (options) => {
+          dispatches += 1;
+          dispatchedPrompt = options.prompt;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await runWithMandatoryRunEventSink(
+      sink,
+      async () =>
+        await generateText({
+          model,
+          messages: [{
+            role: "assistant",
+            content: [{ type: "text", text: "Prior answer" }],
+            providerMetadata,
+          }, { role: "user", content: "Continue" }],
+        }),
+    );
+
+    assertEquals(dispatches, 1);
+    assertEquals(recordedEvents.length, 1);
+    const recordedEvent = recordedEvents[0];
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(recordedEvent.modelCallId, undefined);
+    const firstRecordedMessage = recordedEvent.messages[0];
+    assert(firstRecordedMessage !== undefined);
+    assertEquals(
+      "providerMetadata" in firstRecordedMessage
+        ? firstRecordedMessage.providerMetadata
+        : undefined,
+      undefined,
+    );
+    assertEquals(
+      (dispatchedPrompt as Array<{ providerMetadata?: unknown }>)[0]?.providerMetadata,
+      providerMetadata,
+    );
+  });
+
+  it("still refuses unsupported request controls alongside assistant provider metadata", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let sinkCalls = 0;
@@ -1515,12 +1592,7 @@ describe("runtime-bridge", () => {
     const sink: AgentRunEventSink = (event) => {
       assertModelCallContextEvent(event);
       sinkCalls += 1;
-      return {
-        eventId: "9007199254740993",
-        projectId,
-        runId: canonicalRunId,
-        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-      };
+      return undefined;
     };
     bindTestRuntimeObservationWriter({
       sink,
@@ -1546,6 +1618,11 @@ describe("runtime-bridge", () => {
           async () =>
             await generateText({
               model,
+              system: [{
+                role: "system",
+                content: "Shared prompt",
+                providerOptions: { openai: { store: false } },
+              }],
               messages: [{
                 role: "assistant",
                 content: [{ type: "text", text: "Prior answer" }],
@@ -1556,7 +1633,7 @@ describe("runtime-bridge", () => {
             }),
         ),
       DurableRunEventPersistenceError,
-      "Exact model call capture does not support these provider controls: assistant.providerMetadata",
+      "Exact model call capture does not support these provider controls: system.providerOptions",
     );
     assertEquals(sinkCalls, 0);
     assertEquals(dispatches, 0);

@@ -881,9 +881,6 @@ function assertExactModelCallCaptureControlsSupported(
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     pushPrivateArray(unsupportedControls, "system.providerOptions");
   }
-  if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
-    pushPrivateArray(unsupportedControls, "assistant.providerMetadata");
-  }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(
     `Exact model call capture does not support these provider controls: ${
@@ -957,12 +954,18 @@ async function emitModelCallContextEvent(
   const request = buildModelCallContextRequest(model, directOptions);
   const writerBinding = getRuntimeObservationWriterBinding(sinks.mandatory);
   const writerScope = writerBinding?.scope;
-  const captureEnabled = writerBinding !== undefined &&
+  const captureAuthorized = writerBinding !== undefined &&
     readVeryfrontCloudModelFacts(model) !== undefined;
-  if (captureEnabled) {
+  if (captureAuthorized) {
     writerBinding.assertActive();
     assertExactModelCallCaptureControlsSupported(directOptions);
   }
+  // Assistant provider metadata (signed thinking, provider replay parts) is a
+  // normal part of multi-step continuations, but the durable record omits it.
+  // Record the context without an exact capture receipt rather than failing
+  // the run, so no receipt claims a request the record cannot represent.
+  const captureEnabled = captureAuthorized &&
+    !hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions);
   const modelCallId = captureEnabled ? randomUUID() : undefined;
 
   const event: AgentRunModelCallContextEvent = {
