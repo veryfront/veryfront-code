@@ -3739,3 +3739,57 @@ it("explicit canonical platform grant survives legacy denial through remote exec
     await assembly.remoteToolSources[0]!.executeTool("create_file", {})
   );
 });
+
+it("hosted deferred inventory includes authored bootstrap tools and keeps the rest deferred", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ load_skill: localTool("Loader") }),
+      { sleep: localTool("Sleep"), other: localTool("Other") },
+    ),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    toolLoading: "deferred",
+    bootstrapTools: ["sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, ["sleep", "tool_search", "veryfront__load_skill"]);
+  assertEquals(taskContext.availableToolNames, assembly.modelVisibleToolNames);
+  assertEquals(assembly.availableToolNames.includes("other"), true);
+});
+
+it("hosted bootstrap selection does not bypass an explicit tool denial", async () => {
+  await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          agentId: "agent-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Base instructions",
+        localTools: { sleep: localTool("Sleep") },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        toolLoading: "deferred",
+        bootstrapTools: ["sleep"],
+        deniedToolNames: ["sleep"],
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    "outside the authorized executable catalog",
+  );
+});

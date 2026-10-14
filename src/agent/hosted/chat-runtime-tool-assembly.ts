@@ -65,7 +65,10 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
-import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
+import {
+  type RuntimeToolLoadingMode,
+  snapshotConfiguredToolBootstrapNames,
+} from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
@@ -214,6 +217,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   researchArtifactRemoteToolSource?: RemoteToolSource;
   localToolNames: string[];
   remoteToolNames: string[];
+  /** Names observed on the authenticated Veryfront API source, not on project-configured sources. */
+  trustedPlatformRemoteToolNames?: string[];
   providerToolNames: string[];
   availableToolNames: string[];
   modelVisibleToolNames?: string[];
@@ -284,6 +289,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   sourceProviderToolNames?: readonly string[];
   /** Authored tool schema loading mode, resolved before legacy selector defaults. */
   toolLoading?: RuntimeToolLoadingMode;
+  /** Exact authored startup schemas, constrained by the authorized catalog. */
+  bootstrapTools?: AgentConfig["bootstrapTools"];
   /** Authored framework knowledge selector supplied by trusted agent config. */
   knowledge?: AgentConfig["knowledge"];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -1063,10 +1070,24 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     knowledgeRemoteToolSources,
     remoteToolListOptions,
   );
-  const configuredRemoteToolNames = await listProjectScopedRemoteToolNames(
-    filteredConfiguredRemoteToolSources,
-    remoteToolListOptions,
-  );
+  // List per source, in the same order as one combined listing, so names
+  // observed on the trusted platform source can be distinguished.
+  const configuredRemoteToolNames: string[] = [];
+  const trustedPlatformRemoteToolNames: string[] = [];
+  for (let index = 0; index < filteredConfiguredRemoteToolSources.length; index++) {
+    const source = filteredConfiguredRemoteToolSources[index]!;
+    const sourceNames = await listProjectScopedRemoteToolNames([source], remoteToolListOptions);
+    const trusted = hasTrustedPlatformSource(source);
+    for (let nameIndex = 0; nameIndex < sourceNames.length; nameIndex++) {
+      const name = sourceNames[nameIndex]!;
+      if (!includesValue(configuredRemoteToolNames, name)) {
+        configuredRemoteToolNames[configuredRemoteToolNames.length] = name;
+      }
+      if (trusted && !includesValue(trustedPlatformRemoteToolNames, name)) {
+        trustedPlatformRemoteToolNames[trustedPlatformRemoteToolNames.length] = name;
+      }
+    }
+  }
   if (includesValue(knowledgeRemoteToolNames, FRAMEWORK_KNOWLEDGE_TOOL_NAME)) {
     assertNoLocalFrameworkKnowledgeToolShadow({
       knowledgeSource,
@@ -1172,6 +1193,23 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     runtimeTools: localRuntimeTools,
     explicitAllowedToolNames: bootstrapAllowedToolNames,
   });
+  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(input.bootstrapTools);
+  if (configuredBootstrapNames.length > 0) {
+    for (let index = 0; index < configuredBootstrapNames.length; index++) {
+      const name = configuredBootstrapNames[index]!;
+      const localTool = localRuntimeTools[name];
+      if (
+        !includesValue(authorizedToolNames, name) ||
+        (localTool !== undefined && isRuntimeProviderSchemaHiddenTool(localTool))
+      ) {
+        throw new Error("bootstrapTools contains a tool outside the authorized executable catalog");
+      }
+      if (!includesValue(bootstrapToolNames, name)) {
+        bootstrapToolNames[bootstrapToolNames.length] = name;
+      }
+    }
+    sortValues(bootstrapToolNames, compareStrings);
+  }
   const compatibleToolNames = createPrivateSet(availableToolNames);
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"
     ? hideUnselectedHostedRuntimeSkillLoaderSchema(localRuntimeTools, bootstrapToolNames)
@@ -1255,6 +1293,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ...(researchArtifactRemoteToolSource === undefined ? {} : { researchArtifactRemoteToolSource }),
     localToolNames: compatibleLocalToolNames,
     remoteToolNames,
+    trustedPlatformRemoteToolNames,
     providerToolNames: compatibleProviderToolNames,
     availableToolNames,
     modelVisibleToolNames,

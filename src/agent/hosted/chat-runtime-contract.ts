@@ -153,6 +153,10 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   allowedProviderTools?: string[];
   /** Authored tool schema loading mode. Request overrides cannot set this. */
   toolLoading?: AgentConfig["toolLoading"];
+  /** Authored exact startup tool schemas. Request overrides cannot set this. */
+  bootstrapTools?: AgentConfig["bootstrapTools"];
+  /** Authored startup skill. Request overrides cannot set this. */
+  bootstrapSkill?: AgentConfig["bootstrapSkill"];
   /** Authored model-visible tool result context budget. Request overrides cannot set this. */
   toolResultContext?: AgentConfig["toolResultContext"];
   /** Authored framework knowledge selection. Request overrides cannot set this. */

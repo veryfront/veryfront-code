@@ -226,6 +226,13 @@ export interface AgentConfig<TOutput = any> {
   /** Load selected tool schemas immediately or discover them through tool_search. */
   toolLoading?: "eager" | "deferred";
   /**
+   * Expose up to 16 exact authorized tool schemas immediately in deferred mode.
+   * Other tools stay discoverable through `tool_search`. This does not grant
+   * tool access or replace the trusted skill loader. Omit to keep the runtime
+   * bootstrap defaults.
+   */
+  bootstrapTools?: string[];
+  /**
    * Return references for oversized model-facing tool results, with bounded
    * get_tool_result reads. Raw results remain available to events and callbacks.
    * Omit or false to preserve inline result behavior.
@@ -325,6 +332,12 @@ export interface AgentConfig<TOutput = any> {
    * Discovery happens at startup via discoverAll().
    */
   skills?: SkillSelector;
+  /**
+   * Load one authorized skill root through the framework skill loader before
+   * the first model call. Skill references remain deferred. Omit to start
+   * without a preloaded skill.
+   */
+  bootstrapSkill?: string;
   /**
    * Prompt starters shown on an empty chat.
    *

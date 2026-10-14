@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -53,6 +53,87 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  function bootstrapStepInput(
+    bootstrapTools: string[],
+    overrides: Partial<Parameters<typeof prepareAgentRuntimeStep>[0]> = {},
+  ): Parameters<typeof prepareAgentRuntimeStep>[0] {
+    return {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: false,
+        toolLoading: "deferred",
+        bootstrapTools,
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("read_state"), toolDefinition("write_state")],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      ...overrides,
+    };
+  }
+
+  it("exposes authored bootstrap tools immediately and keeps the rest deferred", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["read_state"]));
+    assertEquals(prepared.tools.map((tool) => tool.name).sort(), ["read_state", "tool_search"]);
+    assertEquals(prepared.toolExposurePlan.deferred.map((tool) => tool.name), ["write_state"]);
+  });
+
+  it("rejects authored bootstrap tools outside the authorized catalog", async () => {
+    await assertRejects(
+      () => prepareAgentRuntimeStep(bootstrapStepInput(["delete_state"])),
+      Error,
+      "outside the authorized executable catalog",
+    );
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    for (const narrowedBy of ["skill", "exclusion"] as const) {
+      it(`keeps ${mode} bootstrap validation separate from ${narrowedBy} restrictions`, async () => {
+        const bootstrapName = "execute_skill_script";
+        const prepared = await prepareAgentRuntimeStep(bootstrapStepInput([bootstrapName], {
+          activeSkillToolAvailability: narrowedBy === "skill"
+            ? { hasActiveSkill: true, scripts: [] }
+            : undefined,
+          excludedToolNames: narrowedBy === "exclusion" ? new Set([bootstrapName]) : undefined,
+          getAvailableTools: async () => [
+            toolDefinition(bootstrapName),
+            toolDefinition("read_state"),
+          ],
+          mode,
+          step: 1,
+        }));
+        assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["read_state"]);
+        assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+      });
+    }
+  }
+
+  it("accepts an authorized provider-native startup tool", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["web_search"], {
+      config: {
+        model: "anthropic/claude-opus-4-6",
+        system: "Base",
+        tools: true,
+        toolLoading: "deferred",
+        bootstrapTools: ["web_search"],
+      } as AgentConfig,
+      getAvailableTools: async () => [],
+      providerToolNames: ["web_search"],
+    }));
+    assertEquals(prepared.tools.map((tool) => tool.name), ["web_search"]);
+  });
   it("passes the configured provider alias to runtime-state cloning", async () => {
     let providerOptionKey: unknown;
     await prepareAgentRuntimeStep({

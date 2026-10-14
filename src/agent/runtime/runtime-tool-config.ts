@@ -191,6 +191,29 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
   return snapshotStringArray(raw) ?? [];
 }
 
+/** Maximum number of authored startup tool schemas. */
+export const MAX_CONFIGURED_BOOTSTRAP_TOOLS = 16;
+
+/** Snapshot an authored startup selection without widening its tool authorization. */
+export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  const names = ArrayIsArray(value) && value.length <= MAX_CONFIGURED_BOOTSTRAP_TOOLS
+    ? snapshotStringArray(value)
+    : undefined;
+  if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
+    throw new Error("bootstrapTools must contain at most 16 exact tool names");
+  }
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (
+      name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
+    ) {
+      throw new Error("bootstrapTools requires exact executable tool names, excluding tool_search");
+    }
+  }
+  return names;
+}
+
 export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {
   const raw = (config as RuntimeToolFilterConfig).__vfToolBootstrapNames;
   const names = snapshotStringArray(raw);

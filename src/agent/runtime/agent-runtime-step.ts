@@ -4,6 +4,7 @@ import {
   filterPrivateArray,
   flatMapPrivateArray,
   joinPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import {
   privateTextIndexOf,
@@ -27,6 +28,7 @@ import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integratio
 import {
   getRuntimeToolBootstrapNames,
   resolveRuntimeToolLoading,
+  snapshotConfiguredToolBootstrapNames,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
 } from "./runtime-tool-config.ts";
 import {
@@ -42,6 +44,7 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { getProviderToolProfile } from "./provider-tool-compat.ts";
 import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
@@ -149,6 +152,8 @@ export interface PreparedAgentRuntimeStep {
   toolContext: ToolExecutionContext;
   tools: ToolDefinition[];
   toolExposurePlan: ToolExposurePlan;
+  /** Authorized catalog before per-step skill restrictions, for host-controlled startup loads. */
+  startupAuthorizedTools: ToolDefinition[];
 }
 
 const INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER = "Integration tool discovery status:";
@@ -309,6 +314,9 @@ export async function prepareAgentRuntimeStep(
     })
     : [];
 
+  // Validate authored startup choices against the executable catalog before per-step restrictions.
+  const startupAuthorizedTools = tools;
+
   if (input.activeSkillToolAvailability) {
     tools = filterToolsForSkill(tools, input.activeSkillToolAvailability);
   }
@@ -383,20 +391,49 @@ export async function prepareAgentRuntimeStep(
     }
     bootstrapToolNames = provenanceBootstrapToolNames;
   }
+  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.config.bootstrapTools,
+  );
+  if (configuredBootstrapNames.length > 0) {
+    const mergedBootstrap = new IntrinsicSet<string>(bootstrapToolNames);
+    const executableCatalog = concatPrivateArrays(startupAuthorizedTools, providerToolDefinitions);
+    for (let index = 0; index < configuredBootstrapNames.length; index++) {
+      const name = configuredBootstrapNames[index]!;
+      if (
+        !somePrivateArray(
+          executableCatalog,
+          (tool) => tool.name === name && !isRuntimeProviderSchemaHiddenTool(tool),
+        )
+      ) {
+        throw new Error("bootstrapTools contains a tool outside the authorized executable catalog");
+      }
+      // A tool hidden by the active step's restrictions stays hidden.
+      if (setHas(existingToolNames, name)) {
+        IntrinsicReflectApply(IntrinsicSetAdd, mergedBootstrap, [name]);
+      }
+    }
+    bootstrapToolNames = mergedBootstrap;
+  }
+  const maxVisibleTools = reserveToolSlots(
+    getProviderToolProfile(
+      input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
+      input.wireSurface,
+    ).maxTools,
+    input.reservedToolSlots,
+  );
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
     bootstrapToolNames,
-    maxVisibleTools: reserveToolSlots(
-      getProviderToolProfile(
-        input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
-        input.wireSurface,
-      )
-        .maxTools,
-      input.reservedToolSlots,
-    ),
+    maxVisibleTools,
   });
+  if (
+    configuredBootstrapNames.length > 0 && maxVisibleTools !== undefined &&
+    toolExposurePlan.visible.length > maxVisibleTools
+  ) {
+    throw new Error("bootstrapTools exceeds the model's visible tool schema limit");
+  }
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
   const instructionsWithToolInventory = hasRuntimeToolInventory(baseSystemPrompt)
     ? withRuntimeToolInventory(
@@ -424,5 +461,6 @@ export async function prepareAgentRuntimeStep(
     toolContext,
     tools: toolExposurePlan.visible,
     toolExposurePlan,
+    startupAuthorizedTools,
   };
 }

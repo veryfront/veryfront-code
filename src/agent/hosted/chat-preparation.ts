@@ -174,6 +174,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     deniedTools?: string[];
     skills?: import("#veryfront/skill/selector.ts").SkillSelector;
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   };
@@ -605,6 +607,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.agentConfig.toolLoading !== undefined
         ? { toolLoading: input.agentConfig.toolLoading }
         : {}),
+      ...(input.agentConfig.bootstrapTools !== undefined
+        ? { bootstrapTools: input.agentConfig.bootstrapTools }
+        : {}),
+      ...(input.agentConfig.bootstrapSkill !== undefined
+        ? { bootstrapSkill: input.agentConfig.bootstrapSkill }
+        : {}),
       ...(input.agentConfig.toolResultContext !== undefined
         ? { toolResultContext: input.agentConfig.toolResultContext }
         : {}),
@@ -703,6 +711,8 @@ export async function prepareHostedChatExecution<
     tools?: true | string[];
     deniedTools?: string[];
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   },

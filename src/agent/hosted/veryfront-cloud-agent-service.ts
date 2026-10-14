@@ -24,6 +24,7 @@ import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
+import type { HostedProjectDefinitionBootstrapPolicy } from "./project-definition-bootstrap.ts";
 import { resolveDefaultProcessTarget } from "./cloud-agent-paths.ts";
 import { resolveNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agent-provider-bootstrap.ts";
 import {
@@ -121,6 +122,11 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   forwardedConfigNamespace?: string;
   /** Framework host tools this service deployment authorizes. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /**
+   * Experimental, default-off project definition index policy. Ignored unless
+   * VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP is set to "1".
+   */
+  projectDefinitionBootstrap?: HostedProjectDefinitionBootstrapPolicy;
   /** Host-owned default-off exact model-call capture for authenticated canonical durable runs. */
   hostedModelCallCapture?: boolean;
   /**

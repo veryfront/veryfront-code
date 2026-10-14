@@ -245,6 +245,8 @@ export async function createAgentRuntime(
         createDefaultHostedChatRuntime({
           options,
           hostToolPolicy: context.options.hostToolPolicy,
+          projectDefinitionBootstrap: context.options.projectDefinitionBootstrap,
+          projectDefinitionBootstrapSignal: resolveHostedRequestPreparationSignal(),
           sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
           config: {
             apiUrl: config.VERYFRONT_API_URL,
