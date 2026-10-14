@@ -5,7 +5,10 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogForTests,
+  forgetReceivedVeryfrontCloudCatalog,
+  rememberReceivedVeryfrontCloudCatalog,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
@@ -257,6 +260,46 @@ describe("final model request budget", () => {
     if (!(error instanceof VeryfrontError)) throw new Error("Expected typed context error");
     assertEquals(error.slug, "agent-context-window-exceeded");
     assertEquals(model.callCount, 0);
+  });
+
+  it("reads a managed proxy's limits from the received catalog its run scope carries", async () => {
+    const key = rememberReceivedVeryfrontCloudCatalog([{
+      id: "small",
+      modelId: "acme/small",
+      provider: "acme",
+      surface: "openai",
+      aliases: [],
+      operations: ["chat-completions"],
+      limit: { context: 256, output: 32 },
+    }]);
+    // A managed hosted proxy carries no registered model facts.
+    const model = scriptedModel([{ text: "unexpected" }], {
+      provider: "veryfront-cloud",
+      modelId: "veryfront-cloud/acme/small",
+      only: "generate",
+    });
+    const runtime = new AgentRuntime("managed-budget-agent", {
+      model: model.modelId,
+      system: "Mandatory system guidance ".repeat(100),
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+    }, { resolveModelRuntime: () => model });
+    try {
+      const error = await assertRejects(
+        () =>
+          runWithVeryfrontCloudContextAsync(
+            { catalogScopeKey: key },
+            () => runtime.generate("Keep this user request"),
+          ),
+        VeryfrontError,
+      );
+      if (!(error instanceof VeryfrontError)) throw new Error("Expected typed context error");
+      assertEquals(error.slug, "agent-context-window-exceeded");
+      assertEquals(model.callCount, 0);
+    } finally {
+      forgetReceivedVeryfrontCloudCatalog(key);
+    }
   });
 
   it("stops an oversized actual agent stream before provider dispatch", async () => {

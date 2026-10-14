@@ -460,6 +460,7 @@ import {
 import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
 import { fitDeferredToolSchemasToBudget } from "./deferred-schema-budget.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
   readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -2308,12 +2309,21 @@ function assembleRuntimeStepRequest(input: RuntimeStepRequestInput) {
   };
 }
 
-/** Served token limits for a Veryfront Cloud model, when its served catalog declares them. */
+/**
+ * Served token limits for a Veryfront Cloud model, when its served catalog
+ * declares them. A model built here names its own catalog; a managed hosted
+ * proxy registers no facts, so it reads the catalog its run scope carries.
+ */
 function readServedModelLimit(
   languageModel: ModelRuntime,
   model: string,
 ): ServedRequestLimit | undefined {
-  const catalogScopeKey = readVeryfrontCloudModelFacts(languageModel)?.catalogScopeKey;
+  const facts = readVeryfrontCloudModelFacts(languageModel);
+  const catalogScopeKey = facts
+    ? facts.catalogScopeKey
+    : languageModel.provider === "veryfront-cloud"
+    ? currentVeryfrontCloudCatalogScopeKey()
+    : undefined;
   return catalogScopeKey
     ? readServedVeryfrontCloudCatalogModel(catalogScopeKey, model)?.limit
     : undefined;
