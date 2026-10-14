@@ -487,6 +487,41 @@ describe("final model request budget", () => {
     }
   }
 
+  it("keeps loaded schemas when eviction cannot make the request fit", async () => {
+    const largeTool = tool({
+      id: "large_tool",
+      description: "Inspect a saved object.",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          payload: v.string().describe(`Schema guidance ${"detail ".repeat(1_200)}`),
+        })
+      )(),
+      execute: () => ({ ok: true }),
+    });
+    const checkpoints: unknown[] = [];
+    const model = servedModel("generate", 400, [{ text: "unexpected" }]);
+    const runtime = agent(
+      {
+        id: "budget-eviction-rejected",
+        model: model.modelId,
+        system: "Answer using the latest result. ".repeat(40),
+        maxSteps: 1,
+        skills: false,
+        tools: { large_tool: largeTool },
+        toolLoading: "deferred",
+        __vfToolExposureCheckpoint: { version: 2, loadedToolNames: ["large_tool"] },
+        __vfToolExposureCheckpointPersistenceRequired: true,
+        __vfPersistToolExposureCheckpoint: (value: unknown) => {
+          checkpoints.push(value);
+        },
+        resolveModelTransport: () => ({ model }),
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
+    await assertRejects(() => runtime.generate({ input: "Inspect it" }), VeryfrontError);
+    assertEquals(model.callCount, 0);
+    assertEquals(checkpoints, []);
+  });
+
   for (const mode of ["generate", "stream"] as const) {
     it(`evicts an older deferred schema, checkpoints it, and allows reactivation (${mode})`, async () => {
       const makeLargeTool = () =>
@@ -1277,6 +1312,34 @@ describe("invoke_agent child request budget", () => {
     assertEquals(result.maxOutputTokens, 1_000);
   });
 
+  it("resolves a managed proxy's surface from its run scope's received catalog", async () => {
+    const key = rememberReceivedVeryfrontCloudCatalog([{
+      id: "claude-like",
+      modelId: "acme/claude-like",
+      provider: "acme",
+      surface: "anthropic",
+      aliases: [],
+      operations: ["messages"],
+    }]);
+    try {
+      const proxy = {
+        provider: "veryfront-cloud",
+        modelId: "veryfront-cloud/acme/claude-like",
+        modelProvider: "acme",
+      };
+      const tokens = await runWithVeryfrontCloudContextAsync(
+        { catalogScopeKey: key },
+        () =>
+          Promise.resolve(resolveAdditiveReasoningOutputTokens(proxy, {
+            reasoning: { enabled: true, budgetTokens: 2_048 },
+          })),
+      );
+      assertEquals(tokens, 2_048);
+    } finally {
+      forgetReceivedVeryfrontCloudCatalog(key);
+    }
+  });
+
   it("reads native thinking from the dispatched provider bucket", () => {
     const model = scriptedModel([{ text: "unused" }], {
       modelId: "acme/claude-like",
@@ -1315,6 +1378,75 @@ describe("invoke_agent child request budget", () => {
       Error,
       "context window",
     );
+  });
+
+  it("compacts history when only the native output control exceeds the window", async () => {
+    const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
+    const history = (): Message[] => [{
+      id: "call-old",
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCallId: "old", toolName: "read_data", args: {} }],
+    }, {
+      id: "result-old",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "old",
+        toolName: "read_data",
+        result: "old value ".repeat(6_000),
+      }],
+    }, {
+      id: "user-next",
+      role: "user",
+      parts: [{ type: "text", text: "Summarize briefly" }],
+    }];
+    const run = async (context: number) => {
+      __setVeryfrontCloudCatalogForTests({
+        models: [{
+          id: "claude-haiku-4-5",
+          modelId: "anthropic/claude-haiku-4-5",
+          provider: "anthropic",
+          surface: "anthropic",
+          aliases: [],
+          operations: ["messages"],
+          capabilities: { limit: { context, output: 64_000 } },
+        }],
+      });
+      const model = scriptedModel([{ text: "summary" }], {
+        modelId,
+        provider: "anthropic",
+        only: "generate",
+      });
+      registerVeryfrontCloudModelFacts(model, () => ({
+        catalogScopeKey: "test-scope" as ReturnType<
+          typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+        >,
+        provider: "anthropic",
+        surface: "anthropic",
+        native: true,
+        transportPlan: { transport: "chat-completions", pinned: true },
+      }));
+      const runtime = new AgentRuntime("native-compaction", {
+        model: modelId,
+        system: "Answer",
+        maxSteps: 1,
+        skills: false,
+        tools: {},
+        toolResultContext: { maxInlineBytes: 1_000_000, previewBytes: 64 },
+        resolveModelTransport: () => ({
+          model,
+          providerOptions: { anthropic: { max_tokens: 20_000 } },
+        }),
+      });
+      await runtime.generate(history());
+      return model;
+    };
+    const roomy = await run(1_000_000);
+    assertEquals(JSON.stringify(roomy.calls[0]?.prompt).includes("tool_result_reference"), false);
+    const fullInput = Math.ceil(JSON.stringify(roomy.calls[0]?.prompt).length / 4 * 1.1);
+    const tight = await run(fullInput + 10_000);
+    assertEquals(tight.callCount, 1);
+    assert(JSON.stringify(tight.calls[0]?.prompt).includes("tool_result_reference"));
   });
 
   it("still rejects a child whose input leaves less than the bounded output reserve", async () => {

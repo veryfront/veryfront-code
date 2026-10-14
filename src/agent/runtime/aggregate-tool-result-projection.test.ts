@@ -491,3 +491,24 @@ it("projects a completed tool turn once a newer user message follows it", () => 
   assertEquals((result(fitted[1]!) as { type: string }).type, "tool_result_reference");
   assertStrictEquals(fitted[2], user);
 });
+
+it("keeps a resumed result delivered after the latest user message inline", () => {
+  const call: Message = {
+    id: "call",
+    role: "assistant",
+    parts: [{ type: "tool-call", toolCallId: "parked", toolName: "read_data", args: {} }],
+  };
+  const user: Message = { id: "user", role: "user", parts: [{ type: "text", text: "Resume" }] };
+  const resumed = toolMessage("parked", "read_data", "resumed data".repeat(200));
+  const source = [call, user, resumed];
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: source,
+    modelMessages: source,
+    context: createToolResultContext(),
+    inspect: (messages) => {
+      const referenced = typeof result(messages[2]!) === "object";
+      return { fits: referenced, outputExceeded: false, estimatedInputTokens: referenced ? 1 : 9 };
+    },
+  });
+  assertStrictEquals(fitted[2], resumed);
+});

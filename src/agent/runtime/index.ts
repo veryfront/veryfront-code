@@ -454,7 +454,7 @@ import { createToolResultContext, type ToolResultContext } from "./tool-result-c
 import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
 import {
   enforceProviderRequestBudget,
-  inspectFinalRequestBudget,
+  inspectProviderRequestBudget,
   type ServedRequestLimit,
 } from "./final-request-budget.ts";
 import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
@@ -2348,6 +2348,8 @@ async function fitRuntimeStepRequestToServedBudget(input: {
   deferredToolLoading: boolean;
   languageModel: ModelRuntime;
   model: string;
+  reasoning: unknown;
+  providerOptions: unknown;
   responseFormat: unknown;
   requestedOutputTokens: number;
   explicitOutputTokens: boolean;
@@ -2368,7 +2370,12 @@ async function fitRuntimeStepRequestToServedBudget(input: {
   if (servedLimit?.context === undefined) return { modelMessages, plan, servedLimit };
   const inspect = (messages: Message[], candidatePlan: ToolExposurePlan) => {
     const request = input.assembleRequest(messages, candidatePlan);
-    return inspectFinalRequestBudget({
+    // Inspect the effective wire request, so native provider controls decide
+    // whether compaction is needed, exactly as final enforcement does.
+    return inspectProviderRequestBudget({
+      model: input.languageModel,
+      ...(input.reasoning === undefined ? {} : { reasoning: input.reasoning }),
+      ...(input.providerOptions === undefined ? {} : { providerOptions: input.providerOptions }),
       system: request.providerSystemPrompt,
       messages: request.providerMessages,
       tools: request.runtimeTools,
@@ -2393,8 +2400,10 @@ async function fitRuntimeStepRequestToServedBudget(input: {
       sourceMessages: input.sourceMessages,
       inspect: (candidatePlan) => inspect(modelMessages, candidatePlan),
     });
-    if (fitted.evictedNames.length > 0) {
-      plan = fitted.plan;
+    plan = fitted.plan;
+    // Keep loaded schemas when the request still cannot fit: final enforcement
+    // rejects it, and a smaller retry must not lose previously loaded tools.
+    if (fitted.evictedNames.length > 0 && inspect(modelMessages, plan).fits) {
       input.toolExposureState.loadedToolNames.clear();
       for (const name of fitted.plan.loadedToolNames) {
         input.toolExposureState.loadedToolNames.add(name);
@@ -4555,6 +4564,8 @@ export class AgentRuntime {
           deferredToolLoading: runtimeStepToolLoading.mode === "deferred",
           languageModel,
           model: effectiveModel,
+          reasoning,
+          providerOptions,
           responseFormat: outputSchema?.responseFormat,
           requestedOutputTokens,
           explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
@@ -5904,6 +5915,8 @@ export class AgentRuntime {
         deferredToolLoading: toolLoadingResolution.mode === "deferred",
         languageModel,
         model: effectiveModel,
+        reasoning,
+        providerOptions,
         responseFormat: outputSchema?.responseFormat,
         requestedOutputTokens,
         explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),

@@ -63,10 +63,14 @@ export function projectHistoricalToolResultsForBudget(input: {
   let latestUser = -1;
   let latestToolCall = -1;
   let latestToolResult = -1;
+  let firstToolResultAfterLatestUser = -1;
   for (let index = 0; index < input.sourceMessages.length; index++) {
     if (!hasOwn(input.sourceMessages, index)) continue;
     const message = input.sourceMessages[index]!;
-    if (message.role === "user") latestUser = index;
+    if (message.role === "user") {
+      latestUser = index;
+      firstToolResultAfterLatestUser = -1;
+    }
     if (
       somePrivateArray(
         message.parts,
@@ -77,13 +81,18 @@ export function projectHistoricalToolResultsForBudget(input: {
     }
     if (somePrivateArray(message.parts, (part) => part.type === "tool-result")) {
       latestToolResult = index;
+      if (firstToolResultAfterLatestUser < 0) firstToolResultAfterLatestUser = index;
     }
   }
   // The most recent call and all its results are the active tool turn. A turn
   // completed before the latest user message is history and can be projected.
   const latestToolTurnStart = latestToolCall >= 0 ? latestToolCall : latestToolResult;
+  // A resumed result delivered after the latest user message answers a call
+  // stored before it; the model has not seen it yet, so it stays active.
   const protectedToolTurnStart = latestToolTurnStart > latestUser
     ? latestToolTurnStart
+    : firstToolResultAfterLatestUser >= 0
+    ? firstToolResultAfterLatestUser
     : input.sourceMessages.length;
 
   for (let messageIndex = 0; messageIndex < input.sourceMessages.length; messageIndex++) {

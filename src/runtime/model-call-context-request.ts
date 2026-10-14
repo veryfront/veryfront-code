@@ -14,6 +14,8 @@ import {
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
+  readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -1768,8 +1770,25 @@ function buildModelCallRequest(
  * or Google surface records the same native controls as `anthropic/*` or
  * `google/*`. Other models are identified by their provider name.
  */
+/**
+ * Served surface of a Veryfront Cloud model. A model built here carries its
+ * facts; a managed hosted proxy registers none, so its run scope's received
+ * catalog names the surface instead.
+ */
+function resolveServedSurface(model: ModelCallRuntimeMetadata): string | undefined {
+  const facts = readVeryfrontCloudModelFacts(model);
+  if (facts) return facts.surface;
+  if (model.provider !== "veryfront-cloud" || typeof model.modelId !== "string") {
+    return undefined;
+  }
+  const scopeKey = currentVeryfrontCloudCatalogScopeKey();
+  return scopeKey
+    ? readServedVeryfrontCloudCatalogModel(scopeKey, model.modelId)?.surface
+    : undefined;
+}
+
 function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
-  const surface = readVeryfrontCloudModelFacts(model)?.surface;
+  const surface = resolveServedSurface(model);
   if (surface === "anthropic" || surface === "google") return surface;
   return resolveModelCallProvider(model);
 }

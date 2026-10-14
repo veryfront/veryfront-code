@@ -124,7 +124,7 @@ function toolDescriptors(tools: Record<string, unknown> | undefined): unknown[] 
 }
 
 /**
- * Enforce the budget against the effective wire request. Native provider
+ * Effective wire request budgeting. Native provider
  * controls replace neutral values on the wire: a native output limit (for
  * example `providerOptions.anthropic.max_tokens` or `max_output_tokens`) is
  * what the provider receives, and a native response format replaces the
@@ -132,15 +132,17 @@ function toolDescriptors(tools: Record<string, unknown> | undefined): unknown[] 
  * a wire output that does not follow them is a native limit, and one that
  * does reveals the tokens the provider adds on top, such as a thinking budget.
  */
-export function enforceProviderRequestBudget(
-  input: FinalRequestBudgetInput & {
-    model: ModelCallMetadata;
-    reasoning?: unknown;
-    providerOptions?: unknown;
-  },
-): { maxOutputTokens: number; estimatedInputTokens: number | null } {
+export type ProviderRequestBudgetInput = FinalRequestBudgetInput & {
+  model: ModelCallMetadata;
+  reasoning?: unknown;
+  providerOptions?: unknown;
+};
+
+function resolveEffectiveBudget(
+  input: ProviderRequestBudgetInput,
+): { budget: FinalRequestBudgetInput; nativeOutputTokens?: number } {
   const { model, reasoning, providerOptions, ...budget } = input;
-  if (budget.limit === undefined) return enforceFinalRequestBudget(budget);
+  if (budget.limit === undefined) return { budget };
   const probe = (maxOutputTokens: number) =>
     buildModelCallContextRequest(model, {
       maxOutputTokens,
@@ -153,24 +155,46 @@ export function enforceProviderRequestBudget(
   const high = probe(2);
   const responseFormat = low?.responseFormat ?? budget.responseFormat;
   const lowOutput = low?.maxOutputTokens;
-  const highOutput = high?.maxOutputTokens;
-  if (lowOutput !== undefined && lowOutput === highOutput) {
+  if (lowOutput !== undefined && lowOutput === high?.maxOutputTokens) {
     // A native output limit is the wire value, so it is reserved in full.
-    const result = enforceFinalRequestBudget({
-      ...budget,
-      responseFormat,
-      requestedOutputTokens: lowOutput,
-      explicitOutputTokens: true,
-      additionalOutputTokens: 0,
-    });
-    return { ...result, maxOutputTokens: Math.min(budget.requestedOutputTokens, lowOutput) };
+    return {
+      budget: {
+        ...budget,
+        responseFormat,
+        requestedOutputTokens: lowOutput,
+        explicitOutputTokens: true,
+        additionalOutputTokens: 0,
+      },
+      nativeOutputTokens: lowOutput,
+    };
   }
   const derivedAdditional = lowOutput === undefined ? 0 : Math.max(0, lowOutput - 1);
-  return enforceFinalRequestBudget({
-    ...budget,
-    responseFormat,
-    additionalOutputTokens: Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional),
-  });
+  return {
+    budget: {
+      ...budget,
+      responseFormat,
+      additionalOutputTokens: Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional),
+    },
+  };
+}
+
+/** Inspect the effective wire request, as {@link enforceProviderRequestBudget} enforces it. */
+export function inspectProviderRequestBudget(
+  input: ProviderRequestBudgetInput,
+): FinalRequestBudgetInspection {
+  return inspectFinalRequestBudget(resolveEffectiveBudget(input).budget);
+}
+
+/** Reject an effective wire request that cannot fit the served limits. */
+export function enforceProviderRequestBudget(
+  input: ProviderRequestBudgetInput,
+): { maxOutputTokens: number; estimatedInputTokens: number | null } {
+  const effective = resolveEffectiveBudget(input);
+  const result = enforceFinalRequestBudget(effective.budget);
+  return effective.nativeOutputTokens === undefined ? result : {
+    ...result,
+    maxOutputTokens: Math.min(input.requestedOutputTokens, effective.nativeOutputTokens),
+  };
 }
 
 /** Best-effort estimate of the assembled request, before provider-specific framing. */
