@@ -1,8 +1,37 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { captureHostBuiltinModuleLoader } from "./native-brand-checks.ts";
 
 describe("native brand checks", () => {
+  it("captures only an own host loader and calls its getter once with the host receiver", () => {
+    const loader = () => ({});
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: loader }), loader);
+    let accesses = 0;
+    const host = Object.defineProperty({}, "getBuiltinModule", {
+      get() {
+        accesses++;
+        assertEquals(this, host);
+        return loader;
+      },
+    });
+    assertEquals(captureHostBuiltinModuleLoader(host), loader);
+    assertEquals(accesses, 1);
+    assertEquals(captureHostBuiltinModuleLoader({}), undefined);
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: undefined }), undefined);
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.create({ getBuiltinModule: loader })),
+      undefined,
+    );
+    const invalid = {};
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.defineProperty({}, "getBuiltinModule", {
+        get: () => invalid,
+      })),
+      invalid,
+    );
+  });
+
   it("captures brand predicates from a lazy host builtin loader once", async () => {
     const hostProcess = (globalThis as typeof globalThis & {
       process?: { getBuiltinModule?: (specifier: string) => unknown };
