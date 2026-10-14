@@ -134,6 +134,22 @@ describe("agent/runtime-step", () => {
     }));
     assertEquals(prepared.tools.map((tool) => tool.name), ["web_search"]);
   });
+  it("validates native bootstrap authorization separately from current-step filtering", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["web_search"], {
+      config: {
+        model: "anthropic/claude-opus-4-6",
+        system: "Base",
+        tools: true,
+        toolLoading: "deferred",
+        bootstrapTools: ["web_search"],
+      } as AgentConfig,
+      getAvailableTools: async () => [],
+      providerToolNames: [],
+      authorizedProviderToolNames: ["web_search"],
+      step: 1,
+    }));
+    assertEquals(prepared.tools.some((tool) => tool.name === "web_search"), false);
+  });
   it("passes the configured provider alias to runtime-state cloning", async () => {
     let providerOptionKey: unknown;
     await prepareAgentRuntimeStep({

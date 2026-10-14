@@ -3793,3 +3793,30 @@ it("hosted bootstrap selection does not bypass an explicit tool denial", async (
     "outside the authorized executable catalog",
   );
 });
+
+it("hosted eager capping retains the selected authored remote startup tool", async () => {
+  const tools = Array.from(
+    { length: 130 },
+    (_, index) => remoteTool(`remote_${String(index).padStart(3, "0")}`, "Remote"),
+  );
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", projectId: "project-1", model: "openai/gpt-4.1" },
+    instructions: "Base",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ id: "custom", endpoint: "https://custom.example/mcp" }],
+    toolLoading: "eager",
+    bootstrapTools: ["remote_129"],
+    preloadLatestConversationUserText: false,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "platform",
+      listTools: async () => tools,
+      executeTool: async () => "ok",
+    }),
+  });
+  assertEquals(assembly.modelVisibleToolNames?.includes("remote_129"), true);
+  assertEquals(assembly.remoteToolNames.includes("remote_129"), true);
+  assertEquals(assembly.modelVisibleToolNames?.length, 128);
+});

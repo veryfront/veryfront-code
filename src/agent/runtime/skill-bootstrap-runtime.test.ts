@@ -239,3 +239,124 @@ for (const mode of ["generate", "stream"] as const) {
     assertEquals(referenceReads, 1);
   });
 }
+
+Deno.test("replacement tools ignore the configured bootstrap selection", async () => {
+  const configured = tool({
+    id: "configured",
+    description: "Configured",
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: async () => "configured",
+  });
+  const model = scriptedModel([{ text: "Ready" }], { only: "generate" });
+  const assistant = agent({
+    id: "bootstrap-replacement",
+    system: "Help",
+    model: model.modelId,
+    tools: { configured },
+    bootstrapTools: ["configured"],
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+  await assistant.generate({ input: "Go", tools: {} });
+  assertEquals(model.callCount, 1);
+});
+
+Deno.test("initial pause resumes startup guidance before its first model call", async () => {
+  clearMCPRegistry();
+  skillRegistryInternal.clearAll();
+  registerSkill("pause-plan", {
+    id: "pause-plan",
+    rootPath: "/skills/pause-plan",
+    metadata: { name: "pause-plan", description: "Guidance" },
+    fsAdapter: createSkillTestAdapter({
+      "/skills/pause-plan/SKILL.md": "# Required resumed guidance",
+    }),
+  });
+  const model = scriptedModel([(options) => {
+    assertStringIncludes(JSON.stringify(options.prompt), "Required resumed guidance");
+    return { text: "Ready" };
+  }], { only: "stream" });
+  const { AgentRuntime } = await import("./index.ts");
+  const config = {
+    system: "Help",
+    model: model.modelId,
+    bootstrapSkill: "pause-plan",
+    skills: ["pause-plan"],
+    tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  };
+  let saved: unknown;
+  const messages = [{
+    id: "request",
+    role: "user" as const,
+    parts: [{ type: "text" as const, text: "Go" }],
+  }];
+  try {
+    const paused = new AgentRuntime("bootstrap-paused", config, {
+      manualPause: {
+        load: async () => null,
+        requested: async () => true,
+        acknowledge: async (checkpoint) => {
+          saved = checkpoint;
+          return true;
+        },
+      },
+    });
+    await new Response(await paused.stream(messages)).text();
+    assertEquals(model.callCount, 0);
+    assertEquals(saved !== undefined, true);
+    const resumed = new AgentRuntime("bootstrap-paused", config, {
+      manualPause: { load: async () => saved, acknowledge: async () => false },
+    });
+    const body = await new Response(await resumed.stream(messages)).text();
+    assertEquals(model.callCount, 1);
+    assertStringIncludes(body, "Ready");
+  } finally {
+    skillRegistryInternal.clearAll();
+  }
+});
+
+Deno.test("concurrent startup runs sharing one loader each receive the complete skill root", async () => {
+  clearMCPRegistry();
+  const both = Promise.withResolvers<void>();
+  let loads = 0;
+  const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+    context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+    skillsDir: "/skills",
+    builtinSkillIds: ["plan"],
+    projectSkillLoader: {
+      loadProjectSkill: async () => {
+        if (++loads >= 2) both.resolve();
+        await both.promise;
+        return null;
+      },
+      listProjectSkillReferences: async () => [],
+      loadProjectSkillReference: async () => null,
+    },
+    builtinStore: {
+      readSkill: async () => "# Complete concurrent startup guidance",
+      listReferences: async () => [],
+      readReferenceFile: async () => null,
+    },
+  }));
+  const check = (options: { prompt: unknown }) => {
+    assertStringIncludes(JSON.stringify(options.prompt), "Complete concurrent startup guidance");
+    return { text: "Ready" };
+  };
+  const model = scriptedModel([check, check], { only: "generate" });
+  const assistant = agent({
+    id: "shared-bootstrap",
+    model: model.modelId,
+    system: "Help",
+    bootstrapSkill: "plan",
+    tools: createToolsFromHostDefinitions({ load_skill: loader }),
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+  await Promise.all([
+    assistant.generate({ input: "First" }),
+    assistant.generate({ input: "Second" }),
+  ]);
+  assertEquals(model.callCount, 2);
+});

@@ -218,7 +218,10 @@ import {
 } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import { validateRuntimeSkillBootstrapResult } from "./skill-bootstrap.ts";
-import { prepareFrameworkSkillBootstrap } from "#veryfront/skill/loader-provenance.ts";
+import {
+  prepareFrameworkSkillBootstrap,
+  runWithFrameworkSkillBootstrap,
+} from "#veryfront/skill/loader-provenance.ts";
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
@@ -2593,9 +2596,8 @@ async function executeStartupSkill(input: {
     input.authorized,
     (entry) => isLoadSkillToolName(entry.name) && hasTrustedPlatformPolicyToolDefinition(entry),
   )[0];
-  const args = definition
-    ? prepareFrameworkSkillBootstrap(input.resolveLoader(definition.name), input.skillId)
-    : undefined;
+  const loader = definition ? input.resolveLoader(definition.name) : undefined;
+  const args = definition ? prepareFrameworkSkillBootstrap(loader, input.skillId) : undefined;
   if (!definition || !args) {
     throw new Error("bootstrapSkill requires an authorized framework skill loader");
   }
@@ -2618,7 +2620,10 @@ async function executeStartupSkill(input: {
   const startTime = Date.now();
   let result: unknown;
   try {
-    result = await input.execute(definition.name, toolCallId, args, admittedTurn);
+    result = await runWithFrameworkSkillBootstrap(
+      loader,
+      () => input.execute(definition.name, toolCallId, args, admittedTurn),
+    );
     validateRuntimeSkillBootstrapResult(result, input.skillId);
   } catch (error) {
     toolCall.status = "error";
@@ -4121,6 +4126,7 @@ export class AgentRuntime {
           ...runConfig,
           tools: runtimeToolsConfig,
           skills: undefined,
+          bootstrapTools: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
@@ -4193,6 +4199,7 @@ export class AgentRuntime {
           mode: "generate",
           modelRuntime: languageModel,
           providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+          authorizedProviderToolNames: supportsToolCalling ? providerTools : [],
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -5190,8 +5197,9 @@ export class AgentRuntime {
     let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
     let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
     let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
-    // A resumed run already recorded its startup skill load in history.
-    let startupSkillLoaded = checkpoint !== undefined || this.config.bootstrapSkill === undefined;
+    // A pause can precede startup preparation; checkpoint existence is not completion.
+    let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
+      this.config.bootstrapSkill === undefined;
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
@@ -5208,6 +5216,7 @@ export class AgentRuntime {
           completed: completedWithinStepBudget,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
           recoveredEmptyResponse,
+          startupSkillLoaded,
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
@@ -5296,6 +5305,7 @@ export class AgentRuntime {
         mode: "stream",
         modelRuntime: languageModel,
         providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+        authorizedProviderToolNames: supportsToolCalling ? providerTools : [],
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],

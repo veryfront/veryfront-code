@@ -1,3 +1,4 @@
+import { isFrameworkSkillBootstrapExecution } from "#veryfront/skill/loader-provenance.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
@@ -2148,7 +2149,7 @@ export function createRuntimeLoadSkillTool(
       const authorityGuard = privateAuthority.begin();
       const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
       const trustedResponse = trustedResponseStore.get(loadedSkillKey);
-      if (trustedResponse) {
+      if (trustedResponse && !isFrameworkSkillBootstrapExecution(execute)) {
         return buildAlreadyLoadedSkillResponse(skillId, trustedResponse);
       }
 
@@ -2270,22 +2271,5 @@ export function createRuntimeLoadSkillTool(
       execute,
     },
     "operation",
-    (skillId) => {
-      // A startup load must publish a fresh root, not a compact repeat marker.
-      const key = buildRuntimeSkillCacheKey(options.context, skillId);
-      const references = authorizationStore.get(key)?.references ?? [];
-      authorizationStore.delete(key);
-      trustedResponseStore.delete(key);
-      rememberBoundedPrivateValue(bodyPublicationVersions, key, nextAuthorityPublicationVersion());
-      for (const file of references) {
-        const referenceKey = buildRuntimeSkillReferenceCacheKey(options.context, skillId, file);
-        trustedReferenceStore.delete(referenceKey);
-        rememberBoundedPrivateValue(
-          referencePublicationVersions,
-          referenceKey,
-          nextAuthorityPublicationVersion(),
-        );
-      }
-    },
   );
 }

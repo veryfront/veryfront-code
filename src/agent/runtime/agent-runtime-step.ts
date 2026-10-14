@@ -132,6 +132,7 @@ export interface PrepareAgentRuntimeStepInput {
   mode: AgentRuntimeStepMode;
   providerOptionKey?: string;
   providerToolNames?: readonly string[];
+  authorizedProviderToolNames?: readonly string[];
   remoteToolSources: RemoteToolSource[] | undefined;
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
@@ -396,7 +397,11 @@ export async function prepareAgentRuntimeStep(
   );
   if (configuredBootstrapNames.length > 0) {
     const mergedBootstrap = new IntrinsicSet<string>(bootstrapToolNames);
-    const executableCatalog = concatPrivateArrays(startupAuthorizedTools, providerToolDefinitions);
+    const authorizedNativeTools = createProviderNativeToolExposureDefinitions({
+      model: input.effectiveModel ?? input.config.model,
+      toolNames: input.authorizedProviderToolNames ?? input.providerToolNames ?? [],
+    });
+    const executableCatalog = concatPrivateArrays(startupAuthorizedTools, authorizedNativeTools);
     for (let index = 0; index < configuredBootstrapNames.length; index++) {
       const name = configuredBootstrapNames[index]!;
       if (

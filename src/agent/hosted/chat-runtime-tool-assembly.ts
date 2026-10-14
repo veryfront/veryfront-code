@@ -1181,19 +1181,23 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
+  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(input.bootstrapTools);
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
       ...(input.toolSchemaTarget ?? { model: input.taskContext.model }),
       reservedToolSlots: input.reservedToolSlots,
-      requiredToolNames: [...eagerBootstrapToolNames, ...providerVisibleLocalToolNames],
+      requiredToolNames: [
+        ...configuredBootstrapNames,
+        ...eagerBootstrapToolNames,
+        ...providerVisibleLocalToolNames,
+      ],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
     toolNames: availableToolNames,
     runtimeTools: localRuntimeTools,
     explicitAllowedToolNames: bootstrapAllowedToolNames,
   });
-  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(input.bootstrapTools);
   if (configuredBootstrapNames.length > 0) {
     for (let index = 0; index < configuredBootstrapNames.length; index++) {
       const name = configuredBootstrapNames[index]!;
