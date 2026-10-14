@@ -442,6 +442,19 @@ describe("provider-tool-compat", () => {
     );
     assertEquals(nested.properties?.value, {});
   });
+  it("decodes pointer fragments before classifying references", () => {
+    for (const ref of ["#/%61nyOf/0/properties/value", "#/any%4Ff/0", "#/%ZZ"]) {
+      const result = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: { alias: { $ref: ref } },
+          anyOf: [{ properties: { value: { type: "string" } } }],
+        } as never,
+        { model: "openai/gpt-5.4" },
+      );
+      assertEquals(result, { type: "object", properties: { alias: {}, value: {} } } as never, ref);
+    }
+  });
   it("keeps a __proto__ property declaration in the fallback root", () => {
     const schema = JSON.parse(
       '{"type":"object","additionalProperties":false,' +

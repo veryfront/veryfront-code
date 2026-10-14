@@ -919,9 +919,17 @@ function isSimpleObjectBranch(branch: unknown): branch is Record<string, unknown
 }
 
 function isRemovedRootReference(ref: string): boolean {
-  const token = ref.startsWith("#/") ? ref.slice(2).split("/")[0] : undefined;
-  return token !== undefined &&
-    (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
+  if (!ref.startsWith("#/")) return false;
+  // Classify the decoded pointer: percent-decode the URI fragment first, then
+  // unescape the first JSON Pointer token. A malformed fragment is unsafe.
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(ref.slice(1));
+  } catch {
+    return true;
+  }
+  const token = pointer.slice(1).split("/")[0]!.replaceAll("~1", "/").replaceAll("~0", "~");
+  return (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
 }
 
 /** Whether any schema node (outside literal values) satisfies `test`. */
