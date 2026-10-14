@@ -860,3 +860,104 @@ it("enforces the received hosted catalog limit on the real managed model proxy",
     await broker.closed;
   }
 });
+
+describe("invoke_agent child request budget", () => {
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+
+  // Claude Haiku 4.5 serves a 200k window with a 64k output ceiling. A
+  // no-tools child invoked through invoke_agent sends no output override, so
+  // its requested output is the model maximum.
+  async function runNoToolsChild(promptChars: number) {
+    const { runAgentRuntimeForkStep } = await import("../streaming/fork-runtime-stream.ts");
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "claude-haiku-4-5",
+        modelId: "anthropic/claude-haiku-4-5",
+        provider: "anthropic",
+        surface: "anthropic",
+        aliases: [],
+        operations: ["messages"],
+        capabilities: { limit: { context: 200_000, output: 64_000 } },
+      }],
+    });
+    const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
+    const model = scriptedModel([{ text: "child summary" }], {
+      modelId,
+      only: "stream",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "test-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "anthropic",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    // The step's response promise is observed internally and never settles
+    // after a pre-dispatch rejection, so the test reads only the wire stream.
+    const { stream } = await runAgentRuntimeForkStep({
+      resolveModelRuntime: () => model,
+      apiUrl: "http://localhost",
+      authToken: "<TOKEN>",
+      projectId: null,
+      model: modelId,
+      system: [{ role: "system", content: "Child agent guidance. ".repeat(1_000) }],
+      messages: [{
+        id: "child-prompt",
+        role: "user",
+        parts: [{ type: "text", text: "Review this section. ".repeat(promptChars / 20) }],
+      }],
+      forkToolNames: [],
+      runtimeTools: {},
+    });
+    const wire = await new Response(stream).text();
+    return { model, wire };
+  }
+
+  it("dispatches a typical no-tools child with the full model output", async () => {
+    const { model, wire } = await runNoToolsChild(80_000);
+    assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), false);
+    assertEquals(model.callCount, 1);
+    assertEquals(model.calls[0]?.maxOutputTokens, 64_000);
+  });
+
+  it("caps implicit output instead of rejecting a large no-tools child", async () => {
+    // About 165k estimated input tokens: it fits the window, but not with the
+    // full 64k model maximum reserved on top.
+    const { model, wire } = await runNoToolsChild(580_000);
+    assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), false);
+    assertEquals(model.callCount, 1);
+    const sentOutput = model.calls[0]?.maxOutputTokens ?? 0;
+    const estimatedInput = 200_000 - sentOutput;
+    // The estimate tracks the dispatched payload, not an inflated catalog.
+    const wireTokens = JSON.stringify(model.calls[0]?.prompt).length / 4;
+    assert(sentOutput >= 4_096 && sentOutput < 64_000, `sent output ${sentOutput}`);
+    assert(
+      estimatedInput >= wireTokens && estimatedInput <= wireTokens * 1.15,
+      `estimate ${estimatedInput} for ${wireTokens} wire tokens`,
+    );
+  });
+
+  it("reserves an explicit output request in full", () => {
+    const input = {
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(600_000) }],
+      limit: { context: 200_000, output: 64_000 },
+      requestedOutputTokens: 64_000,
+    };
+    const implicit = enforceFinalRequestBudget(input);
+    assertEquals(implicit.maxOutputTokens, 200_000 - (implicit.estimatedInputTokens ?? 0));
+    assertThrows(
+      () => enforceFinalRequestBudget({ ...input, explicitOutputTokens: true }),
+      Error,
+      "plus 64000 output tokens",
+    );
+  });
+
+  it("still rejects a child whose input leaves less than the bounded output reserve", async () => {
+    const { model, wire } = await runNoToolsChild(700_000);
+    assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), true);
+    assertEquals(model.callCount, 0);
+  });
+});
