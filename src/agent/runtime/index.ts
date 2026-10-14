@@ -4172,7 +4172,10 @@ export class AgentRuntime {
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
       let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
-      let startupSkillLoaded = hasToolReplacements || this.config.bootstrapSkill === undefined;
+      // A submitted form continues a turn whose startup already ran, and the
+      // post-form skill policy forbids loading or switching skill bodies.
+      let startupSkillLoaded = hasToolReplacements || this.config.bootstrapSkill === undefined ||
+        skillState.hasSubmittedFormInput;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -4207,7 +4210,9 @@ export class AgentRuntime {
           mode: "generate",
           modelRuntime: languageModel,
           providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
-          authorizedProviderToolNames: supportsToolCalling ? providerTools : [],
+          // The authorization catalog is independent of whether the model can
+          // call tools; only the model-visible provider tools are withheld.
+          authorizedProviderToolNames: providerTools,
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -5208,7 +5213,7 @@ export class AgentRuntime {
     let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
     // A pause can precede startup preparation; checkpoint existence is not completion.
     let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
-      this.config.bootstrapSkill === undefined;
+      this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
@@ -5315,7 +5320,7 @@ export class AgentRuntime {
         mode: "stream",
         modelRuntime: languageModel,
         providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
-        authorizedProviderToolNames: supportsToolCalling ? providerTools : [],
+        authorizedProviderToolNames: providerTools,
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],

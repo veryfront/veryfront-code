@@ -574,3 +574,72 @@ for (const mode of ["generate", "stream"] as const) {
     assertEquals(model.callCount, 1);
   });
 }
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`configured provider bootstrap tools stay authorized for a text-only ${mode} model`, async () => {
+    clearMCPRegistry();
+    const model = scriptedModel([(options) => {
+      assertEquals(Object.keys(options.tools ?? {}).length, 0);
+      return { text: "Ready" };
+    }], { provider: "anthropic", modelId: "claude-sonnet-4-6", only: mode });
+    const assistant = agent({
+      id: "text-provider-bootstrap",
+      system: "Help",
+      model: "anthropic/claude-sonnet-4-6",
+      skills: false,
+      tools: {},
+      providerTools: ["web_search"],
+      bootstrapTools: ["web_search"],
+      maxSteps: 1,
+      resolveModelTransport: () => ({
+        model: { ...model, runtimeCapabilities: { toolCalling: false } },
+      }),
+    });
+    if (mode === "generate") await assistant.generate({ input: "Go" });
+    else {assertStringIncludes(
+        await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+        "Ready",
+      );}
+    assertEquals(model.callCount, 1);
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`a submitted form continuation does not reload the startup skill in ${mode}`, async () => {
+    clearMCPRegistry();
+    let reads = 0;
+    const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+      context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+      skillsDir: "/skills",
+      builtinSkillIds: ["plan"],
+      projectSkillLoader: {
+        loadProjectSkill: async () => null,
+        listProjectSkillReferences: async () => [],
+        loadProjectSkillReference: async () => null,
+      },
+      builtinStore: {
+        readSkill: async () => {
+          reads += 1;
+          return "# Plan guidance";
+        },
+        listReferences: async () => [],
+        readReferenceFile: async () => null,
+      },
+    }));
+    const model = scriptedModel([{ text: "Ready" }], { only: mode });
+    const assistant = agent({
+      id: "form-continuation-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "plan",
+      tools: createToolsFromHostDefinitions({ load_skill: loader }),
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const input = { input: "Continue", context: { hasSubmittedFormInputResult: true } };
+    if (mode === "generate") await assistant.generate(input);
+    else await (await assistant.stream(input)).toDataStreamResponse().text();
+    assertEquals(reads, 0);
+    assertEquals(model.callCount, 1);
+  });
+}
