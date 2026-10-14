@@ -131,7 +131,7 @@ describe(
         assertEquals(stats.ssgPaths, []);
       });
 
-      it("uses config.react.version for App Router SSR and the browser import map", async () => {
+      it("uses the configured prepared React runtime for App Router SSR and the browser import map", async () => {
         const adapter = createMemoryAdapter();
         const appDir = "/tmp/project/src/site";
         adapter.fs.files.set(
@@ -152,12 +152,30 @@ describe(
           },
           renderToStaticMarkup: () => `<p>${marker}</p>`,
         });
-        __setServerModuleLoaderForTests((_url, label) => {
-          if (label === "React") return Promise.resolve({ default: React });
-          throw new Error(`Unexpected module load: ${label}`);
+        const preparedReact = { ...React, version: "18.3.1" };
+        const preparedServer = { ...server("project-react-18"), version: "18.3.1" };
+        Object.assign(adapter, {
+          moduleLoader: {
+            importModule: (
+              reference: import("#veryfront/platform/adapters/base.ts").RuntimeModuleReference,
+            ) => {
+              if (reference.kind === "package" && reference.specifier === "react") {
+                return Promise.resolve({ default: preparedReact });
+              }
+              if (reference.kind === "package" && reference.specifier === "react-dom/server") {
+                return Promise.resolve(preparedServer);
+              }
+              if (
+                reference.kind === "source" &&
+                (reference.path === `${appDir}/page.tsx` ||
+                  reference.path === `${appDir}/layout.tsx`)
+              ) {
+                return Promise.resolve({ default: () => null });
+              }
+              throw new Error("Unexpected prepared module load");
+            },
+          },
         });
-        __injectReactDOMServerForTests(server("default-react"));
-        __injectReactDOMServerForTests(server("project-react-18"), "18.3.1");
 
         await buildAppRoutes(
           [{

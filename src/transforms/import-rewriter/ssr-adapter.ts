@@ -175,7 +175,8 @@ function resolveReactForRuntime(
   if (localPath) return localPath;
 
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
-  const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
+  const v = version ?? peers?.versions.react ?? resolveInstalledReactRange() ??
+    DEFAULT_REACT_VERSION;
   const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
 
@@ -304,7 +305,8 @@ function rewriteBareImports(
   dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   reactPeers?: LocalReactPeerSnapshot,
 ): string {
-  const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
+  const v = version ?? reactPeers?.versions.react ?? resolveInstalledReactRange() ??
+    DEFAULT_REACT_VERSION;
 
   observeSpecialImportDependencies(
     code,

@@ -399,7 +399,7 @@ export function prepareHttpCacheRequestOptions<T extends CacheOptions>(options: 
     ...(options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
       ? {
         reactPeers: peers,
-        reactVersion: options.reactVersion ?? options.reactPeers?.versions.react ??
+        reactVersion: options.reactVersion ?? peers?.versions.react ??
           resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION,
       }
       : {}),

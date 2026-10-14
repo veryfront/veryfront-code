@@ -1,6 +1,11 @@
 import { readProjectDependencyVersions } from "#veryfront/transforms/esm/package-registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   captureLocalReactPeers,
@@ -45,6 +50,55 @@ function overrideInstalledVersion(
 }
 
 describe("react-paths", () => {
+  it("keeps the default HTTP version on the peers captured before dependency replacement", async () => {
+    if (!isNode) return;
+    const { prepareHttpCacheRequestOptions } = await import(
+      "#veryfront/transforms/esm/http-cache-helpers.ts"
+    );
+    const restores: Array<() => void> = [];
+    try {
+      const prepared: import("#veryfront/transforms/esm/http-cache-helpers.ts").CacheOptions =
+        prepareHttpCacheRequestOptions({
+          cacheDir: "/unused",
+          localReact: true,
+          get importMap() {
+            if (restores.length === 0) {
+              restores.push(overrideInstalledVersion("react", "19.2.5"));
+              restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
+            }
+            return { imports: {} };
+          },
+        });
+      const peers = prepared.reactPeers;
+      assertEquals(prepared.reactVersion, peers?.versions.react);
+      assertEquals(getLocalReactPath("react", prepared.reactVersion, peers), peers?.paths.react);
+    } finally {
+      for (const restore of restores.reverse()) restore();
+    }
+  });
+
+  it("uses captured peers for default synchronous SSR rewriting after dependency replacement", async () => {
+    if (!isNode) return;
+    const { rewriteSSRImportsCompat } = await import(
+      "#veryfront/transforms/import-rewriter/ssr-adapter.ts"
+    );
+    const peers = captureLocalReactPeers();
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      const rewritten = rewriteSSRImportsCompat(
+        'import React from "react";',
+        { reactPeers: peers },
+      );
+      const reactPath = peers.paths.react;
+      assertExists(reactPath);
+      assertEquals(rewritten.includes(reactPath), true);
+    } finally {
+      restoreDom();
+      restoreReact();
+    }
+  });
+
   it("resolves Bun peers from the SDK when the working directory has no dependencies", () => {
     if (!isBun) return;
     const originalDirectory = process.cwd();
