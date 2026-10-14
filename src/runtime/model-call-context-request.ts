@@ -17,7 +17,6 @@ import {
   readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
-  resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudProviderRouting,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
@@ -1813,9 +1812,7 @@ function suppressOpenAIFunctionToolReasoning(
   }
   const catalogId = `openai/${model.modelId}`;
   const built = readVeryfrontCloudModelFacts(model);
-  const openAITransport = built
-    ? built.openAITransport
-    : resolveVeryfrontCloudOpenAITransport(catalogId);
+  const openAITransport = resolveOpenAIContextTransport(model, options);
   const reasoningWithFunctionTools = built
     ? built.openAIChatReasoningWithFunctionTools
     : resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId);

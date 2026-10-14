@@ -121,7 +121,7 @@ function createCredentialAdapter(
         path: file.path,
         content: file.content,
         checksum: file.checksum,
-        size: file.content.length,
+        size: new TextEncoder().encode(file.content).length,
         type: "file",
         updated_at: "2026-10-02T12:00:00.000Z",
       })),
@@ -214,6 +214,31 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
       "reads must use the retained listing instead of the listing cache",
     );
     second.adapter.dispose();
+  });
+
+  it("keeps an unchanged Unicode branch fingerprint across a strict metadata refresh", async () => {
+    const files = await sourceFiles({
+      "agents/assistant.ts": "export default {};",
+      "mailboxes/inbox/fixture/ingested.json": '{"filename":"rechnung résumé.txt"}',
+    });
+    const first = createCredentialAdapter(() => files);
+    try {
+      await asCredential("credential-unicode", async () => {
+        await first.adapter.initialize();
+        const before = await first.adapter.getSourceSnapshotFingerprint({
+          purpose: "agent-config",
+        });
+        const generation = first.adapter.getSourceSnapshotVersion();
+        await first.adapter.ensureSourceSnapshotFresh("agent-source-config", { maxAgeMs: 0 });
+        const after = await first.adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+        assertEquals(after, before, "unchanged bytes must not invalidate agent configuration");
+        assertEquals(first.adapter.getSourceSnapshotVersion(), generation);
+      });
+      assertEquals(first.counts.fullListings, 1);
+      assertEquals(first.counts.metadataListings, 1);
+    } finally {
+      first.adapter.dispose();
+    }
   });
 
   it("keeps entity ids answerable when a memory cache holds the assembled listing", async () => {

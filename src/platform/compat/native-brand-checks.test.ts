@@ -1,86 +1,127 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isBun, isDeno } from "./runtime.ts";
+import { captureHostBuiltinModuleLoader } from "./native-brand-checks.ts";
 
 describe("native brand checks", () => {
-  it("captures Deno's host resolver accessor once before later hooks", async () => {
-    const hostProcess = (globalThis as typeof globalThis & {
-      process: { getBuiltinModule: (specifier: string) => unknown };
-    }).process;
-    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
-    if (!previous && !isBun) throw new Error("host resolver must be available");
-    const resolver = hostProcess.getBuiltinModule;
-    let reads = 0;
-    let isolated: typeof import("./native-brand-checks.ts") | undefined;
-    let failure: unknown;
-    Object.defineProperty(hostProcess, "getBuiltinModule", {
-      configurable: true,
+  it("captures only an own host loader and calls its getter once with the host receiver", () => {
+    const loader = () => ({});
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: loader }), loader);
+    let accesses = 0;
+    const host = Object.defineProperty({}, "getBuiltinModule", {
       get() {
-        reads++;
-        return resolver;
+        accesses++;
+        assertEquals(this, host);
+        return loader;
       },
     });
+    assertEquals(captureHostBuiltinModuleLoader(host), loader);
+    assertEquals(accesses, 1);
+    assertEquals(captureHostBuiltinModuleLoader({}), undefined);
+    assertEquals(captureHostBuiltinModuleLoader({ getBuiltinModule: undefined }), undefined);
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.create({ getBuiltinModule: loader })),
+      undefined,
+    );
+    const invalid = {};
+    assertEquals(
+      captureHostBuiltinModuleLoader(Object.defineProperty({}, "getBuiltinModule", {
+        get: () => invalid,
+      })),
+      invalid,
+    );
+  });
+
+  it("captures brand predicates from a lazy host builtin loader once", async () => {
+    const hostProcess = (globalThis as typeof globalThis & {
+      process?: { getBuiltinModule?: (specifier: string) => unknown };
+    }).process;
+    if (!hostProcess) throw new Error("host process must be available in server tests");
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    const loader = hostProcess.getBuiltinModule;
+    if (!previous || typeof loader !== "function") {
+      throw new Error("host builtin loader must be available in server tests");
+    }
+    let accesses = 0;
+    let isolated: typeof import("./native-brand-checks.ts") | undefined;
     try {
-      try {
-        isolated = await import("./native-brand-checks.ts?host-resolver-accessor");
-      } catch (error) {
-        failure = error;
-      }
       Object.defineProperty(hostProcess, "getBuiltinModule", {
         configurable: true,
         get() {
-          reads++;
-          throw new Error("late host hook must not run");
+          accesses++;
+          return loader;
         },
       });
-      if (isDeno || isBun) {
-        assertEquals(failure, undefined);
-        assertEquals(isolated?.nativeBrandChecks?.isNativeError(new Error("native")), true);
-        assertEquals(isolated?.nativeBrandChecks?.isProxy(new Proxy({}, {})), true);
-        assertEquals(isolated?.nativeBrandChecks?.isNonPlainBuiltin({}), false);
-      } else {
-        assertEquals(failure instanceof Error, true);
+      isolated = await import("./native-brand-checks.ts?lazy-host-builtin-loader");
+      assertEquals(accesses, 1);
+      Object.defineProperty(hostProcess, "getBuiltinModule", {
+        configurable: true,
+        get() {
+          throw new Error("captured predicates must not reload the host module");
+        },
+      });
+      assertEquals(isolated.nativeBrandChecks?.isNativeError(new Error("fixture")), true);
+      assertEquals(isolated.nativeBrandChecks?.isNativeError({}), false);
+      let trapCalls = 0;
+      const proxy = new Proxy({}, {
+        get() {
+          trapCalls++;
+          return undefined;
+        },
+        ownKeys() {
+          trapCalls++;
+          return [];
+        },
+      });
+      assertEquals(isolated.nativeBrandChecks?.isProxy(proxy), true);
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
+      assertEquals(trapCalls, 0);
+      assertEquals(accesses, 1);
+    } finally {
+      Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+    }
+  });
+
+  it("fails closed when the host loader is missing or does not return a function", async () => {
+    const hostProcess = (globalThis as typeof globalThis & {
+      process?: { getBuiltinModule?: (specifier: string) => unknown };
+    }).process;
+    if (!hostProcess) throw new Error("host process must be available in server tests");
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    if (!previous) throw new Error("host builtin loader must be available in server tests");
+    const hasBunFallback = (globalThis as typeof globalThis & { Bun?: unknown }).Bun != null;
+    try {
+      for (const shape of ["missing", "empty", "invalid-accessor"]) {
+        if (shape === "missing") {
+          Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+        } else {
+          Object.defineProperty(
+            hostProcess,
+            "getBuiltinModule",
+            shape === "empty"
+              ? { configurable: true, value: undefined }
+              : { configurable: true, get: () => ({}) },
+          );
+        }
+        const load = () => import(`./native-brand-checks.ts?unavailable-host-loader-${shape}`);
+        if (hasBunFallback) {
+          // Bun's lexical require still provides its host builtin module.
+          const isolated = await load();
+          assertEquals(isolated.nativeBrandChecks?.isNativeError(new Error("fixture")), true);
+        } else {
+          await assertRejects(
+            load,
+            Error,
+            "does not expose complete node:util/types brand checks",
+          );
+        }
       }
     } finally {
-      if (previous) Object.defineProperty(hostProcess, "getBuiltinModule", previous);
-      else Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+      Object.defineProperty(hostProcess, "getBuiltinModule", previous);
     }
-    assertEquals(reads, isDeno ? 1 : 0);
   });
 
-  it("fails closed when a Deno host accessor does not return a resolver", async () => {
-    const hostProcess = (globalThis as typeof globalThis & { process: object }).process;
-    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
-    if (!previous && !isBun) throw new Error("host resolver must be available");
-    let reads = 0;
-    let failure: unknown;
-    Object.defineProperty(hostProcess, "getBuiltinModule", {
-      configurable: true,
-      get() {
-        reads++;
-        return {};
-      },
-    });
-    try {
-      await import("./native-brand-checks.ts?invalid-host-resolver-accessor");
-    } catch (error) {
-      failure = error;
-    } finally {
-      if (previous) Object.defineProperty(hostProcess, "getBuiltinModule", previous);
-      else Reflect.deleteProperty(hostProcess, "getBuiltinModule");
-    }
-    assertEquals(failure instanceof Error, !isBun);
-    if (!isBun && failure instanceof Error) {
-      assertEquals(
-        failure.message,
-        "The current server runtime does not expose complete node:util/types brand checks",
-      );
-    }
-    assertEquals(reads, isDeno ? 1 : 0);
-  });
-
-  it("propagates a failing Deno host resolver accessor without falling back", async () => {
+  it("propagates a failing host resolver accessor without falling back", async () => {
     const hostProcess = (globalThis as typeof globalThis & { process: object }).process;
     const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
     const expected = new Error("synthetic host resolver failure");
@@ -101,9 +142,8 @@ describe("native brand checks", () => {
       if (previous) Object.defineProperty(hostProcess, "getBuiltinModule", previous);
       else Reflect.deleteProperty(hostProcess, "getBuiltinModule");
     }
-    if (isDeno) assertEquals(failure, expected);
-    else assertEquals(failure instanceof Error, !isBun);
-    assertEquals(reads, isDeno ? 1 : 0);
+    assertEquals(failure, expected);
+    assertEquals(reads, 1);
   });
 
   it("rejects accessor predicates in an untrusted module without invoking them", async () => {

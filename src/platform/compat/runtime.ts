@@ -80,8 +80,16 @@ export function getDenoRuntime(): typeof Deno | undefined {
   return undefined;
 }
 
+// Capture the host before project code can replace its namespace or properties.
+const capturedDenoRuntime = getDenoRuntime();
+
+/** @internal Trusted bootstrap namespace; does not inspect mutable project globals. */
+export function getCapturedDenoRuntime(): typeof Deno | undefined {
+  return capturedDenoRuntime;
+}
+
 function hasRealDeno(): boolean {
-  return getDenoRuntime() != null;
+  return capturedDenoRuntime != null;
 }
 
 /**
