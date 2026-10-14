@@ -322,13 +322,26 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   return freeze(snapshot);
 }
 
+/** @internal Capture only the trusted bootstrap host's own builtin loader. */
+export function captureHostBuiltinModuleLoader(hostProcess: HostProcess): unknown {
+  const descriptor = getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+  // Deno lazy-loads this own property through a getter. Candidate and
+  // predicate reads still use own data functions, never this host boundary.
+  const loader = readOwnDataFunction(hostProcess, "getBuiltinModule");
+  if (loader !== undefined) return loader;
+  if (typeof descriptor?.get === "function") {
+    return apply(descriptor.get, hostProcess, []);
+  }
+  return undefined;
+}
+
 function loadNativeBrandCheckModule(): unknown {
   if (!isBun && !isDeno && !isNode) return undefined;
 
   const hostProcess = (globalThis as typeof globalThis & { process?: HostProcess }).process;
   if (hostProcess) {
-    const getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule");
-    if (getBuiltinModule) {
+    const getBuiltinModule = captureHostBuiltinModuleLoader(hostProcess);
+    if (typeof getBuiltinModule === "function") {
       return apply(getBuiltinModule, hostProcess, ["node:util/types"]);
     }
   }

@@ -60,6 +60,25 @@ function tamperBase64(value: string): string {
   return `${value.slice(0, -1)}${value.endsWith("A") ? "B" : "A"}`;
 }
 
+function problemResponse(status: number, onCancel: () => void): Response {
+  const body = new TextEncoder().encode(JSON.stringify({
+    type: "https://veryfront.com/problems/synthetic",
+    title: "Synthetic problem",
+    status,
+    detail: "synthetic problem detail",
+  }));
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(body);
+        controller.close();
+      },
+      cancel: onCancel,
+    }, { highWaterMark: 0 }),
+    { status, headers: { "content-type": "application/problem+json" } },
+  );
+}
+
 describe("host application inference admission", () => {
   it("keeps local model authentication unchanged", () => {
     assertEquals(
@@ -169,6 +188,58 @@ describe("host application inference admission", () => {
 
     await assertRejects(() => admit("assistant"), Error, "admission failed");
   });
+
+  for (const status of [400, 403, 409, 429, 500, 503]) {
+    it(`discards a Problem body on a ${status} admission without reading it`, async () => {
+      let cancelled = false;
+      const admit = createHostApplicationInferenceAdmission(
+        new Request("https://synthetic.example.test/api/ag-ui"),
+        context(),
+        {
+          getHostEnv: hostEnv(HOST_ENV),
+          createOriginBoundFetch: () => () =>
+            Promise.resolve(problemResponse(status, () => {
+              cancelled = true;
+            })),
+        },
+      );
+      if (!admit) throw new Error("Expected hosted admission");
+
+      const error = await assertRejects(() => admit("assistant"), Error);
+      assertEquals((error as Error).message, "Application inference admission failed");
+      assertEquals(cancelled, true);
+    });
+
+    it(`discards a Problem body on a ${status} finalization without reading it`, async () => {
+      let cancelled = false;
+      const admit = createHostApplicationInferenceAdmission(
+        new Request("https://synthetic.example.test/api/ag-ui"),
+        context(),
+        {
+          getHostEnv: hostEnv(HOST_ENV),
+          createOriginBoundFetch: () => async (input, init) => {
+            const request = new Request(input, init);
+            const path = new URL(request.url).pathname;
+            if (path === "/internal/application-agui-inference/admissions") {
+              return Response.json(encryptedAdmission(await readJsonBody(request.clone())));
+            }
+            if (path === `/internal/application-agui-inference/runs/${RUN_ID}/finalize`) {
+              return problemResponse(status, () => {
+                cancelled = true;
+              });
+            }
+            throw new Error(`Unexpected request path ${path}`);
+          },
+        },
+      );
+      if (!admit) throw new Error("Expected hosted admission");
+      const admission = await admit("assistant");
+
+      const error = await assertRejects(() => admission.finalize("completed"), Error);
+      assertEquals((error as Error).message, "Application inference finalization failed");
+      assertEquals(cancelled, true);
+    });
+  }
 
   it("rejects malformed successful admission responses", async () => {
     const admit = createHostApplicationInferenceAdmission(
