@@ -1,7 +1,9 @@
 import {
   __resetProjectRunRuntimeOwnershipProbeFlightsForTests,
+  classifyRuntimeOwnershipProbeApiResponse,
   createProjectRunRuntimeOwnershipProbe,
   createProjectRunRuntimeOwnershipProbeFromHostEnv,
+  createRuntimeOwnershipProbeApiError,
   type RuntimeOwnershipProbeApiClient,
   type RuntimeOwnershipProbeReceipt,
 } from "../../../../../../src/server/handlers/request/project-run-runtime-ownership-probe.ts";
@@ -25,6 +27,43 @@ const activation = {
   expiresAtMs: nowMs + 60_000,
   operationTimeoutMs: 1_000,
 };
+
+function canonicalSourceAuthorityError(): Error {
+  return createRuntimeOwnershipProbeApiError(
+    403,
+    JSON.stringify({
+      status: 403,
+      slug: "authorization-denied",
+      detail: "Run no longer permits canonical source writes",
+    }),
+    undefined,
+    "canonical-source",
+  );
+}
+
+function runEventsAuthorityError(
+  detail = "Streamed run appends require the current signed executor generation",
+): Error {
+  return createRuntimeOwnershipProbeApiError(
+    409,
+    JSON.stringify({ status: 409, slug: "state-conflict", detail }),
+    undefined,
+    "run-events",
+  );
+}
+
+function runHeartbeatAuthorityError(): Error {
+  return createRuntimeOwnershipProbeApiError(
+    409,
+    JSON.stringify({
+      status: 409,
+      slug: "state-conflict",
+      detail: "This execution generation is no longer current; stop execution",
+    }),
+    undefined,
+    "run-heartbeat",
+  );
+}
 
 interface RunPathParts {
   id: string;
@@ -249,6 +288,73 @@ function createHeartbeatClient(
 describe("project-run runtime ownership probe", () => {
   afterEach(() => __resetProjectRunRuntimeOwnershipProbeFlightsForTests());
 
+  it("uses the old private client only after a different accepted issuer attempt", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const base = new RecordingClient();
+    let replaced = false;
+    const old = boundaryClient(base, {
+      put: async (path, body, options) => {
+        if (replaced) throw canonicalSourceAuthorityError();
+        return await base.put(path, body, options);
+      },
+      post: async (path, body, options) => {
+        if (replaced) {
+          throw isRunHeartbeatsPath(path)
+            ? runHeartbeatAuthorityError()
+            : runEventsAuthorityError();
+        }
+        return await base.post(path, body, options);
+      },
+    });
+    const probe = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    const first = probe.createSession({
+      ...baseSessionInput(old),
+      authorityAttemptId: "first-issuer-attempt",
+    });
+    assertExists(first);
+    await first.beforeExecute();
+    replaced = true;
+    const next = probe.createSession({
+      ...baseSessionInput(base),
+      authorityAttemptId: "second-issuer-attempt",
+    });
+    assertExists(next);
+    await next.beforeExecute();
+    assertEquals(receipts.map((receipt) => [receipt.phase, receipt.status]), [
+      ["current", "ok"],
+      ["current", "ok"],
+      ["stale-after-replacement", "ok"],
+    ]);
+    assertEquals(receipts[2]!.sourcePath, receipts[0]!.sourcePath);
+    assertEquals(receipts[2]!.afterHash, receipts[0]!.afterHash);
+    assertEquals(receipts[2]!.versionHash, receipts[0]!.versionHash);
+  });
+
+  it("labels only authenticated manual resume as current resumed ownership", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = new RecordingClient();
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(client),
+        request: {
+          runId,
+          canonicalRunId: runId,
+          projectId: "proj-1",
+          resumedManually: true,
+        },
+      });
+    assertExists(session);
+    await session.beforeExecute();
+    assertEquals(receipts[0]!.phase, "current-after-manual-resume");
+    assertEquals(receipts[0]!.status, "ok");
+  });
+
   it("does not activate from project env-file values", () => {
     const values = new Map<string, string>([
       ["VERYFRONT_RUNTIME_OWNERSHIP_PROBE_STAGE", "1"],
@@ -399,7 +505,18 @@ describe("project-run runtime ownership probe", () => {
         client.get<T>(path, params, options),
       post: (path, body, options) => client.post(path, body, options),
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) {
+          throw createRuntimeOwnershipProbeApiError(
+            403,
+            JSON.stringify({
+              status: 403,
+              slug: "authorization-denied",
+              detail: "Run no longer permits canonical source writes",
+            }),
+            undefined,
+            "canonical-source",
+          );
+        }
         return await client.put<T>(path, body, options);
       },
     };
@@ -412,7 +529,7 @@ describe("project-run runtime ownership probe", () => {
         createEventAppendClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+            if (denyWrites) throw runEventsAuthorityError();
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -420,7 +537,9 @@ describe("project-run runtime ownership probe", () => {
         createHeartbeatClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            if (denyWrites) {
+              throw runHeartbeatAuthorityError();
+            }
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -440,6 +559,141 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(receipts[1]!.versionHash, receipts[0]!.versionHash);
   });
 
+  it("does not block acknowledgement or attempt stale writes while the server is still running", async () => {
+    const base = new RecordingClient();
+    let committed = false;
+    const done = Promise.withResolvers<void>();
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const retained = boundaryClient(base, {
+      put: async (path, body, options) => {
+        if (committed) throw canonicalSourceAuthorityError();
+        return await base.put(path, body, options);
+      },
+      post: async (path, body, options) => {
+        if (committed) throw runEventsAuthorityError();
+        return await base.post(path, body, options);
+      },
+    });
+    const session = createProjectRunRuntimeOwnershipProbe(activation, (receipt) => {
+      receipts.push(receipt);
+      if (receipt.phase === "stale-after-pause") done.resolve();
+    }).createSession({
+      ...baseSessionInput(retained),
+      createReadbackClient: () =>
+        boundaryClient(base, {
+          get: async <T>(
+            path: string,
+            params?: Record<string, string>,
+            options?: { signal?: AbortSignal },
+          ) => {
+            if (committed && isRunPath(path)) {
+              return {
+                id: runId,
+                project_id: "proj-1",
+                status: "waiting",
+                control: { waiting: { reason: "manual_pause" } },
+              } as T;
+            }
+            return await base.get<T>(path, params, options);
+          },
+        }),
+      createHeartbeatClient: () =>
+        boundaryClient(base, {
+          post: async (path, body, options) => {
+            if (committed) throw runHeartbeatAuthorityError();
+            return await base.post(path, body, options);
+          },
+        }),
+    });
+    assertExists(session);
+    await session.beforeExecute();
+    assertExists(session.afterPauseAcknowledged);
+    await session.afterPauseAcknowledged();
+    assertEquals(base.writes.length, 1);
+    assertEquals(receipts.length, 1);
+    committed = true;
+    await done.promise;
+    assertEquals(base.writes.length, 1);
+    assertEquals(receipts[1]!.status, "ok");
+  });
+
+  it("proves retained authority denial after an acknowledged pause", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const pauseDone = Promise.withResolvers<void>();
+    const client = new RecordingClient();
+    let denyWrites = false;
+    const denyingClient: RuntimeOwnershipProbeApiClient = {
+      get: <T>(path: string, params?: Record<string, string>, options?: { signal?: AbortSignal }) =>
+        client.get<T>(path, params, options),
+      post: (path, body, options) => client.post(path, body, options),
+      put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
+        if (denyWrites) throw canonicalSourceAuthorityError();
+        return await client.put<T>(path, body, options);
+      },
+    };
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => {
+        receipts.push(receipt);
+        if (receipt.phase === "stale-after-pause") pauseDone.resolve();
+      },
+    )
+      .createSession({
+        ...baseSessionInput(denyingClient),
+        createReadbackClient: () =>
+          boundaryClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) => {
+              if (denyWrites && isRunPath(path)) {
+                return {
+                  id: runId,
+                  project_id: "proj-1",
+                  status: "waiting",
+                  control: { waiting: { reason: "manual_pause" } },
+                } as T;
+              }
+              return await client.get<T>(path, params, options);
+            },
+          }),
+        createEventAppendClient: () => ({
+          get: (path, params, options) => client.get(path, params, options),
+          post: async (path, body, options) => {
+            if (denyWrites) throw runEventsAuthorityError();
+            return await client.post(path, body, options);
+          },
+          put: (path, body, options) => client.put(path, body, options),
+        }),
+        createHeartbeatClient: () => ({
+          get: (path, params, options) => client.get(path, params, options),
+          post: async (path, body, options) => {
+            if (denyWrites) {
+              throw runHeartbeatAuthorityError();
+            }
+            return await client.post(path, body, options);
+          },
+          put: (path, body, options) => client.put(path, body, options),
+        }),
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    denyWrites = true;
+    assertExists(session.afterPauseAcknowledged);
+    await session.afterPauseAcknowledged();
+    await pauseDone.promise;
+    assertEquals(receipts[1]!.phase, "stale-after-pause");
+
+    assertEquals(client.writes.length, 1);
+    assertEquals(receipts[0]!.sourcePath, receipts[1]!.sourcePath);
+    assertEquals(receipts[1]!.status, "ok");
+    assertEquals(receipts[1]!.reason, "stale-current-surfaces-preserved");
+    assertEquals(receipts[1]!.afterHash, receipts[0]!.afterHash);
+    assertEquals(receipts[1]!.versionHash, receipts[0]!.versionHash);
+  });
+
   it("isolates concurrent probe verification files by admitted canonical run", async () => {
     const firstReceipts: RuntimeOwnershipProbeReceipt[] = [];
     const secondReceipts: RuntimeOwnershipProbeReceipt[] = [];
@@ -449,11 +703,11 @@ describe("project-run runtime ownership probe", () => {
     const controlledClient: RuntimeOwnershipProbeApiClient = {
       get: (path, params, options) => client.get(path, params, options),
       post: async (path, body, options) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) throw runEventsAuthorityError();
         return await client.post(path, body, options);
       },
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) throw canonicalSourceAuthorityError();
         return await client.put<T>(path, body, options);
       },
     };
@@ -467,7 +721,9 @@ describe("project-run runtime ownership probe", () => {
         createHeartbeatClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            if (denyWrites) {
+              throw runHeartbeatAuthorityError();
+            }
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -516,11 +772,15 @@ describe("project-run runtime ownership probe", () => {
     const staleClient: RuntimeOwnershipProbeApiClient = {
       get: (path, params, options) => client.get(path, params, options),
       post: async (path, body, options) => {
-        if (stale) throw new NativeError("Veryfront API request failed: 409 Conflict");
+        if (stale) {
+          throw isRunHeartbeatsPath(path)
+            ? runHeartbeatAuthorityError()
+            : runEventsAuthorityError();
+        }
         return await client.post(path, body, options);
       },
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (stale) throw new NativeError("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put<T>(path, body, options);
       },
     };
@@ -558,7 +818,7 @@ describe("project-run runtime ownership probe", () => {
       get: (path, params, options) => currentClient.get(path, params, options),
       post: (path, body, options) => currentClient.post(path, body, options),
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     };
     const staleReadbackClient: RuntimeOwnershipProbeApiClient = {
@@ -665,6 +925,36 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(receipts[1]!.reason, "stale-write-failed-without-authorization-rejection");
   });
 
+  it("does not treat generic authorization stale write failures as denial proof", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const currentClient = new RecordingClient();
+    const staleClient: RuntimeOwnershipProbeApiClient = {
+      get: (path, params, options) => currentClient.get(path, params, options),
+      post: (path, body, options) => currentClient.post(path, body, options),
+      put: async () => {
+        throw new NativeError("Veryfront API request failed: 403 Forbidden");
+      },
+    };
+    let stale = false;
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(currentClient),
+        createCanonicalClient: () => stale ? staleClient : currentClient,
+        createReadbackClient: () => currentClient,
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    stale = true;
+    await session.afterStopAcknowledged();
+
+    assertEquals(receipts[1]!.status, "error");
+    assertEquals(receipts[1]!.reason, "stale-write-failed-without-authorization-rejection");
+  });
+
   it("does not report stale denial proof when readback is unavailable", async () => {
     const receipts: RuntimeOwnershipProbeReceipt[] = [];
     const currentClient = new RecordingClient();
@@ -673,7 +963,7 @@ describe("project-run runtime ownership probe", () => {
         throw new Error("Veryfront API request failed: 500 Internal Server Error");
       },
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     };
     let stale = false;
@@ -1196,7 +1486,7 @@ describe("project-run runtime ownership probe", () => {
     const client = boundaryRecordingClient();
     const rejectingCanonicalClient = createReadbackClient(client, {
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     });
     const session = createProjectRunRuntimeOwnershipProbe(
@@ -1225,7 +1515,7 @@ describe("project-run runtime ownership probe", () => {
     let stale = false;
     const canonicalClient = createReadbackClient(client, {
       put: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put(path, body, options);
       },
     });
@@ -1256,13 +1546,15 @@ describe("project-run runtime ownership probe", () => {
     let stale = false;
     const canonicalClient = createReadbackClient(client, {
       put: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put(path, body, options);
       },
     });
     const eventClient = createEventAppendClient(client, {
       post: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 409 Conflict");
+        if (stale) {
+          throw runEventsAuthorityError();
+        }
         return await client.post(path, body, options);
       },
     });
@@ -1366,4 +1658,142 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(firstContent === freshContent, false);
     assertEquals(firstEventKind === freshEventKind, false);
   });
+});
+
+describe("stale API problem classification through bounded response bodies", () => {
+  for (const surface of ["events", "heartbeats"] as const) {
+    for (
+      const scenario of [
+        "authority",
+        "unrelated",
+        "generic",
+        "wrong-slug",
+        "oversized",
+        "invalid",
+        "mutated-builtins",
+        "mutated-species",
+      ] as const
+    ) {
+      it(`${surface}: ${scenario} conflict cannot substitute generic status for authority`, async () => {
+        const receipts: RuntimeOwnershipProbeReceipt[] = [];
+        const client = new RecordingClient();
+        let stale = false;
+        const problem = {
+          status: 409,
+          slug: scenario === "wrong-slug" ? "concurrency-error" : "state-conflict",
+          detail: (scenario === "unrelated" || scenario === "mutated-builtins" ||
+              scenario === "mutated-species")
+            ? "An event idempotency key conflicts with existing data"
+            : surface === "events"
+            ? "Streamed run appends require the current signed executor generation"
+            : "This execution generation is no longer current; stop execution",
+        };
+        const response = () =>
+          new Response(
+            scenario === "invalid"
+              ? "not JSON"
+              : scenario === "oversized"
+              ? " ".repeat(16_385) + JSON.stringify(problem)
+              : JSON.stringify(problem),
+            { status: 409 },
+          );
+        const denying: RuntimeOwnershipProbeApiClient = {
+          get: (path, params, options) => client.get(path, params, options),
+          put: (path, body, options) =>
+            stale
+              ? Promise.reject(canonicalSourceAuthorityError())
+              : client.put(path, body, options),
+          post: (path, body, options) => client.post(path, body, options),
+        };
+        const surfaceClient = (kind: "events" | "heartbeats"): RuntimeOwnershipProbeApiClient => ({
+          ...denying,
+          post: async (path, body, options) => {
+            if (!stale) return await client.post(path, body, options);
+            if (kind !== surface) {
+              throw kind === "events" ? runEventsAuthorityError() : runHeartbeatAuthorityError();
+            }
+            const error = new NativeError("Veryfront API request failed: 409 Conflict");
+            if (scenario === "mutated-species") {
+              const actualResponse = response();
+              const forgedBytes = new TextEncoder().encode(
+                JSON.stringify({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                }),
+              );
+              const originalSpecies = Object.getOwnPropertyDescriptor(Uint8Array, Symbol.species);
+              Object.defineProperty(Uint8Array, Symbol.species, {
+                configurable: true,
+                value: function () {
+                  return forgedBytes;
+                },
+              });
+              try {
+                throw await classifyRuntimeOwnershipProbeApiResponse(
+                  actualResponse,
+                  error,
+                  surface === "events" ? "run-events" : "run-heartbeat",
+                );
+              } finally {
+                if (originalSpecies) {
+                  Object.defineProperty(Uint8Array, Symbol.species, originalSpecies);
+                } else Reflect.deleteProperty(Uint8Array, Symbol.species);
+              }
+            }
+            if (scenario === "mutated-builtins") {
+              const actualResponse = response();
+              const originalParse = JSON.parse;
+              const originalHas = WeakSet.prototype.has;
+              try {
+                JSON.parse = () => ({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                });
+                WeakSet.prototype.has = () => true;
+                throw await classifyRuntimeOwnershipProbeApiResponse(
+                  actualResponse,
+                  error,
+                  surface === "events" ? "run-events" : "run-heartbeat",
+                );
+              } finally {
+                JSON.parse = originalParse;
+                WeakSet.prototype.has = originalHas;
+              }
+            }
+            throw scenario === "generic" ? error : await classifyRuntimeOwnershipProbeApiResponse(
+              response(),
+              error,
+              surface === "events" ? "run-events" : "run-heartbeat",
+            );
+          },
+        });
+        const session = createProjectRunRuntimeOwnershipProbe(
+          activation,
+          (receipt) => receipts.push(receipt),
+        )
+          .createSession({
+            ...baseSessionInput(denying),
+            createEventAppendClient: () => surfaceClient("events"),
+            createHeartbeatClient: () => surfaceClient("heartbeats"),
+          });
+        assertExists(session);
+        await session.beforeExecute();
+        stale = true;
+        await session.afterStopAcknowledged();
+        assertEquals(receipts[0]!.status, "ok");
+        assertEquals(receipts[1]!.status, scenario === "authority" ? "ok" : "error");
+        if (scenario !== "authority") {
+          assertEquals(
+            receipts[1]!.reason,
+            surface === "events"
+              ? "stale-event-append-failed-without-expected-rejection"
+              : "stale-heartbeat-failed-without-expected-rejection",
+          );
+        }
+        assertEquals(JSON.stringify(receipts).includes(problem.detail), false);
+      });
+    }
+  }
 });

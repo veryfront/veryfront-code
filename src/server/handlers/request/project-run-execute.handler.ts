@@ -1,3 +1,6 @@
+import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.ts";
+import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
+import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createTaskChildRunner } from "./task-child.ts";
@@ -182,8 +185,10 @@ import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import {
+  classifyRuntimeOwnershipProbeApiResponse,
   createProjectRunRuntimeOwnershipProbeFromHostEnv,
   type RuntimeOwnershipProbe,
+  type RuntimeOwnershipProbeAuthoritySurface,
 } from "./project-run-runtime-ownership-probe.ts";
 
 const TaskDate = Date;
@@ -425,6 +430,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  eventToken?: string;
   content?: string;
   signal?: AbortSignal;
 }
@@ -2359,6 +2365,11 @@ async function destroyWorkflowClient(
 }
 
 interface RuntimeApiClient {
+  postRaw<T>(
+    path: string,
+    body: string,
+    options?: { signal?: AbortSignal; idempotencyKey?: string },
+  ): Promise<T>;
   getStream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
   get<T>(
     path: string,
@@ -3212,6 +3223,7 @@ function createRunPauseAcknowledger(
   req: Request,
   runId: string,
   sleep: (ms: number) => Promise<void>,
+  afterPauseAcknowledged?: () => Promise<void>,
 ): ((decisionStopped?: AbortSignal) => Promise<boolean | undefined>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
@@ -3271,6 +3283,15 @@ function createRunPauseAcknowledger(
             status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
             typeof body.stop === "boolean"
           ) {
+            // Only the actual successful server acknowledgement may trigger the probe.
+            // Conservative stop decisions after rejection or cancellation are not pause evidence.
+            if (body.stop) {
+              try {
+                await afterPauseAcknowledged?.();
+              } catch {
+                // Diagnostic probe failures must not change the server acknowledgement decision.
+              }
+            }
             return body.stop;
           }
         }
@@ -3693,11 +3714,6 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-const CanonicalKnowledgeSourcePath = /^\/projects\/[^/]+\/files\/knowledge%2[fF][^?]+(?:\?[^#]*)?$/;
-const CanonicalKnowledgeIndexPath =
-  /^\/projects\/[^/]+\/branches\/[^/]+\/files\/knowledge%2[fF][^/]+\/index$/;
-const RuntimeRegExpExec = RegExp.prototype.exec;
-
 function requireCanonicalWriterHttps(apiUrl: string): string {
   const scheme = ReflectApply(StringPrototypeSlice, apiUrl, [0, 8]) as string;
   if (ReflectApply(StringPrototypeToLowerCase, scheme, []) !== "https://") {
@@ -3713,6 +3729,8 @@ function createRuntimeApiClient(
   canonicalWriterAuthority = false,
   retainedWriterToken?: string,
   retainedBearerToken?: string,
+  retainedChildWriterAuthority = false,
+  authoritySurface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): RuntimeApiClient {
   // A client that may carry the current-attempt writer credential uses the
   // host-owned HTTPS origin; project env files cannot select it, and a
@@ -3739,16 +3757,15 @@ function createRuntimeApiClient(
     body?: unknown,
     params?: Record<string, string>,
     signal: AbortSignal | undefined = defaultSignal,
+    retainedWireBody?: string,
+    retainedIdempotencyKey?: string,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
       url.searchParams.set(key, value);
     }
 
-    const canonicalMutation = (method === "PUT" &&
-      ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeSourcePath, [path]) !== null) ||
-      (method === "POST" &&
-        ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeIndexPath, [path]) !== null);
+    const canonicalMutation = isRuntimeFileMutationRequest(method, path);
     const response = await send(
       url.toString(),
       createNativeRequestInit(undefined, {
@@ -3757,27 +3774,50 @@ function createRuntimeApiClient(
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(writerToken && canonicalMutation
+          ...(retainedIdempotencyKey ? { "Idempotency-Key": retainedIdempotencyKey } : {}),
+          ...(writerToken &&
+              (canonicalMutation ||
+                (retainedChildWriterAuthority && method === "POST" && path === "/runs"))
             ? { "X-Veryfront-Run-Event-Token": writerToken }
             : {}),
         },
-        body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
+        body: retainedWireBody ??
+          (body === undefined ? undefined : capturedArtifactJsonStringify(body)),
         signal,
       }),
     );
 
-    if (!response.ok) {
-      throw API_CLIENT_ERROR.create({
-        detail: `Veryfront API request failed: ${response.status} ${response.statusText}`,
+    if (!ReflectApply(ResponseOkGetter, response, [])) {
+      const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+      const error = API_CLIENT_ERROR.create({
+        detail: `Veryfront API request failed: ${status} ${response.statusText}`,
       });
+      throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }
 
-    if (response.status === 204) return undefined as T;
+    if (ReflectApply(ResponseStatusGetter, response, []) === 204) return undefined as T;
 
-    return response.json() as Promise<T>;
+    // Project code shares this process and can replace Response.prototype.json; probe
+    // readbacks and other API results are parsed with the reader captured at load.
+    return await ReflectApply(ResponsePrototypeJson, response, []) as T;
   }
 
   return {
+    postRaw<T>(
+      path: string,
+      body: string,
+      options?: { signal?: AbortSignal; idempotencyKey?: string },
+    ): Promise<T> {
+      return requestJson<T>(
+        "POST",
+        path,
+        undefined,
+        undefined,
+        options?.signal,
+        body,
+        options?.idempotencyKey,
+      );
+    },
     async getStream(
       path: string,
       options?: { signal?: AbortSignal },
@@ -3838,7 +3878,13 @@ function createRuntimeApiClient(
 export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(
+    input.req,
+    input.ctx,
+    input.signal,
+    input.eventToken !== undefined,
+    input.eventToken,
+  );
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
   const response = await client.put<{ path?: string }>(
@@ -4578,6 +4624,7 @@ async function executeEvalRun(
     signal?: AbortSignal;
     summaryOnly?: boolean;
     progressLogs?: string[];
+    eventToken?: string;
   } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -4668,6 +4715,7 @@ async function executeEvalRun(
       report,
       projectReference,
       reportPath: requestedReportPath,
+      eventToken: options.eventToken,
       content: reportContent,
       signal: options.signal,
     });
@@ -4706,6 +4754,7 @@ async function executeEvalTaskRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
+  retainedEventToken?: string,
 ): Promise<ProjectRunExecuteResponse> {
   const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
   if (!evalId) {
@@ -4732,6 +4781,7 @@ async function executeEvalTaskRun(
             signal: taskContext.signal ?? taskSignal,
             summaryOnly: true,
             progressLogs,
+            eventToken: retainedEventToken,
           }),
       },
     },
@@ -5368,7 +5418,15 @@ async function executeProjectRun(
           const execute = async (): Promise<ProjectRunExecuteResponse> => {
             switch (request.target) {
               case "task:eval":
-                return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+                return await executeEvalTaskRun(
+                  request,
+                  ctx,
+                  req,
+                  req.signal,
+                  deps,
+                  control,
+                  retainedEventToken,
+                );
               case "task:knowledge-ingest":
                 return await deps.executeKnowledgeIngest({
                   request,
@@ -5541,23 +5599,118 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         const runtimeOwnershipProbeSession = runtimeOwnershipCanonicalBranchId === null
           ? undefined
           : runtimeOwnershipProbe?.createSession({
-            request,
+            request: { ...request, resumedManually: request.resume?.type === "manual" },
             ctx,
             nowMs: hostObservedAt,
             readNowMs: () => this.taskDeadlineClock.now(),
             retainedEventToken: runtimeOwnershipEventAuthorityCanonicalRunId !== undefined,
             eventAuthorityCanonicalRunId: runtimeOwnershipEventAuthorityCanonicalRunId,
+            authorityAttemptId: runtimeOwnershipEventAuthorityCanonicalRunId === undefined ||
+                eventToken === undefined
+              ? undefined
+              : readProjectExecutionParent(eventToken, request.runId, request.projectId).attemptId,
             canonicalBranchId: runtimeOwnershipCanonicalBranchId,
             createCanonicalClient: (signal) =>
-              createRuntimeApiClient(req, ctx, signal, true, eventToken),
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                eventToken,
+                undefined,
+                false,
+                "canonical-source",
+              ),
+            ...(request.kind !== "task" || request.canonicalRunId === undefined ? {} : {
+              childProbe: createRuntimeOwnershipChildProbe({
+                projectId: request.projectId,
+                canonicalRunId: request.canonicalRunId,
+                targetTaskId: "ce-runtime-proof-task",
+                createWriter: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    true,
+                    "child-admission",
+                  ),
+                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
+                createEvents: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    undefined,
+                    eventToken,
+                    false,
+                    "run-events",
+                  ),
+              }),
+            }),
+            ...(inferenceToken === undefined ? {} : {
+              indexProbe: createRuntimeOwnershipIndexProbe({
+                projectId: request.projectId,
+                branchId: runtimeOwnershipCanonicalBranchId,
+                createWriter: (signal) =>
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    false,
+                    "canonical-index",
+                  ),
+                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
+                embed: async (text, signal) => {
+                  const { createEmbeddingFacade } = await import(
+                    "#veryfront/embedding/embedding.ts"
+                  );
+                  const modelId = "veryfront-cloud/openai/text-embedding-3-small";
+                  const model = createProjectRunInferenceEmbeddingModel(modelId);
+                  if (!model) {
+                    throw new Error(
+                      "Runtime ownership indexing requires actual managed inference authority",
+                    );
+                  }
+                  return await runWithVeryfrontCloudContextAsync({
+                    projectSlug: ctx.projectSlug ?? request.projectId,
+                    serviceLayer: "cloud",
+                  }, () => createEmbeddingFacade({}, modelId, model).embed(text, { signal }));
+                },
+              }),
+            }),
             createReadbackClient: (signal) =>
               createRuntimeApiClient(req, ctx, signal, true, undefined),
             createEventAppendClient: (signal) =>
               eventToken === undefined
                 ? createRuntimeApiClient(req, ctx, signal, true, undefined)
-                : createRuntimeApiClient(req, ctx, signal, true, undefined, eventToken),
+                : createRuntimeApiClient(
+                  req,
+                  ctx,
+                  signal,
+                  true,
+                  undefined,
+                  eventToken,
+                  false,
+                  "run-events",
+                ),
             createHeartbeatClient: (signal) =>
-              createRuntimeApiClient(req, ctx, signal, true, undefined),
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                undefined,
+                undefined,
+                false,
+                "run-heartbeat",
+              ),
           });
         const callback = createRunStopAcknowledger(
           req,
@@ -5568,7 +5721,14 @@ export class ProjectRunExecuteHandler extends BaseHandler {
               primordialPromiseResolve(undefined),
         );
         const acknowledgePause = request.kind === "workflow"
-          ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
+          ? createRunPauseAcknowledger(
+            req,
+            request.runId,
+            this.deps.sleep,
+            () =>
+              runtimeOwnershipProbeSession?.afterPauseAcknowledged?.() ??
+                primordialPromiseResolve(undefined),
+          )
           : undefined;
         const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
         const settledStop = this.stopRegistry.register(request.runId, () => {
