@@ -250,38 +250,40 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.properties?.labelIds?.items, {});
   });
 
-  it("normalizes Moonshot tool schemas to use $defs references", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          acceptance_criteria: {
-            $ref: "#/definitions/acceptanceCriteria",
-          },
-        },
-        definitions: {
-          acceptanceCriteria: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                label: { type: "string" },
-              },
-              required: ["label"],
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`normalizes Moonshot tool schemas to use $defs references (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            acceptance_criteria: {
+              $ref: "#/definitions/acceptanceCriteria",
             },
           },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
-    const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
+          definitions: {
+            acceptanceCriteria: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                },
+                required: ["label"],
+              },
+            },
+          },
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+      const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
-    assertEquals(sanitizedRecord.definitions, undefined);
-    assertEquals(defs.acceptanceCriteria?.type, "array");
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+      assertEquals(sanitizedRecord.definitions, undefined);
+      assertEquals(defs.acceptanceCriteria?.type, "array");
+    });
+  }
 
   it("normalizes short Kimi aliases as Moonshot tool schemas", () => {
     const profile = getProviderToolProfile("kimi-k2.6");
@@ -312,36 +314,38 @@ describe("provider-tool-compat", () => {
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
 
-  it("inlines Moonshot tool refs that point outside $defs", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          expectations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                description: { type: "string" },
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`inlines Moonshot tool refs that point outside $defs (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            expectations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["id", "description"],
               },
-              required: ["id", "description"],
+            },
+            acceptance_criteria: {
+              $ref: "#/properties/expectations",
             },
           },
-          acceptance_criteria: {
-            $ref: "#/properties/expectations",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, undefined);
-    assertEquals(properties.acceptance_criteria?.type, "array");
-    assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, undefined);
+      assertEquals(properties.acceptance_criteria?.type, "array");
+      assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
+    });
+  }
 
   it("bounds Moonshot ref inlining for fan-out ref chains", () => {
     // 15 levels, not a deeper hostile case: without the budget this already expands to

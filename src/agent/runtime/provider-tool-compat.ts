@@ -100,6 +100,10 @@ export function getProviderToolProfile(
     if (wireSurface === "google") return { provider: "google", sanitizeSchema: true };
     if (wireSurface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
     if (wireSurface === "openai") {
+      // An OpenAI-compatible wire retains the backend's reference restrictions.
+      if (provider === "moonshot" || provider === "moonshotai") {
+        return { provider: "moonshot", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: true };
+      }
       return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
     }
   }

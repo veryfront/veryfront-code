@@ -509,6 +509,7 @@ describe("model-tool-converter", () => {
       },
     ] as never, {
       model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      wireSurface: "openai",
     });
 
     const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;
