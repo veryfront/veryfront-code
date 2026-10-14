@@ -41,7 +41,7 @@ Deno.test("applyContextBudget compacts a long active turn while preserving its e
   assertEquals(result.diagnostics.tokensAfter <= 9000, true);
   assertEquals(
     result.messages.some((entry) =>
-      entry.id === "request" && entry.parts[0]?.type === "text" &&
+      entry.id === "request" && isTextPart(entry.parts[0]) &&
       entry.parts[0].text === "Process ten fixture emails"
     ),
     true,
