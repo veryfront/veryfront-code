@@ -15,6 +15,30 @@ Veryfront Code is the Deno-first framework and runtime package for Veryfront. It
 - Do not rename, move, or refactor unrelated code.
 - Do not add dependencies unless the task explicitly requires them.
 
+## Code Review Rules
+
+- Review the complete branch diff against its base. Identify the changed invariants, then inspect
+  every affected caller and sibling path, including failure paths, cache readers/writers and
+  invalidation. Use `rg` to check coverage beyond the changed lines.
+- Before reporting a defect, check other occurrences of the same root cause. Group those
+  occurrences in one finding with the affected paths, a concrete trigger and consequence, and
+  regression evidence where available. Do not stop investigating after the first occurrence.
+- Distinguish actionable regressions and merge blockers from optional improvements. When revisiting
+  feedback, verify the fix across its affected paths; report a recurring defect only with concrete
+  evidence that it remains or a distinct path that the fix missed.
+
+## Fixing Review Findings
+
+- Diagnose the violated invariant before patching a reported line. Search all callers and sibling
+  paths and fix the same root cause throughout the affected area in one batch.
+- Add or update regression tests for the affected behavior, including existing callers and failure
+  paths. Demonstrate that a regression test fails without the fix and passes with it.
+- Keep pull requests draft while implementing a feedback batch. Complete the related fixes, run
+  the narrow affected checks through `vf-slot`, and satisfy the required local reviews before
+  pushing the batch and requesting the next GitHub review. Preserve all required review and CI gates.
+- If another review finds the same violated invariant on a sibling path, reassess its ownership
+  boundary and complete the caller sweep before requesting another review.
+
 ## Commands
 
 Use Deno commands from this repository root.
