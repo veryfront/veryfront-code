@@ -9,6 +9,7 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { dynamicTool, tool } from "./factory.ts";
+import { toolToProviderDefinition } from "./registry.ts";
 
 describe("tool factory", () => {
   describe("tool()", () => {
@@ -760,6 +761,46 @@ describe("tool factory", () => {
         Error,
         "input must be a non-null object",
       );
+    });
+  });
+
+  describe("discovery metadata", () => {
+    const discovery = {
+      version: 1 as const,
+      type: "integration" as const,
+      domain: "crm",
+      resource: "contact",
+    };
+
+    it("carries normalized discovery from tool() into the provider definition", () => {
+      const t = tool({
+        id: "find_contact",
+        description: "Find a contact",
+        discovery: { ...discovery, ignored: true } as typeof discovery,
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => "ok",
+      });
+      assertEquals({ ...t.discovery }, discovery);
+      assertEquals({ ...toolToProviderDefinition(t).discovery }, discovery);
+    });
+
+    it("carries discovery from dynamicTool() and drops invalid metadata", () => {
+      const t = dynamicTool({
+        id: "list_contacts",
+        description: "List contacts",
+        discovery,
+        inputSchema: { type: "object", properties: {} },
+        execute: () => [],
+      });
+      assertEquals({ ...t.discovery }, discovery);
+      const invalid = dynamicTool({
+        id: "bad",
+        description: "Bad",
+        discovery: { version: 2 } as never,
+        inputSchema: { type: "object", properties: {} },
+        execute: () => [],
+      });
+      assertEquals("discovery" in invalid, false);
     });
   });
 });

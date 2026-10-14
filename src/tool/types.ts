@@ -17,6 +17,9 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   /** Tool description for the AI model */
   description: string;
 
+  /** Catalog navigation hints for `tool_search`, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
+
   /**
    * Native integration tools this local wrapper may call through the platform.
    * Hosts use this metadata for connection binding and least-privilege runtime
