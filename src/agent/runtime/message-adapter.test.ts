@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { buildChildRunSuccessResult } from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type {
   ChatToolResultOutput,
@@ -1009,4 +1011,30 @@ Deno.test("child projection never mutates an inherited root suggestion", () => {
     if (previous) Object.defineProperty(Object.prototype, "rootResponseHint", previous);
     else Reflect.deleteProperty(Object.prototype, "rootResponseHint");
   }
+});
+
+Deno.test("successful local child summary replays once with root guidance retained", () => {
+  const summary = buildChildRunResultSummary("Let me inspect the receipt. Local result confirmed.");
+  const child = withRootOwnedChildResultHint(
+    buildChildRunSuccessResult({
+      description: "synthetic child",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 1,
+    }, summary),
+  );
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const projected = createToolResultPart({ toolName, toolCallId: "call", output }).output;
+      assertEquals<unknown>(projected, {
+        type: "json",
+        value: { ...child, rootResponseHint: { instruction: hint.instruction } },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
 });

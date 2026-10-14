@@ -18,6 +18,8 @@ import type {
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
+import { buildChildRunSuccessResult } from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
@@ -1659,4 +1661,37 @@ Deno.test("text-generation child projection is data-only and cycle bounded", () 
       assertEquals(reads, 0);
     }
   }
+});
+
+Deno.test("successful local child summary replays once with root guidance retained", () => {
+  const summary = buildChildRunResultSummary("Let me inspect the receipt. Local result confirmed.");
+  const child = withRootOwnedChildResultHint(
+    buildChildRunSuccessResult({
+      description: "synthetic child",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 1,
+    }, summary),
+  );
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const converted = convertToTextGenerationRuntimeMessages([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result: output }],
+        } as Message,
+      ]);
+      const projected = (converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output;
+      assertEquals(projected, {
+        type: "json",
+        value: { ...child, rootResponseHint: { instruction: hint.instruction } },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
 });

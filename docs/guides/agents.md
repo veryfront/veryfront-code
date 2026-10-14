@@ -213,7 +213,8 @@ JSON-encoded persisted child results. A completed child with accepted structured
 prose stays in durable history, so intermediate trace descriptions cannot
 conflict with the accepted result. Completed child results keep root response
 hint instructions and metadata while omitting their suggested prose when accepted
-output or child response text is present. Failed children retain diagnostic prose.
+output or child response text is present. Successful local child summaries use
+the same hint cleanup. Failed children retain diagnostic prose.
 Distinct textual summaries and outputs retain their existing behavior.
 Result references limit inline payloads, not child generation or the total
 conversation size; reading every section can still grow model context.

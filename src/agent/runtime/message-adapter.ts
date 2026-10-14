@@ -476,20 +476,24 @@ function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
     getOptionalStringField(part, "tool_call_id");
 }
 
-function hasCompletedChildResult(value: unknown): value is Record<string, unknown> {
+function hasCompletedChildResult(value: unknown): boolean {
   return isRecord(value) && hasOwn(value, "ok") && value.ok === true &&
     hasOwn(value, "status") && value.status === "completed" &&
     hasOwn(value, "childRunId") && typeof value.childRunId === "string";
 }
 
 function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
-  return hasCompletedChildResult(value) && hasOwn(value, "output") &&
+  return isRecord(value) && hasCompletedChildResult(value) && hasOwn(value, "output") &&
     value.output !== null && typeof value.output === "object";
 }
 
-function hasCompletedChildResultText(value: unknown): value is Record<string, unknown> {
-  return hasCompletedChildResult(value) &&
-    ((hasOwn(value, "text") && typeof value.text === "string" && value.text.length > 0) ||
+function hasAcceptedChildResultText(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) &&
+    (hasCompletedChildResult(value) ||
+      (hasOwn(value, "success") && value.success === true &&
+        !hasOwn(value, "ok") && !hasOwn(value, "status"))) &&
+    ((hasCompletedChildResult(value) && hasOwn(value, "text") &&
+      typeof value.text === "string" && value.text.length > 0) ||
       (hasOwn(value, "summary") && isRecord(value.summary) &&
         hasOwn(value.summary, "text") && typeof value.summary.text === "string" &&
         value.summary.text.length > 0));
@@ -523,7 +527,7 @@ export function createProviderToolResultOutput(part: {
     }
     if (
       hasCompletedStructuredChildOutput(candidate) ||
-      (hasCompletedChildResultText(candidate) && hasOwn(candidate, "rootResponseHint") &&
+      (hasAcceptedChildResultText(candidate) && hasOwn(candidate, "rootResponseHint") &&
         isRecord(candidate.rootResponseHint)) ||
       (isRecord(candidate) && hasOwn(candidate, "childRunId") &&
         typeof candidate.childRunId === "string" && hasOwn(candidate, "text") &&
@@ -539,7 +543,7 @@ export function createProviderToolResultOutput(part: {
   // but do not replay its additional copy beside the accepted child result.
   if (
     isChildResult &&
-    (hasCompletedStructuredChildOutput(value) || hasCompletedChildResultText(value)) &&
+    (hasCompletedStructuredChildOutput(value) || hasAcceptedChildResultText(value)) &&
     hasOwn(value, "rootResponseHint") && isRecord(value.rootResponseHint)
   ) {
     delete value.rootResponseHint.suggestedText;
