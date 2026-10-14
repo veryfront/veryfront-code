@@ -703,11 +703,64 @@ function mergeAnthropicObjectSchemas(
   };
 }
 
+/** Shared allowance for root composition normalization across one tool set. */
+export interface RootSchemaExpansionBudget {
+  remainingNodes: number;
+  remainingBytes: number;
+}
+
+/** Bound total root normalization work across one conversion pass. */
+export function createRootSchemaExpansionBudget(): RootSchemaExpansionBudget {
+  return { remainingNodes: 200_000, remainingBytes: 8 * 1024 * 1024 };
+}
+
+interface RootNormalizationBudget extends RootSchemaExpansionBudget {
+  shared: RootSchemaExpansionBudget;
+}
+
+function createRootNormalizationBudget(shared: RootSchemaExpansionBudget): RootNormalizationBudget {
+  return { remainingNodes: 20_000, remainingBytes: 512 * 1024, shared };
+}
+
+function chargeRootNormalization(
+  value: unknown,
+  budget: RootNormalizationBudget,
+  depth: number,
+): void {
+  const pending = [{ value, depth }];
+  while (pending.length) {
+    const current = pending.pop()!;
+    const bytes = estimateSerializedNodeBytes(current.value);
+    budget.remainingNodes--;
+    budget.remainingBytes -= bytes;
+    budget.shared.remainingNodes--;
+    budget.shared.remainingBytes -= bytes;
+    if (
+      current.depth > 64 || budget.remainingNodes < 0 || budget.remainingBytes < 0 ||
+      budget.shared.remainingNodes < 0 || budget.shared.remainingBytes < 0
+    ) {
+      throw new TypeError("Tool schema root normalization budget exceeded");
+    }
+    if (current.value !== null && typeof current.value === "object") {
+      for (const key of Object.keys(current.value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(current.value, key);
+        if (!descriptor || !("value" in descriptor)) {
+          throw new TypeError("Tool schema root normalization requires data properties");
+        }
+        pending.push({ value: descriptor.value, depth: current.depth + 1 });
+      }
+    }
+  }
+}
+
 function sanitizeAnthropicSchemaRoot(
   schema: unknown,
   rootSchema: unknown = schema,
   seenRefs: ReadonlySet<string> = new Set(),
+  budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
+  depth = 0,
 ): Record<string, unknown> {
+  chargeRootNormalization(schema, budget, depth);
   if (!isPlainRecord(schema)) {
     return createPermissiveToolInputSchema();
   }
@@ -722,6 +775,8 @@ function sanitizeAnthropicSchemaRoot(
         { ...resolved, ...siblings },
         rootSchema,
         nextSeenRefs,
+        budget,
+        depth + 1,
       );
     }
   }
@@ -743,15 +798,17 @@ function sanitizeAnthropicSchemaRoot(
   ) {
     if (!Array.isArray(rawBranches) || rawBranches.length === 0) continue;
     const branches = rawBranches.map((branch) =>
-      sanitizeAnthropicSchemaRoot(branch, rootSchema, seenRefs)
+      sanitizeAnthropicSchemaRoot(branch, rootSchema, seenRefs, budget, depth + 1)
     );
     const composed = mergeAnthropicObjectSchemas(branches, keyword);
+    chargeRootNormalization(composed, budget, depth);
     sanitized = {
       ...sanitized,
       ...mergeAnthropicObjectSchemas([sanitized, composed], "allOf"),
     };
   }
 
+  chargeRootNormalization(sanitized, budget, depth);
   return sanitized;
 }
 
@@ -764,15 +821,27 @@ const OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS = ["allOf", "anyOf", "oneOf", "not", "
  * drop root `not` and `enum`. Nested schemas are left as they are, and a
  * schema without these root keywords is returned by identity.
  */
-function sanitizeOpenAISchemaRoot(schema: JsonSchema): JsonSchema {
+function sanitizeOpenAISchemaRoot(
+  schema: JsonSchema,
+  shared: RootSchemaExpansionBudget,
+): JsonSchema {
   if (
     !isPlainRecord(schema) ||
     !OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS.some((key) => Object.hasOwn(schema, key))
   ) {
     return schema;
   }
+  const budget = createRootNormalizationBudget(shared);
+  chargeRootNormalization(schema, budget, 0);
   const { not: _not, enum: _enum, ...root } = schema;
-  return sanitizeAnthropicSchemaRoot(root) as JsonSchema;
+  const normalized = sanitizeAnthropicSchemaRoot(
+    root,
+    root,
+    new Set(),
+    budget,
+  );
+  const { not: _resolvedNot, enum: _resolvedEnum, ...normalizedRoot } = normalized;
+  return normalizedRoot as JsonSchema;
 }
 
 /**
@@ -804,6 +873,8 @@ export interface SanitizeProviderToolSchemaOptions
    * is bounded for the collection, not merely per schema.
    */
   moonshotExpansionBudget?: MoonshotSchemaExpansionBudget;
+  /** Shared root composition allowance for the complete tool set. */
+  rootExpansionBudget?: RootSchemaExpansionBudget;
 }
 
 /** Zod schema for sanitize provider tool. */
@@ -813,7 +884,12 @@ export function sanitizeProviderToolSchema(
 ): JsonSchema {
   const profile = getProviderToolProfile(options.model, options.wireSurface);
   // OpenAI keeps its property keys as authored; only the root shape is fixed.
-  if (profile.provider === "openai") return sanitizeOpenAISchemaRoot(schema);
+  if (profile.provider === "openai") {
+    return sanitizeOpenAISchemaRoot(
+      schema,
+      options.rootExpansionBudget ?? createRootSchemaExpansionBudget(),
+    );
+  }
   if (!profile.sanitizeSchema) return schema;
 
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
@@ -836,7 +912,14 @@ export function sanitizeProviderToolSchema(
   }
 
   if (profile.provider === "anthropic") {
-    return sanitizeAnthropicSchemaRoot(propertyKeySafeSchema) as JsonSchema;
+    return sanitizeAnthropicSchemaRoot(
+      propertyKeySafeSchema,
+      propertyKeySafeSchema,
+      new Set(),
+      createRootNormalizationBudget(
+        options.rootExpansionBudget ?? createRootSchemaExpansionBudget(),
+      ),
+    ) as JsonSchema;
   }
 
   return propertyKeySafeSchema as JsonSchema;

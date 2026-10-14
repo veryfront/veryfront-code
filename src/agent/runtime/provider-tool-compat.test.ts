@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -7,6 +7,7 @@ import {
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   createMoonshotSchemaExpansionBudget,
+  createRootSchemaExpansionBudget,
   getProviderToolProfile,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
@@ -122,6 +123,93 @@ describe("provider-tool-compat", () => {
     );
   });
 
+  it("bounds fan-out references while folding OpenAI roots", () => {
+    const defs: Record<string, unknown> = {
+      level14: { type: "object", properties: { value: { type: "string" } } },
+    };
+    for (let index = 13; index >= 0; index--) {
+      defs[`level${index}`] = {
+        allOf: [{ $ref: `#/$defs/level${index + 1}` }, { $ref: `#/$defs/level${index + 1}` }],
+      };
+    }
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
+          { model: "openai/gpt-5.4" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("bounds reference depth while folding OpenAI roots", () => {
+    const defs: Record<string, unknown> = {
+      level80: { type: "object", properties: { value: { type: "string" } } },
+    };
+    for (let index = 79; index >= 0; index--) {
+      defs[`level${index}`] = { $ref: `#/$defs/level${index + 1}` };
+    }
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
+          { model: "openai/gpt-5.4" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("bounds encoded bytes while folding OpenAI roots", () => {
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          {
+            type: "object",
+            description: "\u0000".repeat(90_000),
+            allOf: [{ type: "object" }],
+          } as never,
+          { model: "openai/gpt-5.4" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("shares the root expansion allowance across a tool collection", () => {
+    const budget = createRootSchemaExpansionBudget();
+    budget.remainingNodes = 100;
+    const schema = {
+      type: "object",
+      allOf: [{ properties: { value: { type: "string" } } }],
+    } as never;
+    const options = { model: "openai/gpt-5.4", rootExpansionBudget: budget };
+    assertEquals(sanitizeProviderToolSchema(schema, options).type, "object");
+    assertThrows(
+      () => {
+        for (let index = 0; index < 100; index++) sanitizeProviderToolSchema(schema, options);
+      },
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("removes unsupported root keywords restored by a reference", () => {
+    const schema = {
+      type: "object",
+      $ref: "#/$defs/input",
+      allOf: [],
+      $defs: {
+        input: {
+          type: "object",
+          enum: [{ mode: "a" }],
+          not: { required: ["legacy"] },
+          properties: { mode: { type: "string", enum: ["a", "b"] } },
+        },
+      },
+    } as never;
+    const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
+    assertEquals(Object.hasOwn(result, "not"), false);
+    assertEquals(Object.hasOwn(result, "enum"), false);
+    assertEquals(result.properties?.mode, { type: "string", enum: ["a", "b"] });
+  });
   it("folds root combinators out of OpenAI tool schemas", () => {
     const nested = {
       anyOf: [{ type: "string" }, { type: "object", properties: { text: { type: "string" } } }],
