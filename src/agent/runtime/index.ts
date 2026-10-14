@@ -2047,6 +2047,12 @@ function withToolResultReaderTool(
   return visible;
 }
 
+// Reserve the reader's slot whenever references can be created: a result
+// produced later in the step still makes the reader required at conversion.
+function getToolResultReaderReservedSlots(context: ToolResultContext | undefined): number {
+  return context === undefined ? 0 : 1;
+}
+
 function getRequiredToolResultReaderNames(exposeReader: boolean): readonly string[] | undefined {
   return exposeReader ? [GET_TOOL_RESULT_TOOL_NAME] : undefined;
 }
@@ -3943,6 +3949,7 @@ export class AgentRuntime {
           config: runtimeStepConfig,
           effectiveModel,
           wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+          reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -5015,6 +5022,7 @@ export class AgentRuntime {
         config: runtimeStepConfig,
         effectiveModel,
         wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
+        reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES

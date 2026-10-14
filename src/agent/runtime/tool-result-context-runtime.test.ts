@@ -458,6 +458,45 @@ describe("agent runtime tool result context integration", () => {
     });
   });
 
+  it("reserves the reader's slot so deferred loading keeps tool_search under the 128-tool cap", async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
+      (options) => {
+        const names = toolNamesFromCall(options);
+        assertEquals(names.length <= 128, true);
+        assertEquals(names.includes("get_tool_result"), true);
+        assertEquals(names.includes("tool_search"), true);
+        return { text: "done" };
+      },
+    ], {
+      modelId: "openai/tool-result-context-deferred-cap",
+      provider: "openai",
+      only: "generate",
+    });
+    const noopTools = cappedNoopTools(140);
+
+    const assistant = agent(
+      {
+        model: "openai/tool-result-context-deferred-cap",
+        system: "Use tools.",
+        skills: [],
+        tools: { ...noopTools, list_records: listRecordsTool(HUGE_EMAIL_RESULT) },
+        toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
+        maxSteps: 3,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+        __vfToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: [...Object.keys(noopTools), "list_records"],
+        },
+      } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+    );
+
+    const response = await assistant.generate({ input: "List records." });
+
+    assertEquals(response.text, "done");
+  });
+
   it("preserves default inline behavior unless toolResultContext is enabled", async () => {
     const model = scriptedModel([
       { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },

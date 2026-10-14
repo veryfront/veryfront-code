@@ -111,6 +111,11 @@ export interface PrepareAgentRuntimeStepInput {
   effectiveModel?: string;
   /** The authenticated gateway model's resolved wire surface, when available. */
   wireSurface?: VeryfrontCloudSurfaceId;
+  /**
+   * Schemas the runtime appends after planning (such as the tool-result
+   * reader). The plan leaves this many slots under the provider tool limit.
+   */
+  reservedToolSlots?: number;
   modelRuntime?: ModelRuntime;
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
@@ -240,6 +245,16 @@ function getTrustedAllowedSkillIds(
 }
 
 /** Resolve per-step runtime state and the tools visible for that step. */
+function reserveToolSlots(
+  maxTools: number | undefined,
+  reservedToolSlots: number | undefined,
+): number | undefined {
+  if (maxTools === undefined || reservedToolSlots === undefined || reservedToolSlots <= 0) {
+    return maxTools;
+  }
+  return Math.max(0, maxTools - reservedToolSlots);
+}
+
 export async function prepareAgentRuntimeStep(
   input: PrepareAgentRuntimeStepInput,
 ): Promise<PreparedAgentRuntimeStep> {
@@ -371,10 +386,11 @@ export async function prepareAgentRuntimeStep(
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
     bootstrapToolNames,
-    maxVisibleTools: getProviderToolProfile(
-      input.effectiveModel ?? input.config.model,
-      input.wireSurface,
-    ).maxTools,
+    maxVisibleTools: reserveToolSlots(
+      getProviderToolProfile(input.effectiveModel ?? input.config.model, input.wireSurface)
+        .maxTools,
+      input.reservedToolSlots,
+    ),
   });
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
   const instructionsWithToolInventory = hasRuntimeToolInventory(baseSystemPrompt)
