@@ -850,6 +850,13 @@ function normalizeObjectSchemaRoot(
     };
   }
 
+  // `#/$defs/<name>` resolves against the document root, never a branch, so a
+  // branch definition reusing a root name must not replace the root binding.
+  for (const key of ["$defs", "definitions"] as const) {
+    if (!isPlainRecord(root[key])) continue;
+    sanitized[key] = { ...(isPlainRecord(sanitized[key]) ? sanitized[key] : {}), ...root[key] };
+  }
+
   return sanitized;
 }
 
@@ -862,32 +869,61 @@ const OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS = ["allOf", "anyOf", "oneOf", "not", "
  * drop root `not` and `enum`. Nested schemas are left as they are, and a
  * schema without these root keywords is returned by identity.
  */
+// Keywords whose values are instance data, not schemas, so `$ref` keys inside
+// them are literal object keys.
+const LITERAL_SCHEMA_KEYWORDS = new Set(["const", "default", "enum", "examples"]);
+// Keywords whose values map names to schemas, so their keys are never keywords.
+const SCHEMA_MAP_KEYWORDS = new Set([
+  "$defs",
+  "definitions",
+  "dependencies",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+]);
+
+function isRemovedRootReference(ref: string): boolean {
+  // A bare `#` names the authored root, which folding replaces.
+  if (ref === "#") return true;
+  const token = ref.startsWith("#/") ? ref.slice(2).split("/")[0] : undefined;
+  return token !== undefined &&
+    (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
+}
+
 function hasRemovedRootReference(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasRemovedRootReference);
   if (!isPlainRecord(value)) return false;
-  if (typeof value.$ref === "string") {
-    // A bare `#` names the authored root, which folding replaces.
-    if (value.$ref === "#") return true;
-    const token = value.$ref.startsWith("#/") ? value.$ref.slice(2).split("/")[0] : undefined;
-    if (token && (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token)) {
-      return true;
+  return Object.entries(value).some(([key, item]) => {
+    if (key === "$ref" && typeof item === "string") return isRemovedRootReference(item);
+    if (LITERAL_SCHEMA_KEYWORDS.has(key)) return false;
+    if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainRecord(item)) {
+      return Object.values(item).some(hasRemovedRootReference);
     }
-  }
-  return Object.values(value).some(hasRemovedRootReference);
+    return hasRemovedRootReference(item);
+  });
 }
 
 function rewriteSourceRootReferences(value: unknown, prefix: string): unknown {
   if (Array.isArray(value)) return value.map((item) => rewriteSourceRootReferences(item, prefix));
   if (!isPlainRecord(value)) return value;
   return Object.fromEntries(
-    Object.entries(value).map((
-      [key, item],
-    ) => [
-      key,
-      key === "$ref" && typeof item === "string" && (item === "#" || item.startsWith("#/"))
-        ? prefix + item.slice(1)
-        : rewriteSourceRootReferences(item, prefix),
-    ]),
+    Object.entries(value).map(([key, item]) => {
+      if (key === "$ref" && typeof item === "string" && (item === "#" || item.startsWith("#/"))) {
+        return [key, prefix + item.slice(1)];
+      }
+      if (LITERAL_SCHEMA_KEYWORDS.has(key)) return [key, item];
+      if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainRecord(item)) {
+        return [
+          key,
+          Object.fromEntries(
+            Object.entries(item).map((
+              [name, schema],
+            ) => [name, rewriteSourceRootReferences(schema, prefix)]),
+          ),
+        ];
+      }
+      return [key, rewriteSourceRootReferences(item, prefix)];
+    }),
   );
 }
 

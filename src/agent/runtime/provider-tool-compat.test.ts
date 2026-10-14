@@ -320,6 +320,55 @@ describe("provider-tool-compat", () => {
     const retained = (result.$defs as Record<string, { anyOf?: unknown[] }>)[name];
     assertEquals(retained?.anyOf?.length, 2);
   });
+  it("keeps root definitions bound when a folded branch reuses their names", () => {
+    for (const model of ["openai/gpt-5.4", "anthropic/claude-opus-4-6"]) {
+      const result = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          $defs: { item: { type: "string" } },
+          properties: { value: { $ref: "#/$defs/item" } },
+          allOf: [{
+            $defs: { item: { type: "number" } },
+            properties: { flag: { type: "boolean" } },
+          }],
+        } as never,
+        { model },
+      );
+      assertEquals((result.$defs as Record<string, unknown>).item, { type: "string" }, model);
+    }
+  });
+  it("leaves literal values that look like references unchanged", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          payload: { const: { $ref: "#" }, default: { $ref: "#" }, examples: [{ $ref: "#" }] },
+          const: { $ref: "#/anyOf/0/properties/value" },
+        },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    const payload = result.properties?.payload as Record<string, unknown>;
+    assertEquals(payload.const, { $ref: "#" });
+    assertEquals(payload.default, { $ref: "#" });
+    assertEquals(payload.examples, [{ $ref: "#" }]);
+    const alias = (result.properties?.const as { $ref: string }).$ref;
+    assertEquals(alias.startsWith("#/$defs/source_root/"), true);
+    const source = (result.$defs as Record<string, { properties: Record<string, unknown> }>)
+      .source_root;
+    assertEquals((source?.properties.payload as Record<string, unknown>).const, { $ref: "#" });
+
+    const literalOnly = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { payload: { enum: [{ $ref: "#/anyOf/0" }] } },
+        anyOf: [{ type: "object" }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(Object.hasOwn(literalOnly, "$defs"), false);
+  });
   it("snapshots the complete OpenAI schema before removing root keywords", () => {
     let deep: Record<string, unknown> = {};
     for (let index = 0; index < 200_000; index++) deep = { not: deep };
