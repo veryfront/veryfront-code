@@ -15,7 +15,8 @@ import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import { AgentRuntime } from "./index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
-import { enforceFinalRequestBudget } from "./final-request-budget.ts";
+import { enforceFinalRequestBudget, enforceProviderRequestBudget } from "./final-request-budget.ts";
+import { resolveAdditiveReasoningOutputTokens } from "#veryfront/runtime/model-call-context-request.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import type { AgentConfig, Message } from "../types.ts";
 
@@ -1166,6 +1167,71 @@ describe("invoke_agent child request budget", () => {
     assert(error instanceof VeryfrontError);
     assertEquals(error.slug, "agent-context-window-exceeded");
     assertEquals(model.callCount, 0);
+  });
+
+  it("keeps additive thinking within a served output ceiling below the model maximum", () => {
+    const result = enforceFinalRequestBudget({
+      system: "ok",
+      messages: [{ role: "user", content: "Plan" }],
+      limit: { context: 200_000, output: 20_000 },
+      requestedOutputTokens: 64_000,
+      additionalOutputTokens: 16_384,
+    });
+    assertEquals(result.maxOutputTokens, 20_000 - 16_384);
+    assertThrows(
+      () =>
+        enforceFinalRequestBudget({
+          system: "ok",
+          messages: [],
+          limit: { context: 200_000, output: 20_000 },
+          requestedOutputTokens: 8_000,
+          explicitOutputTokens: true,
+          additionalOutputTokens: 16_384,
+        }),
+      Error,
+      "Requested output 24384 exceeds the served output limit 20000",
+    );
+  });
+
+  it("keeps implicit output capped when only a native response format is added", () => {
+    const schema = { type: "object", description: "Field guidance ".repeat(20_000) };
+    const result = enforceProviderRequestBudget({
+      model: { provider: "anthropic", modelId: "claude-haiku-4-5" },
+      providerOptions: {
+        anthropic: { output_config: { format: { type: "json_schema", schema } } },
+      },
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(400_000) }],
+      limit: { context: 200_000, output: 64_000 },
+      requestedOutputTokens: 64_000,
+    });
+    const withoutFormat = enforceFinalRequestBudget({
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(400_000) }],
+      limit: { context: 200_000, output: 64_000 },
+      requestedOutputTokens: 64_000,
+    });
+    assert(result.maxOutputTokens < withoutFormat.maxOutputTokens);
+    assert(result.maxOutputTokens >= 4_096);
+  });
+
+  it("detects additive thinking from the served Anthropic surface of a custom provider", () => {
+    const model = scriptedModel([{ text: "unused" }], {
+      modelId: "veryfront-cloud/acme/claude-like",
+      provider: "veryfront-cloud",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      provider: "acme",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    assertEquals(
+      resolveAdditiveReasoningOutputTokens(model, {
+        reasoning: { enabled: true, budgetTokens: 8_192 },
+      }),
+      8_192,
+    );
   });
 
   it("still rejects a child whose input leaves less than the bounded output reserve", async () => {

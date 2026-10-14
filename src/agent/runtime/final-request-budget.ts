@@ -90,8 +90,9 @@ export function enforceFinalRequestBudget(
   const estimate = inspectFinalRequestBudget(input);
   if (estimate.outputExceeded) {
     throw AGENT_CONTEXT_WINDOW_EXCEEDED.create({
-      detail:
-        `Requested output ${input.requestedOutputTokens} exceeds the served output limit ${input.limit?.output}`,
+      detail: `Requested output ${
+        input.requestedOutputTokens + (input.additionalOutputTokens ?? 0)
+      } exceeds the served output limit ${input.limit?.output}`,
     });
   }
   if (!estimate.fits) {
@@ -141,12 +142,17 @@ export function enforceProviderRequestBudget(
   const nativeFormat = budget.responseFormat === undefined &&
     effective?.responseFormat !== undefined;
   if (!nativeOutput && !nativeFormat) return result;
+  const responseFormat = budget.responseFormat ?? effective?.responseFormat;
+  // A native output control is what the provider receives, so it is checked
+  // as an explicit request. A native format alone keeps the caller's output
+  // semantics, and the cap is recomputed with that format measured.
+  if (!nativeOutput) return enforceFinalRequestBudget({ ...budget, responseFormat });
   enforceFinalRequestBudget({
     ...budget,
-    responseFormat: budget.responseFormat ?? effective?.responseFormat,
-    requestedOutputTokens: nativeOutput ? wireOutput : result.maxOutputTokens,
+    responseFormat,
+    requestedOutputTokens: wireOutput,
     explicitOutputTokens: true,
-    additionalOutputTokens: nativeOutput ? 0 : additional,
+    additionalOutputTokens: 0,
   });
   return result;
 }
@@ -156,11 +162,18 @@ export function inspectFinalRequestBudget(
   input: FinalRequestBudgetInput,
 ): FinalRequestBudgetInspection {
   const outputLimit = input.limit?.output;
-  const outputExceeded = input.explicitOutputTokens === true && outputLimit !== undefined &&
-    input.requestedOutputTokens > outputLimit;
+  const additionalOutputTokens = input.additionalOutputTokens ?? 0;
+  // An explicit request must fit the ceiling with its additive tokens; an
+  // implicit one is capped, unless the additive tokens alone leave no room.
+  const outputExceeded = outputLimit !== undefined &&
+    (input.explicitOutputTokens === true
+      ? input.requestedOutputTokens + additionalOutputTokens > outputLimit
+      : additionalOutputTokens >= outputLimit);
+  // Additive thinking tokens reach the wire on top of the output request, so
+  // they count against the served output ceiling as well as the window.
   const cappedOutputTokens = outputLimit === undefined
     ? input.requestedOutputTokens
-    : Math.min(input.requestedOutputTokens, outputLimit);
+    : Math.min(input.requestedOutputTokens, outputLimit - additionalOutputTokens);
   // An explicit output request is reserved in full. An implicit one defaults to
   // the model maximum, so it reserves only a bounded floor and is then capped to
   // the room the input leaves, as the provider requires input plus output to fit.
@@ -209,7 +222,6 @@ export function inspectFinalRequestBudget(
   // This heuristic margin is not a tokenizer upper bound: Unicode, media and
   // provider-specific framing can use more tokens than this estimate.
   const estimatedInputTokens = Math.ceil(rawInputTokens * 1.1) + 16;
-  const additionalOutputTokens = input.additionalOutputTokens ?? 0;
   const availableOutputTokens = input.limit.context - estimatedInputTokens -
     additionalOutputTokens;
   return {

@@ -1783,7 +1783,9 @@ export function resolveAdditiveReasoningOutputTokens(
   model: ModelCallRuntimeMetadata,
   options: Pick<ModelCallRequestSource, "reasoning"> & { providerOptions?: unknown },
 ): number | undefined {
-  if (resolveModelCallProvider(model) !== "anthropic") return 0;
+  // The served surface decides the builder, so a custom provider on the
+  // Anthropic surface adds its thinking budget like `anthropic/*`.
+  if (resolveModelCallProtocol(model) !== "anthropic") return 0;
   const reasoning = buildModelCallContextRequest(model, options)?.reasoning;
   if (options.reasoning?.enabled === true) {
     const budget = reasoning?.budgetTokens ??
