@@ -27,8 +27,10 @@ import {
   normalizeAgentModelConfig,
   resolveConfiguredAgentModel,
   resolveModelProviderOptionKey,
+  resolveProviderToolSchemaTarget,
   resolveRuntimeModel,
 } from "./model-resolution.ts";
+import { selectProviderCompatibleToolNames } from "./provider-tool-compat.ts";
 
 /** Every model the served catalog fixtures list. */
 const CATALOG_MODELS = [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS];
@@ -745,5 +747,42 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
       resolveRuntimeModel("openai/gpt-unlisted"),
       "veryfront-cloud/openai/gpt-unlisted",
     );
+  });
+});
+
+describe("agent/runtime/model-resolution tool schema target", () => {
+  beforeEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+  });
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+  afterEach(() => {
+    clearModelEnv();
+  });
+
+  it("names the served wire surface so preselection applies the converter's tool limit", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "google/local-model",
+        provider: "google",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+
+    const target = resolveProviderToolSchemaTarget("google/local-model");
+
+    assertEquals(target, { model: "veryfront-cloud/google/local-model", wireSurface: "openai" });
+    const names = Array.from({ length: 130 }, (_, index) => `tool_${index}`);
+    const selected = selectProviderCompatibleToolNames(names, {
+      ...target,
+      requiredToolNames: ["tool_129"],
+    });
+    assertEquals(selected.length, 128);
+    assertEquals(selected.includes("tool_129"), true);
   });
 });

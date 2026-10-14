@@ -37,6 +37,7 @@ import {
 } from "#veryfront/agent/runtime/model-transport.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { resolveProviderToolSchemaTarget } from "#veryfront/agent/runtime/model-resolution.ts";
 import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
@@ -960,6 +961,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         providerNativeToolNames: withServedFacts(() =>
           getProviderNativeToolNames({ model: modelId, hosted: true })
         ),
+        toolSchemaTarget: withServedFacts(() => resolveProviderToolSchemaTarget(modelId)),
         sourceProviderToolNames: definition.providerTools,
         prepareRemoteToolInput: ({ toolName, toolInput }) =>
           applyDefaultResearchArtifactPath(toolName, toolInput, taskContext),

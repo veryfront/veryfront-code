@@ -2987,6 +2987,41 @@ describe("denial-aware eager tool compatibility", () => {
     assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
   });
 
+  it("prepareHostedChatRuntimeToolAssembly caps eager schemas by the run's wire surface", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "google/local-model",
+    };
+    const localTools = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `local_tool_${String(index).padStart(3, "0")}`,
+        localTool(`Local tool ${index}`),
+      ]),
+    );
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["tool_search"],
+      toolSchemaTarget: { model: "veryfront-cloud/google/local-model", wireSurface: "openai" },
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
+    assertEquals(toolAssembly.toolSchemaTarget, {
+      model: "veryfront-cloud/google/local-model",
+      wireSurface: "openai",
+    });
+  });
+
   it("prepareHostedChatRuntimeToolAssembly caps provider tools with eager schemas", async () => {
     const taskContext: HostedChatRuntimeToolAssemblyContext = {
       authToken: "token",

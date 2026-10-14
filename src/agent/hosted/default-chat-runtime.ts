@@ -40,7 +40,12 @@ import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeLocalTool,
 } from "../runtime/local-tool.ts";
-import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
+import {
+  isVeryfrontCloudRuntimeModel,
+  type ProviderToolSchemaTarget,
+  resolveProviderToolSchemaTarget,
+  resolveRuntimeModel,
+} from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import {
@@ -251,6 +256,7 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
     providerNativeToolNames: readonly string[];
+    toolSchemaTarget: ProviderToolSchemaTarget;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -299,6 +305,7 @@ async function buildToolAssembly(
     toolLoading: input.options.toolLoading,
     knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
+    toolSchemaTarget: input.toolSchemaTarget,
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -629,12 +636,24 @@ export async function createDefaultHostedChatRuntime(
             hosted: isVeryfrontCloudRuntimeModel(modelId),
           }),
       );
+      // Preselection caps tools by the limit the run's model is converted with.
+      const toolSchemaTarget = runWithVeryfrontCloudContext(
+        cloudContext,
+        () => resolveProviderToolSchemaTarget(modelId),
+      );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext, cloudContext, providerNativeToolNames }),
+          () =>
+            buildToolAssembly({
+              ...input,
+              taskContext,
+              cloudContext,
+              providerNativeToolNames,
+              toolSchemaTarget,
+            }),
         );
         const refreshSystem = input.refreshSystem;
         const liveProjectSteering = input.options.liveProjectSteering;
