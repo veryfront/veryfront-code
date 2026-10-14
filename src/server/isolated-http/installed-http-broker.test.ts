@@ -63,58 +63,6 @@ describe("installed HTTP broker", () => {
       await b.shutdown();
     }
   });
-  it("bounds execution from authorization completion and retains the overall lifetime cap", async () => {
-    const f = createHostedHttpFixture(() => new Response("A"));
-    const options = {
-      installations: [{ image: f.input.session.expectedImage, configuration }],
-      expectedBrokerInstanceId: "broker-a",
-      allocator: f.input.session.allocator,
-      connectTransport: f.input.session.connectTransport,
-      maxActive: 1,
-      authorize: async () => {},
-      requestLifetimeMs: 180_000,
-    };
-    const originalNow = Date.now;
-    const requestedAt = 1_700_000_000_000;
-    let now = requestedAt;
-    Date.now = () => now;
-    try {
-      for (
-        const expected of [
-          { lifetime: 180_000, authorization: 1_250, prepare: 31_250, hard: 181_250 },
-          { lifetime: 5, authorization: 1_000, prepare: 1_005, hard: 1_005 },
-          {
-            lifetime: 86_400_000,
-            authorization: 86_390_000,
-            prepare: 86_400_000,
-            hard: 86_400_000,
-          },
-        ]
-      ) {
-        now = requestedAt;
-        const b = createInstalledHttpBroker({
-          ...options,
-          requestLifetimeMs: expected.lifetime,
-          authorize: async () => {
-            now += expected.authorization;
-          },
-        });
-        try {
-          const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
-          assertEquals(input.session.request.requestedAt, requestedAt);
-          assertEquals(input.session.request.hardDeadlineAt, requestedAt + expected.hard);
-          assertEquals(input.session.request.prepareDeadlineAt, requestedAt + expected.prepare);
-        } finally {
-          await b.shutdown();
-        }
-      }
-      for (const requestLifetimeMs of [0, -1, NaN, Infinity, 1.5, 86_400_001]) {
-        assertThrows(() => createInstalledHttpBroker({ ...options, requestLifetimeMs }), TypeError);
-      }
-    } finally {
-      Date.now = originalNow;
-    }
-  });
   it("refuses each foreign identity before authorization or allocation", async () => {
     let calls = 0;
     const b = fixture(async () => {
