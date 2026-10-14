@@ -110,8 +110,7 @@ class ProviderFirstProgressTimeoutError extends Error {
 
 const FIRST_PROGRESS_TIMEOUT_CODE = "FIRST_PROGRESS_TIMEOUT";
 const SEMANTIC_IDLE_TIMEOUT_CODE = "SEMANTIC_IDLE_TIMEOUT";
-const FIRST_PROGRESS_TIMEOUT_MESSAGE =
-  "Provider did not produce semantic progress";
+const FIRST_PROGRESS_TIMEOUT_MESSAGE = "Provider did not produce semantic progress";
 
 /** Curated public event for a provider stream that never produced output. */
 function resolveProviderFirstProgressTimeout(
