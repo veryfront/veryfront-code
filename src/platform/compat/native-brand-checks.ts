@@ -323,7 +323,7 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
 }
 
 /** @internal Capture only the trusted bootstrap host's own builtin loader. */
-export function captureHostBuiltinModuleLoader(hostProcess: object): unknown {
+export function captureHostBuiltinModuleLoader(hostProcess: HostProcess): unknown {
   const descriptor = getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
   // Deno lazy-loads this own property through a getter. Candidate and
   // predicate reads still use own data functions, never this host boundary.
