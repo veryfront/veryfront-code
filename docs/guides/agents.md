@@ -217,6 +217,8 @@ hint instructions and metadata while omitting their suggested prose when accepte
 output or child response text is present. Successful local child summaries use
 the same hint cleanup. Both aliases require framework-owned result provenance;
 project-owned or unmarked historical results retain their original fields. Runtime-written ownership metadata restores unique child results on replay.
+Child projection runs before result-reference previews and sections are built;
+the original result remains in durable history.
 Failed children retain diagnostic prose.
 Distinct textual summaries and outputs retain their existing behavior.
 Result references limit inline payloads, not child generation or the total

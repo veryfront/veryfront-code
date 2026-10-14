@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { AgentRuntime } from "./index.ts";
+import { createToolResultContext } from "./tool-result-context.ts";
+import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -266,5 +272,129 @@ for (const mode of ["generate", "stream"] as const) {
     const prompt = JSON.stringify(model.calls[1]?.prompt);
     assertEquals(prompt.split("durable child response").length - 1, 1);
     assertEquals(prompt.includes("suggestedText"), false);
+  });
+}
+
+Deno.test("admitted child output is preserved beyond chat default normalization limits", () => {
+  let deep: unknown = "accepted";
+  for (let index = 0; index < 96; index++) deep = { child: deep };
+  const outputs = [
+    Array.from({ length: 10_001 }, (_, index) => index),
+    Object.fromEntries(Array.from({ length: 10_001 }, (_, index) => [`key-${index}`, index])),
+    Array.from({ length: 500 }, () => Array.from({ length: 140 }, (_, index) => index)),
+    deep,
+  ];
+  for (const output of outputs) {
+    const message = resultMessage(false);
+    const part = message.parts[0] as ToolResultPart;
+    part.result = { ...childResult(), output };
+    markTrustedPlatformPolicyToolResultPart(part);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+    const before = JSON.stringify(message);
+    assertProjection(message, { ...acceptedOutput(), output });
+    assertEquals(JSON.stringify(message), before);
+  }
+});
+
+Deno.test("child result disclosure projects before wrapping and preserves raw identity", () => {
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const owned of [true, false]) {
+      const message = resultMessage(false);
+      const part = message.parts[0] as ToolResultPart;
+      part.toolName = toolName;
+      const original = {
+        ...childResult(),
+        output: { marker: "accepted", padding: "x".repeat(8_000) },
+      };
+      part.result = original;
+      if (owned) markTrustedPlatformPolicyToolResultPart(part);
+      const before = JSON.stringify(message);
+      const context = createToolResultContext({
+        limits: {
+          maxInlineBytes: 256,
+          previewBytes: 512,
+          maxSectionBytes: 16_000,
+          maxStoredResults: 1,
+        },
+      });
+      const first = createModelToolResultContextMessages([message], context);
+      const second = createModelToolResultContextMessages([message], context);
+      const reference = (first[0]?.parts[0] as ToolResultPart).result as {
+        type: string;
+        ref: string;
+      };
+      assertEquals(reference.type, "tool_result_reference");
+      assertEquals((second[0]?.parts[0] as ToolResultPart).result, reference);
+      assertEquals(context.size, 1);
+      assertStrictEquals(context.getOriginalResult(reference.ref), original);
+      const section = context.read({ ref: reference.ref, maxBytes: 16_000 });
+      assertEquals(section.done, true);
+      assertEquals(section.text.includes("trace prose"), !owned);
+      assertEquals(section.text.includes("suggestedText"), !owned);
+      assertStringIncludes(section.text, "accepted");
+      for (
+        const converted of [
+          convertAgentRuntimeMessagesToProviderMessages(first),
+          convertToTextGenerationRuntimeMessages(first),
+        ]
+      ) {
+        assertEquals(JSON.stringify(converted).includes("trace prose"), !owned);
+      }
+      const spillPart: ToolResultPart = { ...part, toolCallId: "spill" };
+      if (owned) markTrustedPlatformPolicyToolResultPart(spillPart);
+      const spill = createModelToolResultContextMessages([{
+        ...message,
+        id: "spill",
+        parts: [spillPart],
+      }], context);
+      const preview = (spill[0]?.parts[0] as ToolResultPart).result as {
+        type: string;
+        complete: boolean;
+      };
+      assertEquals(preview.type, "tool_result_preview");
+      assertEquals(preview.complete, false);
+      assertEquals(JSON.stringify(spill).includes("trace prose"), !owned);
+      assertEquals(context.size, 1);
+      assertEquals(JSON.stringify(message), before);
+    }
+  }
+});
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`runtime ${mode} applies child projection before result-context wrapping`, async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: "call", name: "invoke_agent", input: {} }] },
+      { text: "completed" },
+    ], { only: mode });
+    const childTool = markTrustedHostToolProvenance(markRuntimeLocalTool(tool({
+      id: "invoke_agent",
+      description: "Synthetic child disclosure",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({
+        ...childResult(),
+        output: { marker: "accepted", padding: "x".repeat(8_000) },
+      }),
+    })));
+    const runtime = new AgentRuntime("context-projection", {
+      model: "veryfront-cloud/openai/context-projection",
+      system: "Process the synthetic result.",
+      security: false,
+      skills: false,
+      maxSteps: 2,
+      toolResultContext: { maxInlineBytes: 256, previewBytes: 512, maxSectionBytes: 16_000 },
+      tools: { invoke_agent: childTool },
+    }, { resolveModelRuntime: () => model });
+    const input: Message[] = [{
+      id: "user",
+      role: "user",
+      parts: [{ type: "text", text: "Process" }],
+    }];
+    if (mode === "generate") await runtime.generate(input);
+    else await new Response(await runtime.stream(input)).text();
+    assertEquals(model.callCount, 2);
+    const prompt = JSON.stringify(model.calls[1]?.prompt);
+    assertStringIncludes(prompt, "tool_result_reference");
+    assertStringIncludes(prompt, "accepted");
+    assertEquals(prompt.includes("trace prose"), false);
   });
 }

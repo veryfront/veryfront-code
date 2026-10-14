@@ -11,6 +11,11 @@ import type { ToolResultPart } from "../types.ts";
 import { hasTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
 import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -480,6 +485,16 @@ export function isProviderChildToolResult(
     readToolResultOwnDataProperty(sourcePart, "result") === part.output;
 }
 
+function snapshotProviderChildValue(value: unknown) {
+  const maxJsonBytes = JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+  const encoded = typeof value === "string";
+  return snapshotBoundedJsonValue(
+    value,
+    encoded ? maxJsonBytes : JSON_VALUE_MAX_STRING_BYTES,
+    encoded ? 2 * maxJsonBytes + 2 : maxJsonBytes,
+  );
+}
+
 /** @internal Normalize provider-visible results while preserving durable tool history. */
 export function createProviderToolResultOutput(part: {
   toolCallId: string;
@@ -487,7 +502,10 @@ export function createProviderToolResultOutput(part: {
   output: unknown;
 }, sourcePart?: unknown): { type: "json"; value: JsonValue } {
   const isChildResult = isProviderChildToolResult(part, sourcePart);
-  const output = toToolResultOutput(part.output);
+  const childSnapshot = isChildResult ? snapshotProviderChildValue(part.output) : undefined;
+  const output = childSnapshot?.success
+    ? { type: "json" as const, value: childSnapshot.value }
+    : toToolResultOutput(part.output);
   let value = output.value;
   if (isChildResult) {
     let candidate: unknown = value;
@@ -515,8 +533,11 @@ export function createProviderToolResultOutput(part: {
         isRecord(candidate.summary) && hasOwn(candidate.summary, "text") &&
         candidate.summary.text === candidate.text)
     ) {
-      value = toChatJsonValue(candidate);
-      output.value = value;
+      const projectedSnapshot = snapshotProviderChildValue(candidate);
+      if (projectedSnapshot.success) {
+        value = projectedSnapshot.value;
+        output.value = value;
+      }
     }
   }
   // Root response suggestions derive from the child prose. Keep the guidance,
