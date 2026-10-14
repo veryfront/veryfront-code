@@ -9,6 +9,7 @@ export {
   type GetDependencyHistoryInput,
   VeryfrontApiClient,
   type VeryfrontApiDependencies,
+  type VeryfrontApiStyleArtifacts,
 } from "./client.ts";
 export type {
   DependencyMetadataHistory,
@@ -20,11 +21,15 @@ export {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
+  type GetStyleArtifactInput,
   type ListFilesOptions,
   type ProjectStyleArtifactResolution,
   type ResolveDependenciesInput,
   type ResolveStyleArtifactInput,
+  type StartStyleArtifactBuildInput,
+  type StyleArtifact,
   type StyleArtifactSelector,
+  type UpdateStyleArtifactInput,
   type UpsertStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";

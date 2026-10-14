@@ -49,7 +49,7 @@ export type IntegrationClientConnection = IntegrationJsonObject & {
   status: "connected" | "expired" | "disconnected";
 };
 
-/** The OAuth status response, with the requested scope recorded by the client. */
+/** The legacy OAuth status shape, with the requested scope recorded by the client. */
 export type IntegrationConnectionStatus = IntegrationJsonObject & {
   connected: boolean;
   integration: string;
@@ -201,11 +201,21 @@ export type IntegrationConnectionWaitOutcome =
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
-  /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
+  /** Read fresh selected-tool metadata. This neither runs a tool nor verifies provider access. */
+  checkReadiness(
+    toolName: string,
+    options?: IntegrationSelectionOptions,
+  ): Promise<IntegrationSelectedReadiness>;
+  /** @deprecated Use `checkReadiness`. */
   readiness(
     toolName: string,
     options?: IntegrationSelectionOptions,
   ): Promise<IntegrationSelectedReadiness>;
+  /** Traverse the integration catalog. */
+  listIntegrations(
+    options?: { search?: string; sortOrder?: "asc" | "desc" },
+  ): AsyncIterable<IntegrationCatalogEntry>;
+  /** @deprecated Use `listIntegrations`. */
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },
   ): AsyncIterable<IntegrationCatalogEntry>;
@@ -229,7 +239,8 @@ export interface IntegrationClient {
   /**
    * Read OAuth connectivity for an explicit scope, not executable readiness.
    *
-   * @deprecated Use `getConnectionStatus`. `status()` still calls the legacy status route.
+   * @deprecated Use `getConnectionStatus`. `status()` reads the same route and returns the
+   * legacy response shape.
    */
   status(
     integration: string,
@@ -259,6 +270,13 @@ export interface IntegrationClient {
     integration: string,
     options: IntegrationConnectionWaitOptions,
   ): Promise<IntegrationConnectionWaitOutcome>;
+  /** Run one integration tool by its `integration__tool_id` name. Runs are never replayed. */
+  runTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    options?: IntegrationCallOptions,
+  ): Promise<IntegrationCallOutcome>;
+  /** @deprecated Use `runTool`. */
   call(
     toolName: string,
     args: Record<string, unknown>,

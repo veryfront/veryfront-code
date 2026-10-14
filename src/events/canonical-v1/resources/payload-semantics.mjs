@@ -16,7 +16,8 @@ const isNumber = value => typeof value === 'number' && Number.isFinite(value);
 const jsonBytes = value => {
   try {
     const encoded = JSON.stringify(value);
-    return encoded === undefined ? Number.POSITIVE_INFINITY : encoder.encode(encoded).byteLength;
+    // Non-JSON values and toJSON hooks may produce no serialized string.
+    return typeof encoded === 'string' ? encoder.encode(encoded).byteLength : Number.POSITIVE_INFINITY;
   } catch {
     return Number.POSITIVE_INFINITY;
   }

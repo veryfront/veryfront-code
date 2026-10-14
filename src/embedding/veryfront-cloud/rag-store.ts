@@ -537,7 +537,7 @@ async function listDocumentPartFiles(
   let cursor: string | null | undefined;
   do {
     const query = new URLSearchParams({
-      branch: context.branch,
+      ref: branchFileRef(context.branch),
       pattern: `${prefix}*`,
       limit: "100",
       fields: "(path)",
@@ -827,6 +827,14 @@ async function listContentFiles(
   return files;
 }
 
+/**
+ * The `ref` content selector for a branch on the project file routes. An empty
+ * branch addresses main, as those routes treat an omitted selector.
+ */
+function branchFileRef(branch: string): string {
+  return branch === "" ? "main" : `branch:${branch}`;
+}
+
 function buildContentDirPattern(contentDir: string): string {
   return `${contentDir.replace(/\/+$/, "")}/**`;
 }
@@ -843,7 +851,7 @@ function buildContentFilesQuery(
   });
 
   if (!context.releaseId && !context.environmentName) {
-    params.set("branch", context.branch);
+    params.set("ref", branchFileRef(context.branch));
   }
 
   if (cursor) {
@@ -893,7 +901,7 @@ function getPublishedFileDetailPath(context: CloudStoreContext, path: string): s
     }/files/${encodedPath}?${query}`;
   }
 
-  query.set("branch", context.branch);
+  query.set("ref", branchFileRef(context.branch));
   return `/projects/${projectRef}/files/${encodedPath}?${query}`;
 }
 

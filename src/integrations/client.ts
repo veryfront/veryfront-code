@@ -132,9 +132,12 @@ function uuid(value: unknown): value is string {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
-function integrationPath(integration: string): string {
+function integrationName(integration: string): string {
   if (!identifier(integration)) throw new TypeError("Integration must be a canonical identifier");
-  return encodeURIComponent(integration);
+  return integration;
+}
+function integrationPath(integration: string): string {
+  return encodeURIComponent(integrationName(integration));
 }
 function connectionScope(scope: unknown): "user" | "project" {
   if (scope !== "user" && scope !== "project") {
@@ -371,8 +374,8 @@ export async function createIntegrationClient(
   // Accessible project detail alone does not establish a token's tool binding.
   // The read-only discovery handler publishes the same authoritative project
   // selection used by calls, including project-bound credential precedence.
-  const binding = await request("/integrations/tools/list?limit=1", {
-    method: "POST",
+  const binding = await request("/integration-tools?limit=1", {
+    method: "GET",
     capturePreconditions: true,
     requireProjectBinding: true,
   });
@@ -478,7 +481,7 @@ export async function createIntegrationClient(
 
   const client: IntegrationClient = Object.freeze({
     project: selectedProject,
-    discover(options: { search?: string; sortOrder?: "asc" | "desc" } = {}) {
+    listIntegrations(options: { search?: string; sortOrder?: "asc" | "desc" } = {}) {
       return pages<IntegrationCatalogEntry>(
         "/integrations",
         "data",
@@ -492,8 +495,14 @@ export async function createIntegrationClient(
           typeof item.description === "string" && typeof item.auth_type === "string",
       );
     },
+    discover(options?: { search?: string; sortOrder?: "asc" | "desc" }) {
+      return client.listIntegrations(options);
+    },
     getIntegration: getDetails,
-    async readiness(
+    readiness(toolName: string, options?: IntegrationSelectionOptions) {
+      return client.checkReadiness(toolName, options);
+    },
+    async checkReadiness(
       toolName: string,
       options: IntegrationSelectionOptions = {},
     ): Promise<IntegrationSelectedReadiness> {
@@ -526,10 +535,11 @@ export async function createIntegrationClient(
       const body = await request(
         `/projects/${selectedProject.id}/integrations/${
           encodeURIComponent(identity.integration)
-        }?${params}`,
+        }/readiness?${params}`,
         { signal: abortSignal },
       );
-      const value = body.selected_readiness;
+      // The readiness route returns the readiness object itself, with no wrapper key.
+      const value: unknown = body;
       if (
         !isSelectedReadiness(value, {
           projectId: selectedProject.id,
@@ -568,18 +578,11 @@ export async function createIntegrationClient(
         ? await options.redirectUri()
         : options.redirectUri;
       signal?.throwIfAborted();
-      requireRedirectUri(redirectUri);
-      const body = JSON.stringify({
-        integration,
-        project_reference: selectedProject.id,
+      const session = await client.createConnectSession(integration, {
         scope,
-        redirect_uri: redirectUri,
+        redirectUri: requireRedirectUri(redirectUri),
+        ...(signal ? { abortSignal: signal } : {}),
       });
-      if (new TextEncoder().encode(body).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
-        throw new RangeError("Integration connect request exceeds the byte limit");
-      }
-      const result = await request("/oauth/connect/session", { method: "POST", body, signal });
-      const session = readConnectSession(result, integration);
       const handoff: IntegrationOAuthHandoff = {
         status: "oauth_handoff",
         integration,
@@ -593,9 +596,13 @@ export async function createIntegrationClient(
     },
     listTools(integration: string, options: { name?: string; order?: "asc" | "desc" } = {}) {
       return pages<IntegrationClientTool>(
-        `/integrations/${integrationPath(integration)}/tools`,
+        "/integration-tools",
         "tools",
-        { order: options.order ?? "asc", ...(options.name ? { name: options.name } : {}) },
+        {
+          integration: integrationName(integration),
+          order: options.order ?? "asc",
+          ...(options.name ? { name: options.name } : {}),
+        },
         (item) =>
           typeof item.name === "string" && item.name.startsWith(`${integration}__`) &&
           parseIntegrationToolIdentity(item.name) !== null &&
@@ -604,11 +611,9 @@ export async function createIntegrationClient(
     },
     listConnections(integration: string, options: { abortSignal?: AbortSignal } = {}) {
       return pages<IntegrationClientConnection>(
-        `/projects/${encodeURIComponent(selectedProject.id)}/integrations/${
-          integrationPath(integration)
-        }/connections`,
+        `/projects/${encodeURIComponent(selectedProject.id)}/connections`,
         "data",
-        { sort_by: "created_at", sort_order: "asc" },
+        { integration: integrationName(integration), sort_by: "created_at", sort_order: "asc" },
         (item) =>
           uuid(item.id) && uuid(item.connection_generation_id) &&
           item.integration === integration && (item.scope === "user" || item.scope === "project") &&
@@ -625,22 +630,23 @@ export async function createIntegrationClient(
       if (scope !== "user" && scope !== "project") {
         throw new TypeError("OAuth status requires an explicit user or project scope");
       }
-      const params = new URLSearchParams({ project_reference: selectedProject.id, scope });
-      const status = requireShape<IntegrationConnectionStatus>(
-        await request(`/oauth/status/${integrationPath(integration)}?${params}`, {
-          signal: options.abortSignal,
-        }),
-        (item) =>
-          typeof item.connected === "boolean" && item.integration === integration &&
-          ["connection_id", "connection_generation_id", "connectionId", "connectionGenerationId"]
-            .every((key) => item[key] === undefined || uuid(item[key])) &&
-          (item.connection_id === undefined || item.connectionId === undefined ||
-            item.connection_id === item.connectionId) &&
-          (item.connection_generation_id === undefined ||
-            item.connectionGenerationId === undefined ||
-            item.connection_generation_id === item.connectionGenerationId),
-      );
-      return { ...status, scope };
+      const current = await client.getConnectionStatus(integration, scope, options);
+      // Keep the legacy status shape: both ID spellings when connected, neither when not.
+      const ids: Record<string, string> = current.connectionId && current.connectionGenerationId
+        ? {
+          connectionId: current.connectionId,
+          connectionGenerationId: current.connectionGenerationId,
+          connection_id: current.connectionId,
+          connection_generation_id: current.connectionGenerationId,
+        }
+        : {};
+      const status: IntegrationConnectionStatus = {
+        connected: current.connected,
+        ...ids,
+        integration,
+        scope,
+      };
+      return status;
     },
     async createConnectSession(
       name: string,
@@ -716,7 +722,10 @@ export async function createIntegrationClient(
         providerRevoked: deletion.provider_revoked as boolean,
       });
     },
-    async call(
+    call(toolName: string, args: Record<string, unknown>, options?: IntegrationCallOptions) {
+      return client.runTool(toolName, args, options);
+    },
+    async runTool(
       toolName: string,
       args: Record<string, unknown>,
       options: IntegrationCallOptions = {},
@@ -757,9 +766,9 @@ export async function createIntegrationClient(
       }
       const result = parseToolResult(
         await request(
-          `/integrations/${encodeURIComponent(identity.integration)}/tools/${
-            encodeURIComponent(identity.toolId)
-          }/call`,
+          `/integration-tools/${
+            encodeURIComponent(`${identity.integration}__${identity.toolId}`)
+          }/run`,
           {
             method: "POST",
             body,

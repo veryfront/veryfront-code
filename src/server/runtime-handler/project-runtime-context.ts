@@ -23,7 +23,11 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getEffectiveRequestHost, getEffectiveRequestOrigin } from "../utils/request-host.ts";
+import {
+  getClassificationRequestHost,
+  getEffectiveRequestHost,
+  getEffectiveRequestOrigin,
+} from "../utils/request-host.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
@@ -383,7 +387,8 @@ export async function resolveProjectRuntimeContext(
 
   const trustProxyHeaders = input.proxyTrust.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  const host = getEffectiveRequestHost(
+  // Classification only: the environment is derived from the normalized host.
+  const host = getClassificationRequestHost(
     input.req,
     input.url,
     trustProxyHeaders,

@@ -130,8 +130,7 @@ function buildConversationMessagesPath(apiUrl: string, conversationId: string): 
   return `${buildConversationPath(apiUrl, conversationId)}/messages`;
 }
 
-/** Record shape for fetch conversation. */
-export async function fetchConversationRecord(input: {
+async function requestConversationRecord(input: {
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -144,6 +143,19 @@ export async function fetchConversationRecord(input: {
   });
 }
 
+/**
+ * Deprecated. Use `Conversation.get` from `veryfront/conversations`. Fetches a conversation
+ * record.
+ * @deprecated Use `Conversation.get` from `veryfront/conversations`.
+ */
+export async function fetchConversationRecord(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+}): Promise<ConversationRecord> {
+  return requestConversationRecord(input);
+}
+
 /** Ensure conversation project link helper. */
 export async function ensureConversationProjectLink(input: {
   authToken: string;
@@ -151,7 +163,7 @@ export async function ensureConversationProjectLink(input: {
   conversationId: string;
   projectId: string;
 }): Promise<void> {
-  const conversation = await fetchConversationRecord(input);
+  const conversation = await requestConversationRecord(input);
 
   if (conversation.projectId === input.projectId) return;
   if (conversation.projectId !== null) {
@@ -165,14 +177,17 @@ export async function ensureConversationProjectLink(input: {
     authToken: input.authToken,
     url: buildConversationPath(input.apiUrl, input.conversationId),
     method: "PATCH",
-    body: { project_id: input.projectId },
+    body: { project_reference: input.projectId },
     responseSchema: ConversationRecordSchema,
     operation: "Link conversation to project",
   });
 }
 
-/** Record shape for create conversation. */
-export async function createConversationRecord(input: {
+/**
+ * Forwards the caller's body unchanged to `POST /conversations`, the route of
+ * `Conversation.create`.
+ */
+async function requestCreateConversationRecord(input: {
   authToken: string;
   apiUrl: string;
   body: unknown;
@@ -187,8 +202,24 @@ export async function createConversationRecord(input: {
   });
 }
 
-/** Message shape for create conversation. */
-export async function createConversationMessage(input: {
+/**
+ * Deprecated. Use `Conversation.create` from `veryfront/conversations`. Creates a
+ * conversation record from an untyped request body.
+ * @deprecated Use `Conversation.create` from `veryfront/conversations`.
+ */
+export async function createConversationRecord(input: {
+  authToken: string;
+  apiUrl: string;
+  body: unknown;
+}): Promise<ConversationRecord> {
+  return requestCreateConversationRecord(input);
+}
+
+/**
+ * Forwards the caller's body unchanged to `POST /conversations/{conversation_id}/messages`,
+ * the route of `conversation.createMessage`.
+ */
+async function requestCreateConversationMessage(input: {
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -205,6 +236,22 @@ export async function createConversationMessage(input: {
     operation: input.operation ?? "Create conversation message",
     onResponseError: input.onResponseError,
   });
+}
+
+/**
+ * Deprecated. Use `conversation.createMessage` from `veryfront/conversations`. Creates a
+ * conversation message from an untyped request body.
+ * @deprecated Use `conversation.createMessage` from `veryfront/conversations`.
+ */
+export async function createConversationMessage(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  body: unknown;
+  operation?: string;
+  onResponseError?: (error: ConversationControlPlaneResponseError) => void;
+}): Promise<ConversationMessageRecord> {
+  return requestCreateConversationMessage(input);
 }
 
 /** Message shape for persist conversation user. */
@@ -224,7 +271,7 @@ export async function persistConversationUserMessage(input: {
     });
   }
 
-  return createConversationMessage({
+  return requestCreateConversationMessage({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
@@ -351,13 +398,13 @@ export async function bootstrapConversationAgentRun(input: {
     });
   }
 
-  const conversation = await createConversationRecord({
+  const conversation = await requestCreateConversationRecord({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     body: input.conversationBody,
   });
   const effectiveProjectId = input.projectId ?? conversation.projectId;
-  const message = await createConversationMessage({
+  const message = await requestCreateConversationMessage({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     conversationId: conversation.id,

@@ -1,3 +1,4 @@
+import { isCloudEventsString, isTraceState } from "../string-validation.ts";
 import type {
   JsonSchema,
   JsonSchemaValidationFunction,
@@ -34,20 +35,16 @@ for (
   documents[document.$id] = document;
 }
 const keys = Object.keys(documents);
-function normalize(value: unknown, documentId: string): unknown {
-  if (Array.isArray(value)) return value.map((item) => normalize(item, documentId));
-  if (!value || typeof value !== "object") return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "$id" || key === "$schema" || key.startsWith("x-")) continue;
-    if (key === "format" && (child === "ce-string" || child === "w3c-tracestate")) continue;
-    if (key === "$ref" && typeof child === "string") {
-      const [id, fragment = ""] = child.split("#");
-      const index = keys.indexOf(id || documentId);
-      if (index < 0) throw new TypeError("Unknown canonical-v1 schema resource");
-      result[key] = `#/$defs/resource${index}${fragment}`;
-    } else result[key] = normalize(child, documentId);
+function normalizeProperty(key: string, child: unknown, documentId: string): unknown {
+  if (key === "$ref" && typeof child === "string") {
+    const [id, fragment = ""] = child.split("#");
+    const index = keys.indexOf(id || documentId);
+    if (index < 0) throw new TypeError("Unknown canonical-v1 schema resource");
+    return `#/$defs/resource${index}${fragment}`;
   }
+  return normalize(child, documentId);
+}
+function inferSchemaTypes(result: Record<string, unknown>): void {
   if (
     result.type === undefined &&
     (result.properties !== undefined || result.required !== undefined ||
@@ -62,6 +59,8 @@ function normalize(value: unknown, documentId: string): unknown {
     result.type = "number";
   }
   if (result.type === undefined && result.items !== undefined) result.type = "array";
+}
+function materializeRequiredProperties(result: Record<string, unknown>): void {
   if (Array.isArray(result.required)) {
     const properties = result.properties && typeof result.properties === "object"
       ? result.properties
@@ -73,6 +72,18 @@ function normalize(value: unknown, documentId: string): unknown {
     }
     result.properties = properties;
   }
+}
+function normalize(value: unknown, documentId: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalize(item, documentId));
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "$id" || key === "$schema" || key.startsWith("x-")) continue;
+    if (key === "format" && (child === "ce-string" || child === "w3c-tracestate")) continue;
+    result[key] = normalizeProperty(key, child, documentId);
+  }
+  inferSchemaTypes(result);
+  materializeRequiredProperties(result);
   return result;
 }
 const normalizedDefinitions = Object.fromEntries(
@@ -109,52 +120,10 @@ function safeCursor(value: string): void {
     throw new TypeError("Invalid canonical-v1 durable cursor");
   }
 }
-function cloudEventsString(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined) return false;
-    if (
-      codePoint <= 0x1f ||
-      (codePoint >= 0x7f && codePoint <= 0x9f) ||
-      (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
-      (codePoint >= 0xfdd0 && codePoint <= 0xfdef) ||
-      (codePoint & 0xffff) >= 0xfffe
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function traceState(value: string): boolean {
-  if (value.length > 512) return false;
-  const members = value.split(",").filter((member) => !/^[ \t]*$/.test(member));
-  if (members.length === 0 || members.length > 32) return false;
-  const keys = new Set<string>();
-  for (const member of members) {
-    const match = member.match(/^[ \t]*([^=]+)=(.*?)[ \t]*$/);
-    if (!match) return false;
-    const [, key, content] = match;
-    if (key === undefined || content === undefined) return false;
-    const simple = /^[a-z][a-z0-9_*/-]{0,255}$/;
-    const multi = /^[a-z0-9][a-z0-9_*/-]{0,240}@[a-z][a-z0-9_*/-]{0,13}$/;
-    if ((!simple.test(key) && !multi.test(key)) || keys.has(key)) return false;
-    if (
-      !content.length ||
-      content.length > 256 ||
-      !/^[\x20-\x2b\x2d-\x3c\x3e-\x7e]*[\x21-\x2b\x2d-\x3c\x3e-\x7e]$/.test(content)
-    ) {
-      return false;
-    }
-    keys.add(key);
-  }
-  return true;
-}
-
 function envelope(event: CanonicalEventV1, view: string, live = false): void {
   for (const [key, value] of Object.entries(event)) {
     if (key === "tracestate") continue;
-    if (typeof value === "string" && !cloudEventsString(value)) {
+    if (typeof value === "string" && !isCloudEventsString(value)) {
       throw new TypeError("Invalid CloudEvents String");
     }
   }
@@ -164,7 +133,7 @@ function envelope(event: CanonicalEventV1, view: string, live = false): void {
   }
   if (
     event.tracestate !== undefined &&
-    (typeof event.tracestate !== "string" || !traceState(event.tracestate))
+    (typeof event.tracestate !== "string" || !isTraceState(event.tracestate))
   ) throw new TypeError("Invalid W3C tracestate");
   const source = new URL(event.source);
   if (
@@ -229,7 +198,7 @@ export async function parseRunReadPageV1(input: unknown): Promise<RunReadPageV1>
 export async function parseEventDiscoveryV1(input: unknown): Promise<EventDiscoveryV1> {
   const value = await decode<EventDiscoveryV1>(input, "discovery");
   for (const event of value.events) {
-    if (!cloudEventsString(event.type) || !cloudEventsString(event.meaning)) {
+    if (!isCloudEventsString(event.type) || !isCloudEventsString(event.meaning)) {
       throw new TypeError("Invalid canonical-v1 discovery String");
     }
   }
@@ -243,7 +212,7 @@ export async function parseEventErrorV1(
     input,
     "error",
   );
-  if (!cloudEventsString(value.code) || !cloudEventsString(value.message)) {
+  if (!isCloudEventsString(value.code) || !isCloudEventsString(value.message)) {
     throw new TypeError("Invalid canonical-v1 error String");
   }
   return value;

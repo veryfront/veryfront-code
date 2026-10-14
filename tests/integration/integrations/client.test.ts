@@ -24,9 +24,9 @@ const tool = {
 };
 
 function isToolRoute(path: string): boolean {
-  return path === "/v1/integrations/tools/list" || path === "/v1/integrations/github/tools" ||
-    path === "/v1/integrations/github/tools/get_current_user/call" ||
-    path === "/v1/integrations/github/tools/create_issue/call";
+  return path === "/v1/integration-tools" ||
+    path === "/v1/integration-tools/github__get_current_user/run" ||
+    path === "/v1/integration-tools/github__create_issue/run";
 }
 
 function projectOr(input: RequestInfo | URL, result: unknown): Response {
@@ -47,13 +47,14 @@ async function withClientFetch<T>(
   return await withMockFetch(async (input, init) => {
     const url = new URL(String(input));
     if (isToolRoute(url.pathname)) {
-      assertEquals(init?.method, url.pathname === "/v1/integrations/github/tools" ? "GET" : "POST");
+      assertEquals(init?.method, url.pathname === "/v1/integration-tools" ? "GET" : "POST");
       assertEquals(
         new Headers(init?.headers).get("x-veryfront-expected-project-id"),
         boundProjectId,
       );
     }
-    if (url.pathname.endsWith("/integrations/tools/list")) {
+    // The binding probe is the only tool list request without an integration filter.
+    if (url.pathname.endsWith("/integration-tools") && !url.searchParams.has("integration")) {
       return Response.json({ tools: [] }, {
         headers: { "x-veryfront-project-id": boundProjectId },
       });
@@ -93,7 +94,7 @@ describe("explicit integration client", () => {
         new Headers(init?.headers).get("authorization"),
         "Bearer synthetic-client-token",
       );
-      if (String(url).includes("/tools/")) {
+      if (String(url).includes("/integration-tools/")) {
         executions++;
         assertEquals(new Headers(init?.headers).get("x-veryfront-project-slug"), project.slug);
         assertEquals(JSON.parse(String(init?.body)), {
@@ -111,7 +112,7 @@ describe("explicit integration client", () => {
       const client = await createIntegrationClient(context);
       assertEquals(client.project, project);
       assertEquals(JSON.stringify(client).includes(context.authToken), false);
-      const outcome = await client.call(tool.name, {
+      const outcome = await client.runTool(tool.name, {
         account_id: "provider-account",
         connection_id: "provider-native-id",
         run_id: "provider-run",
@@ -137,11 +138,11 @@ describe("explicit integration client", () => {
       _meta: { condition },
     };
     await withClientFetch(async (url) => {
-      if (String(url).includes("/tools/")) calls++;
+      if (String(url).includes("/integration-tools/")) calls++;
       return projectOr(url, native);
     }, async () => {
       const client = await createIntegrationClient(context);
-      assertEquals(await client.call("github__create_issue", { title: "Synthetic issue" }), {
+      assertEquals(await client.runTool("github__create_issue", { title: "Synthetic issue" }), {
         status: "tool_error",
         result: native,
         condition,
@@ -188,26 +189,57 @@ describe("explicit integration client", () => {
         }),
       async () => {
         const client = await createIntegrationClient(context);
-        await assertRejects(() => collect(client.discover()), Error, "cursor");
+        await assertRejects(() => collect(client.listIntegrations()), Error, "cursor");
       },
     );
   });
 
   it("does not infer readiness or TTL from raw connected status", async () => {
+    const generation = "22222222-2222-4222-8222-222222222222";
     const status = {
-      connected: true,
       integration: "github",
+      scope: "user",
+      connected: true,
       connection_id: project.id,
-      connection_generation_id: "22222222-2222-4222-8222-222222222222",
+      connection_generation_id: generation,
     };
+    let statusReads = 0;
     await withClientFetch(async (url) => {
-      if (String(url).includes("/oauth/status/")) {
+      if (String(url).includes("/connection-status")) {
+        statusReads++;
         assertEquals(new URL(String(url)).searchParams.get("scope"), "user");
       }
       return projectOr(url, status);
     }, async () => {
       const client = await createIntegrationClient(context);
-      assertEquals(await client.status("github", "user"), { ...status, scope: "user" });
+      assertEquals(await client.status("github", "user"), {
+        connected: true,
+        connectionId: project.id,
+        connectionGenerationId: generation,
+        connection_id: project.id,
+        connection_generation_id: generation,
+        integration: "github",
+        scope: "user",
+      });
+    });
+    assertEquals(statusReads, 1);
+  });
+
+  it("keeps the legacy disconnected status shape without connection IDs", async () => {
+    await withClientFetch(async (url) =>
+      projectOr(url, {
+        integration: "github",
+        scope: "project",
+        connected: false,
+        connection_id: null,
+        connection_generation_id: null,
+      }), async () => {
+      const client = await createIntegrationClient(context);
+      assertEquals(await client.status("github", "project"), {
+        connected: false,
+        integration: "github",
+        scope: "project",
+      });
     });
   });
 
@@ -243,7 +275,7 @@ describe("explicit integration client", () => {
       const client = await createIntegrationClient({ ...context, abortSignal: controller.signal });
       controller.abort(reason);
       try {
-        await client.call(tool.name, {});
+        await client.runTool(tool.name, {});
         throw new Error("expected cancellation");
       } catch (error) {
         assertStrictEquals(error, reason);
@@ -255,7 +287,7 @@ describe("explicit integration client", () => {
   it("reports uncertain execution without replay when dispatch fails", async () => {
     let calls = 0;
     await withClientFetch(async (url) => {
-      if (String(url).includes("/tools/")) {
+      if (String(url).includes("/integration-tools/")) {
         calls++;
         throw new Error("synthetic network failure");
       }
@@ -263,7 +295,7 @@ describe("explicit integration client", () => {
     }, async () => {
       const client = await createIntegrationClient(context);
       const error = await assertRejects(
-        () => client.call("github__create_issue", {}),
+        () => client.runTool("github__create_issue", {}),
         IntegrationApiError,
       );
       assertInstanceOf(error, IntegrationApiError);
@@ -311,7 +343,7 @@ describe("explicit integration client", () => {
       return Response.json(project);
     }, async () => {
       const client = await createIntegrationClient(context);
-      assertEquals((await collect(client.discover())).length, 1200);
+      assertEquals((await collect(client.listIntegrations())).length, 1200);
       assertEquals((await collect(client.listConnections("github"))).length, 2);
     });
     assertEquals(catalogPage, 12);
@@ -353,14 +385,14 @@ describe("explicit integration client", () => {
       };
       let executions = 0;
       await withClientFetch(async (url) => {
-        if (String(url).includes("/tools/")) {
+        if (String(url).includes("/integration-tools/")) {
           executions++;
           return Response.json(problem, { status: failure.status });
         }
         return Response.json(project);
       }, async () => {
         const client = await createIntegrationClient(context);
-        const error = await assertRejects(() => client.call(tool.name, {}), IntegrationApiError);
+        const error = await assertRejects(() => client.runTool(tool.name, {}), IntegrationApiError);
         assertInstanceOf(error, IntegrationApiError);
         assertInstanceOf(error, VeryfrontError);
         assertEquals(error.slug, failure.slug);
@@ -406,7 +438,7 @@ describe("explicit integration client", () => {
       };
       let executions = 0;
       await withClientFetch(async (url) => {
-        if (String(url).includes("/tools/")) {
+        if (String(url).includes("/integration-tools/")) {
           executions++;
           return Response.json(problem, { status: failure.status });
         }
@@ -414,7 +446,7 @@ describe("explicit integration client", () => {
       }, async () => {
         const client = await createIntegrationClient(context);
         const error = await assertRejects(
-          () => client.call("github__create_issue", {}),
+          () => client.runTool("github__create_issue", {}),
           IntegrationApiError,
         );
         assertInstanceOf(error, IntegrationApiError);
@@ -444,7 +476,7 @@ describe("explicit integration client", () => {
     let calls = 0;
     let cancelled = 0;
     await withClientFetch(async (url) => {
-      if (!String(url).includes("/tools/")) return Response.json(project);
+      if (!String(url).includes("/integration-tools/")) return Response.json(project);
       calls++;
       return new Response(
         new ReadableStream({
@@ -460,7 +492,7 @@ describe("explicit integration client", () => {
     }, async () => {
       const client = await createIntegrationClient(context);
       const error = await assertRejects(
-        () => client.call(tool.name, {}, { abortSignal: controller.signal }),
+        () => client.runTool(tool.name, {}, { abortSignal: controller.signal }),
         IntegrationApiError,
       );
       assertInstanceOf(error, IntegrationApiError);
@@ -504,7 +536,7 @@ describe("explicit integration client", () => {
       const client = await createIntegrationClient(context);
       await assertRejects(
         () =>
-          client.call(tool.name, {
+          client.runTool(tool.name, {
             get secret() {
               accessorCalls++;
               return "synthetic-private";
@@ -541,11 +573,11 @@ describe("explicit integration client", () => {
         _meta: { condition },
       };
       await withClientFetch(async (url) => {
-        if (String(url).includes("/tools/")) executions++;
+        if (String(url).includes("/integration-tools/")) executions++;
         return projectOr(url, native);
       }, async () => {
         const client = await createIntegrationClient(context);
-        assertEquals(await client.call("github__create_issue", {}), {
+        assertEquals(await client.runTool("github__create_issue", {}), {
           status: "tool_error",
           result: native,
           condition,
@@ -558,11 +590,11 @@ describe("explicit integration client", () => {
   it("rejects malformed native envelopes without replaying execution", async () => {
     let executions = 0;
     await withClientFetch(async (url) => {
-      if (String(url).includes("/tools/")) executions++;
+      if (String(url).includes("/integration-tools/")) executions++;
       return projectOr(url, { content: [], structuredContent: [] });
     }, async () => {
       const client = await createIntegrationClient(context);
-      const error = await assertRejects(() => client.call(tool.name, {}), IntegrationApiError);
+      const error = await assertRejects(() => client.runTool(tool.name, {}), IntegrationApiError);
       assertInstanceOf(error, IntegrationApiError);
       assertEquals(error.kind, "invalid_response");
       assertEquals(error.outcomeUnknown, true);
@@ -580,7 +612,7 @@ describe("explicit integration client", () => {
         : Response.json({ content: [] });
     }, async () => {
       const client = await createIntegrationClient(context);
-      await assertRejects(() => client.call("github__create_issue", {}), IntegrationApiError);
+      await assertRejects(() => client.runTool("github__create_issue", {}), IntegrationApiError);
     });
     assertEquals(dispatched, ["https://api.example.test"]);
   });
@@ -589,11 +621,11 @@ describe("explicit integration client", () => {
       let executions = 0;
       await withMockFetch(async (input) => {
         const url = new URL(String(input));
-        if (url.pathname.endsWith("/call")) {
+        if (url.pathname.endsWith("/run")) {
           executions++;
           return Response.json({ content: [] });
         }
-        if (url.pathname.endsWith("/integrations/tools/list")) {
+        if (url.pathname.endsWith("/integration-tools")) {
           return Response.json({ tools: [] }, {
             headers: effectiveProjectId ? { "x-veryfront-project-id": effectiveProjectId } : {},
           });
@@ -603,7 +635,7 @@ describe("explicit integration client", () => {
       }, async () => {
         const error = await assertRejects(async () => {
           const client = await createIntegrationClient(context);
-          await client.call("github__create_issue", {});
+          await client.runTool("github__create_issue", {});
         }, IntegrationApiError);
         assertInstanceOf(error, IntegrationApiError);
         assertEquals(error.kind, "project_binding");
@@ -618,7 +650,7 @@ describe("explicit integration client", () => {
       if (url.pathname.includes("/projects/")) return Response.json(project);
       expectedIds.push(new Headers(init?.headers).get("x-veryfront-expected-project-id"));
       return Response.json(
-        url.pathname.endsWith("/call")
+        url.pathname.endsWith("/run")
           ? { content: [] }
           : { tools: [tool], page_info: { next: null } },
         { headers: { "x-veryfront-project-id": project.id } },
@@ -626,7 +658,7 @@ describe("explicit integration client", () => {
     }, async () => {
       const client = await createIntegrationClient(context);
       await collect(client.listTools("github"));
-      await client.call(tool.name, {});
+      await client.runTool(tool.name, {});
     });
     assertEquals(expectedIds, [project.id, project.id, project.id]);
   });
@@ -638,21 +670,21 @@ describe("explicit integration client", () => {
       const url = new URL(String(input));
       if (url.pathname.includes("/projects/")) return Response.json(project);
       const expected = new Headers(init?.headers).get("x-veryfront-expected-project-id");
-      if (url.pathname.endsWith("/call")) callRequests++;
+      if (url.pathname.endsWith("/run")) callRequests++;
       if (expected !== routedProject) {
         return Response.json({ slug: "validation-failed", status: 400, retryable: false }, {
           status: 400,
         });
       }
-      if (url.pathname.endsWith("/call")) executions++;
-      return Response.json(url.pathname.endsWith("/call") ? { content: [] } : { tools: [] }, {
+      if (url.pathname.endsWith("/run")) executions++;
+      return Response.json(url.pathname.endsWith("/run") ? { content: [] } : { tools: [] }, {
         headers: { "x-veryfront-project-id": routedProject },
       });
     }, async () => {
       const client = await createIntegrationClient(context);
       routedProject = "22222222-2222-4222-8222-222222222222";
       const error = await assertRejects(
-        () => client.call("github__create_issue", {}),
+        () => client.runTool("github__create_issue", {}),
         IntegrationApiError,
       );
       assertInstanceOf(error, IntegrationApiError);
@@ -676,11 +708,10 @@ describe("explicit integration client", () => {
           credential_requirement: { mode: "oauth_connection" },
         });
       }
-      if (path.endsWith("/oauth/connect/session")) {
+      if (path.endsWith(`/projects/${project.id}/integrations/github/connect-sessions`)) {
         sessions++;
+        assertEquals(init?.method, "POST");
         assertEquals(JSON.parse(String(init?.body)), {
-          integration: "github",
-          project_reference: project.id,
           scope: "user",
           redirect_uri: "http://localhost:9876/callback?state=synthetic",
         });
@@ -768,7 +799,7 @@ describe("explicit integration client", () => {
             credential_requirement: { mode: "oauth_connection" },
           });
         }
-        return String(input).includes("/oauth/connect/session")
+        return String(input).includes("/integrations/github/connect-sessions")
           ? Response.json(payload)
           : Response.json(project);
       }, async () => {
@@ -821,8 +852,8 @@ describe("audited REST wire contract", () => {
     > = [
       { method: "GET", path: `/projects/${project.slug}`, response: project },
       {
-        method: "POST",
-        path: "/integrations/tools/list",
+        method: "GET",
+        path: "/integration-tools",
         query: { limit: "1" },
         tool: true,
         response: { tools: [] },
@@ -848,28 +879,35 @@ describe("audited REST wire contract", () => {
       { method: "GET", path: "/integrations/github", response: details },
       {
         method: "GET",
-        path: "/integrations/github/tools",
-        query: { name: "get_", order: "desc", limit: "100" },
+        path: "/integration-tools",
+        query: { integration: "github", name: "get_", order: "desc", limit: "100" },
         tool: true,
         response: { tools: [tool], page_info: { next: "tools/next" } },
       },
       {
         method: "GET",
-        path: "/integrations/github/tools",
-        query: { name: "get_", order: "desc", limit: "100", cursor: "tools/next" },
+        path: "/integration-tools",
+        query: {
+          integration: "github",
+          name: "get_",
+          order: "desc",
+          limit: "100",
+          cursor: "tools/next",
+        },
         tool: true,
         response: { tools: [tool], page_info: { next: null } },
       },
       {
         method: "GET",
-        path: `/projects/${project.id}/integrations/github/connections`,
-        query: { sort_by: "created_at", sort_order: "asc", limit: "100" },
+        path: `/projects/${project.id}/connections`,
+        query: { integration: "github", sort_by: "created_at", sort_order: "asc", limit: "100" },
         response: { data: [row], page_info: { next: "connections/next" } },
       },
       {
         method: "GET",
-        path: `/projects/${project.id}/integrations/github/connections`,
+        path: `/projects/${project.id}/connections`,
         query: {
+          integration: "github",
           sort_by: "created_at",
           sort_order: "asc",
           limit: "100",
@@ -879,10 +917,11 @@ describe("audited REST wire contract", () => {
       },
       {
         method: "GET",
-        path: "/oauth/status/github",
-        query: { project_reference: project.id, scope: "user" },
+        path: `/projects/${project.id}/integrations/github/connection-status`,
+        query: { scope: "user" },
         response: {
           integration: "github",
+          scope: "user",
           connected: true,
           connection_id: connectionId,
           connection_generation_id: generationId,
@@ -890,7 +929,7 @@ describe("audited REST wire contract", () => {
       },
       {
         method: "POST",
-        path: "/integrations/github/tools/get_current_user/call",
+        path: "/integration-tools/github__get_current_user/run",
         body: {
           arguments: { run_id: "native", connection_id: "provider-native" },
           connection_id: connectionId,
@@ -901,10 +940,8 @@ describe("audited REST wire contract", () => {
       { method: "GET", path: "/integrations/github", response: details },
       {
         method: "POST",
-        path: "/oauth/connect/session",
+        path: `/projects/${project.id}/integrations/github/connect-sessions`,
         body: {
-          integration: "github",
-          project_reference: project.id,
           scope: "user",
           redirect_uri: "http://localhost:9876/callback",
         },
@@ -940,7 +977,7 @@ describe("audited REST wire contract", () => {
     }, async () => {
       const client = await createIntegrationClient(context);
       assertEquals(
-        (await collect(client.discover({ search: "git", sortOrder: "desc" }))).length,
+        (await collect(client.listIntegrations({ search: "git", sortOrder: "desc" }))).length,
         2,
       );
       assertEquals(await client.getIntegration("github"), details);
@@ -950,7 +987,7 @@ describe("audited REST wire contract", () => {
       );
       assertEquals((await collect(client.listConnections("github"))).length, 2);
       assertEquals((await client.status("github", "user")).connected, true);
-      await client.call(tool.name, { run_id: "native", connection_id: "provider-native" }, {
+      await client.runTool(tool.name, { run_id: "native", connection_id: "provider-native" }, {
         connectionId,
       });
       assertEquals(
@@ -959,6 +996,37 @@ describe("audited REST wire contract", () => {
       );
     });
     assertEquals(index, fixtures.length);
+  });
+
+  it("keeps discover, readiness and call as aliases of the renamed methods", async () => {
+    const requests: string[] = [];
+    await withMockFetch(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === `/v1/projects/${project.slug}`) return Response.json(project);
+      const headers = { "x-veryfront-project-id": project.id };
+      if (url.pathname === "/v1/integration-tools") {
+        return Response.json({ tools: [] }, { headers });
+      }
+      requests.push(`${init?.method} ${url.pathname}`);
+      if (url.pathname === "/v1/integrations") {
+        return Response.json({ data: [], page_info: { next: null } });
+      }
+      return Response.json(url.pathname.endsWith("/run") ? { content: [] } : {}, { headers });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      assertEquals(await collect(client.discover()), []);
+      // An empty readiness body is invalid on both names; only the route is under test.
+      await assertRejects(() => client.readiness(tool.name), IntegrationApiError);
+      assertEquals(await client.call(tool.name, {}), {
+        status: "success",
+        result: { content: [] },
+      });
+    });
+    assertEquals(requests, [
+      "GET /v1/integrations",
+      `GET /v1/projects/${project.id}/integrations/github/readiness`,
+      `POST /v1/integration-tools/${tool.name}/run`,
+    ]);
   });
 });
 
@@ -1236,7 +1304,7 @@ describe("native response resource budgets", () => {
           }),
         async () => {
           const client = await createIntegrationClient(context);
-          const outcome = await client.call(tool.name, {});
+          const outcome = await client.runTool(tool.name, {});
           assertEquals(outcome.result.content[0]?.data, data);
           assertEquals(outcome.result.structuredContent, { native: true });
         },
@@ -1272,7 +1340,7 @@ describe("native response resource budgets", () => {
           await assertRejects(
             () =>
               operation === "call"
-                ? client.call(tool.name, {})
+                ? client.runTool(tool.name, {})
                 : collect(client.listTools("github")),
             IntegrationApiError,
           );

@@ -541,6 +541,11 @@ describe("generate-api-reference", () => {
         cliReference,
         "### AI & Automation",
       );
+      // whoami checks an API key against /projects; /me is session-only.
+      assertStringIncludes(
+        cliReference,
+        "`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions.",
+      );
 
       for await (const entry of Deno.readDir(`${outputDir}/veryfront`)) {
         if (!entry.isFile || !entry.name.endsWith(".md")) continue;

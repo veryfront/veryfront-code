@@ -47,6 +47,13 @@ export interface TaskContext {
   /** Cooperative cancellation for request- or runtime-scoped execution */
   signal?: AbortSignal;
   /**
+   * Writable scratch directory for this run, under the OS temp root. Hosted runtimes mount the
+   * project filesystem read-only, so relative writes such as `.data/` fail there; write here
+   * instead. `runTask` creates it before `run()` and removes it after, so nothing persists
+   * across runs. Unset in hand-built contexts and when the process cannot write to the temp root.
+   */
+  dataDir?: string;
+  /**
    * 1-based attempt number. A project task run starts again, with a higher
    * attempt, only after it threw a `RetryableError` or the runtime never
    * started it; see `backoff_limit`. `runTask` always sets it (1 when the

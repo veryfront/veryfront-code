@@ -119,7 +119,13 @@ export {
   type DependencyResolution,
   type DependencySkipReason,
   type GetDependencyHistoryInput,
+  type GetStyleArtifactInput,
   type ResolveDependenciesInput,
+  type StartStyleArtifactBuildInput,
+  type StyleArtifact,
+  type StyleArtifactSelector,
+  type UpdateStyleArtifactInput,
   VeryfrontApiClient,
   type VeryfrontApiDependencies,
+  type VeryfrontApiStyleArtifacts,
 } from "./adapters/veryfront-api-client/index.ts";

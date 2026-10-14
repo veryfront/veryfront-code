@@ -1,7 +1,7 @@
 ---
 title: "veryfront/events"
 description: "Agent Events Protocol decoder and public types. This module validates target Agent Events Protocol CloudEvents with the committed target catalog, envelope schema and payload schemas. It is additive to the released `veryfront/run-events` surface."
-order: 9
+order: 10
 ---
 
 ## Import

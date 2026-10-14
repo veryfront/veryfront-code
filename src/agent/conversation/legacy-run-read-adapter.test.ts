@@ -569,11 +569,58 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
-  it("keeps a result-only provider marker on the version 1 compatibility path", () => {
-    // The version 2 writer marks provider execution on the result alone. The
-    // lifecycle reducer only admits a provider start for a call that was itself
-    // recorded as provider-executed, so inferring the marker from the result
-    // would turn benign legacy history into a protocol failure.
+  it("does not infer result ownership across incomplete, ambiguous or explicitly local calls", () => {
+    const start = { type: "TOOL_CALL_START", toolCallId: "owned", toolCallName: "web_fetch" };
+    const args = { type: "TOOL_CALL_ARGS", toolCallId: "owned", delta: "{}" };
+    const end = { type: "TOOL_CALL_END", toolCallId: "owned" };
+    const result = {
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "owned",
+      content: "found",
+      providerExecuted: true,
+    };
+    const cases = [
+      [result],
+      [start, args, result],
+      [result, start, args, end],
+      [start, args, result, end],
+      [start, args, end],
+      [start, args, end, result, result],
+      [start, args, end, result, start, args, end, result],
+      [{ ...start, providerExecuted: false }, args, end, result],
+      [start, args, { ...end, providerExecuted: false }, result],
+      [{ ...start, providerExecuted: true }, args, { ...end, providerExecuted: false }, result],
+      [start, args, end, { ...result, toolCallId: "other" }],
+    ];
+    for (const events of cases) {
+      const original = structuredClone(events);
+      const read = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(events, original);
+      if (read.status === "ok") {
+        assertEquals(
+          read.frames.filter((frame) => frame.event.type === "provider_tool_result"),
+          [],
+        );
+      }
+    }
+    const oversized = normalizeConversationRunEvents([{ ...result, content: "x".repeat(200_000) }]);
+    assertEquals(oversized[0]?.providerExecuted, true);
+    const interleaved = [start, { ...start, toolCallId: "other" }, args, end, result];
+    const read = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: interleaved,
+    });
+    assertEquals(read.status, "ok");
+    if (read.status === "ok") {
+      assertEquals(
+        read.frames.filter((frame) => frame.event.type === "provider_tool_result").length,
+        1,
+      );
+    }
+  });
+
+  it("recovers result ownership on the completed version 1 input occurrence", () => {
+    // Result ownership is recovered at the existing input END during replay.
     const stored = writeDurableEvents(frames([
       {
         event: {
@@ -627,14 +674,71 @@ describe("conversation run lifecycle read adapter", () => {
         frame.class === "semantic" && frame.event.type === "custom" &&
         (frame.event as { name?: string }).name === "legacy-tool-result"
       ).length,
-      1,
-      "a result-only marker must stay on the legacy custom compatibility path",
+      0,
+      "a completed input occurrence must recover its explicitly marked result",
     );
     assertEquals(
       result.frames.filter((frame) => frame.event.type === "provider_part_rejected").length,
       0,
       "replaying a result-only marker must never raise a protocol rejection",
     );
+  });
+
+  it("replays provider ownership first learned on a version 1 error result", () => {
+    for (const providerExecuted of [true, false]) {
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "tool-input-start", toolCallId: "fetch-1", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "fetch-1", toolName: "web_fetch", input: {} },
+        {
+          type: "tool-output-error",
+          toolCallId: "fetch-1",
+          errorText: "Provider fetch failed",
+          providerExecuted,
+        },
+      ]);
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        providerExecuted,
+      );
+      const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return;
+      const providerResults = result.frames.filter((frame) =>
+        frame.event.type === "provider_tool_result"
+      );
+      assertEquals(providerResults.length, providerExecuted ? 1 : 0);
+      if (providerExecuted) {
+        assertEquals(
+          (providerResults[0]?.event as { output?: unknown }).output,
+          "Provider fetch failed",
+        );
+        assertEquals((providerResults[0]?.event as { isError?: boolean }).isError, true);
+      }
+    }
+  });
+
+  it("replays provider ownership first learned on a version 1 denied result", () => {
+    for (const providerExecuted of [true, false]) {
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "tool-input-start", toolCallId: "fetch-1", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "fetch-1", toolName: "web_fetch", input: {} },
+        { type: "tool-output-denied", toolCallId: "fetch-1", providerExecuted },
+      ]);
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        providerExecuted,
+      );
+      const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return;
+      const providerResults = result.frames.filter((frame) =>
+        frame.event.type === "provider_tool_result"
+      );
+      assertEquals(providerResults.length, providerExecuted ? 1 : 0);
+      if (providerExecuted) {
+        assertEquals((providerResults[0]?.event as { isError?: boolean }).isError, true);
+      }
+    }
   });
 
   it("keeps a version 1 tool output that cannot be JSON encoded verbatim", () => {

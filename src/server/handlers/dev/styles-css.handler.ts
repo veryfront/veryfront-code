@@ -32,8 +32,8 @@ import {
 import { serverLogger } from "#veryfront/utils";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type {
-  EnsureStyleArtifactBuildInput,
-  ResolveStyleArtifactInput,
+  GetStyleArtifactInput,
+  StartStyleArtifactBuildInput,
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
@@ -46,7 +46,7 @@ import { profilePhase } from "#veryfront/observability";
 const logger = serverLogger.component("styles-css-handler");
 
 type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
-type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfileHash">;
+type StyleArtifactSelectorContext = Omit<GetStyleArtifactInput, "styleProfileHash">;
 
 /** Longest diagnostic text embedded in a served stylesheet. */
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
@@ -575,7 +575,7 @@ export class StylesCSSHandler extends BaseHandler {
     if (!client) return undefined;
 
     try {
-      const resolved = await client.resolveStyleArtifact({
+      const resolved = await client.styleArtifacts.get({
         ...selector,
         styleProfileHash,
       });
@@ -633,7 +633,7 @@ export class StylesCSSHandler extends BaseHandler {
     if (!client) return;
 
     try {
-      await client.upsertStyleArtifact({
+      await client.styleArtifacts.update({
         ...selector,
         styleProfileHash,
         artifactHash: cssHash,
@@ -672,11 +672,11 @@ export class StylesCSSHandler extends BaseHandler {
     if (!this.shouldEnsureRemoteStyleArtifactBuild(selector)) return;
 
     try {
-      await client.ensureStyleArtifactBuild(
+      await client.styleArtifacts.startBuild(
         {
           ...selector,
           styleProfileHash,
-        } satisfies EnsureStyleArtifactBuildInput,
+        } satisfies StartStyleArtifactBuildInput,
       );
     } catch (error) {
       logger.debug("Failed to ensure remote prepared CSS build", {

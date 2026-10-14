@@ -66,6 +66,10 @@ export class CanonicalEventsV1StreamError extends Error {
     this.name = "CanonicalEventsV1StreamError";
   }
 }
+function path(runId: string, suffix: string): string {
+  return `/runs/${locator(runId)}/${suffix}?event_representation=canonical-v1`;
+}
+
 function locator(value: string): string {
   if (!value.trim()) throw new TypeError("Run ID must not be empty");
   return encodeURIComponent(value);
@@ -145,9 +149,6 @@ export function createCanonicalEventsV1Facade(
     }
     return result;
   }
-  function path(runId: string, suffix: string): string {
-    return `/runs/${locator(runId)}/${suffix}?event_representation=canonical-v1`;
-  }
   return {
     async list(runId, query = {}, options) {
       if (query.cursor !== undefined) cursor(query.cursor);
@@ -183,76 +184,86 @@ export function createCanonicalEventsV1Facade(
       if (!(response instanceof Response) || !response.body) {
         throw new TypeError("canonical-v1 stream has no response body");
       }
-      const reader = response.body.pipeThrough(new TextDecoderStream(), { signal: options.signal })
-        .getReader();
-      let buffer = "";
-      let pendingCR = false;
-      try {
-        while (true) {
-          options.signal?.throwIfAborted();
-          const chunk = await reader.read();
-          let text = chunk.value ?? "";
-          if (pendingCR) {
-            text = "\r" + text;
-            pendingCR = false;
-          }
-          if (!chunk.done && text.endsWith("\r")) {
-            text = text.slice(0, -1);
-            pendingCR = true;
-          }
-          buffer += normalizeNewlines(text);
-          let end: number;
-          while ((end = buffer.indexOf("\n\n")) >= 0) {
-            const frame = buffer.slice(0, end);
-            if (frame.length > MAX_SSE_FRAME_CHARS) {
-              throw new TypeError("canonical-v1 SSE frame is too large");
-            }
-            buffer = buffer.slice(end + 2);
-            let eventName = "message";
-            let id: string | undefined;
-            const data: string[] = [];
-            for (const line of frame.split("\n")) {
-              if (line.startsWith(":")) continue;
-              const colon = line.indexOf(":");
-              const field = colon < 0 ? line : line.slice(0, colon);
-              const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
-              if (field === "event") eventName = value;
-              if (field === "id") id = value;
-              if (field === "data") data.push(value);
-            }
-            if (!data.length) {
-              if (id !== undefined) {
-                throw new TypeError("Control frame must not advance canonical-v1 cursor");
-              }
-              continue;
-            }
-            const value: unknown = JSON.parse(data.join("\n"));
-            if (eventName === "error") {
-              if (id !== undefined) throw new TypeError("Stream error must not carry a cursor");
-              throw new CanonicalEventsV1StreamError(await parseEventErrorV1(value));
-            }
-            const member = await parseStreamMemberV1(value);
-            const name = member.kind === "legacy" ? "legacy" : member.event.type;
-            const expectedId = member.kind === "transient"
-              ? undefined
-              : String(member.metadata.event_id);
-            if (eventName !== name || id !== expectedId) {
-              throw new TypeError("canonical-v1 SSE identity mismatch");
-            }
-            yield member;
-          }
-          if (buffer.length > MAX_SSE_FRAME_CHARS) {
-            throw new TypeError("canonical-v1 SSE frame is too large");
-          }
-          if (chunk.done) {
-            if (buffer.trim()) throw new TypeError("Incomplete canonical-v1 SSE frame");
-            break;
-          }
-        }
-      } finally {
-        await reader.cancel();
-        reader.releaseLock();
-      }
+      yield* readCanonicalMembers(response.body, options.signal);
     },
   };
+}
+
+async function decodeCanonicalSseFrame(frame: string): Promise<StreamMemberV1 | undefined> {
+  let eventName = "message";
+  let id: string | undefined;
+  const data: string[] = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+    if (field === "event") eventName = value;
+    if (field === "id") id = value;
+    if (field === "data") data.push(value);
+  }
+  if (!data.length) {
+    if (id !== undefined) {
+      throw new TypeError("Control frame must not advance canonical-v1 cursor");
+    }
+    return undefined;
+  }
+  const value: unknown = JSON.parse(data.join("\n"));
+  if (eventName === "error") {
+    if (id !== undefined) throw new TypeError("Stream error must not carry a cursor");
+    throw new CanonicalEventsV1StreamError(await parseEventErrorV1(value));
+  }
+  const member = await parseStreamMemberV1(value);
+  const name = member.kind === "legacy" ? "legacy" : member.event.type;
+  const expectedId = member.kind === "transient" ? undefined : String(member.metadata.event_id);
+  if (eventName !== name || id !== expectedId) {
+    throw new TypeError("canonical-v1 SSE identity mismatch");
+  }
+  return member;
+}
+
+async function* readCanonicalMembers(
+  body: NonNullable<Response["body"]>,
+  signal?: AbortSignal,
+): AsyncGenerator<StreamMemberV1> {
+  const reader = body.pipeThrough(new TextDecoderStream(), { signal })
+    .getReader();
+  let buffer = "";
+  let pendingCR = false;
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const chunk = await reader.read();
+      let text = chunk.value ?? "";
+      if (pendingCR) {
+        text = "\r" + text;
+        pendingCR = false;
+      }
+      if (!chunk.done && text.endsWith("\r")) {
+        text = text.slice(0, -1);
+        pendingCR = true;
+      }
+      buffer += normalizeNewlines(text);
+      let end: number;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, end);
+        if (frame.length > MAX_SSE_FRAME_CHARS) {
+          throw new TypeError("canonical-v1 SSE frame is too large");
+        }
+        buffer = buffer.slice(end + 2);
+        const member = await decodeCanonicalSseFrame(frame);
+        if (member !== undefined) yield member;
+      }
+      if (buffer.length > MAX_SSE_FRAME_CHARS) {
+        throw new TypeError("canonical-v1 SSE frame is too large");
+      }
+      if (chunk.done) {
+        if (buffer.trim()) throw new TypeError("Incomplete canonical-v1 SSE frame");
+        break;
+      }
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
 }

@@ -4,7 +4,7 @@ import {
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
-import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getClassificationRequestHost } from "../utils/request-host.ts";
 
 export interface RequestContext {
   token: string;
@@ -37,7 +37,9 @@ export function createRequestContext(
   // the operator explicitly trusts forwarded headers.
   const trustProxy = options.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
+  // The classification host is normalized (lowercase, no trailing root dot), so
+  // `PROJECT.PREVIEW.EXAMPLE.` is still a preview host.
+  const effectiveHost = getClassificationRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 

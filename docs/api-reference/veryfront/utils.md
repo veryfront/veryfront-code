@@ -1,7 +1,7 @@
 ---
 title: "veryfront/utils"
 description: "Runtime detection, logging, constants, hashing, and feature flags."
-order: 45
+order: 46
 ---
 
 ## Import

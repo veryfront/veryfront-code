@@ -304,6 +304,7 @@ Deno.test("legacy getRuntimeProjectFile returns mismatched paths and oversized c
     "/projects/project%2Fone/files/..%2Frequested.md",
   );
   assertEquals(getRequestedUrl(fetchSpy).searchParams.has("branch"), false);
+  assertEquals(getRequestedUrl(fetchSpy).searchParams.has("ref"), false);
 });
 
 Deno.test("getRuntimeProjectFile enforces its public content and transport bounds", async () => {
@@ -446,7 +447,8 @@ Deno.test("legacy project file calls preserve normal REST, auth, and response sh
   );
   const fileUrl = getRequestedUrl(fileFetch);
   assertEquals(fileUrl.pathname, "/projects/project-1/files/src%2Findex.ts");
-  assertEquals(fileUrl.searchParams.get("branch"), "branch-1");
+  assertEquals(fileUrl.searchParams.get("ref"), "branch:branch-1");
+  assertEquals(fileUrl.searchParams.has("branch"), false);
   assertEquals(fileUrl.searchParams.get("fields"), "(path,content)");
   assertEquals(
     new Headers(getFetchCall(fileFetch).init.headers).get("Authorization"),
@@ -470,7 +472,8 @@ Deno.test("legacy project file calls preserve normal REST, auth, and response sh
   );
   const listUrl = getRequestedUrl(listFetch);
   assertEquals(listUrl.pathname, "/projects/project-1/files");
-  assertEquals(listUrl.searchParams.get("branch"), "branch-1");
+  assertEquals(listUrl.searchParams.get("ref"), "branch:branch-1");
+  assertEquals(listUrl.searchParams.has("branch"), false);
   assertEquals(listUrl.searchParams.get("path"), "skills/catalog");
   assertEquals(listUrl.searchParams.get("fields"), "(path)");
   assertEquals(listUrl.searchParams.get("limit"), "100");
@@ -1128,7 +1131,8 @@ Deno.test("getStrictRuntimeProjectFile passes project, path, branch, fields, and
   const url = getRequestedUrl(fetchSpy);
   assertEquals(url.origin, "https://api.test");
   assertEquals(url.pathname, "/projects/project-1/files/src%2Findex.ts");
-  assertEquals(url.searchParams.get("branch"), "branch-1");
+  assertEquals(url.searchParams.get("ref"), "branch:branch-1");
+  assertEquals(url.searchParams.has("branch"), false);
   assertEquals(url.searchParams.get("fields"), "(path,content)");
   assertEquals(
     new Headers(getFetchCall(fetchSpy).init.headers).get("Authorization"),
@@ -1147,6 +1151,7 @@ Deno.test("getStrictRuntimeProjectFile preserves an empty branch as the default-
   });
 
   assertEquals(getRequestedUrl(fetchSpy).searchParams.has("branch"), false);
+  assertEquals(getRequestedUrl(fetchSpy).searchParams.has("ref"), false);
 });
 
 Deno.test("getStrictRuntimeProjectFiles returns project file paths from the API list route", async () => {
@@ -2123,7 +2128,8 @@ Deno.test("getStrictRuntimeProjectFiles passes project, branch, prefix, fields, 
   const url = getRequestedUrl(fetchSpy);
   assertEquals(url.origin, "https://api.test");
   assertEquals(url.pathname, "/projects/project-1/files");
-  assertEquals(url.searchParams.get("branch"), "branch-1");
+  assertEquals(url.searchParams.get("ref"), "branch:branch-1");
+  assertEquals(url.searchParams.has("branch"), false);
   assertEquals(url.searchParams.get("path"), "skills/research");
   assertEquals(url.searchParams.get("fields"), "(path)");
   assertEquals(url.searchParams.get("limit"), "100");
@@ -2139,4 +2145,5 @@ Deno.test("getStrictRuntimeProjectFiles preserves an empty branch as the default
   await getStrictRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, branchId: "" });
 
   assertEquals(getRequestedUrl(fetchSpy).searchParams.has("branch"), false);
+  assertEquals(getRequestedUrl(fetchSpy).searchParams.has("ref"), false);
 });

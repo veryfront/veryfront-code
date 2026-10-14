@@ -57,6 +57,8 @@ import {
   type DeletedGitSourcePaths,
   getProjectTarget,
   type GitSource,
+  gitSourceComparisonWitness,
+  gitSourceProbeWitness,
   normalizeControlPlane,
   type ProjectTarget,
   readPushReceipt,
@@ -65,6 +67,7 @@ import {
   resolveGitTrackedSourcePaths,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { getBranchByName } from "../merge/command.ts";
 import { buildStudioUrl } from "../studio/command.ts";
 import { getCloudDomain } from "#cli/shared/constants";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
@@ -230,13 +233,6 @@ interface PushRemoteTarget {
   branchExists: boolean;
 }
 
-interface ListBranchesResponse {
-  data: BranchListItem[];
-  page_info?: {
-    next?: string;
-  };
-}
-
 interface RemoteFile {
   path: string;
   content?: string;
@@ -315,8 +311,13 @@ function sourceSnapshotsMatch(
     left.sourceDigest === right.sourceDigest;
 }
 
-function sourceChangedError(): Error {
-  return new Error("Local source changed during push. Run veryfront push again.");
+function sourceChangedError(before?: GitSource, after?: GitSource): Error {
+  return new Error(
+    "Local source changed during push. Run veryfront push again." +
+      (before && after
+        ? ` Git capture outcomes: ${gitSourceComparisonWitness(before, after)}.`
+        : ""),
+  );
 }
 
 /** Whether two source captures cover exactly the same set of relative paths. */
@@ -342,10 +343,12 @@ function sameFileContentsExcept(
   );
 }
 
-function gitProvenanceError(): Error {
+function gitProvenanceError(source?: GitSource): Error {
+  const witness = source && gitSourceProbeWitness(source);
   return new Error(
     "Git provenance could not be verified. Ensure Git can inspect the project checkout. " +
-      "In GitHub Actions, ensure GITHUB_SHA matches the checked-out HEAD, then retry.",
+      "In GitHub Actions, ensure GITHUB_SHA matches the checked-out HEAD, then retry." +
+      (witness ? ` Git probe outcomes: ${witness}.` : ""),
   );
 }
 
@@ -406,7 +409,7 @@ export async function capturePushSourceSnapshot(
   expectedRepositoryAvailable?: boolean,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
-  if (gitSourceBefore.indeterminate) throw gitProvenanceError();
+  if (gitSourceBefore.indeterminate) throw gitProvenanceError(gitSourceBefore);
   if (expectedCommitSha !== undefined && gitSourceBefore.commitSha !== expectedCommitSha) {
     throw sourceChangedError();
   }
@@ -424,8 +427,10 @@ export async function capturePushSourceSnapshot(
   const filesTracked = await areSourceFilesTracked(projectDir, trackedSourceFiles);
   const gitSource = await resolveGitSource(projectDir);
 
-  if (gitSource.indeterminate) throw gitProvenanceError();
-  if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();
+  if (gitSource.indeterminate) throw gitProvenanceError(gitSource);
+  if (!gitSourcesMatch(gitSourceBefore, gitSource)) {
+    throw sourceChangedError(gitSourceBefore, gitSource);
+  }
   return {
     files,
     gitSource: { ...gitSource, clean: gitSource.clean && filesTracked },
@@ -597,34 +602,6 @@ export function createBranch(
   return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
     name: branchName,
   });
-}
-
-async function getBranchByName(
-  client: ApiClient,
-  projectSlug: string,
-  branchName: string,
-): Promise<BranchListItem | null> {
-  let cursor: string | undefined;
-
-  do {
-    const params: Record<string, string> = {
-      search: branchName,
-      limit: "100",
-      ...(cursor ? { cursor } : {}),
-    };
-
-    const response = await client.get<ListBranchesResponse>(
-      `/projects/${encodeURIComponent(projectSlug)}/branches`,
-      params,
-    );
-
-    const branch = response.data.find((candidate) => candidate.name === branchName);
-    if (branch) return branch;
-
-    cursor = response.page_info?.next;
-  } while (cursor);
-
-  return null;
 }
 
 export async function ensureBranch(

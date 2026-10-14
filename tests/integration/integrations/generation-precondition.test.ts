@@ -29,7 +29,7 @@ describe("published client generation preconditions", () => {
       await withMockFetch(async (input, init) => {
         const path = new URL(String(input)).pathname;
         if (path.startsWith("/projects/")) return Response.json(project);
-        const isCall = path.endsWith("/call");
+        const isCall = path.endsWith("/run");
         const headers = new Headers({ "x-veryfront-project-id": project.id });
         if (scenario !== "unsupported" && !(scenario === "downgraded" && isCall)) {
           headers.set("x-veryfront-tool-preconditions", "project_id, connection_generation_id");
@@ -45,7 +45,7 @@ describe("published client generation preconditions", () => {
       }, async () => {
         const client = await createIntegrationClient(context);
         const call = () =>
-          client.call("github__get_current_user", {
+          client.runTool("github__get_current_user", {
             expected_connection_generation_id: "provider-native",
           }, {
             connectionId: scenario === "missing-connection" ? undefined : connectionId,
@@ -86,7 +86,7 @@ describe("client and CLI selection failure identity", () => {
           "x-veryfront-project-id": project.id,
           "x-veryfront-tool-preconditions": "project_id,connection_generation_id",
         });
-        if (!path.endsWith("/call")) return Response.json({ tools: [] }, { headers });
+        if (!path.endsWith("/run")) return Response.json({ tools: [] }, { headers });
         calls++;
         const status = slug === "integration-connection-stale"
           ? 409
@@ -104,7 +104,7 @@ describe("client and CLI selection failure identity", () => {
         const client = await createIntegrationClient(context);
         const error = await assertRejects(
           () =>
-            client.call("github__get_current_user", {}, {
+            client.runTool("github__get_current_user", {}, {
               connectionId,
               expectedConnectionGenerationId: generation,
             }),

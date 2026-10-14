@@ -30,8 +30,33 @@ export function getEffectiveRequestHost(
     const forwarded = parseForwardedHost(req.headers.get("x-forwarded-host"));
     if (forwarded) return forwarded;
   }
-  return req.headers.get("host") ??
-    (url ?? new URL(req.url)).host;
+  return req.headers.get("host") ?? (url ?? new URL(req.url)).host;
+}
+
+/**
+ * The effective host normalized for domain and mode classification only: lowercase,
+ * without a trailing root dot, keeping any port. Browser-facing origins keep the
+ * browser-visible authority from {@link getEffectiveRequestHost}.
+ */
+export function getClassificationRequestHost(
+  req: Request,
+  url?: URL,
+  trustProxy = false,
+): string {
+  return normalizeHost(getEffectiveRequestHost(req, url, trustProxy));
+}
+
+/**
+ * DNS names are case-insensitive and may carry a trailing root dot. Lowercase the host
+ * and drop that dot, keeping any port.
+ */
+function normalizeHost(host: string): string {
+  const lower = host.toLowerCase();
+  const portStart = lower.startsWith("[") ? lower.indexOf("]:") + 1 : lower.lastIndexOf(":");
+  const hasPort = portStart > 0 && /^:\d+$/.test(lower.slice(portStart));
+  const name = hasPort ? lower.slice(0, portStart) : lower;
+  const port = hasPort ? lower.slice(portStart) : "";
+  return (name.endsWith(".") ? name.slice(0, -1) : name) + port;
 }
 
 /**

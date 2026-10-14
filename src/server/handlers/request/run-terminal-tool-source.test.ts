@@ -81,3 +81,73 @@ describe("control-plane run platform tool source", () => {
     }
   });
 });
+
+describe("canonical file mutation authority", () => {
+  it("binds retained authority only to the trusted API mutation calls", async () => {
+    const { calls, create } = recorder();
+    const source = createRunPlatformToolSource(
+      {
+        endpoint: "https://api.example/mcp",
+        headers: { Authorization: "Bearer current-attempt" },
+      },
+      null,
+      create,
+      { apiBaseUrl: "https://api.example", token: "current-writer" },
+    );
+    await source.listTools({});
+    for (
+      const name of [
+        "create_file",
+        "update_file",
+        "move_file",
+        "delete_file",
+        "update_project_file_draft",
+        "delete_project_file_draft",
+        "publish_project_files",
+      ]
+    ) {
+      await source.executeTool(name, {}, {});
+      assertEquals(calls.at(-1)!.headers.get("X-Veryfront-Run-Event-Token"), "current-writer");
+      await source.executeTool(`veryfront__${name}`, {}, {});
+      assertEquals(calls.at(-1)!.headers.get("X-Veryfront-Run-Event-Token"), "current-writer");
+    }
+    for (
+      const name of [
+        "veryfront__get_file",
+        "veryfront__list_files",
+        "veryfront__finalize",
+        "other__update_file",
+        "veryfront__write_sandbox_files",
+        "veryfront__create_external_storage_file",
+      ]
+    ) {
+      await source.executeTool(name, {}, {});
+      assertEquals(calls.at(-1)!.headers.get("X-Veryfront-Run-Event-Token"), null);
+    }
+  });
+
+  it("never sends signed authority to a foreign or dynamic MCP endpoint", async () => {
+    const { calls, create } = recorder();
+    for (
+      const endpoint of [
+        "https://foreign.example/mcp",
+        () => "https://api.example/mcp",
+        "http://api.example/mcp",
+        "https://api.example/mcp?redirect=foreign",
+      ]
+    ) {
+      let rejected = false;
+      try {
+        const source = createRunPlatformToolSource({ endpoint, headers: {} }, null, create, {
+          apiBaseUrl: "https://api.example",
+          token: "private-writer",
+        });
+        await source.executeTool("veryfront__update_file", {}, {});
+      } catch {
+        rejected = true;
+      }
+      assertEquals(rejected, true);
+    }
+    assertEquals(calls.length, 0);
+  });
+});

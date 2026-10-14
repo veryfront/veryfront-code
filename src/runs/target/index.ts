@@ -28,6 +28,7 @@ export {
   createRunsSdk,
   type RunsArgs,
   type RunsCallOptions,
+  type RunsDeleteAcknowledgement,
   type RunsInput,
   type RunsOperationId,
   type RunsOutput,

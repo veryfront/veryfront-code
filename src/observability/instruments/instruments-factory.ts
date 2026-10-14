@@ -54,6 +54,7 @@ export function createEmptyInstruments(): MetricsInstruments {
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
+    eventLoopMaxLagGauge: null,
     errorCounter: null,
     streamLifecycleOutcomeCounter: null,
     streamLifecycleDeadlineCounter: null,
