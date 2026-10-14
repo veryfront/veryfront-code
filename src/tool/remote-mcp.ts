@@ -1,5 +1,5 @@
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import { normalizeToolDiscoveryMetadata } from "./discovery-metadata.ts";
+import { normalizeToolDiscoveryMetadata, TOOL_DISCOVERY_META_KEY } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -266,7 +266,7 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
 
   // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
   const discovery = normalizeToolDiscoveryMetadata(
-    isRecord(entry._meta) ? entry._meta["veryfront/tool-discovery"] : undefined,
+    isRecord(entry._meta) ? entry._meta[TOOL_DISCOVERY_META_KEY] : undefined,
   );
   if (discovery) definition.discovery = discovery;
 

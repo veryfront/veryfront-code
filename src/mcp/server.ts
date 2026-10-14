@@ -9,6 +9,10 @@ import type {
   SchemaValidator,
 } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
+import {
+  normalizeToolDiscoveryMetadata,
+  TOOL_DISCOVERY_META_KEY,
+} from "#veryfront/tool/discovery-metadata.ts";
 import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { resourcePatternToUriTemplate } from "#veryfront/resource/pattern.ts";
@@ -518,6 +522,8 @@ export class MCPServer {
       }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
+      const discovery = normalizeToolDiscoveryMetadata(tool.discovery);
+      if (discovery) entry._meta = { [TOOL_DISCOVERY_META_KEY]: discovery };
       tools.push(entry);
     }
 

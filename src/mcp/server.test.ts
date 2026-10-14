@@ -754,6 +754,49 @@ describe("mcp/server", () => {
     });
   });
 
+  it("emits normalized discovery metadata in tools/list _meta", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const makeTool = (id: string, discovery: unknown) => {
+      const created = dynamicTool({
+        id,
+        description: "Tool with discovery metadata",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      });
+      (created as { discovery?: unknown }).discovery = discovery;
+      return created;
+    };
+    registerTool(
+      "test:discoverable",
+      makeTool("test:discoverable", {
+        version: 1,
+        type: "integration",
+        domain: "docs",
+        operation: "search",
+        ignored: true,
+      }),
+    );
+    registerTool("test:invalid-discovery", makeTool("test:invalid-discovery", { version: 2 }));
+
+    const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+
+    assertEquals(tools.find((t) => t.name === "test:discoverable")?._meta, {
+      "veryfront/tool-discovery": {
+        version: 1,
+        type: "integration",
+        domain: "docs",
+        operation: "search",
+      },
+    });
+    const invalid = tools.find((t) => t.name === "test:invalid-discovery");
+    assertExists(invalid);
+    assertEquals(Object.hasOwn(invalid, "_meta"), false);
+  });
+
   it("omits uncompilable output contracts without breaking tool discovery", async () => {
     const server = createMCPServer({
       enabled: true,

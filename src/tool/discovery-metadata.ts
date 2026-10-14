@@ -2,6 +2,9 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { ToolDiscoveryMetadata } from "./types.ts";
 
+/** MCP `_meta` key that carries tool discovery metadata across server boundaries. */
+export const TOOL_DISCOVERY_META_KEY = "veryfront/tool-discovery";
+
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 
 /** Read bounded navigation hints without changing executable tool authorization. */
