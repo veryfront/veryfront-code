@@ -122,6 +122,78 @@ describe("provider-tool-compat", () => {
     );
   });
 
+  it("folds root combinators out of OpenAI tool schemas", () => {
+    const nested = {
+      anyOf: [{ type: "string" }, { type: "object", properties: { text: { type: "string" } } }],
+    };
+    const createAgentSchema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        system: { type: "string" },
+        system_prompt: { type: "string" },
+        model: nested,
+      },
+      required: ["name"],
+      anyOf: [{ required: ["system"] }, { required: ["system_prompt"] }],
+    } as never;
+
+    for (
+      const model of ["openai/gpt-5.4", "veryfront-cloud/openai/gpt-5.5", "openai/o3"]
+    ) {
+      const sanitized = sanitizeProviderToolSchema(createAgentSchema, { model });
+      assertEquals(sanitized, {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          system: { type: "string" },
+          system_prompt: { type: "string" },
+          model: nested,
+        },
+        required: ["name"],
+      } as never, model);
+      for (const key of ["allOf", "anyOf", "oneOf", "not", "enum"]) {
+        assertEquals(Object.hasOwn(sanitized, key), false, `${model} root ${key}`);
+      }
+    }
+
+    const withRootNotAndEnum = {
+      type: "object",
+      properties: { mode: { type: "string", enum: ["a", "b"] } },
+      not: { required: ["legacy"] },
+      enum: [{ mode: "a" }],
+      oneOf: [
+        { properties: { a: { type: "string" } }, required: ["a"] },
+        { properties: { a: { type: "string" } }, required: ["a"] },
+      ],
+    } as never;
+    assertEquals(
+      sanitizeProviderToolSchema(withRootNotAndEnum, { model: "openai/gpt-5.4" }),
+      {
+        type: "object",
+        properties: { mode: { type: "string", enum: ["a", "b"] }, a: { type: "string" } },
+        required: ["a"],
+      } as never,
+    );
+  });
+
+  it("leaves root combinators alone for providers other than OpenAI", () => {
+    const schema = {
+      type: "object",
+      properties: { system: { type: "string" }, system_prompt: { type: "string" } },
+      anyOf: [{ required: ["system"] }, { required: ["system_prompt"] }],
+    } as never;
+
+    assertStrictEquals(sanitizeProviderToolSchema(schema, { model: "some-local-model" }), schema);
+    assertStrictEquals(sanitizeProviderToolSchema(schema, {}), schema);
+    assertStrictEquals(
+      sanitizeProviderToolSchema(schema, { model: "mistral/mistral-large" }),
+      schema,
+    );
+  });
+
   it("returns independent permissive fallback schemas", () => {
     for (
       const createFallback of [

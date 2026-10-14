@@ -755,6 +755,26 @@ function sanitizeAnthropicSchemaRoot(
   return sanitized;
 }
 
+const OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS = ["allOf", "anyOf", "oneOf", "not", "enum"] as const;
+
+/**
+ * OpenAI rejects function parameters whose root carries `oneOf`, `anyOf`,
+ * `allOf`, `not`, or `enum` (`invalid_function_parameters`). Fold root
+ * compositions into one object schema the way Anthropic roots are folded and
+ * drop root `not` and `enum`. Nested schemas are left as they are, and a
+ * schema without these root keywords is returned by identity.
+ */
+function sanitizeOpenAISchemaRoot(schema: JsonSchema): JsonSchema {
+  if (
+    !isPlainRecord(schema) ||
+    !OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS.some((key) => Object.hasOwn(schema, key))
+  ) {
+    return schema;
+  }
+  const { not: _not, enum: _enum, ...root } = schema;
+  return sanitizeAnthropicSchemaRoot(root) as JsonSchema;
+}
+
 /**
  * Normalize a provider tool input schema so every function tool has a
  * provider-safe JSON Schema object at the root. Remote/MCP tools can omit the
@@ -792,6 +812,8 @@ export function sanitizeProviderToolSchema(
   options: SanitizeProviderToolSchemaOptions = {},
 ): JsonSchema {
   const profile = getProviderToolProfile(options.model, options.wireSurface);
+  // OpenAI keeps its property keys as authored; only the root shape is fixed.
+  if (profile.provider === "openai") return sanitizeOpenAISchemaRoot(schema);
   if (!profile.sanitizeSchema) return schema;
 
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
