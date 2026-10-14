@@ -73,6 +73,11 @@ cannot reinstall tracing state.
 | `withSpan(name, asyncFn, options?)`       | Runs an async callback and completes its span               |
 | `withSpanSync(name, fn, options?)`        | Synchronous form of `withSpan`                              |
 
+Explicit completion is opt-in. `markSpanCompleted` is for a domain operation whose
+completion has been verified; it preserves errors reported through the public
+span setter or internal error helpers. The OTLP async `withSpan` helper does not
+infer completion from a callback returning successfully.
+
 `SpanOptions` supports `kind`, `attributes`, and `parent`. `kind` is one of
 `internal`, `server`, `client`, `producer`, or `consumer`. `parent` may be a
 `Span` or a tracing `Context`.
@@ -91,6 +96,7 @@ provider is installed.
 | `withSpanSync(name, fn, attributes?, options?)`  | Runs a synchronous callback in an active span context                  |
 | `startServerSpan(method, path, parentContext?)`  | Returns `{ span, context }`, or `null` when span startup fails         |
 | `endServerSpan(span, statusCode, error?)`        | Records HTTP status and ends the server span                           |
+| `markSpanCompleted(span)`                        | Marks verified domain completion OK unless the span has reported ERROR |
 | `extractContext(headers)`                        | Extracts from incoming headers                                         |
 | `injectContext(headers)`                         | Injects the active context into outgoing headers                       |
 | `withContext(context, asyncFn)`                  | Runs a callback in an explicit context                                 |

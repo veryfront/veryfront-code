@@ -17,6 +17,7 @@ import {
   _resetShimForTests,
   type AttributeValue,
   type Context,
+  createPublicSpan,
   propagation,
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
@@ -31,6 +32,47 @@ import {
 describe("observability/tracing/otlp-setup", () => {
   afterEach(() => {
     _resetShimForTests();
+  });
+
+  for (const failure of ["none", "public", "internal"] as const) {
+    it(`explicit completion preserves ${failure} observed error status`, async () => {
+      const { markSpanCompleted, markSpanFailed } = await import("./otlp-setup.ts");
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const raw = provider.getTracer("completion-test").startSpan("operation");
+      const span = createPublicSpan(raw as unknown as Span);
+      try {
+        if (failure === "public") span.setStatus({ code: SpanStatusCode.ERROR });
+        if (failure === "internal") markSpanFailed(span, "execution-failed");
+        markSpanCompleted(span);
+        span.end();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(
+          exporter.getFinishedSpans()[0]?.status.code,
+          failure === "none" ? SpanStatusCode.OK : SpanStatusCode.ERROR,
+        );
+      } finally {
+        await provider.shutdown();
+      }
+    });
+  }
+
+  it("generic async spans retain UNSET after successful return", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setGlobalTracerProvider(provider as never);
+    try {
+      await withSpan("ordinary-async-operation", async () => "done");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(exporter.getFinishedSpans()[0]?.status.code, SpanStatusCode.UNSET);
+    } finally {
+      await provider.shutdown();
+    }
   });
 
   it("withSpan should execute the callback when OTLP is unavailable", async () => {
