@@ -112,7 +112,9 @@ export function resetReactCache(): void {
 function resolveReactVersion(version?: string): string {
   const installed = resolveInstalledReactRange(version);
   if (installed) return installed;
-  return normalizeReactVersion(version ? stripSemverRange(version) : undefined);
+  const normalized = normalizeReactVersion(version ? stripSemverRange(version) : undefined);
+  // Exact SemVer permits a v prefix; package exports report the bare version.
+  return normalized.startsWith("v") ? normalized.slice(1) : normalized;
 }
 
 export function __injectReactDOMServerForTests(
@@ -262,7 +264,11 @@ export function getReactDOMServer(
       normalizedVersion,
     ) as typeof import("react-dom/server");
 
+    // Node may retain a module instance when package files change in place.
+    // A refreshed manifest must never relabel an older renderer as the new peer.
+    assertReactDOMPeerVersion(normalizedVersion, serverModule.version);
     const loadedServer = {
+      version: serverModule.version,
       renderToString: serverModule.renderToString,
       renderToStaticMarkup: serverModule.renderToStaticMarkup,
       renderToPipeableStream: react18Plus ? serverModule.renderToPipeableStream : undefined,

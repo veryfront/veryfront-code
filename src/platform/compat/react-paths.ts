@@ -36,14 +36,19 @@ const REACT_SPECIFIERS = [
 
 function freshPeerRoot(packageName: string): string {
   const issuer = fileURLToPath(import.meta.url);
-  const pnp = (nodeModule as unknown as {
-    findPnpApi?: (
-      path: string,
-    ) => { resolveToUnqualified: (name: string, issuer: string) => string | null };
-  }).findPnpApi?.(issuer);
-  if (pnp) {
-    const root = pnp.resolveToUnqualified(packageName, issuer);
-    if (root) return root;
+  const findPnpApi = Reflect.get(nodeModule, "findPnpApi");
+  const pnp = typeof findPnpApi === "function"
+    ? ReflectApply(findPnpApi, nodeModule, [issuer])
+    : undefined;
+  if (pnp !== undefined && pnp !== null) {
+    const resolveToUnqualified = typeof pnp === "object"
+      ? Reflect.get(pnp, "resolveToUnqualified")
+      : undefined;
+    if (typeof resolveToUnqualified !== "function") {
+      throw new TypeError("Invalid local React PnP resolver");
+    }
+    const root = ReflectApply(resolveToUnqualified, pnp, [packageName, issuer]);
+    if (typeof root === "string" && root.length > 0) return root;
     throw new TypeError("Local React package resolution is unavailable");
   }
   for (const directory of createRequire(import.meta.url).resolve.paths(packageName) ?? []) {

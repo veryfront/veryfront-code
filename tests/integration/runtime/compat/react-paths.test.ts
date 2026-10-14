@@ -187,6 +187,45 @@ describe("react-paths", () => {
     }
   });
 
+  it("accepts version prefixes on an installed renderer without accepting another release", async () => {
+    if (!isNode) return;
+    const { getReactDOMServer, resetReactCache } = await import(
+      "#veryfront/react/compat/ssr-adapter/server-loader.ts"
+    );
+    resetReactCache();
+    try {
+      const bare = await getReactDOMServer("19.2.4");
+      for (const prefix of ["v", "^v", "~v"]) {
+        assertEquals(await getReactDOMServer(`${prefix}19.2.4`), bare);
+      }
+      await assertRejects(() => getReactDOMServer("v19.2.4-canary"), Error, "does not match");
+    } finally {
+      resetReactCache();
+    }
+  });
+
+  it("refuses a cached Node renderer after an in-place peer version replacement", async () => {
+    if (!isNode) return;
+    const { getReactDOMServer, resetReactCache, resolveSSRRuntime } = await import(
+      "#veryfront/react/compat/ssr-adapter/server-loader.ts"
+    );
+    resetReactCache();
+    await getReactDOMServer("19.2.4");
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      await assertRejects(
+        () => resolveSSRRuntime({ reactVersion: "19.2.5" }),
+        Error,
+        "does not match",
+      );
+    } finally {
+      restoreDom();
+      restoreReact();
+      resetReactCache();
+    }
+  });
+
   it("separates cached and concurrent layouts after same-version peer relocation", async () => {
     if (!isNode) return;
     const { createLayoutComponentCache, loadTSXComponent } = await import(

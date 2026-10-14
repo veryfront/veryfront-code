@@ -88,6 +88,16 @@ describe("project runtime delegation", () => {
           ["start", `--project-dir=${f.project}`],
           ["--project", f.project, "dev"],
           ["--project-dir", f.project],
+          ["--port", "3456", "dev", "--project", f.project],
+          ["-p", "3456", "dev", "--project", f.project],
+          ["--port", "3456", "--project-dir", f.project],
+          ["-p", "3456", "--project-dir", f.project],
+          ["schedule", "run", "owned-task", "--project-dir", f.project],
+          ["routes", `--project-dir=${f.project}`],
+          ["routes", "--dir", f.project],
+          ["schedule", "run", "owned-task", "-d", f.project],
+          ["-d", f.project, "schedule", "run", "owned-task"],
+          ["dev", "-d", "--project", f.project],
         ]
       ) {
         const result = await new Deno.Command("node", {

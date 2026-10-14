@@ -59,12 +59,27 @@ function checkedProjectCli(packageFile, pnpApi) {
 
 function selectedProjectDirectory() {
   const args = process.argv.slice(2);
+  // -d is a directory for CommonArgs.projectDir commands, but debug for dev.
+  const directoryAliasCommands = new Set([
+    "analyze-chunks", "clean", "deploy", "env", "files", "integration", "knowledge",
+    "project", "pull", "push", "routes", "schedule", "up", "uploads", "webhook",
+  ]);
   let command;
+  const valueFlags = new Set(["--project", "--project-dir", "--dir", "--port", "-p", "--output", "-o"]);
+  for (let index = 0; index < args.length && args[index] !== "--"; index++) {
+    const arg = args[index];
+    if (valueFlags.has(arg) || (arg === "-d" && args[index + 1] && !args[index + 1].startsWith("-"))) {
+      index++;
+    } else if (!arg.startsWith("-")) { command = arg; break; }
+  }
   let project;
   let projectDirectory;
   for (let index = 0; index < args.length && args[index] !== "--"; index++) {
     const arg = args[index];
-    const key = ["--project", "--project-dir"].find((name) =>
+    const directoryKeys = directoryAliasCommands.has(command)
+      ? ["--project-dir", "--dir", "-d"]
+      : ["--project-dir", "--dir"];
+    const key = ["--project", ...directoryKeys].find((name) =>
       arg === name || arg.startsWith(`${name}=`)
     );
     if (key) {
@@ -72,14 +87,15 @@ function selectedProjectDirectory() {
       if (!value || value.startsWith("--")) {
         throw new Error(`${key} requires a project directory`);
       }
-      if (key === "--project-dir") {
+      if (key !== "--project") {
         projectDirectory = resolve(process.cwd(), value);
       } else project = resolve(process.cwd(), value);
-    } else if (!arg.startsWith("-") && command === undefined) {
-      command = arg;
     }
   }
-  if (command === "dev") return project ?? process.cwd();
+  // Explicit project-dir belongs to every project-aware command, including
+  // schedule, routes and local task execution.
+  if (projectDirectory) return projectDirectory;
+  if (command === "dev" || command === "lock") return project ?? process.cwd();
   if (command === "start" || command === undefined) {
     return projectDirectory ?? project ?? process.cwd();
   }
