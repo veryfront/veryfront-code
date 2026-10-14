@@ -30,5 +30,12 @@ export async function withHostedChildTaskInputResolver<T>(
 }
 export function getHostedChildTaskInputResolver(): HostedChildTaskInputResolver | undefined {
   const scope = storage.getStore();
-  return scope?.active ? scope.resolver : undefined;
+  if (!scope?.active) return undefined;
+  const resolver = scope.resolver;
+  return async (input) => {
+    if (!scope.active) throw new Error("Accepted child input resolver is no longer active");
+    const accepted = await resolver(input);
+    if (!scope.active) throw new Error("Accepted child input resolver is no longer active");
+    return accepted;
+  };
 }

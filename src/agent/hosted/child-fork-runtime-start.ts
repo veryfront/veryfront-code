@@ -1,4 +1,9 @@
-import { hostedInheritedInferenceModelResolver } from "./terminal-credential.ts";
+import { bindHostedTaskInputAuthority, inheritHostedTaskInputAuthority } from "./task-input.ts";
+import {
+  hostedInheritedInferenceModelResolver,
+  hostedInheritedRootRunId,
+  hostedInheritedTaskInput,
+} from "./terminal-credential.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import {
@@ -50,6 +55,17 @@ export function startHostedChildForkRuntimeWithHostTools<
     ...runtimeInput
   } = input;
   inheritHostedChildInferenceAuthority(runtimeInput, input);
+  const taskInput = durableChildRun
+    ? hostedInheritedTaskInput(durableChildRun, runtimeInput.projectId ?? "")
+    : undefined;
+  bindHostedTaskInputAuthority(runtimeInput, taskInput, {
+    projectId: runtimeInput.projectId,
+    runId: durableChildRun?.childRunId,
+    rootRunId: taskInput && durableChildRun
+      ? hostedInheritedRootRunId(durableChildRun, runtimeInput.projectId ?? "") ??
+        taskInput.rootRunId
+      : undefined,
+  });
   const forkStreamAbortController = new AbortController();
   const forkStreamAbortSignal = composeAbortSignals([
     abortSignal,
@@ -86,6 +102,7 @@ export function startHostedChildForkRuntimeWithHostTools<
     abortSignal: forkStreamAbortSignal,
   };
   inheritHostedChildInferenceAuthority(forkInput, runtimeInput);
+  inheritHostedTaskInputAuthority(forkInput, runtimeInput);
   const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools(forkInput);
 
   return {

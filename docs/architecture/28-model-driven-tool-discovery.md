@@ -76,22 +76,49 @@ mechanism.
 
 ### `tool_search`
 
-Use one of two input forms:
+Provide exactly one of four mode fields. Every argument is a top-level string or
+integer:
 
-- `{"query":"get_agent"}` searches or loads an exact authorized executable tool.
-  Its input schema becomes visible on the next model step.
-- `{"inventory":{"limit":10}}` browses executable tool metadata without loading
-  schemas or changing exposure. Results distinguish `available` and `deferred`
-  tools. Follow `nextCursor` with `{"inventory":{"cursor":"10","limit":10}}`.
-  Page sizes range from 1 to 20, default 10. Descriptions are previews of at most
-  240 characters plus an ellipsis. Inventory does not inspect parameter schemas.
+- `{"schema":"get_agent"}` returns the exact input schema of one authorized
+  executable tool and loads it for the next model step. Use it when the exact
+  name is known. The name never matches by substring. Provider-native tools have
+  no inspectable schema, so load them with `query`.
+- `{"search":"create agent"}` ranks up to five tools by a short capability
+  phrase. It returns metadata only and does not load schemas or change exposure.
+- `{"inventory":"all","limit":10}` browses executable tool metadata without
+  loading schemas or changing exposure. `inventory` is `all` for every authorized
+  tool or `platform` for Veryfront platform tools only, excluding integration and
+  project tools. Results distinguish `available` and `deferred` tools. Page sizes
+  range from 1 to 20, default 10. Descriptions are previews of at most 240
+  characters plus an ellipsis. Inventory does not inspect parameter schemas. The
+  inventory-only fields `domain` and `resource` match one exact
+  `discovery.domain` or `discovery.resource` value and apply before pagination.
+  An unknown value returns `invalidFilter` with the advertised values and a
+  `restartInput` that browses without filters.
 
-Choose `query` or `inventory`, not both. Inventory contains only this run's
-provider-visible authorized tools, not project tool definitions. It preserves
-provider-hidden tool filtering and execution permissions. Use an exact returned
-name to load a deferred tool. A search miss directs the model to browse instead
-of repeatedly guessing resource display names. If the catalog changes and a
-cursor is outside the current inventory, restart without a cursor.
+  Pass `nextPageInput` unchanged to browse the next page. A null `nextPageInput`
+  means the inventory is complete. `nextCursor` remains for compatibility.
+- `{"query":"get_agent"}` searches and loads matching authorized executable
+  tools. Their input schemas become visible on the next model step.
+
+The `tool_search` parameter schema declares no root `oneOf`, `anyOf`, or `allOf`
+because some providers reject root combinators. It also has no nested argument
+objects: under fine-grained tool streaming, models emitted invalid JSON for
+nested mode objects. The runtime rejects calls that provide zero or several mode
+fields with an error naming the fields received. It also rejects `domain`,
+`resource`, `cursor`, or `limit` without `inventory`.
+
+Inventory and search contain only this run's provider-visible authorized tools,
+not project tool definitions. They preserve provider-hidden tool filtering and
+execution permissions. A search miss directs the model to browse instead of
+repeatedly guessing resource display names. If the catalog changes and a cursor
+is outside the current inventory, restart without a cursor.
+
+Tool sources can attach navigation metadata as `discovery`:
+`{ version: 1, type: "platform" | "integration", domain?, resource?, subgroup?, operation? }`.
+Remote MCP servers advertise it in a tool's `_meta["veryfront/tool-discovery"]`.
+Each string is at most 128 characters. Invalid metadata is ignored. Discovery
+metadata is navigation only and never grants execution permission.
 
 For queries with three or more terms, a candidate supported only by parameter
 descriptions must match at least half the terms. One incidental field description
@@ -103,7 +130,10 @@ existing ranking, including integration catalog navigation.
 Agents can enable `toolResultContext` to replace oversized tool results with a
 preview and a run-local retrieval reference. The runtime exposes `get_tool_result`
 only after a stored reference exists. Reads use bounded sections; events and
-persisted history retain the original result.
+persisted history retain the original result. JSON results can be narrowed with an
+RFC 6901 `pointer`, and `view: "structure"` lists one level of child pointer
+tokens and types without values. A section's `nextCursor` continues the same
+`ref`, `view`, and `pointer` selection.
 
 Root skill instructions remain inline. Advertised reference-file results from
 `load_skill` and `veryfront__load_skill` follow the configured limits instead of

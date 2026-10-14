@@ -7,8 +7,10 @@
  * @module schemas/json-value
  */
 
-const JSON_VALUE_MAX_DEPTH = 128;
-const JSON_VALUE_MAX_NODES = 100_000;
+/** Maximum nesting depth admitted by data-only JSON snapshots. */
+export const JSON_VALUE_MAX_DEPTH = 128;
+/** Maximum value-node count admitted by data-only JSON snapshots. */
+export const JSON_VALUE_MAX_NODES = 100_000;
 export const JSON_VALUE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 export const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_VALUE_MAX_KEY_BYTES = 16 * 1024;

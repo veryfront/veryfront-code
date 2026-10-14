@@ -90,6 +90,7 @@ function channels(
           definition: {
             name: "read",
             description: "Read a synthetic value",
+            discovery: { version: 1, type: "platform", domain: "files", resource: "Files" },
             parameters: { type: "object", properties: {} },
           },
         };
@@ -151,6 +152,12 @@ it("constructs model and host/remote tool facades only for the installed IDs", a
     assertEquals(pair.executions, 1);
     const remote = facades.remoteToolSources.get("remote")!;
     assertEquals((await remote.listTools()).length, 1);
+    assertEquals(facades.hostTools.get("host")?.read?.discovery, {
+      version: 1,
+      type: "platform",
+      domain: "files",
+      resource: "Files",
+    });
     assertEquals(await remote.executeTool("read", {}), "synthetic-result");
     await facades.cleanup();
     await assertRejects(async () => {

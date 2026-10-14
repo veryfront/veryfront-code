@@ -386,7 +386,7 @@ export interface paths {
         put?: never;
         /**
          * Fail a run
-         * @description Fails a run.
+         * @description Fail a run.
          */
         post: operations["failRun"];
         delete?: never;
@@ -406,7 +406,7 @@ export interface paths {
         put?: never;
         /**
          * Finalize a run
-         * @description Finalizes a run with output or an error.
+         * @description Finalize a run.
          */
         post: operations["finalizeRun"];
         delete?: never;
@@ -550,7 +550,7 @@ export interface paths {
         put?: never;
         /**
          * Succeed a run
-         * @description Completes a run successfully.
+         * @description Succeed a run.
          */
         post: operations["succeedRun"];
         delete?: never;
@@ -603,6 +603,45 @@ export interface components {
             /** @enum {string} */
             type: "user" | "api_key" | "service_account" | "system";
         };
+        /** @description Agent admission for an agent target with `conversation_id`. The conversation's latest message must be a persisted user message. Before durable queue admission, the prepared active user message and its run/conversation/input identity wrapper must fit 2 MiB of serialized UTF-8 JSON. Larger prepared requests fail with INVALID_INPUT before quota charging or dispatch and are never truncated. See https://veryfront.com/docs/cloud/connect-agent-runtime. */
+        AgentAdmissionConfig: {
+            /** @description Deprecated. Send an `Idempotency-Key` header instead. */
+            client_run_id?: string;
+            /**
+             * Format: uuid
+             * @description User who composed the triggering message.
+             */
+            composing_user_id?: string;
+            /** @description Required for `worker`: the `implementation_kind` the agent worker registered with. */
+            implementation_kind?: string;
+            /**
+             * Format: uuid
+             * @description Persisted user message that starts the run; defaults to the latest conversation message.
+             */
+            input_message_id?: string;
+            /**
+             * @description Who executes the agent: `worker` hands the run to a registered agent worker that claims it, `project` runs the deployed project agent, `hosted` runs the Veryfront chat agent.
+             * @enum {string}
+             */
+            mode: "hosted" | "project" | "worker";
+            /**
+             * Format: uuid
+             * @description Preview branch UUID when `source_target_kind` is `preview_branch`.
+             */
+            source_target_branch_id?: string;
+            /**
+             * Format: uuid
+             * @description Environment UUID when `source_target_kind` is `environment`.
+             */
+            source_target_environment_id?: string;
+            /**
+             * @description Worker source selection: project, main_branch, environment, or preview_branch.
+             * @enum {string}
+             */
+            source_target_kind?: "project" | "main_branch" | "environment" | "preview_branch";
+            /** @description Pin the run to one registered worker by its `worker_key`; omit to let any matching worker claim it. */
+            worker_key?: string;
+        } & (unknown & unknown & unknown & unknown & unknown & unknown);
         AgentRunAuthorizationSealedPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_AUTHORIZATION_SEALED";
@@ -628,6 +667,8 @@ export interface components {
             /** Format: int64 */
             emittedAt?: number;
             firstKeptEntryId: string;
+            /** @description The source run’s exact active user input ID, or an empty array. Replay validates the source run binding. */
+            preservedMessageIds?: string[];
             /** @enum {string} */
             reason: "context_window" | "transport_body";
             /** Format: int64 */
@@ -800,11 +841,14 @@ export interface components {
                 id: string;
                 modelProvider?: string;
             };
+            /** Format: uuid */
+            modelCallId?: string;
             request?: {
                 /** Format: double */
                 frequencyPenalty?: number;
                 /** Format: double */
                 maxOutputTokens?: number;
+                parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
                 reasoning?: {
@@ -916,11 +960,14 @@ export interface components {
                 id: string;
                 modelProvider?: string;
             };
+            /** Format: uuid */
+            modelCallId?: string;
             request?: {
                 /** Format: double */
                 frequencyPenalty?: number;
                 /** Format: double */
                 maxOutputTokens?: number;
+                parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
                 reasoning?: {
@@ -957,6 +1004,227 @@ export interface components {
             })[];
             /** @enum {string} */
             type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+        };
+        AgentRunModelCallContextRecordedPayloadRead: {
+            /** Format: double */
+            elapsedMs?: number;
+            /** Format: int64 */
+            emittedAt?: number;
+            messages: ({
+                content: string;
+                providerOptions?: {
+                    [key: string]: {
+                        cacheControl: {
+                            /** @enum {string} */
+                            ttl?: "5m" | "1h";
+                            /** @enum {string} */
+                            type: "ephemeral";
+                        };
+                    };
+                };
+                /** @enum {string} */
+                role: "system";
+            } | {
+                content: ({
+                    text: string;
+                    /** @enum {string} */
+                    type: "text";
+                } | {
+                    filename?: string;
+                    mediaType: string;
+                    /** @enum {string} */
+                    type: "image" | "file";
+                    url: string;
+                })[];
+                /** @enum {string} */
+                role: "user";
+            } | {
+                content: ({
+                    text: string;
+                    /** @enum {string} */
+                    type: "text";
+                } | {
+                    input: unknown;
+                    providerExecuted?: boolean;
+                    toolCallId: string;
+                    toolName: string;
+                    /** @enum {string} */
+                    type: "tool-call";
+                })[];
+                /** @enum {string} */
+                role: "assistant";
+            } | {
+                content: {
+                    output: {
+                        /** @enum {string} */
+                        type: "json";
+                        value: unknown;
+                    };
+                    toolCallId: string;
+                    toolName: string;
+                    /** @enum {string} */
+                    type: "tool-result";
+                }[];
+                /** @enum {string} */
+                role: "tool";
+            })[];
+            model?: {
+                id: string;
+                modelProvider?: string;
+            };
+            request?: {
+                /** Format: double */
+                frequencyPenalty?: number;
+                /** Format: double */
+                maxOutputTokens?: number;
+                parallelToolCalls?: boolean;
+                /** Format: double */
+                presencePenalty?: number;
+                reasoning?: {
+                    /** Format: int64 */
+                    budgetTokens?: number;
+                    /** @enum {string} */
+                    effort?: "low" | "medium" | "high" | "max";
+                    enabled?: boolean;
+                };
+                /** Format: double */
+                seed?: number;
+                stopSequences?: string[];
+                /** Format: double */
+                temperature?: number;
+                /** Format: double */
+                topK?: number;
+                /** Format: double */
+                topP?: number;
+            };
+            tools?: ({
+                description?: string;
+                inputSchema: unknown;
+                name: string;
+                /** @enum {string} */
+                type: "function";
+            } | {
+                args: {
+                    [key: string]: unknown;
+                };
+                id: string;
+                name: string;
+                /** @enum {string} */
+                type: "provider";
+            })[];
+            /** @enum {string} */
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" | "AGENT_RUN_MODEL_CALL_CONTEXT";
+        } | {
+            /** Format: double */
+            elapsedMs?: number;
+            /** Format: int64 */
+            emittedAt?: number;
+            messages: ({
+                content: string;
+                providerOptions?: {
+                    [key: string]: {
+                        cacheControl: {
+                            /** @enum {string} */
+                            ttl?: "5m" | "1h";
+                            /** @enum {string} */
+                            type: "ephemeral";
+                        };
+                    };
+                };
+                /** @enum {string} */
+                role: "system";
+            } | {
+                content: ({
+                    text: string;
+                    /** @enum {string} */
+                    type: "text";
+                } | {
+                    filename?: string;
+                    mediaType: string;
+                    /** @enum {string} */
+                    type: "image" | "file";
+                    url: string;
+                })[];
+                /** @enum {string} */
+                role: "user";
+            } | {
+                content: ({
+                    text: string;
+                    /** @enum {string} */
+                    type: "text";
+                } | {
+                    input: unknown;
+                    providerExecuted?: boolean;
+                    toolCallId: string;
+                    toolName: string;
+                    /** @enum {string} */
+                    type: "tool-call";
+                })[];
+                /** @enum {string} */
+                role: "assistant";
+            } | {
+                content: {
+                    output: {
+                        /** @enum {string} */
+                        type: "json";
+                        value: unknown;
+                    };
+                    toolCallId: string;
+                    toolName: string;
+                    /** @enum {string} */
+                    type: "tool-result";
+                }[];
+                /** @enum {string} */
+                role: "tool";
+            })[];
+            model?: {
+                id: string;
+                modelProvider?: string;
+            };
+            /** Format: uuid */
+            modelCallId: string;
+            request?: {
+                /** Format: double */
+                frequencyPenalty?: number;
+                /** Format: double */
+                maxOutputTokens?: number;
+                parallelToolCalls?: boolean;
+                /** Format: double */
+                presencePenalty?: number;
+                reasoning?: {
+                    /** Format: int64 */
+                    budgetTokens?: number;
+                    /** @enum {string} */
+                    effort?: "low" | "medium" | "high" | "max";
+                    enabled?: boolean;
+                };
+                /** Format: double */
+                seed?: number;
+                stopSequences?: string[];
+                /** Format: double */
+                temperature?: number;
+                /** Format: double */
+                topK?: number;
+                /** Format: double */
+                topP?: number;
+            };
+            tools?: ({
+                description?: string;
+                inputSchema: unknown;
+                name: string;
+                /** @enum {string} */
+                type: "function";
+            } | {
+                args: {
+                    [key: string]: unknown;
+                };
+                id: string;
+                name: string;
+                /** @enum {string} */
+                type: "provider";
+            })[];
+            /** @enum {string} */
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" | "AGENT_RUN_MODEL_CALL_CONTEXT";
         };
         AgentRunModelCallContextRecordedPayloadRedacted: {
             /** @enum {string} */
@@ -1120,6 +1388,44 @@ export interface components {
             expected_previous_external_event_sequence?: number | null;
             /** @enum {string} */
             external_sequence_scope?: "agent" | "publish_only";
+            runtime_observations?: {
+                observations: ({
+                    /** Format: int64 */
+                    event_index: number;
+                    /** @enum {string} */
+                    kind: "execution_entry";
+                    /** Format: uuid */
+                    occurrence_id: string;
+                } | {
+                    /** Format: int64 */
+                    event_index: number;
+                    /** @enum {string} */
+                    kind: "step_started";
+                    /** Format: uuid */
+                    step_id: string;
+                } | {
+                    /** Format: int64 */
+                    event_index: number;
+                    /** @enum {string} */
+                    kind: "step_ended";
+                    /** Format: uuid */
+                    step_id: string;
+                } | {
+                    /** Format: int64 */
+                    event_index: number;
+                    /** @enum {string} */
+                    kind: "step_message";
+                    /** Format: uuid */
+                    message_span_id: string;
+                    /** Format: uuid */
+                    step_id: string;
+                })[];
+                /**
+                 * Format: double
+                 * @enum {number}
+                 */
+                version: 1;
+            };
         };
         AppendRunEventsResponse: {
             /** Format: int64 */
@@ -1128,6 +1434,15 @@ export interface components {
             latest_event_id: number;
             /** Format: int64 */
             latest_external_event_sequence?: number;
+            model_call_captures?: {
+                event_id: string;
+                /** Format: uuid */
+                model_call_id: string;
+                /** Format: uuid */
+                project_id: string;
+                /** Format: uuid */
+                run_id: string;
+            }[];
             /** Format: uuid */
             run_id: string;
         };
@@ -1256,6 +1571,25 @@ export interface components {
                  * @description Recorded failed tool invocations during this run.
                  */
                 tool_error_count?: number;
+                /** @description Agent worker that claimed and executed the run; present only on worker-executed runs. */
+                worker?: {
+                    /**
+                     * Format: date-time
+                     * @description When the worker claimed the run.
+                     */
+                    claimed_at: string;
+                    /**
+                     * Format: uuid
+                     * @description Agent worker ID.
+                     */
+                    id: string;
+                    /** @description Agent implementation the worker runs, such as codex; omitted when the worker is gone. */
+                    implementation_kind?: string;
+                    /** @description Worker display name, omitted when the worker registered without one. */
+                    name?: string;
+                    /** @description Key the worker registered under, unique per project and kind; omitted when the worker is gone. */
+                    worker_key?: string;
+                };
             };
             /**
              * Format: date-time
@@ -1399,7 +1733,7 @@ export interface components {
              * @description Batch UUID associated with the accepted run.
              */
             batch_id?: string;
-            /** @description Definition-specific configuration; business keys retain their spelling on every transport. */
+            /** @description Definition-specific configuration; business keys retain their spelling on every transport. Agent targets with `conversation_id` read `agent_admission` (AgentAdmissionConfig). */
             config?: {
                 [key: string]: unknown;
             };
@@ -1430,7 +1764,7 @@ export interface components {
             title?: string;
             /** @description Durable tool invocation on an agent parent; requires parent_run_id and excludes node_id. */
             tool_call_id?: string;
-        } & unknown;
+        } & (unknown & unknown & unknown);
         DocumentCitedPayload: {
             filename?: string;
             mediaType: string;
@@ -1989,6 +2323,10 @@ export interface components {
             /** @enum {string} */
             usageCaptureStatus: "complete" | "partial" | "missing";
         };
+        OkResponse: {
+            /** @enum {boolean} */
+            ok: true;
+        };
         /** @description Opaque cursor for the next page; null means there are no more results. */
         PageInfo: {
             next: string | null;
@@ -1999,7 +2337,7 @@ export interface components {
              * @description Schedule admission refusal.
              * @enum {string}
              */
-            cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress";
+            cause?: "schedule_concurrency_forbidden" | "schedule_fire_in_progress" | "schedule_run_limit_reached";
             code: string;
             detail?: string;
             errors?: {
@@ -2179,6 +2517,25 @@ export interface components {
                  * @description Recorded failed tool invocations during this run.
                  */
                 tool_error_count?: number;
+                /** @description Agent worker that claimed and executed the run; present only on worker-executed runs. */
+                worker?: {
+                    /**
+                     * Format: date-time
+                     * @description When the worker claimed the run.
+                     */
+                    claimed_at: string;
+                    /**
+                     * Format: uuid
+                     * @description Agent worker ID.
+                     */
+                    id: string;
+                    /** @description Agent implementation the worker runs, such as codex; omitted when the worker is gone. */
+                    implementation_kind?: string;
+                    /** @description Worker display name, omitted when the worker registered without one. */
+                    name?: string;
+                    /** @description Key the worker registered under, unique per project and kind; omitted when the worker is gone. */
+                    worker_key?: string;
+                };
             };
             /**
              * Format: date-time
@@ -3562,7 +3919,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
+            payload: components["schemas"]["AgentRunModelCallContextRecordedPayloadRead"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -5572,7 +5929,7 @@ export interface components {
             origin_event_type: string;
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
-            payload: components["schemas"]["AgentRunModelCallContextRecordedPayload"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
+            payload: components["schemas"]["AgentRunModelCallContextRecordedPayloadRead"] | components["schemas"]["AgentRunModelCallContextRecordedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.
@@ -6330,6 +6687,8 @@ export interface components {
             type: "user";
         } | {
             id: string;
+            /** @description Display name of the API key, revoked keys included; omitted when unknown. */
+            name?: string;
             /** @enum {string} */
             type: "api_key";
         } | {
@@ -6871,6 +7230,25 @@ export interface components {
                  * @description Recorded failed tool invocations during this run.
                  */
                 tool_error_count?: number;
+                /** @description Agent worker that claimed and executed the run; present only on worker-executed runs. */
+                worker?: {
+                    /**
+                     * Format: date-time
+                     * @description When the worker claimed the run.
+                     */
+                    claimed_at: string;
+                    /**
+                     * Format: uuid
+                     * @description Agent worker ID.
+                     */
+                    id: string;
+                    /** @description Agent implementation the worker runs, such as codex; omitted when the worker is gone. */
+                    implementation_kind?: string;
+                    /** @description Worker display name, omitted when the worker registered without one. */
+                    name?: string;
+                    /** @description Key the worker registered under, unique per project and kind; omitted when the worker is gone. */
+                    worker_key?: string;
+                };
             };
             /**
              * Format: date-time
@@ -7524,7 +7902,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description Only an open input request can be cancelled; an already resolved request returns 409 unless this is an identical idempotent replay. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7630,7 +8008,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description The input request was already resolved differently (submission, cancellation and expiry compete atomically). A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8300,11 +8678,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Run, its events, and owned input requests deleted; referenced artifact files are retained. */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
             };
             /** @description Invalid request or cursor */
             400: {
@@ -9311,7 +9691,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9431,7 +9811,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9757,7 +10137,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description No waiting tool call is recorded and tool_call_id was not supplied, or a duplicate open run/tool-call request exists. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9871,7 +10251,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description A running agent without project-bound dispatch stop authority returns 409 RUN_NOT_PAUSABLE. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9989,7 +10369,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description The run is not waiting on the supplied signal: only a signal matching the current wait is accepted. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10280,7 +10660,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description State conflict, stale execution generation, or idempotency mismatch */
+            /** @description The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409. */
             409: {
                 headers: {
                     [name: string]: unknown;

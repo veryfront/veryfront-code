@@ -280,7 +280,7 @@ describe("agent/runtime-step", () => {
       remoteToolSources: undefined,
       resolveRuntimeState: async () => ({
         systemPrompt:
-          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.',
+          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.',
       }),
       runtimeContext: undefined,
       step: 0,

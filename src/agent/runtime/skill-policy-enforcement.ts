@@ -1,10 +1,10 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import type { ProviderObservedSkillBody } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { pushPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
 import {
-  JSON_VALUE_MAX_SERIALIZED_BYTES,
   JSON_VALUE_MAX_STRING_BYTES,
   snapshotBoundedJsonValue,
 } from "#veryfront/schemas/json-value.ts";
@@ -57,6 +57,7 @@ import {
   isFormInputToolName,
   isLoadSkillToolName,
   LOAD_SKILL_TOOL_ID,
+  normalizeConversationPlatformToolName,
 } from "../platform-tool-names.ts";
 export {
   CANONICAL_FORM_INPUT_TOOL_ID,
@@ -131,7 +132,7 @@ function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefi
       6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
         (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
       65_536
-    : JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+    : PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES;
   const encoded = typeof resultValue === "string";
   // Stored results may already be JSON strings. Snapshotting their literal text
   // can double JSON escape bytes; it must retain the same accepted payload.
@@ -787,7 +788,8 @@ function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
       isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedSource(part) &&
       trustedToolCallIdSet.has(part.toolCallId) &&
       ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
-        (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
+        (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)) ||
+        normalizeConversationPlatformToolName(part.toolName) === "invoke_agent")
     ) {
       markTrustedPlatformPolicyToolResultPart(part);
     }

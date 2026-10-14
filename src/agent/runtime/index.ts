@@ -1,3 +1,4 @@
+import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -32,6 +33,7 @@ import {
   filterPrivateArray,
   flatMapPrivateArray,
   forEachPrivateArray,
+  joinPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   slicePrivateArray,
@@ -83,6 +85,7 @@ import {
   getTextFromParts,
   type Message,
   type MessagePart,
+  type ModelStreamTimeouts,
   type ResolvedRuntimeState,
   type RuntimeReasoningOption,
   type ToolCall,
@@ -414,12 +417,16 @@ import {
   createToolExposureState,
   createToolSearchDefinition,
   listToolExposure,
+  readToolExposureContract,
   searchToolExposure,
+  searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
+  type ToolExposureContract,
   type ToolExposurePlan,
   type ToolExposureState,
   type ToolInventoryPage,
+  type ToolMetadataSearchResult,
   type ToolSearchMatch,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
@@ -1055,8 +1062,6 @@ type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
   | { kind: "callback"; chunk: string };
 
-const MAX_RUNTIME_PROVIDER_STREAM_RETRIES = 1;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -1564,23 +1569,142 @@ function toolSearchLoadedNextStep(matches: readonly ToolSearchMatch[]): string {
   return `Loaded tools: ${names}. Call the loaded tool that fits the request in the next step to complete it.`;
 }
 
+type FrameworkToolSearchResult =
+  | ToolSearchResult
+  | ToolInventoryPage
+  | ToolMetadataSearchResult
+  | (ToolSearchResult & { contract: ToolExposureContract });
+
+const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "query"] as const;
+const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] as const;
+
+function readToolSearchArg(args: Record<string, unknown>, key: string): unknown {
+  const property = ObjectGetOwnPropertyDescriptor(args, key);
+  if (!property) return undefined;
+  if (!ObjectHasOwn(property, "value")) throw new Error("tool_search requires data properties");
+  return property.value;
+}
+
+function hasToolSearchArg(args: Record<string, unknown>, key: string): boolean {
+  return readToolSearchArg(args, key) !== undefined;
+}
+
 function executeFrameworkToolSearch(input: {
   args: Record<string, unknown>;
   plan: ToolExposurePlan;
   state: ToolExposureState;
 }): {
-  result: (ToolSearchResult | ToolInventoryPage) & { nextStep: string };
+  result: FrameworkToolSearchResult & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
-  if (ObjectHasOwn(input.args, "inventory")) {
-    if (ObjectHasOwn(input.args, "query")) throw new Error("Choose query or inventory, not both");
-    const inventory = input.args.inventory;
-    if (inventory === null || typeof inventory !== "object" || Array.isArray(inventory)) {
-      throw new Error("Tool inventory must be an object");
+  if (isProxyWithoutHooks(input.args)) throw new Error("tool_search requires data properties");
+  // The provider schema has no root combinator, so enforce exactly one mode here.
+  const modes = filterPrivateArray(
+    TOOL_SEARCH_MODES,
+    (mode) => hasToolSearchArg(input.args, mode),
+  );
+  if (modes.length !== 1) {
+    throw new Error(
+      `tool_search requires exactly one of schema, search, inventory, or query; received ${
+        modes.length === 0 ? "none" : joinPrivateArray(modes, ", ")
+      }`,
+    );
+  }
+  const inventoryOptions = filterPrivateArray(
+    TOOL_SEARCH_INVENTORY_OPTIONS,
+    (option) => hasToolSearchArg(input.args, option),
+  );
+  if (modes[0] !== "inventory" && inventoryOptions.length > 0) {
+    throw new Error(
+      `tool_search ${joinPrivateArray(inventoryOptions, ", ")} applies only with inventory`,
+    );
+  }
+  const available = filterPrivateArray(
+    input.plan.visible,
+    (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
+  );
+  const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
+  if (modes[0] === "search") {
+    const phrase = readToolSearchArg(input.args, "search");
+    const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
+    if (!query) {
+      throw new Error("tool_search search requires a non-empty capability phrase string");
     }
-    const options = inventory as Record<string, unknown>;
-    const cursor = options.cursor;
-    const limit = options.limit;
+    const result = searchToolExposureMetadata({
+      query,
+      authorized: input.plan.deferred,
+      available,
+    });
+    return {
+      result: {
+        ...result,
+        nextStep: result.miss
+          ? "No executable tool matched. Use inventory to browse authorized tool names. A project resource title is not a tool name."
+          : "These are metadata matches, not input contracts. Call an available tool directly, or use schema with one exact deferred name to read its input schema and load it for the next step.",
+      },
+      checkpoint: checkpoint(),
+    };
+  }
+  if (modes[0] === "schema") {
+    const name = readToolSearchArg(input.args, "schema");
+    if (typeof name !== "string" || !name) {
+      throw new Error("tool_search schema requires one exact tool name string");
+    }
+    const contract = readToolExposureContract({ name, authorized: input.plan.authorized });
+    if (contract === undefined) {
+      return {
+        result: {
+          matches: [],
+          resultCount: 0,
+          loadedCount: 0,
+          miss: true,
+          nextStep:
+            "No authorized executable tool has that exact name. Use search or inventory to find one, then use schema with an exact returned name.",
+        },
+        checkpoint: checkpoint(),
+      };
+    }
+    const result = searchToolExposure({
+      query: contract.name,
+      authorized: filterPrivateArray(input.plan.deferred, (tool) => tool.name === contract.name),
+      available: filterPrivateArray(available, (tool) => tool.name === contract.name),
+      state: input.state,
+      maxLoadedTools: input.plan.maxLoadedTools,
+    });
+    const isAvailable = somePrivateArray(
+      available,
+      (tool) => tool.name === contract.name,
+    );
+    return {
+      result: {
+        ...result,
+        contract,
+        nextStep: isAvailable
+          ? "This tool is already available. Call it with this input schema."
+          : result.loadedCount > 0
+          ? "This tool is loaded for the next step. Call it with this input schema."
+          : "This is the exact input schema, but the tool could not be loaded within the current tool limit.",
+      },
+      checkpoint: checkpoint(),
+    };
+  }
+  if (modes[0] === "inventory") {
+    const scope = readToolSearchArg(input.args, "inventory");
+    const cursor = readToolSearchArg(input.args, "cursor");
+    const limit = readToolSearchArg(input.args, "limit");
+    const domain = readToolSearchArg(input.args, "domain");
+    const resource = readToolSearchArg(input.args, "resource");
+    if (scope !== "all" && scope !== "platform") {
+      throw new Error(
+        'tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
+      );
+    }
+    if (domain !== undefined && typeof domain !== "string") {
+      throw new Error("Invalid tool inventory domain");
+    }
+    if (resource !== undefined && typeof resource !== "string") {
+      throw new Error("Invalid tool inventory resource");
+    }
     if (cursor !== undefined && typeof cursor !== "string") {
       throw new Error("Invalid tool inventory cursor");
     }
@@ -1589,33 +1713,32 @@ function executeFrameworkToolSearch(input: {
     }
     const result = listToolExposure({
       authorized: input.plan.deferred,
-      available: filterPrivateArray(
-        input.plan.visible,
-        (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-      ),
+      available,
       cursor,
       limit,
+      scope,
+      domain,
+      resource,
     });
     return {
       result: {
         ...result,
-        nextStep:
-          "These are executable tool names, not project definitions. Call available tools directly; use query with one exact deferred name to load its input schema for the next step. Follow nextCursor to browse another page.",
+        nextStep: result.invalidFilter
+          ? "No authorized tool has that filter value. Use one of allowedValues, or pass restartInput unchanged to browse without domain and resource filters."
+          : "These are executable tool names, not project definitions. Call available tools directly; use schema with one exact deferred name to load its input schema for the next step. Pass nextPageInput unchanged to browse the next page. A null nextPageInput means the inventory is complete.",
       },
-      checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+      checkpoint: checkpoint(),
     };
   }
-  const query = typeof input.args.query === "string" ? privateTextTrim(input.args.query) : "";
+  const phrase = readToolSearchArg(input.args, "query");
+  const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
     authorized: input.plan.deferred,
-    available: filterPrivateArray(
-      input.plan.visible,
-      (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-    ),
+    available,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
   });
@@ -1633,10 +1756,10 @@ function executeFrameworkToolSearch(input: {
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
-        ? "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then query one exact name. A project resource title is not a tool name."
+        ? "No executable tool matched this query. Use tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
         : "Continue with the available tools or answer without a tool.",
     },
-    checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+    checkpoint: checkpoint(),
   };
 }
 
@@ -2156,10 +2279,10 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
-function didReloadProjectAgentWriteTool(result: ToolSearchResult | ToolInventoryPage): boolean {
-  if ("nextCursor" in result) return false;
+function didReloadProjectAgentWriteTool(result: FrameworkToolSearchResult): boolean {
+  if (result.loadedCount === 0) return false;
   return somePrivateArray(
-    result.matches,
+    result.matches as readonly { name: string; status: string }[],
     (match) => match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name),
   );
 }
@@ -2618,6 +2741,8 @@ export type AgentRuntimeInternalOptions = {
   preserveToolCatalog?: boolean;
   /** Call controls for private models, independent of source transport hooks. */
   modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
+  /** Host-owned per-model stream deadlines. Omitted fields keep framework defaults. */
+  modelStreamTimeouts?: ModelStreamTimeouts;
   /** Observe original producer settlement before it starts, including its full cleanup. */
   onStreamCompletion?: (completion: Promise<void>) => void;
   /** Exact pending tool invocation trusted by the hosted control plane. */
@@ -2714,6 +2839,7 @@ export class AgentRuntime {
   #manualPause: AgentManualPause | undefined;
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
+  #modelStreamTimeouts: AgentRuntimeInternalOptions["modelStreamTimeouts"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
@@ -2739,6 +2865,7 @@ export class AgentRuntime {
       ObjectDefineProperty(this, name, descriptor);
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#modelStreamTimeouts = internalOptions.modelStreamTimeouts;
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
@@ -5562,11 +5689,15 @@ export class AgentRuntime {
               // a caller has already recorded on a span.
               callbacks?.onUsage?.({ ...totalUsage });
             },
+            streamRequiresFinish: languageModel.runtimeCapabilities?.streamRequiresFinish === true,
             requireProviderFinish:
               languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
             providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
             availableToolNames: acceptedRuntimeToolNames,
             streamLifecycleMode,
+            ...(this.#modelStreamTimeouts
+              ? { streamLifecyclePolicy: { ...this.#modelStreamTimeouts } }
+              : {}),
             traceSpanName: `chat ${effectiveModel}`,
             traceAttributes: {
               ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),

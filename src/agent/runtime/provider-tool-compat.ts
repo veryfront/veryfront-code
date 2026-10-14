@@ -288,14 +288,18 @@ function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
 
   const sanitized: Record<string, unknown> = {};
   const rawProperties = isPlainRecord(value.properties) ? value.properties : undefined;
-  const retainedPropertyNames = rawProperties ? new Set<string>() : undefined;
+  // Collected before the key loop: `required` may precede `properties`.
+  const retainedPropertyNames = rawProperties
+    ? new Set(
+      Object.keys(rawProperties).filter((name) => PROVIDER_TOOL_PROPERTY_KEY_PATTERN.test(name)),
+    )
+    : undefined;
 
   for (const [key, child] of Object.entries(value)) {
     if (key === "properties" && rawProperties) {
       const properties: Record<string, unknown> = {};
       for (const [propertyName, propertySchema] of Object.entries(rawProperties)) {
-        if (!PROVIDER_TOOL_PROPERTY_KEY_PATTERN.test(propertyName)) continue;
-        retainedPropertyNames?.add(propertyName);
+        if (!retainedPropertyNames?.has(propertyName)) continue;
         properties[propertyName] = sanitizeProviderSchemaPropertyKeys(propertySchema);
       }
       sanitized.properties = properties;

@@ -5,9 +5,12 @@ import {
   acceptInheritedRunAdmission,
   hostedInheritedTaskInput,
   transferHostedTerminalAuthority,
-} from "./terminal-credential.ts";
+} from "#veryfront/agent/hosted/terminal-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { encodeHostedTaskInput, getVerifiedHostedTaskInput } from "./task-input.ts";
+import {
+  encodeHostedTaskInput,
+  getVerifiedHostedTaskInput,
+} from "#veryfront/agent/hosted/task-input.ts";
 const project = "11111111-1111-4111-8111-111111111111",
   child = "22222222-2222-4222-8222-222222222222",
   generation = "33333333-3333-4333-8333-333333333333";
@@ -160,4 +163,94 @@ it("rejects child binding that names another run or project", async () => {
       })
     );
   }
+});
+
+it("delivers privately admitted input through the actual inherited child fork tool execution", async () => {
+  const { startHostedChildForkRuntimeWithHostTools } = await import(
+    "#veryfront/agent/hosted/child-fork-runtime-start.ts"
+  );
+  const { runAgentRuntimeForkStep } = await import(
+    "#veryfront/agent/streaming/fork-runtime-stream.ts"
+  );
+  const { scriptedModel } = await import("#veryfront/agent/runtime/model-runtime.test-helpers.ts");
+  const admissionResponse = response();
+  admissionResponse.headers.set("X-Veryfront-Inference-Token", "private-test-inference");
+  const admitted = await acceptInheritedRunAdmission(admissionResponse, {
+    ...binding,
+    verifyRunEventAppendToken: async () => ({
+      verified: true,
+      taskInputSha256: await computeHash(encodeHostedTaskInput(input)),
+      taskInputRootRunId: input.rootRunId,
+    }),
+  });
+  const descriptor = {
+    childRunId: admitted.runId,
+    childConversationId: project,
+    childMessageId: child,
+    latestEventId: 12,
+    latestExternalEventSequence: 0,
+  };
+  transferHostedTerminalAuthority(admitted, descriptor);
+  for (const owned of [true, false]) {
+    const observations: unknown[] = [];
+    const model = scriptedModel([
+      { toolCalls: [{ id: "inspect", name: "inspect_input", input: {} }] },
+      { text: "done" },
+    ], { provider: "openai", modelId: "gpt-4.1", only: "stream" });
+    const started = startHostedChildForkRuntimeWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "test-token",
+      projectId: project,
+      provider: "openai",
+      forkModel: "openai/gpt-4.1",
+      maxSteps: 2,
+      prompt: "Inspect the admitted input.",
+      durableChildRun: owned ? descriptor : JSON.parse(JSON.stringify(descriptor)),
+      monitorChildRunStatus: () => Promise.resolve(),
+      buildInstructions: () => "Use inspect_input.",
+      forkTools: {
+        inspect_input: {
+          description: "Inspect the verified child channel",
+          inputSchemaJson: { type: "object", properties: {} },
+          execute: (_args: unknown, context: unknown) => {
+            observations.push(getVerifiedHostedTaskInput(context));
+            return { inspected: true };
+          },
+        },
+      },
+      runStep: (step) => {
+        step.resolveModelRuntime = () => model;
+        return runAgentRuntimeForkStep(step);
+      },
+    });
+    try {
+      for await (
+        const _part of started.streamResult.fullStream
+      ) { /* consume actual tool execution */ }
+      assertEquals(observations, [owned ? input : undefined]);
+    } finally {
+      started.childRunMonitorAbortController?.abort();
+      started.forkStreamAbortController.abort();
+      await started.childRunMonitorPromise;
+    }
+  }
+  await assertRejects(
+    async () => {
+      startHostedChildForkRuntimeWithHostTools({
+        apiUrl: "https://api.example.com",
+        authToken: "test-token",
+        projectId: "foreign",
+        provider: "openai",
+        forkModel: "openai/gpt-4.1",
+        maxSteps: 1,
+        prompt: "Inspect",
+        durableChildRun: descriptor,
+        monitorChildRunStatus: () => Promise.resolve(),
+        forkTools: {},
+        buildInstructions: () => "Inspect",
+      });
+    },
+    Error,
+    "project mismatch",
+  );
 });

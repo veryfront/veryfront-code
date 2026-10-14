@@ -204,6 +204,29 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
+For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
+child response text once while preserving summary metadata and the original
+durable result envelope.
+Both chat replay and text-generation requests use this normalization, including
+JSON-encoded persisted child results. A completed child with accepted structured
+`output` sends that value and lifecycle metadata to the provider, including JSON
+scalars and `null`. Its original
+prose stays in durable history, so intermediate trace descriptions cannot
+conflict with the accepted result. Completed child results keep root response
+hint instructions and metadata while omitting their suggested prose when accepted
+output or child response text is present. Successful local child summaries use
+the same hint cleanup. Both aliases require framework-owned result provenance;
+project-owned or unmarked historical results retain their original fields. Runtime-written ownership metadata restores unique child results on replay.
+Child projection runs before result-reference previews and sections are built;
+the original result remains in durable history.
+Failed children retain diagnostic prose.
+Distinct textual summaries and outputs retain their existing behavior.
+Result references limit inline payloads, not child generation or the total
+conversation size; reading every section can still grow model context.
+JSON-encoded child envelopes matching the projection rules above are decoded
+before replay; other encoded results retain their string representation. Raw
+output already contained in annotated response text is omitted from the provider
+projection.
 When storage is full, later oversized results become bounded preview-only
 payloads with `complete: false`, no reference, and
 `retrievalUnavailable.reason: "capacity_exceeded"`. Existing references remain
@@ -724,6 +747,15 @@ Middleware can replace or edit messages, but changing a platform control result
 removes its trusted ownership. Internal clones preserve that ownership only when
 the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
 Caller-supplied result shapes never grant platform control authority.
+
+Child handoffs retain copied tool telemetry when the complete result fits the JSON
+resource limits. If telemetry exceeds those limits, the handoff replaces telemetry
+values with explicit truncation markers. If the trace entries still exceed the
+limits, `toolTelemetryOmitted` reports the number of omitted calls and results
+when that metadata fits. Otherwise, the handoff retains the admitted response
+without copied telemetry; raw child events retain the full trace.
+The accepted child response and raw child events remain unchanged. An oversized
+accepted response does not gain trusted ownership by dropping telemetry.
 
 For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or

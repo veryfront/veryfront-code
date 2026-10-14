@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { hostedAcceptedChildEvidenceFromCapability } from "./child-run-event-writer-token.ts";
 import {
   getHostedChildTaskInputResolver,
@@ -8,6 +9,7 @@ import {
   type HostedAcceptedTaskInputReceipt,
   persistHostedAcceptedTaskInput,
 } from "./child-run-event-writer-token.ts";
+import { boundChildResultTelemetry } from "../child-run/result-telemetry.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hostedInheritedEventWriter,
@@ -89,6 +91,7 @@ export type HostedDurableChildInvokeResult = {
   steps?: number;
   toolCalls?: ChildRunExecutionSnapshot["toolCalls"];
   toolResults?: ChildRunExecutionSnapshot["toolResults"];
+  toolTelemetryOmitted?: ChildRunExecutionSnapshot["toolTelemetryOmitted"];
   usage?: ChildRunExecutionSnapshot["usage"];
   durationMs?: ChildRunExecutionSnapshot["durationMs"];
   childConversationId?: string | null;
@@ -125,6 +128,7 @@ export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
     steps: v.number().optional(),
     toolCalls: v.array(v.unknown()).optional(),
     toolResults: v.array(v.unknown()).optional(),
+    toolTelemetryOmitted: v.object({ calls: v.number(), results: v.number() }).optional(),
     usage: v.record(v.string(), v.unknown()).optional(),
     durationMs: v.number().optional(),
     childCanonicalRunId: v.string().uuid().nullable().optional(),
@@ -310,9 +314,9 @@ export function buildHostedDurableChildInvokeSuccessResult<
     ? null
     : resolveKnownProviderTerminalError(input.snapshot.error);
 
-  return {
+  return boundChildResultTelemetry({
     ok: input.snapshot.success,
-    status: input.snapshot.success ? "completed" : "failed",
+    status: input.snapshot.success ? "completed" as const : "failed" as const,
     ...(summary
       ? {
         text: summary.text,
@@ -323,7 +327,10 @@ export function buildHostedDurableChildInvokeSuccessResult<
     steps: input.snapshot.steps,
     toolCalls: input.snapshot.toolCalls,
     toolResults: input.snapshot.toolResults,
-    usage: input.snapshot.usage,
+    ...(input.snapshot.toolTelemetryOmitted
+      ? { toolTelemetryOmitted: input.snapshot.toolTelemetryOmitted }
+      : {}),
+    ...(input.snapshot.usage === undefined ? {} : { usage: input.snapshot.usage }),
     durationMs: input.snapshot.durationMs,
     childConversationId: input.identifiers.childConversationId,
     childRunId: input.identifiers.childRunId,
@@ -339,7 +346,7 @@ export function buildHostedDurableChildInvokeSuccessResult<
     terminalErrorMessage: input.snapshot.success
       ? null
       : terminalError?.message ?? input.snapshot.error,
-  };
+  });
 }
 
 /** Create hosted durable child invoke trace recorder. */
@@ -869,6 +876,93 @@ async function notifyBootstrapError(
 
 const inheritedExecutions = createPrivateWeakStore<object, Map<string, Promise<unknown>>>();
 
+type AcceptedInvocationInput = {
+  projectId: string;
+  rootRunId: string | undefined;
+  parentRunId: string;
+  targetAgentId: string;
+  receipt: Promise<HostedAcceptedTaskInputReceipt>;
+};
+const acceptedInvocationInputs = createPrivateWeakStore<
+  object,
+  Map<string, AcceptedInvocationInput>
+>();
+const freezeInputScope = Object.freeze;
+
+async function prepareAcceptedInvocationInput<
+  TResult,
+  TLocalResult extends ChildRunExecutionResult,
+>(
+  input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
+  capability: HostedRunEventWriterCapability | undefined,
+  key: string,
+  resolver: ReturnType<typeof getHostedChildTaskInputResolver>,
+): Promise<ExecuteHostedDurableChildForkInput<TResult, TLocalResult>> {
+  const retained = capability ? acceptedInvocationInputs.get(capability)?.get(key) : undefined;
+  if (retained === undefined && (!resolver || input.acceptedTaskInputReceipt !== undefined)) {
+    return input;
+  }
+  const projectId = input.getProjectId();
+  if (!projectId || !input.parentRunId) {
+    throw new Error("Accepted child input requires parent project scope");
+  }
+  if (retained !== undefined) {
+    if (
+      retained.projectId !== projectId || retained.parentRunId !== input.parentRunId ||
+      retained.rootRunId !== input.rootRunId || retained.targetAgentId !== input.childAgentId
+    ) throw new Error("Accepted child input invocation scope changed");
+    const receipt = await retained.receipt;
+    if (
+      input.acceptedTaskInputReceipt !== undefined && input.acceptedTaskInputReceipt !== receipt
+    ) {
+      throw new Error("Accepted child input invocation scope changed");
+    }
+    return { ...input, acceptedTaskInputReceipt: receipt };
+  }
+  const accepted = await resolver!(freezeInputScope({
+    projectId,
+    rootRunId: input.rootRunId,
+    parentRunId: input.parentRunId,
+    targetAgentId: input.childAgentId,
+    toolCallId: input.executionOptions.toolCallId,
+    evidence: hostedAcceptedChildEvidenceFromCapability(
+      capability,
+      input.parentRunId,
+      projectId,
+      input.executionOptions.abortSignal,
+    ),
+  }));
+  if (!accepted) return input;
+  // Retain the append promise before awaiting its response. A failed response
+  // may follow a committed event, so retry must not blindly append it again.
+  const receipt = persistHostedAcceptedTaskInput({
+    capability,
+    parentRunId: input.parentRunId,
+    event: {
+      ...accepted,
+      type: ACCEPTED_TASK_INPUT_EVENT_TYPE,
+      version: 1,
+      targetAgentId: input.childAgentId,
+    },
+    abortSignal: input.executionOptions.abortSignal,
+  });
+  if (capability) {
+    let inputs = acceptedInvocationInputs.get(capability);
+    if (!inputs) {
+      inputs = createPrivateMap();
+      acceptedInvocationInputs.set(capability, inputs);
+    }
+    inputs.set(key, {
+      projectId,
+      rootRunId: input.rootRunId,
+      parentRunId: input.parentRunId,
+      targetAgentId: input.childAgentId,
+      receipt,
+    });
+  }
+  return { ...input, acceptedTaskInputReceipt: await receipt };
+}
+
 /** Execute hosted durable child fork. */
 export async function executeHostedDurableChildFork<
   TResult,
@@ -876,60 +970,23 @@ export async function executeHostedDurableChildFork<
 >(
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
 ): Promise<TResult> {
-  const runEventWriterCapability = input.runEventWriterCapability ??
-    getActiveHostedRunEventWriterCapability();
+  const capability = input.runEventWriterCapability ?? getActiveHostedRunEventWriterCapability();
   const resolver = getHostedChildTaskInputResolver();
-  if (resolver) {
-    const projectId = input.getProjectId();
-    if (!projectId || !input.parentRunId) {
-      throw new Error("Accepted child input requires parent project scope");
-    }
-    const accepted = await resolver(Object.freeze({
-      projectId,
-      rootRunId: input.rootRunId,
-      parentRunId: input.parentRunId,
-      targetAgentId: input.childAgentId,
-      toolCallId: input.executionOptions.toolCallId,
-      evidence: hostedAcceptedChildEvidenceFromCapability(
-        runEventWriterCapability,
-        input.parentRunId,
-        projectId,
-        input.executionOptions.abortSignal,
-      ),
-    }));
-    if (accepted) {
-      input = {
-        ...input,
-        acceptedTaskInputReceipt: await persistHostedAcceptedTaskInput({
-          capability: runEventWriterCapability,
-          parentRunId: input.parentRunId,
-          event: {
-            ...accepted,
-            type: ACCEPTED_TASK_INPUT_EVENT_TYPE,
-            version: 1,
-            targetAgentId: input.childAgentId,
-          },
-          abortSignal: input.executionOptions.abortSignal,
-        }),
-      };
-    }
-  }
-
-  return runInheritedChildExecutionOnce(
-    runEventWriterCapability,
-    `${input.parentRunId}:${input.executionOptions.toolCallId}`,
-    (onAdmitted) =>
-      runWithHostedRunEventWriterCapability(
-        undefined,
-        () =>
-          withHostedChildTaskInputResolver(undefined, () =>
-            executeHostedDurableChildForkWithCapability(
-              input,
-              runEventWriterCapability,
-              onAdmitted,
-            )),
-      ),
-  );
+  const key = `${input.parentRunId}:${input.executionOptions.toolCallId}`;
+  return runInheritedChildExecutionOnce(capability, key, async (onAdmitted) => {
+    // Receipt reads and persistence belong to the same owner as execution.
+    // Keep a durable receipt if admission fails, while allowing admission itself
+    // to retry. Completed invocation replay performs neither operation again.
+    const prepared = await prepareAcceptedInvocationInput(input, capability, key, resolver);
+    return runWithHostedRunEventWriterCapability(
+      undefined,
+      () =>
+        withHostedChildTaskInputResolver(
+          undefined,
+          () => executeHostedDurableChildForkWithCapability(prepared, capability, onAdmitted),
+        ),
+    );
+  });
 }
 
 /** Share the existing exact-parent single-flight owner across local inherited adapters. */
@@ -946,7 +1003,7 @@ export async function runInheritedChildExecutionOnce<TResult>(
   if (!capability) return await operation();
   let executions = inheritedExecutions.get(capability);
   if (!executions) {
-    executions = new Map();
+    executions = createPrivateMap();
     inheritedExecutions.set(capability, executions);
   }
   const existing = executions.get(key);

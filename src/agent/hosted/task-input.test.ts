@@ -1,6 +1,11 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveHostedTaskInput } from "./task-input.ts";
+import {
+  authorizeHostedTaskInput,
+  bindHostedTaskInputAuthority,
+  readHostedTaskInputAuthority,
+  resolveHostedTaskInput,
+} from "./task-input.ts";
 const scope = { projectId: "project-a", rootRunId: "root-a", runId: "child-a" };
 const binding = () => ({
   version: 1 as const,
@@ -44,4 +49,15 @@ describe("host-owned task input", () => {
       ]
     ) assertThrows(() => resolveHostedTaskInput(candidate, scope));
   });
+});
+
+it("revokes a previous private binding when a rebind fails scope validation", () => {
+  const input = authorizeHostedTaskInput(resolveHostedTaskInput(binding(), scope)!);
+  for (const key of ["projectId", "rootRunId", "runId"] as const) {
+    const owner = {};
+    bindHostedTaskInputAuthority(owner, input, scope);
+    assertEquals(readHostedTaskInputAuthority(owner, scope.projectId), input);
+    assertThrows(() => bindHostedTaskInputAuthority(owner, input, { ...scope, [key]: "foreign" }));
+    assertEquals(readHostedTaskInputAuthority(owner, scope.projectId), undefined);
+  }
 });

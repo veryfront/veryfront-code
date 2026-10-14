@@ -4,7 +4,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/define.ts";
-import { createDefaultHostedChatRuntime } from "./default-chat-runtime.ts";
+import { createDefaultHostedChatRuntime } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 
 it("delivers immutable host task input to an actual hosted tool across reconstruction", async () => {
   const scope = { projectId: "project-a", rootRunId: "root-a", runId: "child-a" };

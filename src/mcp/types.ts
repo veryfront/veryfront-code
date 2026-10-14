@@ -1,5 +1,5 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool/types.ts";
+import type { Tool, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import type { Resource } from "#veryfront/resource/types.ts";
 import type { Prompt } from "#veryfront/prompt/types.ts";
 export type { ToolAnnotations } from "./annotations.ts";
@@ -29,6 +29,8 @@ export interface ToolListEntry {
   outputSchema?: unknown;
   title?: string;
   annotations?: ToolAnnotations;
+  /** Veryfront extension metadata; discovery hints never grant execution authority. */
+  _meta?: { "veryfront/tool-discovery"?: ToolDiscoveryMetadata };
 }
 
 export interface MCPRegistry {

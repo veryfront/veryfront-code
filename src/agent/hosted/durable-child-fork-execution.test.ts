@@ -1,8 +1,10 @@
+import { withHostedChildTaskInputResolver } from "./accepted-child-input-scope.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -1875,3 +1877,152 @@ describe("canonical child identity in invoke results", () => {
     }
   });
 });
+
+for (const replayMode of ["admission retry", "completed replay", "ambiguous receipt"] as const) {
+  const admitted = replayMode === "completed replay";
+  it(`deduplicates accepted input across concurrent execution and ${replayMode}`, async () => {
+    let reads = 0, writes = 0, resolutions = 0, admissions = 0;
+    let unavailable = false;
+    const receipts: unknown[] = [];
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: API_URL,
+      runId: "run_parent_1",
+      canonicalRunId: PARENT_CONVERSATION_ID,
+      runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
+      acceptedChildEvidence: () => ({
+        readParentToolResults: () => {
+          reads++;
+          if (unavailable) throw new Error("Evidence unavailable during replay");
+          return Promise.resolve([]);
+        },
+        readCommittedVersion: () => Promise.reject(new Error("Unexpected version read")),
+      }),
+      fetch: (url) => {
+        if (unavailable) throw new Error("Transport unavailable during replay");
+        if (String(url).endsWith(`/runs/${PARENT_CONVERSATION_ID}/events`)) {
+          writes++;
+          if (replayMode === "ambiguous receipt") {
+            return Promise.reject(new Error("Receipt append outcome unknown"));
+          }
+          return Promise.resolve(Response.json({
+            run_id: PARENT_CONVERSATION_ID,
+            appended_count: 1,
+            latest_event_id: writes,
+          }));
+        }
+        return Promise.resolve(Response.json({
+          token: CHILD_RUN_EVENT_TOKEN,
+          run_id: INJECTED_CHILD_IDENTIFIERS.childRunId,
+          token_type: "Bearer",
+          expires_at: "2026-10-04T00:00:00Z",
+          permissions: ["run.events.append"],
+        }, { headers: { "Cache-Control": "no-store" } }));
+      },
+    });
+    const input: Parameters<
+      typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+    >[0] = {
+      runEventWriterCapability: capability,
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      forkInput: { description: "Inspect logs", prompt: "Inspect" },
+      executionOptions: { toolCallId: "accepted-input-call" },
+      childAgentId: "child-agent",
+      rootRunId: "root",
+      parentRunId: "run_parent_1",
+      parentConversationId: PARENT_CONVERSATION_ID,
+      parentMessageId: PARENT_MESSAGE_ID,
+      getProjectId: () => PROJECT_ID,
+      defaultModel: "model",
+      resolveModelId: (id) => id,
+      resolveProvider: () => "openai",
+      contextUnavailableMessage: "missing",
+      setupFailedCode: "SETUP_FAILED",
+      executionFailedCode: "FAILED",
+      executeLocal: () => baseSuccessResult(),
+      getExecutionSnapshot: () => null,
+      buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+      buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+      buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+      buildSuccessResult: (success) => ({ status: "completed", success }),
+      runtime: {
+        bootstrapChildRun: (args) => {
+          admissions++;
+          receipts.push(args.acceptedTaskInputReceipt);
+          return admitted
+            ? Promise.resolve({ ...INJECTED_CHILD_IDENTIFIERS, status: "running" })
+            : Promise.reject(new Error("Admission temporarily unavailable"));
+        },
+        createLifecycleAdapter: () => ({}),
+        runLifecycle: async (options) => {
+          const result = await options.execute();
+          return {
+            status: "completed" as const,
+            result,
+            snapshot: buildChildRunExecutionSnapshot(result),
+            terminalState: {
+              status: "completed" as const,
+              terminalErrorCode: null,
+              terminalErrorMessage: null,
+            },
+          };
+        },
+      },
+    };
+    await withHostedChildTaskInputResolver(async (request) => {
+      resolutions++;
+      await request.evidence.readParentToolResults();
+      return {
+        sourceEventIds: [5],
+        payload: { directory: "synthetic" },
+        artifactVersions: [{
+          path: "accepted.json",
+          version_id: CHILD_CONVERSATION_ID,
+          sha256: "a".repeat(64),
+          size_bytes: 2,
+        }],
+      };
+    }, async () => {
+      if (replayMode === "ambiguous receipt") {
+        const calls = await Promise.allSettled([
+          executeHostedDurableChildFork(input),
+          executeHostedDurableChildFork(input),
+        ]);
+        assertEquals(calls.every((call) => call.status === "rejected"), true);
+        await assertRejects(
+          () => executeHostedDurableChildFork(input),
+          Error,
+          "Receipt append outcome unknown",
+        );
+        assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 0]);
+        return;
+      }
+      const [first, concurrent] = await Promise.all([
+        executeHostedDurableChildFork(input),
+        executeHostedDurableChildFork(input),
+      ]);
+      assertStrictEquals(first, concurrent);
+      assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 1]);
+      unavailable = true;
+      const replay = await executeHostedDurableChildFork(input);
+      assertEquals(replay.status, admitted ? "completed" : "setup_failed");
+      assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, admitted ? 1 : 2]);
+      if (!admitted) {
+        assertStrictEquals(receipts[1], receipts[0]);
+        for (
+          const changed of [
+            { childAgentId: "different" },
+            { rootRunId: "different" },
+            { getProjectId: () => "different" },
+          ]
+        ) {
+          await assertRejects(
+            () => executeHostedDurableChildFork({ ...input, ...changed }),
+            Error,
+            "scope",
+          );
+        }
+      }
+    });
+  });
+}

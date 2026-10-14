@@ -1244,7 +1244,7 @@ export class VeryfrontAPIOperations {
   // Release Asset Manifest operations
   // ===========================================================================
 
-  async beginReleaseAssetManifestBuild(
+  async startReleaseAssetManifestBuild(
     projectRef: string,
     version: string,
     signal?: AbortSignal,
@@ -1252,7 +1252,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest/builds`;
-    logger.debug("beginReleaseAssetManifestBuild", { projectRef, version });
+    logger.debug("startReleaseAssetManifestBuild", { projectRef, version });
 
     const raw = await this.request(url, {
       method: "POST",
@@ -1263,7 +1263,7 @@ export class VeryfrontAPIOperations {
     return getReleaseAssetManifestBuildResponseSchema().parse(raw);
   }
 
-  async uploadReleaseAsset(
+  async writeReleaseAsset(
     projectRef: string,
     version: string,
     contentHash: string,
@@ -1274,7 +1274,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest/assets`;
-    logger.debug("uploadReleaseAsset", {
+    logger.debug("writeReleaseAsset", {
       projectRef,
       version,
       contentHash,
@@ -1294,7 +1294,7 @@ export class VeryfrontAPIOperations {
     return getReleaseAssetUploadResponseSchema().parse(raw);
   }
 
-  async putReleaseAssetManifest(
+  async writeReleaseAssetManifest(
     projectRef: string,
     version: string,
     manifest: unknown,
@@ -1303,7 +1303,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest`;
-    logger.debug("putReleaseAssetManifest", { projectRef, version });
+    logger.debug("writeReleaseAssetManifest", { projectRef, version });
 
     const raw = await this.request(url, {
       method: "PUT",
@@ -1314,7 +1314,7 @@ export class VeryfrontAPIOperations {
     return getReleaseAssetManifestStateResponseSchema().parse(raw);
   }
 
-  async reportReleaseAssetManifestState(
+  async updateReleaseAssetManifestState(
     projectRef: string,
     version: string,
     state: "partial" | "failed",
@@ -1324,7 +1324,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest/state`;
-    logger.debug("reportReleaseAssetManifestState", { projectRef, version, state });
+    logger.debug("updateReleaseAssetManifestState", { projectRef, version, state });
 
     const raw = await this.request(url, {
       method: "POST",
@@ -1333,6 +1333,48 @@ export class VeryfrontAPIOperations {
       signal,
     });
     return getReleaseAssetManifestStateResponseSchema().parse(raw);
+  }
+
+  /** @deprecated Use `startReleaseAssetManifestBuild`. */
+  beginReleaseAssetManifestBuild(
+    projectRef: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<ReleaseAssetManifestBuildResponse> {
+    return this.startReleaseAssetManifestBuild(projectRef, version, signal);
+  }
+
+  /** @deprecated Use `writeReleaseAsset`. */
+  uploadReleaseAsset(
+    projectRef: string,
+    version: string,
+    contentHash: string,
+    contentType: string,
+    bytes: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ReleaseAssetUploadResponse> {
+    return this.writeReleaseAsset(projectRef, version, contentHash, contentType, bytes, signal);
+  }
+
+  /** @deprecated Use `writeReleaseAssetManifest`. */
+  putReleaseAssetManifest(
+    projectRef: string,
+    version: string,
+    manifest: unknown,
+    signal?: AbortSignal,
+  ): Promise<ReleaseAssetManifestStateResponse> {
+    return this.writeReleaseAssetManifest(projectRef, version, manifest, signal);
+  }
+
+  /** @deprecated Use `updateReleaseAssetManifestState`. */
+  reportReleaseAssetManifestState(
+    projectRef: string,
+    version: string,
+    state: "partial" | "failed",
+    error?: string,
+    signal?: AbortSignal,
+  ): Promise<ReleaseAssetManifestStateResponse> {
+    return this.updateReleaseAssetManifestState(projectRef, version, state, error, signal);
   }
 
   async getReleaseAssetManifest(

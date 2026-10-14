@@ -1,7 +1,12 @@
 import {
+  inheritHostedTaskInputAuthority,
+  readHostedTaskInputAuthority,
+} from "../hosted/task-input.ts";
+import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
+  readHostedChildModelStreamTimeouts,
 } from "../hosted/inference-credential.ts";
 import {
   createToolsFromHostDefinitions,
@@ -210,7 +215,7 @@ export function startAgentRuntimeForkWithHostTools<
   );
 
   return {
-    streamResult: startAgentRuntimeFork(inheritForkInference({
+    streamResult: startAgentRuntimeFork(inheritForkExecutionAuthority({
       createModelRuntimeResolver: input.createModelRuntimeResolver,
       apiUrl: input.apiUrl,
       authToken: input.authToken,
@@ -381,12 +386,30 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     };
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
+    // Host-owned model stream budgets apply to delegated child model calls too.
+    const modelStreamTimeouts = readHostedChildModelStreamTimeouts(input);
     const runtime = new AgentRuntime(
       "invoke-agent-child-runtime",
       runtimeConfig,
-      resolveModelRuntime ? { resolveModelRuntime } : undefined,
+      resolveModelRuntime || modelStreamTimeouts
+        ? {
+          ...(resolveModelRuntime ? { resolveModelRuntime } : {}),
+          ...(modelStreamTimeouts ? { modelStreamTimeouts } : {}),
+        }
+        : undefined,
     );
 
+    const taskInput = readHostedTaskInputAuthority(input, input.projectId);
+    const toolContext = taskInput
+      ? {
+        projectId: taskInput.projectId,
+        runId: taskInput.runId,
+        rootRunId: taskInput.rootRunId,
+        taskInput,
+      }
+      : input.projectId
+      ? { projectId: input.projectId }
+      : undefined;
     stream = await runWithVeryfrontCloudContextAsync(
       {
         apiBaseUrl: input.apiUrl,
@@ -396,7 +419,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       () =>
         runtime.stream(
           input.messages,
-          input.projectId ? { projectId: input.projectId } : undefined,
+          toolContext,
           {
             onFinish: (response) => {
               input.abortSignal?.removeEventListener("abort", abortHandler);
@@ -429,7 +452,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
 }> {
-  return runAgentRuntimeForkStep({
+  return runAgentRuntimeForkStep(inheritForkExecutionAuthority({
     ...(input.resolveModelRuntime ? { resolveModelRuntime: input.resolveModelRuntime } : {}),
     apiUrl: input.apiUrl,
     authToken: input.authToken,
@@ -446,7 +469,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
       : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
     ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-  });
+  }, input));
 }
 
 /** Public API contract for fork runtime continuation prompt resolver. */
@@ -566,7 +589,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const effectiveForkToolNames: string[] = [
             ...(prepared.forkToolNames ?? input.forkToolNames),
           ];
-          const { stream, responsePromise } = await runStep(inheritForkInference({
+          const { stream, responsePromise } = await runStep(inheritForkExecutionAuthority({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
             projectId: input.projectId,
@@ -639,10 +662,11 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
   };
 }
 
-function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
+function inheritForkExecutionAuthority<T extends HostedInferenceAuthorityOwner>(
   target: T,
   source: HostedInferenceAuthorityOwner,
 ): T {
   inheritHostedChildInferenceAuthority(target, source);
+  inheritHostedTaskInputAuthority(target, source);
   return target;
 }

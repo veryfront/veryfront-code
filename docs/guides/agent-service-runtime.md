@@ -429,6 +429,35 @@ Closing the managed broker handler or aborting its service signal returns 503
 `BROKER_UNAVAILABLE` for pending admission. Request-only cancellation returns 499
 `BROKER_INGRESS_ABORTED`.
 
+## Bound model stream progress
+
+Set `VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS` and
+`VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS` in the service environment to
+bound how long each streamed agent model call waits for semantic output. The first
+budget covers the wait for the first text, reasoning, or tool output, with a
+default of `60000`. The second covers the gap between outputs once progress
+begins, with a default of `15000`.
+
+```bash
+VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000
+VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS=30000
+VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS=10000
+```
+
+Both budgets must stay below `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS` (default
+`120000`), including a default that applies to an unset variable. The service
+rejects a budget at or above that watchdog when it creates the chat runtime,
+because the watchdog would fire first and report a generic stall instead of
+the fixed `FIRST_PROGRESS_TIMEOUT` code. A configured first-progress budget
+counts twice, because a stream that times out before any output can be
+replayed once. In the example, `30000` uses a `60000` window.
+
+Delegated child agents inherit a budget only when its window is shorter than
+the child stream watchdog (`45000`). A longer budget leaves that child on the
+framework default. See
+[Configuration](./configuration.md#model-stream-progress-budgets) for every
+related variable.
+
 ## Keep inference authority separate
 
 Signed runtime invocations may include an optional

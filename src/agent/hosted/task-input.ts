@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
@@ -54,7 +55,7 @@ function assertJson(value: unknown, depth = 0, budget = { remaining: 16_384 }): 
   if (typeof value === "string" && value.length > 16_384) throw invalid();
   if (value === null || typeof value === "boolean" || typeof value === "string") return;
   if (typeof value === "number" && finite(value)) return;
-  if (typeof value !== "object" || value === null) throw invalid();
+  if (typeof value !== "object") throw invalid();
   if (
     !isArray(value) && prototype(value) !== plainPrototype &&
     prototype(value) !== null
@@ -105,7 +106,7 @@ export function resolveHostedTaskInput(
   if (privateByteLength(encodePrivateText(encoded, encoder)) > 16_384) throw invalid();
   const snapshot = privateJsonParse(encoded) as HostedTaskInput;
   freezeJson(snapshot);
-  if (value && typeof value === "object" && apply(weakHas, trustedInputs, [value])) {
+  if (apply(weakHas, trustedInputs, [value])) {
     apply(weakAdd, trustedInputs, [snapshot]);
   }
   return snapshot;
@@ -162,4 +163,40 @@ export function getVerifiedHostedTaskInput(context: unknown): HostedTaskInput | 
     scope[key] = property.value;
   }
   return resolveHostedTaskInput(input.value, scope);
+}
+
+const executionInputs = createPrivateWeakStore<object, HostedTaskInput | undefined>();
+
+/** @internal Attach only verified, exact-scope input to a host-owned execution carrier. */
+export function bindHostedTaskInputAuthority(
+  owner: object,
+  input: HostedTaskInput | undefined,
+  scope: HostedTaskInputScope,
+): void {
+  executionInputs.set(owner, undefined);
+  if (input === undefined) return;
+  executionInputs.set(
+    owner,
+    getVerifiedHostedTaskInput({
+      projectId: scope.projectId,
+      runId: scope.runId,
+      rootRunId: scope.rootRunId,
+      taskInput: input,
+    }),
+  );
+}
+
+/** @internal Preserve input authority across framework-owned fork projections. */
+export function inheritHostedTaskInputAuthority(target: object, source: object): void {
+  executionInputs.set(target, executionInputs.get(source));
+}
+
+/** @internal Read the private channel against the actual execution project. */
+export function readHostedTaskInputAuthority(
+  owner: object,
+  projectId: string | null,
+): HostedTaskInput | undefined {
+  const input = executionInputs.get(owner);
+  if (input !== undefined && input.projectId !== projectId) throw invalid();
+  return input;
 }

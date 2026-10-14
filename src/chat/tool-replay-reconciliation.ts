@@ -7,104 +7,20 @@
  * matched, superseded, batch-starting, or transient-but-preserved without
  * mutating them.
  */
-import { isRecord } from "./part-field-access.ts";
-import {
-  buildToolResultOutput,
-  getFilePart,
-  getRawToolCallPart,
-  getRawToolResultPart,
-  getToolPart,
-  hasSelfContainedRawToolCallResult,
-  isProviderVisibleReasoningPart,
-  isTextPart,
-} from "./message-part-parsing.ts";
+import { getFilePart, isProviderVisibleReasoningPart, isTextPart } from "./message-part-parsing.ts";
 import type { ChatUiMessageRole } from "./types.ts";
 import type { ChatProviderModelInputMessage } from "./provider-input-types.ts";
+import {
+  getReplayToolCallPart,
+  getReplayToolResultPart,
+  type ReplayToolCallPart,
+} from "./tool-replay-parts.ts";
 
-export function isTransientToolState(state: string | undefined): boolean {
-  return state === "pending" || state === "input-available" || state === "input-streaming" ||
-    state === "streaming" || state === "approval-requested" || state === "approval-responded";
-}
-
-type ReplayToolCallPart = {
-  part: object;
-  toolCallId: string;
-  toolName: string;
-  transient: boolean;
-  selfContainedResult: boolean;
-};
+export { isTransientToolState } from "./tool-replay-parts.ts";
 
 type PendingReplayToolCall = Omit<ReplayToolCallPart, "selfContainedResult"> & {
   originMessageIndex: number;
 };
-
-function getReplayToolCallPart(part: unknown, role: ChatUiMessageRole): ReplayToolCallPart | null {
-  if (role !== "assistant") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const toolPart = getToolPart(part);
-  if (toolPart) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-      transient: isTransientToolState(toolPart.state),
-      selfContainedResult: buildToolResultOutput(toolPart) !== null,
-    };
-  }
-
-  const rawToolCall = getRawToolCallPart(part);
-  if (!rawToolCall) {
-    return null;
-  }
-
-  return {
-    part,
-    toolCallId: rawToolCall.toolCallId,
-    toolName: rawToolCall.toolName,
-    transient: isTransientToolState(rawToolCall.state),
-    selfContainedResult: hasSelfContainedRawToolCallResult(rawToolCall),
-  };
-}
-
-function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
-  part: object;
-  toolCallId: string;
-  toolName?: string;
-} | null {
-  if (role !== "assistant" && role !== "tool") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const rawToolResult = getRawToolResultPart(part);
-  if (rawToolResult) {
-    return {
-      part,
-      toolCallId: rawToolResult.toolCallId,
-      ...(rawToolResult.toolName ? { toolName: rawToolResult.toolName } : {}),
-    };
-  }
-
-  const toolPart = getToolPart(part);
-  if (role === "tool" && toolPart && buildToolResultOutput(toolPart)) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-    };
-  }
-
-  return null;
-}
 
 function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): boolean {
   if (role === "system") {

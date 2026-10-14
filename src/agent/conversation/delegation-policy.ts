@@ -1,3 +1,8 @@
+import { boundChildResultTelemetry } from "../child-run/result-telemetry.ts";
+import type {
+  ChildRunToolCallSnapshot,
+  ChildRunToolResultSnapshot,
+} from "../child-run/execution-snapshot.ts";
 import { extractLatestUserText } from "../artifacts/default-research-artifact-support.ts";
 import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts";
 import { isRecord } from "../../chat/conversation.ts";
@@ -94,10 +99,22 @@ export function withRootOwnedChildResultHint<T extends object>(
     return result;
   }
 
-  return {
+  const hinted = {
     ...result,
     rootResponseHint: buildRootOwnedChildResultHint(text),
   };
+  if (
+    "toolCalls" in hinted && Array.isArray(hinted.toolCalls) &&
+    "toolResults" in hinted && Array.isArray(hinted.toolResults)
+  ) {
+    return boundChildResultTelemetry(
+      hinted as T & RootOwnedChildResultHinted & {
+        toolCalls: ChildRunToolCallSnapshot[];
+        toolResults: ChildRunToolResultSnapshot[];
+      },
+    ) as T & RootOwnedChildResultHinted;
+  }
+  return hinted;
 }
 
 /** Builds invoke agent followup instruction. */

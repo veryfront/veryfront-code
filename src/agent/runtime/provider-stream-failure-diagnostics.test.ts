@@ -95,6 +95,34 @@ async function runFailingStream(cause: unknown): Promise<string> {
 }
 
 describe("provider stream failure diagnostics", () => {
+  it("applies host-owned model stream budgets and relays a fixed timeout code", async () => {
+    const silentModel = {
+      provider: "anthropic",
+      modelId: MODEL_ID,
+      doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+      doStream: () => Promise.resolve({ stream: new ReadableStream({}) }),
+    } as unknown as ModelRuntime;
+    const runtime = new AgentRuntime("provider-stream-budget", {
+      model: `veryfront-cloud/anthropic/${MODEL_ID}`,
+      system: "Synthetic instructions",
+      maxSteps: 1,
+    }, {
+      resolveModelRuntime: () => silentModel,
+      modelStreamTimeouts: { firstProgressTimeoutMs: 20 },
+    });
+    const stream = await runtime.stream([{
+      id: "synthetic-message",
+      role: "user",
+      parts: [{ type: "text", text: "Synthetic input" }],
+    }]);
+    const decoder = new TextDecoder();
+    let body = "";
+    for await (const chunk of stream) body += decoder.decode(chunk, { stream: true });
+
+    assertEquals(body.includes("FIRST_PROGRESS_TIMEOUT"), true);
+    assertEquals(body.includes("Provider did not produce semantic progress"), true);
+  });
+
   it("logs the underlying cause chain and keeps the client SSE error generic", async () => {
     const logs = captureStreamErrorLogs();
     try {
