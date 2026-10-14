@@ -83,6 +83,7 @@ export type {
   Tool,
   ToolConfig,
   ToolDefinition,
+  ToolDiscoveryMetadata,
   ToolExecutionContext,
   ToolExecutionDataEvent,
   ToolSet,

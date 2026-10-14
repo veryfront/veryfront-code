@@ -19,11 +19,15 @@ import {
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool";
+import { normalizeToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import { hasTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
+import { isProviderNativeToolExposureDefinition } from "./provider-native-tool-inventory.ts";
 
 const ArraySort = Array.prototype.sort;
 const hasOwn = Object.hasOwn;
@@ -80,6 +84,9 @@ const TOOL_SEARCH_SCHEMA_MAX_NODES = 4_096;
 const TOOL_SEARCH_SCHEMA_MAX_BYTES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_NODES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_BYTES = 524_288;
+const TOOL_CONTRACT_MAX_BYTES = 65_536;
+const TOOL_INVENTORY_FILTER_MAX_LENGTH = 128;
+const TOOL_INVENTORY_FILTER_PREVIEW_LIMIT = 40;
 const UTF8_ENCODER = new PrivateTextEncoder();
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -121,6 +128,7 @@ export type ToolSearchMatch = {
   name: string;
   description: string;
   status: "available" | "loaded";
+  discovery?: ToolDiscoveryMetadata;
 };
 
 /** Search output plus bounded observability counters. */
@@ -200,7 +208,12 @@ function createNamespaceTokenPattern(namespaceTerm: string): RegExp {
 }
 
 function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
-  return { name: tool.name, description: tool.description, status: tool.status };
+  return {
+    name: tool.name,
+    description: tool.description,
+    status: tool.status,
+    ...(tool.discovery ? { discovery: tool.discovery } : {}),
+  };
 }
 
 function compareToolSearchMatches(left: ToolSearchMatch, right: ToolSearchMatch): number {
@@ -360,6 +373,7 @@ function snapshotSearchableTool(
       name: name.value,
       description: description.value,
       status,
+      ...readToolDiscoveryField(tool),
       normalizedName: normalizeSearchText(name.value),
       normalizedDescription: normalizeSearchText(description.value),
       parameterDescriptions: includeParameterDescriptions && parameters
@@ -390,6 +404,7 @@ function collectSearchCandidates(input: {
   available: readonly ToolDefinition[];
   authorized: readonly ToolDefinition[];
   includeParameterDescriptions?: boolean;
+  include?: (tool: ToolDefinition) => boolean;
 }): SearchableTool[] {
   const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
   const candidates: SearchableTool[] = [];
@@ -399,6 +414,7 @@ function collectSearchCandidates(input: {
       if (!hasOwn(tools, toolIndex)) continue;
       const tool = tools[toolIndex]!;
       if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
+      if (input.include && !input.include(tool)) continue;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
       const snapshot = snapshotSearchableTool(
@@ -415,21 +431,120 @@ function collectSearchCandidates(input: {
   return candidates;
 }
 
+/** Exact selector carried forward by executable inventory pagination. */
+export interface ToolInventorySelector {
+  cursor?: string;
+  limit?: number;
+  scope?: "all" | "platform";
+  domain?: string;
+  resource?: string;
+}
+
+/** One executable metadata record, without an input or output schema. */
+export type ToolMetadataMatch = {
+  name: string;
+  description: string;
+  status: "available" | "deferred";
+  discovery?: ToolDiscoveryMetadata;
+};
+
 /** Bounded executable metadata, without inspecting or loading tool schemas. */
 export type ToolInventoryPage = {
-  matches: Array<{ name: string; description: string; status: "available" | "deferred" }>;
+  matches: ToolMetadataMatch[];
   resultCount: number;
   loadedCount: 0;
   miss: boolean;
   nextCursor: string | null;
+  /** Exact `tool_search` arguments for the next page, or null when complete. */
+  nextPageInput: { inventory: ToolInventorySelector } | null;
+  /** Present when a domain or resource filter matches no authorized tool. */
+  invalidFilter?: {
+    field: "domain" | "resource";
+    allowedValues: string[];
+    truncated: boolean;
+  };
+  /** Exact `tool_search` arguments that browse without the rejected filters. */
+  restartInput?: { inventory: ToolInventorySelector };
 };
 
+/** Ranked capability metadata that does not activate execution schemas. */
+export type ToolMetadataSearchResult = {
+  matches: ToolMetadataMatch[];
+  resultCount: number;
+  loadedCount: 0;
+  miss: boolean;
+};
+
+function readToolDiscoveryMetadata(tool: ToolDefinition): ToolDiscoveryMetadata | undefined {
+  const descriptor = ObjectGetOwnPropertyDescriptor(tool, "discovery");
+  return descriptor && isOwnDataPropertyDescriptor(descriptor)
+    ? normalizeToolDiscoveryMetadata(descriptor.value)
+    : undefined;
+}
+
+function readToolDiscoveryField(tool: ToolDefinition): { discovery?: ToolDiscoveryMetadata } {
+  const discovery = readToolDiscoveryMetadata(tool);
+  return discovery ? { discovery } : {};
+}
+
+function isPlatformInventoryTool(tool: ToolDefinition): boolean {
+  return hasTrustedPlatformPolicyToolDefinition(tool) &&
+    readToolDiscoveryMetadata(tool)?.type !== "integration";
+}
+
+function previewDescription(description: string): string {
+  return description.length > 240
+    ? `${privateTextSlice(description, 0, previewEnd(description, 240))}...`
+    : description;
+}
+
+function toMetadataMatch(match: ToolSearchMatch): ToolMetadataMatch {
+  return {
+    name: match.name,
+    description: previewDescription(match.description),
+    status: match.status === "available" ? "available" : "deferred",
+    ...(match.discovery ? { discovery: match.discovery } : {}),
+  };
+}
+
+function assertInventoryFilter(value: unknown, field: "domain" | "resource"): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || value.length === 0 ||
+      value.length > TOOL_INVENTORY_FILTER_MAX_LENGTH)
+  ) {
+    throw new Error(
+      `Tool inventory ${field} must be a non-empty string of at most ${TOOL_INVENTORY_FILTER_MAX_LENGTH} characters`,
+    );
+  }
+}
+
+type FilterPreview = { values: string[]; truncated: boolean };
+
+function rememberFilterValue(preview: FilterPreview, value: string | undefined): void {
+  if (value === undefined || somePrivateArray(preview.values, (entry) => entry === value)) return;
+  if (preview.values.length === TOOL_INVENTORY_FILTER_PREVIEW_LIMIT) preview.truncated = true;
+  else pushPrivateArray(preview.values, value);
+}
+
+/**
+ * Page authorized executable metadata in name order. Scope, domain, and
+ * resource filters apply before pagination. Schemas stay deferred.
+ */
 export function listToolExposure(input: {
   authorized: readonly ToolDefinition[];
   available?: readonly ToolDefinition[];
   cursor?: string;
   limit?: number;
+  scope?: "all" | "platform";
+  domain?: string;
+  resource?: string;
 }): ToolInventoryPage {
+  if (input.scope !== undefined && input.scope !== "all" && input.scope !== "platform") {
+    throw new Error("Tool inventory scope must be all or platform");
+  }
+  assertInventoryFilter(input.domain, "domain");
+  assertInventoryFilter(input.resource, "resource");
   const limit = input.limit ?? 10;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
     throw new Error("Tool inventory limit must be an integer from 1 to 20");
@@ -445,30 +560,62 @@ export function listToolExposure(input: {
     authorized: input.authorized,
     available: input.available ?? [],
     includeParameterDescriptions: false,
+    include: input.scope === "platform" ? isPlatformInventoryTool : undefined,
   });
   const seen = createPrivateSet<string>([]);
-  const entries: ToolInventoryPage["matches"] = [];
+  const entries: ToolMetadataMatch[] = [];
+  const domains: FilterPreview = { values: [], truncated: false };
+  const resources: FilterPreview = { values: [], truncated: false };
+  let domainMatched = input.domain === undefined;
+  let resourceMatched = input.resource === undefined;
   for (let index = 0; index < candidates.length; index++) {
     const entry = candidates[index]!;
+    rememberFilterValue(domains, entry.discovery?.domain);
+    if (input.domain !== undefined && entry.discovery?.domain !== input.domain) continue;
+    domainMatched = true;
+    rememberFilterValue(resources, entry.discovery?.resource);
+    if (input.resource !== undefined && entry.discovery?.resource !== input.resource) continue;
+    resourceMatched = true;
     if (setHas(seen, entry.name)) continue;
     ReflectApply(SetAdd, seen, [entry.name]);
-    pushPrivateArray(entries, {
-      name: entry.name,
-      description: entry.description.length > 240
-        ? `${privateTextSlice(entry.description, 0, previewEnd(entry.description, 240))}...`
-        : entry.description,
-      status: entry.status === "available" ? "available" : "deferred",
-    });
+    pushPrivateArray(entries, toMetadataMatch(entry));
+  }
+  const scope = input.scope === undefined ? {} : { scope: input.scope };
+  if (!domainMatched || !resourceMatched) {
+    const field = domainMatched ? "resource" : "domain";
+    const preview = domainMatched ? resources : domains;
+    return {
+      matches: [],
+      resultCount: 0,
+      loadedCount: 0,
+      miss: true,
+      nextCursor: null,
+      nextPageInput: null,
+      invalidFilter: { field, allowedValues: preview.values, truncated: preview.truncated },
+      restartInput: { inventory: { limit, ...scope } },
+    };
   }
   sortSearchItems(entries, (left, right) => compareAscii(left.name, right.name));
   if (offset > entries.length) throw new Error("Tool inventory changed; restart without a cursor");
   const matches = slicePrivateArray(entries, offset, offset + limit);
+  const nextCursor = offset + matches.length < entries.length
+    ? String(offset + matches.length)
+    : null;
   return {
     matches,
     resultCount: matches.length,
     loadedCount: 0,
     miss: matches.length === 0,
-    nextCursor: offset + matches.length < entries.length ? String(offset + matches.length) : null,
+    nextCursor,
+    nextPageInput: nextCursor === null ? null : {
+      inventory: {
+        cursor: nextCursor,
+        limit,
+        ...scope,
+        ...(input.domain === undefined ? {} : { domain: input.domain }),
+        ...(input.resource === undefined ? {} : { resource: input.resource }),
+      },
+    },
   };
 }
 
@@ -721,25 +868,114 @@ function pruneLoadedToolNames(
   }
 }
 
-/** Create the framework fallback tool definition without exposing catalog schemas. */
+/** Exact advertised input contract for one authorized executable tool. */
+export type ToolExposureContract = {
+  name: string;
+  description: string;
+  inputSchema: BoundedJsonValue;
+};
+
+/**
+ * Read one authorized tool's bounded input contract by exact name without
+ * executing the tool or reading accessors. Returns undefined when no
+ * authorized, schema-visible tool has that name.
+ */
+export function readToolExposureContract(input: {
+  name: string;
+  authorized: readonly ToolDefinition[];
+}): ToolExposureContract | undefined {
+  if (!input.name || !isUtf8LengthWithin(input.name, TOOL_SEARCH_NAME_MAX_BYTES)) {
+    throw new Error("Tool schema lookup requires one exact executable tool name");
+  }
+  for (let index = 0; index < input.authorized.length; index++) {
+    if (!hasOwn(input.authorized, index)) continue;
+    const tool = input.authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
+    const metadata = snapshotSearchableTool(tool, "available", { nodes: 0, bytes: 0 }, false);
+    if (!metadata || metadata.name !== input.name) continue;
+    if (isProviderNativeToolExposureDefinition(tool)) {
+      throw new Error(
+        "Provider-native tools have no inspectable schema; use query with the exact name to load one",
+      );
+    }
+    const parameters = ObjectGetOwnPropertyDescriptor(tool, "parameters");
+    if (!isOwnDataPropertyDescriptor(parameters)) {
+      throw new Error("Executable tool contract is not available as data");
+    }
+    const snapshot = snapshotBoundedJsonValue(
+      parameters.value,
+      TOOL_CONTRACT_MAX_BYTES,
+      TOOL_CONTRACT_MAX_BYTES,
+    );
+    if (!snapshot.success) {
+      throw new Error("Executable tool contract exceeds safe inspection limits");
+    }
+    return { name: metadata.name, description: metadata.description, inputSchema: snapshot.value };
+  }
+  return undefined;
+}
+
+/**
+ * Create the framework `tool_search` definition without exposing catalog
+ * schemas. The root schema has no `oneOf`, `anyOf`, or `allOf` because some
+ * providers reject root combinators; the runtime enforces exactly one mode.
+ */
 export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      "Discover this run's executable tools, not project tool definitions. Use inventory to browse bounded metadata pages without loading schemas. Use query with an exact returned name to load that tool's input schema for the next step, or a short capability phrase to search before declaring a requested tool unavailable. Choose query or inventory, not both.",
+      "Find and load this run's executable tools. Provide exactly one of: schema to read one exact tool name's input schema and load it for the next step; search to find tools by a short capability phrase without loading them; inventory to browse tool metadata pages; or query to search and load matching tools. Check discovery before declaring a requested tool unavailable.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
-        query: {
-          type: "string",
-          description:
-            `One exact tool name when known, or one short capability phrase. UTF-8 input must be at most ${TOOL_SEARCH_QUERY_MAX_BYTES} bytes. Do not combine alternatives.`,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name"],
+          properties: {
+            name: {
+              type: "string",
+              minLength: 1,
+              description: "One exact executable tool name.",
+            },
+          },
+        },
+        search: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: {
+            query: {
+              type: "string",
+              minLength: 1,
+              description:
+                `One short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Returns up to ${TOOL_SEARCH_RESULT_LIMIT} metadata matches without loading schemas.`,
+            },
+          },
         },
         inventory: {
           type: "object",
           additionalProperties: false,
           properties: {
+            scope: {
+              type: "string",
+              enum: ["all", "platform"],
+              description:
+                "Use platform for Veryfront platform tools only. Default all browses every authorized tool.",
+            },
+            domain: {
+              type: "string",
+              minLength: 1,
+              maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
+              description: "One exact discovery.domain value. Filters before pagination.",
+            },
+            resource: {
+              type: "string",
+              minLength: 1,
+              maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
+              description: "One exact discovery.resource value. Filters before pagination.",
+            },
             cursor: {
               type: "string",
               description: "Use nextCursor from the preceding page. Omit for the first page.",
@@ -751,6 +987,11 @@ export function createToolSearchDefinition(): ToolDefinition {
               description: "Metadata entries per page, default 10.",
             },
           },
+        },
+        query: {
+          type: "string",
+          description:
+            `One exact tool name or one short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Loads matching input schemas for the next step.`,
         },
       },
     },
@@ -899,6 +1140,29 @@ export function searchToolExposure(input: {
     loadedCount: loadedMatches.length,
     miss: loadedMatches.length === 0,
   };
+}
+
+/** Rank bounded capability metadata without changing run-local tool exposure. */
+export function searchToolExposureMetadata(input: {
+  query: string;
+  authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
+}): ToolMetadataSearchResult {
+  const ranked = rankToolExposureMatches({
+    query: input.query,
+    available: input.available ?? [],
+    authorized: input.authorized,
+  });
+  const seen = createPrivateSet<string>([]);
+  const matches: ToolMetadataMatch[] = [];
+  for (let index = 0; index < ranked.length; index++) {
+    if (matches.length === TOOL_SEARCH_RESULT_LIMIT) break;
+    const match = ranked[index]!;
+    if (setHas(seen, match.name)) continue;
+    ReflectApply(SetAdd, seen, [match.name]);
+    pushPrivateArray(matches, toMetadataMatch(match));
+  }
+  return { matches, resultCount: matches.length, loadedCount: 0, miss: matches.length === 0 };
 }
 
 /** Snapshot loaded names for private framework persistence. */

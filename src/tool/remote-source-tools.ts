@@ -1,3 +1,4 @@
+import { normalizeToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { hasTrustedPlatformSource } from "./platform-source-provenance.ts";
 import { markTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { dynamicTool } from "./factory.ts";
@@ -70,6 +71,8 @@ export function createToolsFromRemoteDefinitions(
       }),
       definition.name,
     );
+    const discovery = normalizeToolDiscoveryMetadata(definition.discovery);
+    if (discovery) remoteTool.discovery = discovery;
     entries.push([
       toolName,
       hasTrustedPlatformSource(source) ? markTrustedHostToolProvenance(remoteTool) : remoteTool,

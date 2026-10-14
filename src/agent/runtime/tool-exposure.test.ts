@@ -7,10 +7,14 @@ import {
   createToolExposureState,
   createToolSearchDefinition,
   listToolExposure,
+  readToolExposureContract,
   restoreToolExposureState,
   searchToolExposure,
+  searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
 } from "./tool-exposure.ts";
+import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
+import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import { sanitizeProviderToolSchema } from "./provider-tool-compat.ts";
 import {
   inheritRuntimeProviderSchemaHiddenTool,
@@ -78,6 +82,10 @@ it("bounds inventory descriptions and rejects invalid pagination", () => {
     assertThrows(() => listToolExposure({ authorized, cursor }));
   }
 });
+
+function platform(domain: string, resource: string) {
+  return { version: 1 as const, type: "platform" as const, domain, resource };
+}
 
 function definition(
   name: string,
@@ -571,16 +579,150 @@ it("tool_search parameters have no root combinator for any provider profile", ()
 
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
-  const querySchema = (search.parameters as {
-    properties?: { query?: { description?: string; maxLength?: number } };
-  }).properties?.query;
+  const properties = (search.parameters as {
+    properties?: Record<string, { description?: string; maxLength?: number }>;
+  }).properties!;
 
   assert(search.description.includes("before declaring a requested tool unavailable"));
+  assert(search.description.includes("exactly one of"));
+  assert(search.description.length <= 400);
+  assertEquals(Object.keys(properties).sort(), ["inventory", "query", "schema", "search"]);
+  assertEquals(properties.query?.maxLength, undefined);
+});
+
+it("tool_search raw parameter schema declares no root combinator", () => {
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  assertEquals(parameters.type, "object");
+  for (const key of ["oneOf", "anyOf", "allOf", "not", "if", "then", "else"]) {
+    assertEquals(Object.hasOwn(parameters, key), false, `root ${key}`);
+  }
+});
+
+it("metadata search ranks tools without loading schemas", () => {
+  const state = createToolExposureState();
+  const authorized = [
+    definition("create_agent", "Create an agent"),
+    definition("list_files", "List project files"),
+  ];
+  const result = searchToolExposureMetadata({
+    query: "create agent",
+    authorized,
+    available: [definition("get_agent", "Read an agent")],
+  });
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [[
+    "create_agent",
+    "deferred",
+  ]]);
+  assertEquals(result.loadedCount, 0);
+  assertEquals(state.loadedToolNames.size, 0);
+  assertEquals(Object.hasOwn(result.matches[0]!, "parameters"), false);
+});
+
+it("reads one exact input contract without matching by substring", () => {
+  const authorized = [definition("get_agent", "Read an agent")];
+  const contract = readToolExposureContract({ name: "get_agent", authorized });
+  assertEquals(contract?.name, "get_agent");
   assertEquals(
-    querySchema?.description,
-    "One exact tool name when known, or one short capability phrase. UTF-8 input must be at most 256 bytes. Do not combine alternatives.",
+    (contract?.inputSchema as { properties?: Record<string, unknown> }).properties?.value,
+    { type: "string", description: "get_agent unique parameter" },
   );
-  assertEquals(querySchema?.maxLength, undefined);
+  assertEquals(readToolExposureContract({ name: "get", authorized }), undefined);
+  assertThrows(() => readToolExposureContract({ name: "", authorized }));
+});
+
+it("schema lookup does not read accessors or inspect provider-native entries", () => {
+  const accessorSchema = definition("load_agent", "Load an agent");
+  let reads = 0;
+  Object.defineProperty(accessorSchema, "parameters", {
+    get() {
+      reads++;
+      return {};
+    },
+  });
+  assertEquals(
+    readToolExposureContract({ name: "load_agent", authorized: [accessorSchema] }),
+    undefined,
+  );
+  assertEquals(reads, 0);
+  const [nativeSearch] = createProviderNativeToolExposureDefinitions({
+    provider: "anthropic",
+    toolNames: ["web_search"],
+  });
+  assert(nativeSearch);
+  assertThrows(
+    () => readToolExposureContract({ name: "web_search", authorized: [nativeSearch] }),
+    Error,
+    "use query",
+  );
+  assertEquals(
+    readToolExposureContract({
+      name: "native_hidden",
+      authorized: [hiddenDefinition("native_hidden", "Hidden")],
+    }),
+    undefined,
+  );
+});
+
+it("filters inventory by discovery domain and resource before pagination", () => {
+  const authorized = [
+    { ...definition("list_agents", "List agents"), discovery: platform("agents", "Agents") },
+    { ...definition("get_agent", "Read an agent"), discovery: platform("agents", "Agents") },
+    { ...definition("list_files", "List files"), discovery: platform("files", "Files") },
+    definition("plain_tool", "No metadata"),
+  ];
+  const first = listToolExposure({ authorized, domain: "agents", limit: 1 });
+  assertEquals(first.matches.map((entry) => entry.name), ["get_agent"]);
+  assertEquals(first.matches[0]!.discovery, platform("agents", "Agents"));
+  assertEquals(first.nextPageInput, {
+    inventory: { cursor: "1", limit: 1, domain: "agents" },
+  });
+  const second = listToolExposure({ authorized, ...first.nextPageInput!.inventory });
+  assertEquals(second.matches.map((entry) => entry.name), ["list_agents"]);
+  assertEquals(second.nextPageInput, null);
+  assertEquals(
+    listToolExposure({ authorized, resource: "Files" }).matches.map((entry) => entry.name),
+    ["list_files"],
+  );
+});
+
+it("reports advertised values for an unknown inventory filter", () => {
+  const authorized = [
+    { ...definition("list_agents", "List agents"), discovery: platform("agents", "Agents") },
+    { ...definition("list_files", "List files"), discovery: platform("files", "Files") },
+  ];
+  const result = listToolExposure({ authorized, domain: "missing", scope: "all", limit: 5 });
+  assertEquals(result.miss, true);
+  assertEquals(result.invalidFilter, {
+    field: "domain",
+    allowedValues: ["agents", "files"],
+    truncated: false,
+  });
+  assertEquals(result.restartInput, { inventory: { limit: 5, scope: "all" } });
+  const resource = listToolExposure({ authorized, domain: "agents", resource: "Files" });
+  assertEquals(resource.invalidFilter?.field, "resource");
+  assertEquals(resource.invalidFilter?.allowedValues, ["Agents"]);
+  for (const filter of ["", "x".repeat(129)]) {
+    assertThrows(() => listToolExposure({ authorized, domain: filter }));
+    assertThrows(() => listToolExposure({ authorized, resource: filter }));
+  }
+  assertThrows(() => listToolExposure({ authorized, scope: "project" as unknown as "all" }));
+});
+
+it("platform inventory scope lists only trusted platform tools", () => {
+  const platformTool = markTrustedPlatformPolicyToolDefinition({
+    ...definition("veryfront__list_agents", "List agents"),
+    discovery: platform("agents", "Agents"),
+  });
+  const integrationTool = markTrustedPlatformPolicyToolDefinition({
+    ...definition("gmail__send", "Send mail"),
+    discovery: { version: 1 as const, type: "integration" as const },
+  });
+  const projectTool = definition("project_tool", "Project tool");
+  const result = listToolExposure({
+    authorized: [platformTool, integrationTool, projectTool],
+    scope: "platform",
+  });
+  assertEquals(result.matches.map((entry) => entry.name), ["veryfront__list_agents"]);
 });
 
 it("tool search enforces query limits in UTF-8 bytes", () => {

@@ -168,6 +168,9 @@ export interface Tool<TInput = any, TOutput = any> {
   /** Tool description */
   description: string;
 
+  /** Catalog navigation hints, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
+
   /** Native integration tools this local wrapper may call through the platform. */
   delegatedIntegrationTools?: readonly string[];
 
@@ -215,12 +218,28 @@ export interface Tool<TInput = any, TOutput = any> {
 export type ToolSet = Record<string, Tool<unknown, unknown>>;
 
 /**
+ * Catalog navigation hints for tool discovery. These fields never grant tool
+ * execution permission.
+ */
+export interface ToolDiscoveryMetadata {
+  version: 1;
+  type: "platform" | "integration";
+  domain?: string;
+  resource?: string;
+  subgroup?: string;
+  /** Navigation-only action, such as get, list, create, or run. */
+  operation?: string;
+}
+
+/**
  * Provider-facing tool definition used for model/tool registration.
  */
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonSchema;
+  /** Catalog navigation hints, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
   title?: string;
   annotations?: ToolAnnotations;
 }

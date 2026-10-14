@@ -496,7 +496,7 @@ it("tool_search miss asks for a refined search while authorized tools stay defer
     read_release_marker: noopTool("read_release_marker", "Read the release marker"),
   };
   assertEquals(await toolSearchNextSteps([["zzz unrelated capability"]], tools), [
-    "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then query one exact name. A project resource title is not a tool name.",
+    "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name.",
   ]);
 
   // A search in the same step that loaded the last deferred tool leaves nothing to discover.
@@ -560,6 +560,68 @@ for (const mode of ["generate", "stream"] as const) {
     assertEquals(model.toolNames(0), ["tool_search"]);
     assertEquals(model.toolNames(1), ["tool_search"]);
     assertEquals(model.toolNames(2), ["read_release_marker"]);
+    assertEquals(executions, 1);
+    assert(resultText.includes("Verified marker"));
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
+  it(`enforces one tool_search mode, then searches and loads by exact schema (${mode})`, async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "both",
+          name: "tool_search",
+          input: { query: "marker", inventory: {} },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "find",
+          name: "tool_search",
+          input: { search: { query: "release marker" } },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "inspect",
+          name: "tool_search",
+          input: { schema: { name: "read_release_marker" } },
+        }],
+      },
+      { toolCalls: [{ id: "read", name: "read_release_marker", input: {} }] },
+      { text: "Verified marker" },
+    ], { modelId: "hosted/schema-tools", only: mode });
+    let executions = 0;
+    const assistant = agent({
+      id: "schema-runtime-test",
+      model: "hosted/schema-tools",
+      system: "Verify the marker using executable tools.",
+      tools: {
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return { marker: "verified" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 5,
+      resolveModelTransport: () => ({ model }),
+    });
+    const resultText = mode === "generate"
+      ? (await assistant.generate({ input: "Read the release marker" })).text
+      : await (await assistant.stream({ input: "Read the release marker" })).toDataStreamResponse()
+        .text();
+    assert(JSON.stringify(model.calls[1]).includes("exactly one of"));
+    const searchContext = JSON.stringify(model.calls[2]);
+    assert(searchContext.includes("read_release_marker"));
+    assertEquals(model.toolNames(2), ["tool_search"]);
+    assert(JSON.stringify(model.calls[3]).includes("inputSchema"));
+    assertEquals(model.toolNames(3), ["read_release_marker"]);
     assertEquals(executions, 1);
     assert(resultText.includes("Verified marker"));
   });
