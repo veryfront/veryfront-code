@@ -14,6 +14,12 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogClockForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  VERYFRONT_CLOUD_CATALOG_TTL_MS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -2517,4 +2523,62 @@ it("prepared hosted runtime converts tools for the assembly's target when the mo
   });
 
   assertEquals(names.length, 128);
+});
+
+it("preselects eager hosted tools under the strictest limit when only a stale catalog answered", async () => {
+  let now = 1_000_000;
+  __setVeryfrontCloudCatalogClockForTests(() => now);
+  __setVeryfrontCloudCatalogForScopeForTests(
+    { apiBaseUrl: "https://api.example.com", apiToken: "token-stale-catalog" },
+    {
+      models: [{
+        id: "stale-model",
+        modelId: "google/stale-model",
+        provider: "google",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    },
+  );
+  now += VERYFRONT_CLOUD_CATALOG_TTL_MS + 1;
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  try {
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ error: "unavailable" }, { status: 503 })),
+      async () => {
+        await createDefaultHostedChatRuntime({
+          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+          options: {
+            projectId: "project-1",
+            authToken: "token-stale-catalog",
+            instructions: "Use only authorized tools.",
+            model: "google/stale-model",
+            deniedTools: ["tool_search"],
+          },
+          config: {
+            apiUrl: "https://api.example.com",
+            apiMcpUrl: "https://api.example.com/mcp",
+          },
+          buildLocalTools: (taskContext) => {
+            capturedContext = taskContext;
+            return Object.fromEntries(
+              Array.from({ length: 129 }, (_, index) => [
+                `local_tool_${String(index).padStart(3, "0")}`,
+                localTool(`Local tool ${index}`),
+              ]),
+            );
+          },
+          createRemoteToolSource: emptyRemoteSource,
+          preloadLatestConversationUserText: false,
+        });
+      },
+    );
+  } finally {
+    __resetVeryfrontCloudCatalogForTests();
+  }
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
 });

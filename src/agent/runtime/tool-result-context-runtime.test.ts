@@ -432,9 +432,10 @@ describe("agent runtime tool result context integration", () => {
       model: "openai/tool-result-context-cap",
       system: "Use tools.",
       skills: [],
+      // Eager schemas past the cap are not sent, so the called tool comes first.
       tools: {
-        ...cappedNoopTools(128),
         list_records: listRecordsTool(HUGE_EMAIL_RESULT),
+        ...cappedNoopTools(128),
       },
       toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
       maxSteps: 4,
@@ -495,6 +496,42 @@ describe("agent runtime tool result context integration", () => {
     const response = await assistant.generate({ input: "List records." });
 
     assertEquals(response.text, "done");
+  });
+
+  it("keeps every eager schema it advertised once the reader joins under the 128-tool cap", async () => {
+    const stepNames: string[][] = [];
+    const model = scriptedModel([
+      (options) => {
+        stepNames.push(toolNamesFromCall(options));
+        return { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] };
+      },
+      (options) => {
+        stepNames.push(toolNamesFromCall(options));
+        return { text: "done" };
+      },
+    ], {
+      modelId: "openai/tool-result-context-eager-cap",
+      provider: "openai",
+      only: "generate",
+    });
+
+    const assistant = agent({
+      model: "openai/tool-result-context-eager-cap",
+      system: "Use tools.",
+      skills: [],
+      tools: { list_records: listRecordsTool(HUGE_EMAIL_RESULT), ...cappedNoopTools(127) },
+      toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "List records." });
+
+    assertEquals(response.text, "done");
+    const [first = [], second = []] = stepNames;
+    assertEquals(first.length, 127);
+    assertEquals(second.includes("get_tool_result"), true);
+    assertEquals(first.every((name) => second.includes(name)), true);
   });
 
   it("preserves default inline behavior unless toolResultContext is enabled", async () => {

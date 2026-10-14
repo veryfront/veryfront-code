@@ -17,6 +17,7 @@ import {
   runWithRequestContext as runWithProjectRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   currentVeryfrontCloudCatalogScopeKey,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -642,11 +643,15 @@ export async function createDefaultHostedChatRuntime(
           }),
       );
       // Preselection caps tools by the limit the run's model is converted with.
-      // A model whose catalog has not loaded yet settles against it later, so
+      // The model settles against a fresh catalog: a load that timed out or
+      // answered from a stale entry still refreshes before dispatch, so
       // preselection then assumes the strictest wire limit.
       const toolSchemaTarget = runWithVeryfrontCloudContext(
         cloudContext,
-        () => resolveProviderToolSchemaTarget(modelId, { catalogSettled: catalogLoaded }),
+        () =>
+          resolveProviderToolSchemaTarget(modelId, {
+            catalogSettled: catalogLoaded && canVeryfrontCloudCatalogRefuse(),
+          }),
       );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
