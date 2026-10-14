@@ -455,6 +455,34 @@ describe("provider-tool-compat", () => {
       assertEquals(result, { type: "object", properties: { alias: {}, value: {} } } as never, ref);
     }
   });
+  it("falls back for references to root keywords that folding replaces", () => {
+    const unevaluated = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        unevaluatedProperties: { type: "string" },
+        properties: { alias: { $ref: "#/unevaluatedProperties" } },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(unevaluated, {
+      type: "object",
+      properties: { alias: {}, value: {} },
+    } as never);
+
+    const property = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { value: { type: "string" }, alias: { $ref: "#/properties/value" } },
+        allOf: [{ properties: { value: { type: "string", maxLength: 1 } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(property, {
+      type: "object",
+      properties: { value: {}, alias: {} },
+    } as never);
+  });
   it("keeps a __proto__ property declaration in the fallback root", () => {
     const schema = JSON.parse(
       '{"type":"object","additionalProperties":false,' +

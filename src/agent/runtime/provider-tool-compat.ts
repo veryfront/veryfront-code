@@ -918,10 +918,13 @@ function isSimpleObjectBranch(branch: unknown): branch is Record<string, unknown
       typeof branch.additionalProperties === "boolean");
 }
 
-function isRemovedRootReference(ref: string): boolean {
-  if (!ref.startsWith("#/")) return false;
+// Folding leaves only root definitions where they were authored.
+const STABLE_ROOT_POINTER_TOKENS = new Set(["$defs", "definitions"]);
+
+/** Whether a `#/` pointer may resolve differently, or not at all, after folding. */
+function isUnstableRootPointer(ref: string): boolean {
   // Classify the decoded pointer: percent-decode the URI fragment first, then
-  // unescape the first JSON Pointer token. A malformed fragment is unsafe.
+  // unescape the first JSON Pointer token. A malformed fragment is unstable.
   let pointer: string;
   try {
     pointer = decodeURIComponent(ref.slice(1));
@@ -929,7 +932,7 @@ function isRemovedRootReference(ref: string): boolean {
     return true;
   }
   const token = pointer.slice(1).split("/")[0]!.replaceAll("~1", "/").replaceAll("~0", "~");
-  return (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
+  return !STABLE_ROOT_POINTER_TOKENS.has(token);
 }
 
 /** Whether any schema node (outside literal values) satisfies `test`. */
@@ -948,13 +951,14 @@ function someSchemaNode(value: unknown, test: (node: Record<string, unknown>) =>
 
 /**
  * A reference stays valid after folding only when it is the bare root or a
- * plain local pointer outside the removed keywords. Anchor, absolute, relative,
- * and dynamic references may target removed branches.
+ * plain local pointer into root definitions. Other pointers can target removed
+ * or rewritten root keywords, and anchor, absolute, relative, and dynamic
+ * references can target removed branches.
  */
 function hasUnsafeReference(value: unknown): boolean {
   return someSchemaNode(value, (node) =>
     (typeof node.$ref === "string" && node.$ref !== "#" &&
-      (!node.$ref.startsWith("#/") || isRemovedRootReference(node.$ref))) ||
+      (!node.$ref.startsWith("#/") || isUnstableRootPointer(node.$ref))) ||
     Object.hasOwn(node, "$dynamicRef") || Object.hasOwn(node, "$recursiveRef"));
 }
 
@@ -1024,8 +1028,8 @@ function createPermissiveOpenAIRoot(
  * root must admit every value the authored schema admits; runtime validation
  * still enforces the authored schema. Root compositions are folded only when
  * every branch is a simple object shape, no identifier or anchor is declared,
- * and every reference is the bare root or a plain local pointer outside the
- * removed keywords. Otherwise the root falls back to an open object that keeps the
+ * and every reference is the bare root or a plain local pointer into root
+ * definitions. Otherwise the root falls back to an open object that keeps the
  * self-contained root constraints and admits every named property. Nested
  * schemas are left as they are, and a schema without these root keywords is
  * returned by identity.
