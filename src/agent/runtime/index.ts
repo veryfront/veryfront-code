@@ -2645,10 +2645,11 @@ async function executeStartupSkill(input: {
   await input.persistMessage(message);
   const toolCall: ToolCall = { id: toolCallId, name: definition.name, args, status: "executing" };
   pushPrivateArray(input.toolCalls, toolCall);
-  input.onToolCall?.(toolCall);
   const startTime = Date.now();
   let result: unknown;
   try {
+    // An observer failure settles the persisted call like an execution failure.
+    input.onToolCall?.(toolCall);
     result = await runWithFrameworkSkillBootstrap(
       loader,
       () => input.execute(definition.name, toolCallId, args, admittedTurn),

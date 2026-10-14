@@ -346,6 +346,21 @@ describe("project definition bootstrap", () => {
       },
     });
     assertEquals(prefixed[0]?.pathname, "/v1/projects/project%201/definitions");
+    const cancelled = new AbortController();
+    await assertRejects(
+      () =>
+        readHostedProjectDefinitionBootstrap({
+          ...base,
+          signal: cancelled.signal,
+          selection: envSelection,
+          fetch: () => {
+            cancelled.abort(new Error("request cancelled"));
+            return Promise.resolve(Response.json({}));
+          },
+        }),
+      Error,
+      "request cancelled",
+    );
     assertEquals(prefixed[0]?.searchParams.get("target_environment_id"), "env-1");
     assertEquals(
       await readHostedProjectDefinitionBootstrap({

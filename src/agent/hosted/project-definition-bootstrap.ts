@@ -153,7 +153,9 @@ export async function readHostedProjectDefinitionBootstrap(input: {
       observedAt: new Date().toISOString(),
       maxBlockBytes: input.policy.maxBlockBytes,
     });
-  } catch {
+  } catch (error) {
+    // The internal timeout and lookup failures fail open; a cancelled request does not.
+    if (input.signal.aborted) throw input.signal.reason ?? error;
     return null;
   }
 }
