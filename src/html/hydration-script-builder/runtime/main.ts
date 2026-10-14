@@ -37,7 +37,9 @@ import { createRouterRuntime } from "./router.ts";
 import { createHydrationRenderer } from "./renderer.ts";
 import { resolveNavigationStore } from "./navigation-store.ts";
 
-const runtimeWindow: RuntimeWindow = globalThis as typeof globalThis & RuntimeWindow;
+const runtimeWindow = globalThis as unknown as
+  & RuntimeWindow
+  & Pick<HydrationRuntimeEnv, "setTimeout" | "clearTimeout">;
 const runtimeDocument: RuntimeDocument =
   (globalThis as typeof globalThis & { document: RuntimeDocument }).document;
 
@@ -66,7 +68,7 @@ const snapshotModules = createSnapshotModuleImporter({
   importModule: env.importModule,
   fetchModule: env.fetch,
   reloadDocument: () => runtimeWindow.location.reload(),
-  recoveryState: runtimeWindow as RuntimeWindow & Record<string, unknown>,
+  recoveryState: runtimeWindow as unknown as RuntimeWindow & Record<string, unknown>,
 });
 
 const componentLoader = createComponentLoader({
