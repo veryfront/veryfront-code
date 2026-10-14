@@ -495,19 +495,24 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(new URL(listUrl).searchParams.get("fields"), "(path,type,size_bytes,size)");
     });
 
-    it("still reads a file size from size when the route answers no size_bytes", async () => {
+    it("selects and reads size on the branch file route, which answers no size_bytes", async () => {
       resetEnv();
 
+      let listUrl = "";
       const result = await withMockFetch(
-        () =>
-          Promise.resolve(Response.json({
+        (input, init) => {
+          listUrl = new Request(input, init).url;
+          return Promise.resolve(Response.json({
             data: [{ path: "pages/index.tsx", type: "file", size: 7 }],
-          })),
+          }));
+        },
         async () =>
           await vfRemoteListFiles.execute({ project: "my-project", branch: "feature", limit: 50 }),
       );
 
       assertEquals(result.files, [{ path: "pages/index.tsx", type: "file", size: 7 }]);
+      assertEquals(new URL(listUrl).pathname.endsWith("/branches/feature/files"), true);
+      assertEquals(new URL(listUrl).searchParams.get("fields"), "(path,type,size)");
     });
 
     it("searches project file text with limit and reads data and total_matches", async () => {

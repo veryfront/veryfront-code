@@ -322,7 +322,9 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const params = new URLSearchParams();
         if (input.pattern) params.set("pattern", input.pattern);
         params.set("limit", String(input.limit));
-        params.set("fields", "(path,type,size_bytes,size)");
+        // The branch file route answers `size` only; the project route answers
+        // `size_bytes` beside it.
+        params.set("fields", input.branch ? "(path,type,size)" : "(path,type,size_bytes,size)");
 
         const apiPath = `${
           buildProjectApiPath(input.project, "files", input.branch)
