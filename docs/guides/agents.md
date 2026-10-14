@@ -220,8 +220,10 @@ Failed children retain diagnostic prose.
 Distinct textual summaries and outputs retain their existing behavior.
 Result references limit inline payloads, not child generation or the total
 conversation size; reading every section can still grow model context.
-JSON-encoded child envelopes are decoded before replay. Raw output already
-contained in annotated response text is omitted from the provider projection.
+JSON-encoded child envelopes matching the projection rules above are decoded
+before replay; other encoded results retain their string representation. Raw
+output already contained in annotated response text is omitted from the provider
+projection.
 When storage is full, later oversized results become bounded preview-only
 payloads with `complete: false`, no reference, and
 `retrievalUnavailable.reason: "capacity_exceeded"`. Existing references remain
