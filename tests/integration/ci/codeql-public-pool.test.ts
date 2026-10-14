@@ -47,37 +47,86 @@ describe("CodeQL public analysis", () => {
       "inputs",
       `return ${String(call.if).slice(4, -3)}`,
     );
-    for (const eventName of ["pull_request", "push", "merge_group", "schedule"]) {
-      for (const fork of [false, true]) {
-        const github = {
-          event_name: eventName,
-          repository: "veryfront/veryfront-code",
-          event: {
-            pull_request: {
-              head: { repo: { full_name: fork ? "fork/code" : "veryfront/veryfront-code" } },
-            },
-          },
-        };
-        for (const value of [undefined, "", "true", "enabled"]) {
-          assertEquals(
-            Boolean(select(github, { CI_CODEQL_PUBLIC: value }, {})),
-            value === "enabled" && (eventName !== "pull_request" || !fork),
-          );
+    const scan = (await workflow("ci-public-pool.yml")).jobs.codeql;
+    const runner = new Function(
+      "github",
+      "inputs",
+      "vars",
+      `return ${String(scan["runs-on"]).slice(4, -3)}`,
+    );
+    for (
+      const eventName of ["pull_request", "push", "merge_group", "schedule", "workflow_dispatch"]
+    ) {
+      for (const ref of ["refs/heads/main", "refs/heads/feature"]) {
+        for (const fork of [false, true]) {
+          for (const actor of ["octocat", "dependabot[bot]"]) {
+            for (const author of ["octocat", "dependabot[bot]"]) {
+              const github = {
+                event_name: eventName,
+                ref,
+                actor,
+                repository: "veryfront/veryfront-code",
+                event: {
+                  pull_request: {
+                    head: { repo: { full_name: fork ? "fork/code" : "veryfront/veryfront-code" } },
+                    user: { login: author },
+                  },
+                },
+              };
+              const eligible = eventName === "merge_group" ||
+                ((eventName === "push" || eventName === "workflow_dispatch") &&
+                  ref === "refs/heads/main") ||
+                (eventName === "pull_request" && !fork && actor !== "dependabot[bot]" &&
+                  author !== "dependabot[bot]");
+              for (const rollout of [undefined, "", "true", "enabled"]) {
+                for (const pool of [undefined, "", "true", "veryfront-public"]) {
+                  for (const requested of [undefined, false, true]) {
+                    const canary = eventName === "workflow_dispatch" && ref === "refs/heads/main" &&
+                      requested === true;
+                    if (
+                      select(github, { CI_CODEQL_PUBLIC: rollout, CI_RUNNER_PUBLIC: pool }, {
+                        public_pool: requested,
+                      })
+                    ) {
+                      assertEquals(
+                        runner(github, { job: "codeql" }, { CI_RUNNER_PUBLIC: pool }),
+                        "veryfront-public",
+                      );
+                    }
+                    assertEquals(
+                      Boolean(
+                        select(github, { CI_CODEQL_PUBLIC: rollout, CI_RUNNER_PUBLIC: pool }, {
+                          public_pool: requested,
+                        }),
+                      ),
+                      pool === "veryfront-public" &&
+                        ((rollout === "enabled" && eligible) || canary),
+                      JSON.stringify({
+                        eventName,
+                        ref,
+                        fork,
+                        actor,
+                        author,
+                        rollout,
+                        pool,
+                        requested,
+                      }),
+                    );
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
-    for (const ref of ["refs/heads/main", "refs/heads/feature"]) {
-      for (const requested of [undefined, false, true]) {
-        assertEquals(
-          Boolean(select(
-            { event_name: "workflow_dispatch", ref },
-            {},
-            { public_pool: requested },
-          )),
-          ref === "refs/heads/main" && requested === true,
-        );
-      }
-    }
+    assertEquals(
+      Boolean(select({ event_name: "merge_group", repository: "other/code" }, {
+        CI_CODEQL_PUBLIC: "enabled",
+        CI_RUNNER_PUBLIC: "veryfront-public",
+      }, {})),
+      false,
+    );
   });
 
   it("keeps runner eligibility scoped while allowing a main-only canary", async () => {
