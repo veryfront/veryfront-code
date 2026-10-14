@@ -1359,6 +1359,24 @@ export function processStreamInternal(
     // active lifecycle runner. Without overrides these equal the historical
     // 60s first-output and 15s output-idle defaults.
     const idlePolicy = resolveRuntimeLifecyclePolicy(callbacks);
+    const streamStartedAt = idlePolicy.clock.nowMs();
+    let lastSemanticProgressAt = streamStartedAt;
+    const noteSemanticProgress = () => {
+      lastSemanticProgressAt = idlePolicy.clock.nowMs();
+    };
+    // Metadata and empty reasoning delimiters must not grant a fresh budget.
+    const readUntilSemanticDeadline = (deadline: number) => {
+      const remaining = deadline - idlePolicy.clock.nowMs();
+      if (remaining <= 0) return Promise.resolve("timeout" as const);
+      return readNextStreamPartWithTimeout(
+        streamIterator,
+        state,
+        Math.ceil(remaining),
+        callbacks?.setTimeoutFn,
+        callbacks?.clearTimeoutFn,
+        abortSignal,
+      );
+    };
     try {
       while (true) {
         // A pending provider-executed call outranks the local commit grace: its
@@ -1422,23 +1440,11 @@ export function processStreamInternal(
             abortSignal,
           )
           : shouldStopForIdleOutput
-          ? await readNextStreamPartWithTimeout(
-            streamIterator,
-            state,
-            idlePolicy.semanticIdleTimeoutMs,
-            callbacks?.setTimeoutFn,
-            callbacks?.clearTimeoutFn,
-            abortSignal,
+          ? await readUntilSemanticDeadline(
+            lastSemanticProgressAt + idlePolicy.semanticIdleTimeoutMs,
           )
           : shouldStopForIdleStart
-          ? await readNextStreamPartWithTimeout(
-            streamIterator,
-            state,
-            idlePolicy.firstProgressTimeoutMs,
-            callbacks?.setTimeoutFn,
-            callbacks?.clearTimeoutFn,
-            abortSignal,
-          )
+          ? await readUntilSemanticDeadline(streamStartedAt + idlePolicy.firstProgressTimeoutMs)
           : await readNextStreamPart(streamIterator, state, abortSignal);
         throwIfAborted(abortSignal);
         if (next === "timeout") {
@@ -1519,6 +1525,7 @@ export function processStreamInternal(
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
+            if (typedPart.text.length > 0) noteSemanticProgress();
             sendSSE(
               controller,
               encoder,
@@ -1545,6 +1552,9 @@ export function processStreamInternal(
             const reasoningPart = reasoningParts.get(reasoningId);
             if (reasoningPart) {
               reasoningPart.text += typeof typedPart.delta === "string" ? typedPart.delta : "";
+              if (typeof typedPart.delta === "string" && typedPart.delta.length > 0) {
+                noteSemanticProgress();
+              }
             }
             sendSSE(
               controller,
@@ -1566,9 +1576,20 @@ export function processStreamInternal(
             const reasoningPart = reasoningParts.get(activeReasoningId);
             if (reasoningPart) {
               if (typeof typedPart.signature === "string") {
+                if (
+                  typedPart.signature.length > 0 && reasoningPart.signature !== typedPart.signature
+                ) {
+                  noteSemanticProgress();
+                }
                 reasoningPart.signature = typedPart.signature;
               }
               if (typeof typedPart.redactedData === "string") {
+                if (
+                  typedPart.redactedData.length > 0 &&
+                  reasoningPart.redactedData !== typedPart.redactedData
+                ) {
+                  noteSemanticProgress();
+                }
                 reasoningPart.redactedData = typedPart.redactedData;
               }
             }
@@ -1595,6 +1616,7 @@ export function processStreamInternal(
               typedPart.providerExecuted,
             );
             hasActiveLocalToolInput = providerExecuted !== true;
+            noteSemanticProgress();
             state.toolCalls.set(toolId, {
               id: toolId,
               name: typedPart.toolName,
@@ -1615,7 +1637,9 @@ export function processStreamInternal(
             const tc = state.toolCalls.get(toolId);
             if (!tc) break;
 
+            const previousArguments = tc.arguments;
             tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
+            if (tc.arguments !== previousArguments) noteSemanticProgress();
             tc.inputDeltas ??= [];
             pushPrivateArray(tc.inputDeltas, typedPart.delta);
             break;
@@ -1632,6 +1656,7 @@ export function processStreamInternal(
             const tc = state.toolCalls.get(toolId);
             if (!tc) break;
 
+            if (!tc.inputAvailable) noteSemanticProgress();
             tc.inputAvailable = true;
             trackProviderExecutedToolCall(toolId, tc.providerExecuted);
             hasActiveLocalToolInput = false;
@@ -1679,6 +1704,9 @@ export function processStreamInternal(
             const previousArguments = previous?.arguments ?? "";
             const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
             const wasInputAvailable = previous?.inputAvailable === true;
+            if (!wasInputAvailable || resolvedArguments !== previousArguments) {
+              noteSemanticProgress();
+            }
             const dynamic = typedPart.dynamic ?? isDynamicTool(typedPart.toolName);
             const toolCall: StreamingToolCall = {
               id: toolId,
@@ -1732,6 +1760,9 @@ export function processStreamInternal(
             const previousArguments = previous?.arguments ?? "";
             const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
             const wasInputAvailable = previous?.inputAvailable === true;
+            if (!wasInputAvailable || resolvedArguments !== previousArguments) {
+              noteSemanticProgress();
+            }
             const toolCall: StreamingToolCall = {
               id: toolId,
               name: typedPart.toolName,
@@ -1821,6 +1852,7 @@ export function processStreamInternal(
               preliminary: typedPart.preliminary,
               isError,
             });
+            noteSemanticProgress();
             // Preliminary provider output is progress, not a terminal tool
             // result. Keep the call pending without exposing a success-shaped
             // result to live clients, durable history, or continuation input.
@@ -1891,6 +1923,7 @@ export function processStreamInternal(
               providerExecuted,
               dynamic: typedPart.dynamic,
             });
+            noteSemanticProgress();
             logProviderToolPart("tool-error", {
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,

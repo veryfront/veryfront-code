@@ -445,10 +445,10 @@ VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS=10000
 ```
 
 Both budgets must stay below `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS` (default
-`120000`), including a default that applies to an unset variable. The service
+`150000`), including a default that applies to an unset variable. The service
 rejects a budget at or above that watchdog when it creates the chat runtime,
 because the watchdog would fire first and report a generic stall instead of
-the fixed `FIRST_PROGRESS_TIMEOUT` code. A configured first-progress budget
+the fixed `FIRST_PROGRESS_TIMEOUT` code. The effective first-progress budget
 counts twice, because a stream that times out before any output can be
 replayed once. In the example, `30000` uses a `60000` window.
 

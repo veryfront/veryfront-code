@@ -391,11 +391,11 @@ first-progress budget fires before any output, the run fails with the fixed
 
 Both budgets, including the defaults that apply when a variable is unset, must
 stay below the hosted chat stream idle watchdog
-(`VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS`, default `120000`). Otherwise the
+(`VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS`, default `150000`). Otherwise the
 watchdog fires first and reports a generic stall, so the agent service rejects
-the configuration when it creates the runtime. A configured first-progress
-budget counts twice, because a stream that times out before any output can be
-replayed once: twice its value must stay below the watchdog.
+the configuration when it creates the runtime. The first-progress budget counts
+twice, including when unset, because a stream that times out before any output
+can be replayed once: twice its value must stay below the watchdog.
 
 Delegated child agents inherit a budget only when its window (twice the value
 for first progress) is shorter than the child stream watchdog (`45000`). A

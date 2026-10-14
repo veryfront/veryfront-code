@@ -1,4 +1,5 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS } from "#veryfront/chat/stream-watchdog.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseAgentServiceConfig } from "../service/config.ts";
 import {
@@ -8,7 +9,29 @@ import {
 
 describe("host-owned model stream timeouts", () => {
   it("keeps framework defaults when the host has no override", () => {
-    assertEquals(resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), 120_000), undefined);
+    assertEquals(
+      resolveHostedModelStreamTimeouts(
+        parseAgentServiceConfig({}),
+        DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      ),
+      undefined,
+    );
+  });
+
+  it("counts default first-progress replays when only semantic idle is configured", () => {
+    const config = parseAgentServiceConfig({
+      VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "20000",
+    });
+    for (const outerBudget of [90_000, 120_000]) {
+      assertThrows(
+        () => resolveHostedModelStreamTimeouts(config, outerBudget),
+        TypeError,
+        "first progress timeout window",
+      );
+    }
+    assertEquals(resolveHostedModelStreamTimeouts(config, DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS), {
+      semanticIdleTimeoutMs: 20_000,
+    });
   });
 
   it("passes only explicit model stream budgets", () => {
@@ -87,11 +110,15 @@ describe("host-owned model stream timeouts", () => {
     assertEquals(
       resolveHostedModelRuntimeOptions(parseAgentServiceConfig({}), {
         resolveModelRuntime: resolver,
-      }, 120_000),
+      }, DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS),
       { resolveModelRuntime: resolver },
     );
     assertEquals(
-      resolveHostedModelRuntimeOptions(parseAgentServiceConfig({}), undefined, 120_000),
+      resolveHostedModelRuntimeOptions(
+        parseAgentServiceConfig({}),
+        undefined,
+        DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      ),
       undefined,
     );
   });

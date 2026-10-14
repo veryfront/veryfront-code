@@ -5,7 +5,7 @@ import { DEFAULT_STREAM_LIFECYCLE_POLICY } from "../streaming/lifecycle/policy.t
 import { RUNTIME_PROVIDER_STREAM_ATTEMPTS } from "../runtime/provider-stream-retry-policy.ts";
 
 /**
- * Worst-case wait a configured first-progress budget can produce. Active
+ * Worst-case wait an effective first-progress budget can produce. Active
  * lifecycle mode replays a stream that timed out before any output, so the
  * deadline can run once per attempt before the failure surfaces.
  */
@@ -28,9 +28,9 @@ export function resolveHostedModelStreamTimeouts(
     const [name, timeoutMs] of [
       [
         "first progress",
-        firstProgressTimeoutMs === undefined
-          ? DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs
-          : hostedFirstProgressWindowMs(firstProgressTimeoutMs),
+        hostedFirstProgressWindowMs(
+          firstProgressTimeoutMs ?? DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs,
+        ),
       ],
       [
         "semantic idle",

@@ -202,7 +202,7 @@ describe("chat/stream-watchdog", () => {
 
     assertEquals(
       DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-      120_000,
+      150_000,
       "the documented default idle timeout must stay 120s",
     );
     assertEquals(watchdog.signal.aborted, false);

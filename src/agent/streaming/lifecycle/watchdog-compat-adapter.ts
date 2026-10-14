@@ -10,7 +10,8 @@ import { type AbsoluteDeadlineTimer, createAbsoluteDeadline } from "./deadlines.
 import type { StreamLifecyclePhase } from "./types.ts";
 
 /** Default value for chat stream idle timeout ms. */
-export const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+// Leave room for two 60s model first-progress attempts before the outer stall guard.
+export const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 150_000;
 /** Default value for chat stream tool running timeout ms. */
 export const DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS = 300_000;
 
