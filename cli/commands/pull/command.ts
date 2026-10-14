@@ -272,7 +272,9 @@ export function buildFilesListUrl(projectSlug: string, source: PullSource): stri
     case "release":
       return `/projects/${encodedProjectSlug}/releases/${encodeURIComponent(source.version)}/files`;
     case "branch":
-      return `/projects/${encodedProjectSlug}/files?branch=${encodeURIComponent(source.name)}`;
+      return `/projects/${encodedProjectSlug}/files?ref=${
+        encodeURIComponent(`branch:${source.name}`)
+      }`;
     case "main":
       return `/projects/${encodedProjectSlug}/files`;
   }
@@ -325,8 +327,8 @@ export function buildFileContentUrl(projectSlug: string, path: string, source: P
         encodeURIComponent(source.version)
       }/files/${encodedPath}`;
     case "branch":
-      return `/projects/${encodedProjectSlug}/files/${encodedPath}?branch=${
-        encodeURIComponent(source.name)
+      return `/projects/${encodedProjectSlug}/files/${encodedPath}?ref=${
+        encodeURIComponent(`branch:${source.name}`)
       }`;
     case "main":
       return `/projects/${encodedProjectSlug}/files/${encodedPath}`;

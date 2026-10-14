@@ -58,7 +58,13 @@ function makeStorageKey(projectSlug: string, path: string): string {
 }
 
 function createMockUploadService(
-  options: { failMetadataSidecarUpload?: boolean } = {},
+  options: {
+    failMetadataSidecarUpload?: boolean;
+    /** Answer deletes with an empty 204, as the route did before the 200 acknowledgement. */
+    deleteWithoutBody?: boolean;
+    /** Answer upload metadata with `size` only, as the route did before `size_bytes`. */
+    metadataWithoutSizeBytes?: boolean;
+  } = {},
 ) {
   const uploads = new Map<string, StoredUpload>();
   const pendingUploads = new Map<string, PendingUpload>();
@@ -89,32 +95,55 @@ function createMockUploadService(
           const prefix = `${projectSlug}:`;
           const data = [...uploads.keys()]
             .filter((key) => key.startsWith(prefix))
-            .map((key) => ({ path: key.slice(prefix.length) }));
-          return Response.json({ data });
+            .map((key) => ({ type: "file", path: key.slice(prefix.length) }));
+          // Folders are a separate array, and `data` repeats them as folder items.
+          const folders = [{
+            path: ".vf-test/",
+            visibility: "project",
+            permission: "admin",
+            created_at: FIXED_NOW.toISOString(),
+          }];
+          return Response.json({
+            data: [...folders.map((folder) => ({ type: "folder", ...folder })), ...data],
+            folders,
+            page_info: { self: null, first: null, next: null, prev: null },
+          });
         }
         if (createMatch && method === "POST") {
           const projectSlug = decodeURIComponent(createMatch[1] ?? "");
-          const body = await request.json() as {
-            file_path: string;
-            content_type?: string;
-            size: number;
-          };
+          const body = await request.json() as Record<string, unknown>;
+          // The client must send `path` and `size_bytes`, not their earlier spellings.
+          if (
+            typeof body.path !== "string" || typeof body.size_bytes !== "number" ||
+            "file_path" in body || "size" in body
+          ) {
+            return new Response("path and size_bytes are required", { status: 400 });
+          }
+          const uploadPath = body.path;
+          const contentType = typeof body.content_type === "string"
+            ? body.content_type
+            : "application/octet-stream";
 
-          pendingUploads.set(makeStorageKey(projectSlug, body.file_path), {
+          pendingUploads.set(makeStorageKey(projectSlug, uploadPath), {
             projectSlug,
-            path: body.file_path,
-            contentType: body.content_type ?? "application/octet-stream",
-            size: body.size,
+            path: uploadPath,
+            contentType,
+            size: body.size_bytes,
           });
 
           return Response.json({
-            file_upload_url: `https://93.184.216.35/${encodeURIComponent(projectSlug)}/${
-              encodeURIComponent(body.file_path)
+            upload_url: `https://93.184.216.35/${encodeURIComponent(projectSlug)}/${
+              encodeURIComponent(uploadPath)
             }`,
-            file_path: `${projectSlug}/${body.file_path}`,
+            path: uploadPath,
+            status: "pending",
+            // Earlier spellings the route still serves. The URL is unroutable in
+            // this mock, so a client that reads it fails.
+            file_upload_url: "https://93.184.216.99/earlier-spelling",
+            file_path: `${projectSlug}/${uploadPath}`,
             upload_id: crypto.randomUUID(),
             required_headers: {
-              "Content-Type": body.content_type ?? "application/octet-stream",
+              "Content-Type": contentType,
             },
           }, { status: 201 });
         }
@@ -153,7 +182,10 @@ function createMockUploadService(
               path,
               file_name: path.split("/").pop() ?? path,
               content_type: upload.contentType,
-              size: upload.bytes.byteLength,
+              // `size` deliberately differs so a client that reads it is caught.
+              ...(options.metadataWithoutSizeBytes
+                ? { size: upload.bytes.byteLength }
+                : { size_bytes: upload.bytes.byteLength, size: -1 }),
               url: null,
               status: "active",
               visibility: "project",
@@ -165,7 +197,10 @@ function createMockUploadService(
 
           if (method === "DELETE") {
             const existed = uploads.delete(key);
-            return new Response(null, { status: existed ? 204 : 404 });
+            if (!existed) return new Response(null, { status: 404 });
+            return options.deleteWithoutBody
+              ? new Response(null, { status: 204 })
+              : Response.json({ ok: true });
           }
         }
       }
@@ -508,6 +543,77 @@ describe("VeryfrontCloudBlobStorage", () => {
         `https://93.184.216.36/demo-project/${encodeURIComponent(`.vf-test/${ref.id}.blob`)}`,
       );
       assertEquals(await storage.exists(ref.id), true);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("reads the upload size from size when the API answers no size_bytes", async () => {
+    const service = createMockUploadService({ metadataWithoutSizeBytes: true });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const ref = await storage.put(new Uint8Array([1, 2, 3]), {
+        mimeType: "application/octet-stream",
+      });
+      service.uploads.delete(makeStorageKey("demo-project", `.vf-test/${ref.id}.meta.json`));
+
+      assertEquals((await storage.stat(ref.id))?.size, 3);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("deletes blobs when the API answers an empty 204", async () => {
+    const service = createMockUploadService({ deleteWithoutBody: true });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const ref = await storage.put("Hello cloud blob", { mimeType: "text/plain" });
+      await storage.delete(ref.id);
+      // A second delete finds nothing and still resolves.
+      await storage.delete(ref.id);
+
+      assertEquals(service.uploads.size, 0);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("requests the download URL lifetime as ttl_seconds", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      downloadTtl: 600,
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const ref = await storage.put("Hello cloud blob", { mimeType: "text/plain" });
+      await storage.getText(ref.id);
+
+      const signedUrlCall = service.fetchCalls.find((call) =>
+        call.method === "GET" && new URL(call.url).pathname.endsWith("/url")
+      );
+      assertExists(signedUrlCall);
+      const query = new URL(signedUrlCall.url).searchParams;
+      assertEquals(query.get("ttl_seconds"), "600");
+      assertEquals(query.has("ttl"), false);
     } finally {
       service.restore();
     }

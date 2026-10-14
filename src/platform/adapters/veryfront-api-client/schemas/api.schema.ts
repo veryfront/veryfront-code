@@ -56,13 +56,55 @@ const environmentMetaFields = (v: SchemaValidator) => ({
   ...releaseMetaFields(v),
 });
 
-const branchFileFields = (v: SchemaValidator) => ({
-  id: v.string().optional(),
-  version_id: v.string().optional(),
-  content: v.string(),
-  checksum: v.string().nullable().optional(),
-  ...baseFileFields(v),
+/**
+ * Project file routes (`GET /projects/{ref}/files` and `/files/{path}`) answer
+ * `size_bytes`. `size` is the earlier spelling of the same value, which those
+ * routes still serve beside it and which an API without `size_bytes` serves
+ * alone. A file must carry one of them.
+ */
+const branchFileSizeFields = (v: SchemaValidator) => ({
+  size_bytes: v.number().optional(),
+  size: v.number().optional(),
 });
+
+const BRANCH_FILE_SIZE_REQUIRED = "size_bytes is required";
+
+function hasBranchFileSize(file: { size_bytes?: number; size?: number }): boolean {
+  return file.size_bytes !== undefined || file.size !== undefined;
+}
+
+/** Expose one `size` for a parsed branch file, read from `size_bytes` first. */
+function withBranchFileSize<T extends { size_bytes?: number; size?: number }>(
+  file: T,
+): Omit<T, "size"> & { size: number } {
+  return { ...file, size: (file.size_bytes ?? file.size) as number };
+}
+
+const branchFileMetadataFields = (v: SchemaValidator) => {
+  const { size: _size, ...fields } = baseFileFields(v);
+  return {
+    id: v.string().optional(),
+    version_id: v.string().optional(),
+    checksum: v.string().nullable().optional(),
+    ...fields,
+    ...branchFileSizeFields(v),
+  };
+};
+
+const branchFileFields = (v: SchemaValidator) => ({
+  content: v.string(),
+  ...branchFileMetadataFields(v),
+});
+
+const branchFileSchema = (v: SchemaValidator) =>
+  v.object(branchFileFields(v))
+    .refine(hasBranchFileSize, BRANCH_FILE_SIZE_REQUIRED)
+    .transform(withBranchFileSize);
+
+const branchFileMetadataSchema = (v: SchemaValidator) =>
+  v.object(branchFileMetadataFields(v))
+    .refine(hasBranchFileSize, BRANCH_FILE_SIZE_REQUIRED)
+    .transform(withBranchFileSize);
 
 const versionedFileWithContentFields = (v: SchemaValidator) => ({
   ...versionedFileFields(v),
@@ -124,7 +166,7 @@ export const getEnvironmentSchema = defineSchema((v) =>
   })
 );
 
-export const getBranchFileListItemSchema = defineSchema((v) => v.object(branchFileFields(v)));
+export const getBranchFileListItemSchema = defineSchema((v) => branchFileSchema(v));
 
 export const getListBranchFilesResponseSchema = defineSchema((v) =>
   v.object({
@@ -137,20 +179,13 @@ export const getListBranchFilesResponseSchema = defineSchema((v) =>
 /** A branch listing that selected response fields without `content`. */
 export const getListBranchFileMetadataResponseSchema = defineSchema((v) =>
   v.object({
-    data: v.array(
-      v.object({
-        id: v.string().optional(),
-        version_id: v.string().optional(),
-        checksum: v.string().nullable().optional(),
-        ...baseFileFields(v),
-      }),
-    ),
+    data: v.array(branchFileMetadataSchema(v)),
     page_info: getPageInfoSchema(),
     _links: linksSchema(v).optional(),
   })
 );
 
-export const getBranchFileDetailSchema = defineSchema((v) => v.object(branchFileFields(v)));
+export const getBranchFileDetailSchema = defineSchema((v) => branchFileSchema(v));
 
 export const getEnvironmentFileListItemSchema = defineSchema((v) =>
   v.object(versionedFileWithContentFields(v))
@@ -407,13 +442,13 @@ export const API_ENDPOINTS = {
   },
   listBranchFiles: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/files?branch={branchRef}",
-    description: "List files for a branch ref or name (omit branch for main branch)",
+    path: "/projects/{projectRef}/files?ref=branch:{branchRef}",
+    description: "List files for a branch ID or name (ref=main for the main branch)",
   },
   getBranchFile: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/files/{pathOrId}?branch={branchRef}",
-    description: "Get file from a branch ref or name by path or UUID",
+    path: "/projects/{projectRef}/files/{pathOrId}?ref=branch:{branchRef}",
+    description: "Get file from a branch ID or name by path or UUID",
   },
   listEnvironmentFiles: {
     method: "GET" as const,
