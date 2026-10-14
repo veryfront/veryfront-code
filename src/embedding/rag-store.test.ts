@@ -469,6 +469,23 @@ describe("ragStore", () => {
     });
   });
 
+  it("keeps writer failures visible when Deno dependency diagnostics are quiet", async () => {
+    const result = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        "--quiet",
+        'console.error("writer runtime diagnostic"); throw new Error("writer runtime failure");',
+      ],
+      cwd: Deno.cwd(),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(result.stderr);
+    assertEquals(result.success, false);
+    assert(stderr.includes("writer runtime diagnostic"));
+    assert(stderr.includes("writer runtime failure"));
+  });
+
   it("serializes concurrent local-index writers in separate processes", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -478,6 +495,7 @@ describe("ragStore", () => {
         new Deno.Command(Deno.execPath(), {
           args: [
             "eval",
+            "--quiet",
             `import { ragStore } from ${JSON.stringify(moduleUrl)};` +
             `while (Date.now() < ${startAtMs}) await new Promise((resolve) => setTimeout(resolve, 5));` +
             `await ragStore({backend:"local-json",model:"local/test-model",storagePath:${
