@@ -9,9 +9,11 @@ import {
   createNodeVeryfrontCloudAgentServiceRuntimeOptions,
 } from "./cloud-agent-chat-execution.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { hasRuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   createNodeVeryfrontCloudAgentServiceContext,
+  resolveProjectDefinitionBootstrapEnabled,
   resolveProviderReplayCheckpointEmissionBootstrap,
   resolveRuntimeObservationCaptureBootstrap,
 } from "./cloud-agent-config.ts";
@@ -34,6 +36,39 @@ describe("cloud agent provider replay bootstrap", () => {
       false,
     );
     assertEquals(resolveProviderReplayCheckpointEmissionBootstrap({ env: {} }), false);
+  });
+});
+
+describe("cloud agent project definition bootstrap gate", () => {
+  const flag = "VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP";
+
+  it("reads the service environment snapshot instead of the ambient process", () => {
+    const ambient = getEnv(flag);
+    setEnv(flag, "1");
+    try {
+      assertEquals(resolveProjectDefinitionBootstrapEnabled({ env: {} }), false);
+      assertEquals(
+        resolveProjectDefinitionBootstrapEnabled({ processTarget: { env: { [flag]: "0" } } }),
+        false,
+      );
+    } finally {
+      if (ambient === undefined) deleteEnv(flag);
+      else setEnv(flag, ambient);
+    }
+    assertEquals(resolveProjectDefinitionBootstrapEnabled({ env: { [flag]: "1" } }), true);
+    assertEquals(
+      resolveProjectDefinitionBootstrapEnabled({ processTarget: { env: { [flag]: "1" } } }),
+      true,
+    );
+  });
+
+  it("captures the gate in the service context for runtime creation", () => {
+    const context = createNodeVeryfrontCloudAgentServiceContext({
+      serviceName: "bootstrap-gate",
+      createBashTool: () => Promise.resolve({ tools: {} }),
+      env: { [flag]: "1", NODE_ENV: "test" },
+    });
+    assertEquals(context.projectDefinitionBootstrapEnabled, true);
   });
 });
 

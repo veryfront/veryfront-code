@@ -124,7 +124,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   hostToolPolicy?: HostedHostToolPolicy;
   /**
    * Experimental, default-off project definition index policy. Ignored unless
-   * VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP is set to "1".
+   * VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP is "1" in the service
+   * environment (`env`, else `processTarget.env`), read once at startup.
    */
   projectDefinitionBootstrap?: HostedProjectDefinitionBootstrapPolicy;
   /** Host-owned default-off exact model-call capture for authenticated canonical durable runs. */

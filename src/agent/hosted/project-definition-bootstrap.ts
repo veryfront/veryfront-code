@@ -2,7 +2,6 @@ import type { AgentSystem } from "../types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Experimental, default-off switch. The deployment policy below is consulted
@@ -14,10 +13,11 @@ export const PROJECT_DEFINITION_BOOTSTRAP_ENV =
 /**
  * Return whether the experimental project definition bootstrap is enabled.
  *
- * `readEnv` defaults to the process environment; tests inject a reader.
+ * `readEnv` reads the deployment-owned service environment snapshot, never the
+ * ambient process, so explicit service overrides decide the gate.
  */
 export function isProjectDefinitionBootstrapEnabled(
-  readEnv: (name: string) => string | undefined = getEnv,
+  readEnv: (name: string) => string | undefined,
 ): boolean {
   return readEnv(PROJECT_DEFINITION_BOOTSTRAP_ENV) === "1";
 }

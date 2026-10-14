@@ -246,6 +246,7 @@ export async function createAgentRuntime(
           options,
           hostToolPolicy: context.options.hostToolPolicy,
           projectDefinitionBootstrap: context.options.projectDefinitionBootstrap,
+          projectDefinitionBootstrapEnabled: context.projectDefinitionBootstrapEnabled,
           projectDefinitionBootstrapSignal: resolveHostedRequestPreparationSignal(),
           sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
           config: {
