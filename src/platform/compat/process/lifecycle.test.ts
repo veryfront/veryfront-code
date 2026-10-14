@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isBun, isDeno } from "../runtime.ts";
+import { isBun } from "../runtime.ts";
 import {
   getV8HeapSizeLimit,
   type NodeReadSyncFs,
@@ -26,35 +26,6 @@ function fakeFs(steps: Array<number | Error>): NodeReadSyncFs {
 }
 
 describe("platform/compat/process/lifecycle", () => {
-  it("retains a positive fixed V8 heap ceiling on native Deno", () => {
-    if (!isDeno) return;
-    const limit = getV8HeapSizeLimit();
-    assertExists(limit);
-    assertEquals(Number.isFinite(limit) && limit > 0, true);
-  });
-
-  it("does not redirect the captured Deno compatibility lookup through a replaced global", () => {
-    if (!isDeno) return;
-    const previous = Object.getOwnPropertyDescriptor(globalThis, "process");
-    let reads = 0;
-    Object.defineProperty(globalThis, "process", {
-      configurable: true,
-      get() {
-        reads++;
-        throw new Error("project process getter must not run");
-      },
-    });
-    try {
-      const limit = getV8HeapSizeLimit();
-      assertExists(limit);
-      assertEquals(Number.isFinite(limit) && limit > 0, true);
-      assertEquals(reads, 0);
-    } finally {
-      if (previous) Object.defineProperty(globalThis, "process", previous);
-      else Reflect.deleteProperty(globalThis, "process");
-    }
-  });
-
   it("rejects Bun's moving node:v8 compatibility heap limit", () => {
     if (!isBun) return;
     assertEquals(

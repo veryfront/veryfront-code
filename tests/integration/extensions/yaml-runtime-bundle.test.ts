@@ -7,7 +7,7 @@ Deno.test("YAML runtime bundle matches the frozen official browser entry", async
       "run",
       "--frozen",
       "-A",
-      fileURLToPath(new URL("../scripts/prebundle.ts", import.meta.url)),
+      fileURLToPath(new URL("../../../extensions/ext-yaml/scripts/prebundle.ts", import.meta.url)),
       "--check",
     ],
     stdout: "piped",
@@ -19,7 +19,7 @@ Deno.test("YAML runtime bundle matches the frozen official browser entry", async
 Deno.test("YAML parsing succeeds with all host permissions denied", async () => {
   const source = `
     const { parseYamlSource } = await import(${
-    JSON.stringify(new URL("./adapter.ts", import.meta.url).href)
+    JSON.stringify(new URL("../../../extensions/ext-yaml/src/adapter.ts", import.meta.url).href)
   });
     let envDenied = false;
     try { Deno.env.get("LOG_TOKENS"); } catch (error) { envDenied = error instanceof Deno.errors.NotCapable; }

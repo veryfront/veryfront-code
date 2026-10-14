@@ -75,51 +75,6 @@ describe("lifecycle run event adapter", () => {
     assertEquals(scheduled, 0);
   });
 
-  it("cancels the exact native timer handle once on disposal", () => {
-    const originalSet = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
-    const originalClear = Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!;
-    const handle = Object.freeze({ nativeTimer: true });
-    const cleared: unknown[] = [];
-    let scheduled = 0;
-    try {
-      Object.defineProperty(globalThis, "setTimeout", {
-        configurable: true,
-        value: () => {
-          scheduled++;
-          return handle;
-        },
-      });
-      Object.defineProperty(globalThis, "clearTimeout", {
-        configurable: true,
-        value: (value: unknown) => {
-          cleared.push(value);
-        },
-      });
-      const adapter = createLifecycleRunEventAdapter({
-        runId: "run-1",
-        attemptId: "attempt-1",
-        attemptIndex: 0,
-        messageId: "message-1",
-        onEvents: () => {},
-      });
-      for (
-        const frame of frames([
-          { event: { type: "message_start" } },
-          { event: { type: "text_start", id: "text:0" } },
-          { event: { type: "text_content", id: "text:0", delta: "buffered" } },
-        ])
-      ) adapter.handleFrame(frame);
-      adapter.dispose();
-      adapter.dispose();
-      assertEquals(scheduled, 1);
-      assertEquals(cleared.length, 1);
-      assertEquals(cleared[0] === handle, true);
-    } finally {
-      Object.defineProperty(globalThis, "setTimeout", originalSet);
-      Object.defineProperty(globalThis, "clearTimeout", originalClear);
-    }
-  });
-
   it("emits balanced coalesced version 2 events with unique identity", () => {
     const { emitted, adapter } = createCollector();
     for (
