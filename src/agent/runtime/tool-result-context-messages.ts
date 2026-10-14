@@ -1,6 +1,6 @@
 import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
-import type { ToolResultContext } from "./tool-result-context.ts";
+import type { ToolResultContext, ToolResultDisclosureInput } from "./tool-result-context.ts";
 import { createProviderToolResultOutput, isProviderChildToolResult } from "./message-adapter.ts";
 
 const hasOwn = Object.hasOwn;
@@ -40,6 +40,20 @@ function shouldSkipToolResult(
   return skippedToolNames.has(part.toolName) && !isSkillReferenceToolResult(part);
 }
 
+/** Disclosure input whose model view matches the provider projection of delegated child results. */
+export function toolResultDisclosureInput(part: ToolResultPart): ToolResultDisclosureInput {
+  const childPart = { toolCallId: part.toolCallId, toolName: part.toolName, output: part.result };
+  return {
+    ...(isProviderChildToolResult(childPart, part)
+      ? { modelResult: createProviderToolResultOutput(childPart, part).value }
+      : {}),
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    result: part.result,
+    isError: getToolResultError(part.result) !== undefined,
+  };
+}
+
 function transformPartForToolResultContext(
   part: MessagePart,
   context: ToolResultContext,
@@ -49,16 +63,7 @@ function transformPartForToolResultContext(
     return part;
   }
 
-  const childPart = { toolCallId: part.toolCallId, toolName: part.toolName, output: part.result };
-  const disclosure = context.discloseForModelContext({
-    ...(isProviderChildToolResult(childPart, part)
-      ? { modelResult: createProviderToolResultOutput(childPart, part).value }
-      : {}),
-    toolCallId: part.toolCallId,
-    toolName: part.toolName,
-    result: part.result,
-    isError: getToolResultError(part.result) !== undefined,
-  });
+  const disclosure = context.discloseForModelContext(toolResultDisclosureInput(part));
   if (disclosure.kind === "inline") {
     return part;
   }

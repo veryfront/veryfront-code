@@ -1,9 +1,12 @@
-import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { slicePrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { privateTextStartsWith } from "#veryfront/security/private-text.ts";
 import type { Message, ToolResultPart } from "../types.ts";
 import { isToolResultContextCapacityError, type ToolResultContext } from "./tool-result-context.ts";
-import { isSkillReferenceToolResult } from "./tool-result-context-messages.ts";
+import {
+  isSkillReferenceToolResult,
+  toolResultDisclosureInput,
+} from "./tool-result-context-messages.ts";
 
 const hasOwn = Object.hasOwn;
 
@@ -104,12 +107,10 @@ export function projectHistoricalToolResultsForBudget(input: {
         : [undefined];
       try {
         for (const previewBytes of previewCandidates) {
-          const reference = input.context.discloseReference({
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            result: part.result,
-            isError: getToolResultError(part.result) !== undefined,
-          }, previewBytes === undefined ? undefined : { previewBytes });
+          const reference = input.context.discloseReference(
+            toolResultDisclosureInput(part),
+            previewBytes === undefined ? undefined : { previewBytes },
+          );
           if (input.context.size > storedBefore) createdRef = reference.modelResult.ref;
           const parts = slicePrivateArray(modelMessage.parts);
           parts[partIndex] = { ...modelPart, result: reference.modelResult };

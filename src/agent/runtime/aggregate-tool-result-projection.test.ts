@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Message } from "../types.ts";
+import type { Message, ToolResultPart } from "../types.ts";
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
 import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
 import { inspectFinalRequestBudget } from "./final-request-budget.ts";
 import { createToolResultContext } from "./tool-result-context.ts";
@@ -364,4 +365,40 @@ it("does not turn preview-only model fallbacks into retrievable references", () 
   });
   assertStrictEquals(result(fitted[0]!), preview);
   assertEquals(context.size, 0);
+});
+
+it("previews delegated child results through their provider projection", () => {
+  const value = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text: "RAW_CHILD_TRACE ".repeat(200),
+    summary: { text: "RAW_CHILD_TRACE" },
+    output: { directory: "accepted" },
+    rootResponseHint: { instruction: "guidance", suggestedText: "RAW_CHILD_TRACE" },
+  };
+  const part: ToolResultPart = {
+    type: "tool-result",
+    toolCallId: "child-call",
+    toolName: "invoke_agent",
+    result: value,
+  };
+  markTrustedPlatformPolicyToolResultPart(part);
+  const child: Message = { id: "child-call", role: "tool", parts: [part] };
+  const latest = toolMessage("latest", "read_data", "latest");
+  const context = createToolResultContext();
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: [child, latest],
+    modelMessages: [child, latest],
+    context,
+    inspect: (messages) => {
+      const referenced = (result(messages[0]!) as { type?: string }).type ===
+        "tool_result_reference";
+      return { fits: referenced, outputExceeded: false, estimatedInputTokens: referenced ? 1 : 9 };
+    },
+  });
+  const reference = result(fitted[0]!) as { type: string; ref: string };
+  assertEquals(reference.type, "tool_result_reference");
+  assertEquals(JSON.stringify(reference).includes("RAW_CHILD_TRACE"), false);
+  assertStrictEquals(context.getOriginalResult(reference.ref), value);
 });
