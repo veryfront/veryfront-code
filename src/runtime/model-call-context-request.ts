@@ -490,6 +490,12 @@ function openAIProviderName(model: ModelCallRuntimeMetadata): string {
 }
 
 function openAIProviderBucketNames(model: ModelCallRuntimeMetadata): readonly string[] {
+  // Match the Chat builder: a Cloud model built on the registry-backed
+  // compatible path reads the "openai-compatible" bucket, not the Cloud one.
+  const builderName = model.provider === "veryfront-cloud"
+    ? readVeryfrontCloudModelFacts(model)?.openAIChatProviderName
+    : undefined;
+  if (builderName !== undefined) return ["openai", builderName];
   const providerName = openAIProviderName(model);
   return providerName === "openai" ? ["openai-compatible", "openai"] : ["openai", providerName];
 }

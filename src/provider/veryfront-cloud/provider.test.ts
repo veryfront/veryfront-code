@@ -2157,6 +2157,8 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     const model = resolveModel("veryfront-cloud/openai/gpt-5.5") as ModelRuntime;
     await model.prepare?.();
     assertEquals(readVeryfrontCloudModelFacts(model)?.native, false);
+    // The registry-backed compatible builder reads the "openai-compatible" bucket.
+    assertEquals(readVeryfrontCloudModelFacts(model)?.openAIChatProviderName, "openai-compatible");
 
     for (const withTools of [true, false]) {
       const result = await model.doStream({

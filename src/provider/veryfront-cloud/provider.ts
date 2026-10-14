@@ -284,6 +284,9 @@ function createVeryfrontCloudModelInternal(
         catalogModelId,
       );
       const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      // The registry-backed compatible builder reads its own option bucket.
+      const usesCompatibleRegistryBuilder = routing.surface === "openai" &&
+        routing.native !== true && !useFirstPartyTransport && registry?.get("openai") !== undefined;
       return Object.freeze({
         catalogScopeKey,
         provider,
@@ -297,6 +300,9 @@ function createVeryfrontCloudModelInternal(
         ...(openAIChatPreserveSystemMessages === undefined
           ? {}
           : { openAIChatPreserveSystemMessages }),
+        ...(usesCompatibleRegistryBuilder
+          ? { openAIChatProviderName: "openai-compatible" as const }
+          : {}),
       });
     });
   }
@@ -310,6 +316,7 @@ function createVeryfrontCloudModelInternal(
       String(value.openAITransport),
       String(value.openAIChatReasoningWithFunctionTools),
       String(value.openAIChatPreserveSystemMessages),
+      String(value.openAIChatProviderName),
     ].join("\n");
 
   const build = (): ModelRuntime =>
