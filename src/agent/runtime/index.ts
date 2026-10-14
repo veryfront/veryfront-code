@@ -1,4 +1,3 @@
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
