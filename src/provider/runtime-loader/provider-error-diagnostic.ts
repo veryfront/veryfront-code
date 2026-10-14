@@ -1,3 +1,4 @@
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 /** Safe, bounded fields from a provider's structured request rejection. */
 export interface ProviderErrorDiagnostic {
   readonly type?: string;
@@ -10,7 +11,6 @@ const freeze = Object.freeze;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 const setHas = Set.prototype.has;
-const regExpTest = RegExp.prototype.test;
 const diagnostics = new WeakMap<object, ProviderErrorDiagnostic>();
 
 const allowedTypes = new Set([
@@ -62,19 +62,19 @@ export function recordProviderErrorDiagnostic(
     : undefined;
   const safeParam = typeof param === "string" && param.length <= 64 &&
       (apply(setHas, allowedPlainParams, [param]) === true ||
-        apply(regExpTest, allowedToolParam, [param]) === true ||
-        apply(regExpTest, allowedMessageParam, [param]) === true)
+        testPrivateRegExp(allowedToolParam, param) ||
+        testPrivateRegExp(allowedMessageParam, param))
     ? param
     : undefined;
   if (safeType === undefined && safeCode === undefined && safeParam === undefined) return;
   const diagnostic: ProviderErrorDiagnostic = {
-    ...(safeType !== undefined ? { type: safeType } : {}),
-    ...(safeCode !== undefined ? { code: safeCode } : {}),
-    ...(safeParam !== undefined ? { param: safeParam } : {}),
+    type: safeType,
+    code: safeCode,
+    param: safeParam,
   };
   // Freeze through the load-time intrinsic and store the validated object itself,
   // never a value returned by a replaced global.
-  apply(freeze, Object, [diagnostic]);
+  apply(freeze, undefined, [diagnostic]);
   apply(weakMapSet, diagnostics, [error, diagnostic]);
 }
 
