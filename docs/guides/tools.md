@@ -92,6 +92,7 @@ import { tool } from "veryfront/tool";
 export default tool({
   id: "save-note",
   description: "Save the prepared note",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
   delegatedPlatformTools: ["veryfront__create_file"],
   execute: async (_input, context) => {
     if (!context?.executePlatformTool) throw new Error("Hosted tool authority is required");
