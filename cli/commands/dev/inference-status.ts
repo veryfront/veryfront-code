@@ -9,8 +9,7 @@ export interface InferenceEnvironment {
 }
 
 const CLOUD_GATEWAY_LABEL = "Veryfront Cloud AI Gateway";
-const CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL =
-  "Veryfront Cloud AI Gateway (project required: set VERYFRONT_PROJECT_SLUG or add projectSlug to veryfront.config.ts)";
+const CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL = "Cloud (no project connected)";
 
 function isSet(value: string | undefined): boolean {
   return Boolean(value?.trim());
@@ -23,7 +22,7 @@ function isSet(value: string | undefined): boolean {
  */
 export function advertisesCloudGateway(options: readonly string[]): boolean {
   return options.some((option) =>
-    option === CLOUD_GATEWAY_LABEL || option.startsWith(`${CLOUD_GATEWAY_LABEL} (`)
+    option === CLOUD_GATEWAY_LABEL || option === CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL
   );
 }
 
