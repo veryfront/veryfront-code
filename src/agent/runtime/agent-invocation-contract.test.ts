@@ -735,6 +735,111 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.data.forwardedProps, { runtimeOverrides: { allowedTools: [] } });
   });
 
+  function denyAllConfig(extra: Record<string, unknown> = {}) {
+    return {
+      id: "builder",
+      name: "Builder",
+      description: "Runs without host tools.",
+      instructions: "Answer directly.",
+      tools: false,
+      ...extra,
+    };
+  }
+
+  it("fails closed when a deny-all allowlist would exceed the override limit", () => {
+    const providerTools = Array.from({ length: 101 }, (_, index) => `provider_tool_${index}`);
+    const invocation = createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: undefined,
+    });
+
+    const parsed = safeParseRuntimeAgentRunInvocationValue(invocation);
+    assertEquals(parsed.success, false);
+    const error = assertThrows(() => parseRuntimeAgentRunInvocationValue(invocation));
+    assertStringIncludes(String(error), "tools: false requires valid");
+  });
+
+  it("deduplicates deny-all provider tools before applying the override limit", () => {
+    const providerTools = Array.from({ length: 150 }, () => "web_search");
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: ["web_search"] } });
+  });
+
+  it("fails closed when a deny-all invocation carries an invalid sibling override", () => {
+    const invalidOverrides: unknown[] = [
+      { maxSteps: 0 },
+      { thinking: -1 },
+      { maxOutputTokens: 1.5 },
+      "all-tools",
+      [],
+    ];
+    for (const runtimeOverrides of invalidOverrides) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("rejects malformed deny-all forwardedProps instead of replacing them", () => {
+    for (const forwardedProps of [null, [], "props"]) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps,
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(forwardedProps)}`);
+    }
+  });
+
+  it("drops deny-all provider tools that collide with host tool names", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        skills: ["support-triage"],
+        knowledge: true,
+        providerTools: [
+          "invoke_agent",
+          "veryfront__invoke_agent",
+          "search_knowledge",
+          "load_skill",
+          "tool_search",
+          "form_input",
+          "agent_researcher",
+          "web_search",
+        ],
+      }),
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.agentConfig?.tools, []);
+    assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: ["web_search"] } });
+  });
+
+  it("intersects deny-all allowlists without consulting mutable array prototypes", () => {
+    const originalFilter = Array.prototype.filter;
+    const originalIncludes = Array.prototype.includes;
+    try {
+      // deno-lint-ignore no-explicit-any
+      (Array.prototype as any).filter = function () {
+        return ["web_search"];
+      };
+      // deno-lint-ignore no-explicit-any
+      (Array.prototype as any).includes = () => true;
+      const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides: { allowedTools: [] } },
+      }));
+      assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: [] } });
+    } finally {
+      Array.prototype.filter = originalFilter;
+      Array.prototype.includes = originalIncludes;
+    }
+  });
+
   it("leaves non-deny agent tool selections unchanged", () => {
     const selections: Array<true | string[]> = [[], ["get_file"], true];
     for (const tools of selections) {

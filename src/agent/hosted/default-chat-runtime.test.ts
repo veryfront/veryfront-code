@@ -2029,6 +2029,17 @@ Deno.test("hosted main agent with tools: false exposes no callable tools", async
       },
       expectedToolNames: [],
     },
+    // Provider-native names that collide with host tools must not re-grant them.
+    {
+      name: "deny-all with colliding provider tool names",
+      agentConfig: {
+        tools: false,
+        skills: ["deploy"],
+        knowledge: true,
+        providerTools: ["invoke_agent", "search_knowledge", "load_skill", "form_input"],
+      },
+      expectedToolNames: [],
+    },
     // An empty positive selector is not deny-all: it keeps runtime essentials.
     {
       name: "empty selector",
