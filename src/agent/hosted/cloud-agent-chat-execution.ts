@@ -1,3 +1,5 @@
+import { configureHostedPlatformDependencySource } from "./platform-dependency-credential.ts";
+import { createHostedProjectRemoteToolSources } from "./project-remote-tool-source.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
@@ -208,6 +210,32 @@ export async function createAgentRuntime(
   terminalRequest?: ParsedHostedChatRequest,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
+  if (terminalRequest) {
+    const sourceFactory = getRemoteToolSourceFactory(context);
+    await configureHostedPlatformDependencySource(
+      terminalRequest,
+      async (scope, authToken, owner) => {
+        const agentConfig = owner === terminalRequest
+          ? options.liveProjectSteering?.agent
+          : await resolveAgentConfig(context, scope.agentId);
+        if (!agentConfig) return undefined;
+        const mcpServers = resolveMcpServers(context.options, agentConfig)
+          .filter((server) => server.kind === "veryfront-api");
+        return createHostedProjectRemoteToolSources({
+          authToken,
+          apiMcpUrl: config.VERYFRONT_MCP_URL,
+          mcpServers,
+          getProjectId: () => scope.projectId,
+          defaultProjectId: scope.projectId,
+          createRemoteToolSource: hostedTerminalToolSourceFactory(
+            owner,
+            config.VERYFRONT_MCP_URL,
+            sourceFactory,
+          ),
+        })[0];
+      },
+    );
+  }
   const projectRuntime = getProjectAgentRuntime(context);
   const refreshSystem = createProjectSteeringRefresh(context);
   const localToolRuntime = createHostedRootLocalToolRuntime({

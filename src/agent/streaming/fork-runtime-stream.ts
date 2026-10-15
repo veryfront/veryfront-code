@@ -1,4 +1,8 @@
 import {
+  hostedPlatformDependencyRuntimeContext,
+  inheritHostedPlatformDependencyRuntime,
+} from "../hosted/platform-dependency-credential.ts";
+import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
@@ -381,8 +385,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     };
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
+    const dependencyContext = hostedPlatformDependencyRuntimeContext(input, input.projectId);
     const runtime = new AgentRuntime(
-      "invoke-agent-child-runtime",
+      dependencyContext?.agentId ?? "invoke-agent-child-runtime",
       runtimeConfig,
       resolveModelRuntime ? { resolveModelRuntime } : undefined,
     );
@@ -396,7 +401,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       () =>
         runtime.stream(
           input.messages,
-          input.projectId ? { projectId: input.projectId } : undefined,
+          dependencyContext ?? (input.projectId ? { projectId: input.projectId } : undefined),
           {
             onFinish: (response) => {
               input.abortSignal?.removeEventListener("abort", abortHandler);
@@ -644,5 +649,6 @@ function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
   source: HostedInferenceAuthorityOwner,
 ): T {
   inheritHostedChildInferenceAuthority(target, source);
+  inheritHostedPlatformDependencyRuntime(target, source);
   return target;
 }

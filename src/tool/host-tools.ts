@@ -30,6 +30,8 @@ export type HostToolDefinition = {
   ownerAgentId?: string;
   /** Short selector accepted by the owning agent's `tools:` configuration. */
   shortName?: string;
+  /** Source-owned canonical platform dependencies, separate from host authorization. */
+  delegatedPlatformTools?: ToolConfig["delegatedPlatformTools"];
   title?: string;
   description?: string;
   inputSchema?: unknown;
@@ -133,6 +135,9 @@ function normalizeExecutionContext(
   context: ToolExecutionContext | undefined,
   options: HostToolMaterializationOptions,
 ): ToolExecutionContext {
+  // The runtime already stamps invocation identity. Preserve its private host
+  // associations and non-enumerable platform callback for source-owned tools.
+  if (typeof context?.toolCallId === "string" && context.toolCallId.length > 0) return context;
   const toolCallId = typeof context?.toolCallId === "string" && context.toolCallId.length > 0
     ? context.toolCallId
     : (options.generateToolCallId ?? defaultToolCallId)(toolName);
@@ -188,6 +193,7 @@ export function createToolsFromHostDefinitions(
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
+          delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = dynamicTool(config);
       } else if (isSchemaLike(definition.inputSchema)) {
@@ -198,6 +204,7 @@ export function createToolsFromHostDefinitions(
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
+          delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = tool(config);
       }

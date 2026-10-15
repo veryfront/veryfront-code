@@ -1,3 +1,4 @@
+import { registerHostedPlatformDependencyRequest } from "./platform-dependency-credential.ts";
 import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
@@ -447,6 +448,15 @@ async function withVerifiedRunEventAppendToken(
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
+  if (parsedRequest.agentId && verifyRunEventAppendToken) {
+    registerHostedPlatformDependencyRequest(
+      verifiedRequest,
+      verification,
+      { projectId, runId, agentId: parsedRequest.agentId },
+      verifyRunEventAppendToken,
+      parsedRequest.authToken,
+    );
+  }
   registerHostedRunEventWriterToken(
     verifiedRequest,
     {
@@ -459,6 +469,7 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+    token,
   );
   registerHostedAgentPauseCredential(
     verifiedRequest,

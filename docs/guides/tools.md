@@ -110,9 +110,10 @@ can call only its own declared operations while that invocation remains active.
 A copied callback, another run, or a settled invocation cannot reuse authority.
 The API still verifies project access, integration bindings and operation policy.
 This contract applies to API-dispatched project agent runs and their
-control-plane-dispatched children. Generic local `agentAsTool` execution and
-default hosted forks do not establish this capability. Child runs receive their
-own declarations; they do not inherit the parent's map. The declaration and
+control-plane-dispatched children, including default hosted forks admitted with
+their own authenticated child writer credential. Generic local `agentAsTool`
+execution does not establish this capability. Child runs receive their own
+source declarations; they do not inherit the parent's map. The declaration and
 callback never contain authentication tokens.
 
 ## Try a tool directly

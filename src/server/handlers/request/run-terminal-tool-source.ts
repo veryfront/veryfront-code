@@ -1,3 +1,4 @@
+import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
 import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
@@ -93,26 +94,4 @@ export function createRunPlatformToolSource(
         ? terminalSource.executeTool(name, args, context)
         : fileSource.executeTool(name, args, context),
   };
-}
-
-function isCanonicalFileMutationTool(name: string): boolean {
-  switch (name) {
-    case "create_file":
-    case "update_file":
-    case "move_file":
-    case "delete_file":
-    case "update_project_file_draft":
-    case "delete_project_file_draft":
-    case "publish_project_files":
-    case "veryfront__create_file":
-    case "veryfront__update_file":
-    case "veryfront__move_file":
-    case "veryfront__delete_file":
-    case "veryfront__update_project_file_draft":
-    case "veryfront__delete_project_file_draft":
-    case "veryfront__publish_project_files":
-      return true;
-    default:
-      return false;
-  }
 }

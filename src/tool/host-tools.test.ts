@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -20,6 +20,25 @@ import {
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("retains source wrapper dependencies and the callback context through hosted materialization", async () => {
+    const context: ToolExecutionContext = { toolCallId: "wrapper-call" };
+    const callback = () => Promise.resolve({ persisted: true });
+    Object.defineProperty(context, "executePlatformTool", { value: callback });
+    const tools = createToolsFromHostDefinitions({
+      intake: {
+        description: "Persist a selected attachment",
+        inputSchemaJson: emptyJsonSchema,
+        delegatedPlatformTools: ["veryfront__create_file"],
+        execute: async (_input: unknown, received?: ToolExecutionContext) => {
+          assertStrictEquals(received, context);
+          return await received?.executePlatformTool?.("veryfront__create_file", {});
+        },
+      },
+    });
+    assertEquals(tools.intake?.delegatedPlatformTools, ["veryfront__create_file"]);
+    assertEquals(await tools.intake?.execute({}, context), { persisted: true });
+  });
+
   it("materializes class-defined execution methods with their original receiver", async () => {
     class Definition {
       description = "Synthetic class tool";

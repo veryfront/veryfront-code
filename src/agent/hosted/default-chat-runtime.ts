@@ -1,3 +1,4 @@
+import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
@@ -592,6 +593,7 @@ export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
+  const runWithPlatformDependencies = captureHostedPlatformDependencyExecution();
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
@@ -676,11 +678,13 @@ export async function createDefaultHostedChatRuntime(
               ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),
             }),
             runStream: (operation) =>
-              runWithDefaultHostedRequestContext({
-                taskContext,
-                cloudContext,
-                operation,
-              }),
+              runWithPlatformDependencies(() =>
+                runWithDefaultHostedRequestContext({
+                  taskContext,
+                  cloudContext,
+                  operation,
+                })
+              ),
             warnOrphanedToolInput: (message, metadata) => {
               input.logger?.warn(message, {
                 ...metadata,

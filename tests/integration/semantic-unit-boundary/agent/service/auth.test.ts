@@ -1,3 +1,12 @@
+import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
+import { createAgentRuntime } from "#veryfront/agent/hosted/cloud-agent-chat-execution.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
+import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
+import { startHostedChildForkRuntimeWithHostTools } from "#veryfront/agent/hosted/child-fork-runtime-start.ts";
+import { runAgentRuntimeForkStep } from "#veryfront/agent/streaming/fork-runtime-stream.ts";
+import type { ModelRuntime } from "#veryfront/provider";
+import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
@@ -12,6 +21,7 @@ import apiRunEventWriterContract from "../../../../fixtures/contracts/api-run-ev
 import {
   capturePlatformDependencySource,
   createHostedServiceAuth,
+  getActivePlatformToolDependencies,
   getHostedServiceTokenFromRequest,
   getVerifiedPlatformToolDependencies,
   HostedServiceAuthError,
@@ -22,13 +32,35 @@ import {
   runWithPlatformDependencyOwner,
   runWithVerifiedPlatformToolDependencies,
 } from "#veryfront/agent/service/auth.ts";
-import { dynamicTool, type ToolExecutionContext } from "#veryfront/tool";
+import {
+  createToolsFromHostDefinitions,
+  dynamicTool,
+  type ToolExecutionContext,
+} from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+
+import { parseRuntimeAgentRunInvocationHostedChatRequestFromRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
+import {
+  captureHostedPlatformDependencyExecution,
+  configureHostedPlatformDependencySource,
+  registerHostedChildPlatformDependencies,
+  registerHostedPlatformDependencyRequest,
+  revokeHostedPlatformDependencies,
+  runWithHostedPlatformDependencies,
+} from "#veryfront/agent/hosted/platform-dependency-credential.ts";
+import {
+  hostedInheritedRunAdmitter,
+  hostedTerminalToolSourceFactory,
+  registerHostedTerminalCredential,
+  transferHostedTerminalAuthority,
+} from "#veryfront/agent/hosted/terminal-credential.ts";
+import { createHostedProjectRemoteToolSources } from "#veryfront/agent/hosted/project-remote-tool-source.ts";
 
 type JwtFixture = {
   token: string;
   publicKeyPem: string;
+  keyPair: CryptoKeyPair;
 };
 
 type FetchCall = {
@@ -89,8 +121,9 @@ function createUnsignedJwt(payload: Record<string, unknown>): string {
 
 async function createRs256JwtFixture(
   payload: Record<string, unknown>,
+  suppliedKeyPair?: CryptoKeyPair,
 ): Promise<JwtFixture> {
-  const keyPair = await crypto.subtle.generateKey(
+  const keyPair = suppliedKeyPair ?? await crypto.subtle.generateKey(
     {
       name: "RSASSA-PKCS1-v1_5",
       modulusLength: 2048,
@@ -116,6 +149,7 @@ async function createRs256JwtFixture(
   return {
     token: `${signingInput}.${encodeBase64UrlBytes(new Uint8Array(signature))}`,
     publicKeyPem: spkiDerToPem(publicKeyDer),
+    keyPair,
   };
 }
 
@@ -178,6 +212,250 @@ function getOnlyFetchCall(calls: FetchCall[]): FetchCall {
   const call = calls[0];
   if (!call) throw new Error("Expected one fetch call");
   return call;
+}
+
+async function createHostedDependencyHarness(
+  options: { parentHasNoDependencies?: boolean; childProjectId?: string } = {},
+) {
+  const scope = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    runId: "run_1",
+    agentId: "ingestion-agent",
+  };
+  const dependencies = [{ toolId: "intake", platformTools: ["veryfront__create_file"] }];
+  const fixture = await createRs256JwtFixture({
+    ...apiRunEventWriterContract.payload,
+    agentId: scope.agentId,
+    ...(options.parentHasNoDependencies ? {} : { platformToolDependencies: dependencies }),
+  });
+  const auth = createHostedServiceAuth({
+    authProvider: webCryptoAuthProvider,
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+      NODE_ENV: "production",
+      VERYFRONT_API_URL: "https://api.example.test",
+    }),
+  });
+  const runtimeSource = { type: "release", releaseId: "release-fixture" } as const;
+  const ingressRequest = new Request("https://agent.example.test/api/runs", {
+    method: "POST",
+    headers: { "X-Veryfront-Run-Event-Token": fixture.token },
+    body: JSON.stringify({
+      run: {
+        agentServiceId: "runtime-provider",
+        agentId: scope.agentId,
+        conversationId: "10000000-1000-4000-8000-100000000001",
+        runId: scope.runId,
+        messageId: "10000000-1000-4000-8000-100000000002",
+        inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+        requestedByUserId: "10000000-1000-4000-8000-100000000004",
+        project: {
+          projectId: scope.projectId,
+          projectSlug: "fixture-project",
+          runtimeTargetKind: "main_branch",
+        },
+      },
+      messages: [{
+        id: "user-fixture",
+        role: "user",
+        parts: [{ type: "text", text: "Persist selected artifact" }],
+      }],
+      agentSource: runtimeSource,
+    }),
+  });
+  const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+    ingressRequest.clone(),
+    {
+      authenticate: async () => ({ userId: "fixture-user", authToken: "fixture-session" }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
+      runtimeSource,
+    },
+  );
+  assert(!(parsed instanceof Response));
+  const childScope = {
+    ...scope,
+    projectId: options.childProjectId ?? scope.projectId,
+    runId: "run_inherited_fixture",
+    agentId: "attachment-child",
+  };
+  const childDependencies = [{
+    toolId: "persist_attachment",
+    platformTools: [
+      "veryfront__create_file",
+      "outlook__upload_attachment",
+      "veryfront__get_file_version",
+    ],
+  }];
+  const childFixture = await createRs256JwtFixture({
+    ...apiRunEventWriterContract.payload,
+    ...childScope,
+    platformToolDependencies: childDependencies,
+  }, fixture.keyPair);
+  const terminalToken = (runId: string, canonicalRunId: string) =>
+    createUnsignedJwt({
+      runId,
+      canonicalRunId,
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      dispatchNonce: "fixture-generation",
+    });
+  const parentCanonicalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const childCanonicalId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  registerHostedTerminalCredential(
+    parsed,
+    terminalToken(scope.runId, parentCanonicalId),
+    fixture.token,
+  );
+  const controls: {
+    eventToken: string;
+    deniedOperations: string[];
+    failSource: boolean;
+    failedOwner?: object;
+    discoveryWait?: Promise<void>;
+    onDiscovery?: () => void;
+  } = { eventToken: childFixture.token, deniedOperations: [], failSource: false };
+  const effects: string[] = [];
+  const persisted = new Map<string, unknown>();
+  await configureHostedPlatformDependencySource(parsed, async (sourceScope, authToken, owner) => {
+    if (controls.failSource && sourceScope.runId === childScope.runId) {
+      controls.failedOwner = owner;
+      throw new Error("Fixture source configuration failed");
+    }
+    return createHostedProjectRemoteToolSources({
+      mcpServers: [{ kind: "veryfront-api", toolPolicy: { deny: controls.deniedOperations } }],
+      authToken,
+      apiMcpUrl: "https://api.example.test/mcp",
+      getProjectId: () => sourceScope.projectId,
+      defaultProjectId: sourceScope.projectId,
+      createRemoteToolSource: hostedTerminalToolSourceFactory(
+        owner,
+        "https://api.example.test/mcp",
+        (config) => ({
+          id: "fixture-api",
+          listTools: async () => {
+            controls.onDiscovery?.();
+            await controls.discoveryWait;
+            return ["create_file", "outlook__upload_attachment", "get_file_version"].map((
+              name,
+            ) => ({
+              name,
+              description: name,
+              parameters: { type: "object", properties: {} },
+            }));
+          },
+          executeTool: async (name, input, context) => {
+            const headers = new Headers(
+              typeof config.headers === "function" ? await config.headers(context) : config.headers,
+            );
+            if (name === "create_file") {
+              assertEquals(headers.get("X-Veryfront-Run-Event-Token"), childFixture.token);
+              persisted.set("fixture-record", input);
+            }
+            if (name !== "get_tool_access_profile") effects.push(name);
+            if (name === "create_file") {
+              return {
+                version_id: "10000000-1000-4000-8000-100000000020",
+                path: "fixture-record",
+              };
+            }
+            if (name === "get_file_version") {
+              assertEquals(input.version_id, "10000000-1000-4000-8000-100000000020");
+              return { path: "fixture-record", historical: persisted.get("fixture-record") };
+            }
+            return { persisted: persisted.has("fixture-record"), operation: name };
+          },
+        }),
+      ),
+    })[0];
+  });
+  const send: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    assertEquals(request.url, "https://api.example.test/runs");
+    assertEquals((await request.json()).target, { type: "agent", id: childScope.agentId });
+    return Response.json({
+      id: childCanonicalId,
+      conversation_id: "10000000-1000-4000-8000-100000000010",
+      output_message_id: "10000000-1000-4000-8000-100000000011",
+      status: "running",
+    }, {
+      status: 202,
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Veryfront-Run-Terminal-Token": terminalToken(childScope.runId, childCanonicalId),
+        "X-Veryfront-Inference-Token": "child-inference-fixture",
+        "X-Veryfront-Run-Invocation-Token": "child-invocation-fixture",
+        "X-Veryfront-Run-Renewal-Token": "child-renewal-fixture",
+        "X-Veryfront-Run-Event-Token": controls.eventToken,
+        "X-Veryfront-Run-Event-Sequence": "0",
+        "X-Veryfront-Run-External-Event-Sequence": "0",
+      },
+    });
+  };
+  const admit = hostedInheritedRunAdmitter(parsed, {
+    apiUrl: "https://api.example.test",
+    fetch: send,
+  });
+  assert(admit);
+  const admitChild = () =>
+    admit("fixture-delegation", "Persist selected artifact")({
+      apiUrl: "https://api.example.test",
+      authToken: "fixture-session",
+      projectId: childScope.projectId,
+      agentId: childScope.agentId,
+      parentRunId: scope.runId,
+    });
+  let retainedCallback: ToolExecutionContext["executePlatformTool"];
+  const tools = createToolsFromHostDefinitions({
+    persist_attachment: dynamicTool({
+      id: "persist_attachment",
+      description: "Persist selected attachment",
+      inputSchema: {},
+      inputSchemaJson: { type: "object", properties: {} },
+      delegatedPlatformTools: [
+        "veryfront__create_file",
+        "outlook__upload_attachment",
+        "veryfront__get_file_version",
+      ],
+      execute: async (_input: unknown, context?: ToolExecutionContext) => {
+        assertEquals(context?.projectId, childScope.projectId);
+        assertEquals(context?.runId, childScope.runId);
+        assertEquals(context?.agentId, childScope.agentId);
+        assertEquals(context?.authToken, undefined);
+        retainedCallback = context?.executePlatformTool;
+        const created = await context?.executePlatformTool?.("veryfront__create_file", {
+          path: "fixture-record",
+        }) as { version_id: string };
+        await context?.executePlatformTool?.("outlook__upload_attachment", {
+          record: "fixture-record",
+        });
+        return await context?.executePlatformTool?.("veryfront__get_file_version", {
+          file_path: "fixture-record",
+          version_id: created.version_id,
+          ref: { type: "main" },
+        });
+      },
+    }),
+  });
+  return {
+    scope,
+    ingressRequest,
+    runtimeSource,
+    verify: auth.verifyRunEventAppendToken,
+    childScope,
+    childDependencies,
+    dependencies,
+    fixture,
+    parsed,
+    childFixture,
+    effects,
+    persisted,
+    controls,
+    admitChild,
+    tools,
+    retainedCallback: () => retainedCallback,
+  };
 }
 
 describe("agent/agent-service-auth", () => {
@@ -451,6 +729,403 @@ describe("agent/agent-service-auth", () => {
     );
   });
 
+  it("uses the exact root source snapshot for hidden dependency transport", async () => {
+    using _catalog = useServedCatalogForTests();
+    const harness = await createHostedDependencyHarness();
+    const createdSources: string[] = [];
+    const context = {
+      options: {
+        mcpServers: [{ kind: "veryfront-api" }],
+        createRemoteToolSource: () => {
+          createdSources.push("api");
+          return { id: "fixture-api", listTools: async () => [], executeTool: async () => ({}) };
+        },
+      },
+      infrastructure: {
+        getConfig: () => ({
+          VERYFRONT_API_URL: "https://93.184.216.34",
+          VERYFRONT_MCP_URL: "https://93.184.216.34/mcp",
+          VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
+        }),
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+        tracer: {
+          trace: (_name: string, operation: () => unknown) => operation(),
+          scope: () => ({ active: () => undefined }),
+        },
+        setActiveSpanAttributes() {},
+      },
+      discoveryResult: {
+        agents: new Map(),
+        tools: new Map(),
+        sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      },
+      defaultAgentId: harness.scope.agentId,
+      agentConfigs: new Map([[harness.scope.agentId, {
+        id: harness.scope.agentId,
+        mcpServers: [{ kind: "veryfront-api" }],
+      }]]),
+      projectSteeringByAgentId: new Map(),
+      trace: (_name: string, operation: () => unknown) => operation(),
+    } as never;
+    const runtime = await createAgentRuntime(
+      context,
+      {
+        projectId: harness.scope.projectId,
+        branchId: null,
+        authToken: "fixture-session",
+        instructions: "Use selected tools",
+        agentId: harness.scope.agentId,
+        model: "anthropic/claude-sonnet-4-5",
+        allowedTools: [],
+        allowDelegation: false,
+        liveProjectSteering: {
+          agent: {
+            id: harness.scope.agentId,
+            name: "Root",
+            instructions: "Use selected tools",
+            tools: [],
+            mcpServers: [],
+          },
+          environmentContext: "",
+        },
+      } as never,
+      undefined,
+      harness.parsed,
+    );
+    try {
+      assertEquals(createdSources, []);
+    } finally {
+      await runtime.cleanup?.();
+    }
+  });
+
+  it("revokes captured preparation authority after route failure or detached settlement", async () => {
+    for (const failPreparation of [true, false]) {
+      const harness = await createHostedDependencyHarness();
+      let captured: ReturnType<typeof captureHostedPlatformDependencyExecution> | undefined;
+      const tracker = createDetachedRunTracker<AgUiResumeValue>();
+      const routeSet = createHostedAgentServiceRouteSet({
+        tracker,
+        runtimeSource: harness.runtimeSource,
+        authenticateRequest: async () => ({ userId: "fixture-user", authToken: "fixture-session" }),
+        verifyProjectAccess: async () => ({ success: true }),
+        verifyRunEventAppendToken: harness.verify,
+        prepareExecution: async () => {
+          captured = captureHostedPlatformDependencyExecution();
+          await captured(async () =>
+            assertEquals(getActivePlatformToolDependencies(harness.scope), harness.dependencies)
+          );
+          if (failPreparation) throw new Error("Fixture preparation failed");
+          return {};
+        },
+        streamExecutionToAgUiResponse: () => new Response(),
+        startDetachedExecution: async () => {},
+      });
+      const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+        request: harness.ingressRequest,
+        runId: harness.scope.runId,
+      });
+      assertEquals(response.status, failPreparation ? 500 : 202);
+      assert(captured);
+      await tracker.waitForDrain({ timeoutMs: 1000, pollIntervalMs: 1 });
+      await assertRejects(async () => await captured!(async () => {}));
+    }
+  });
+
+  it("revokes active dependency execution immediately when the hosted run is cancelled", async () => {
+    const harness = await createHostedDependencyHarness();
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    let captured: ReturnType<typeof captureHostedPlatformDependencyExecution> | undefined;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const routeSet = createHostedAgentServiceRouteSet({
+      tracker,
+      runtimeSource: harness.runtimeSource,
+      authenticateRequest: async () => ({ userId: "fixture-user", authToken: "fixture-session" }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: harness.verify,
+      prepareExecution: async () => ({}),
+      streamExecutionToAgUiResponse: () => new Response(),
+      startDetachedExecution: async () => {
+        captured = captureHostedPlatformDependencyExecution();
+        await settled;
+      },
+    });
+    const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+      request: harness.ingressRequest,
+      runId: harness.scope.runId,
+    });
+    assertEquals(response.status, 202);
+    assert(captured);
+    await captured(async () =>
+      assertEquals(getActivePlatformToolDependencies(harness.scope), harness.dependencies)
+    );
+    assert(tracker.cancelRun(harness.scope.runId));
+    try {
+      await assertRejects(async () => await captured!(async () => {}));
+    } finally {
+      release();
+      await tracker.waitForDrain({ timeoutMs: 1000, pollIntervalMs: 1 });
+    }
+    assertEquals(harness.effects, []);
+  });
+
+  it("derives child grants from its own signed admission when the parent has no dependencies", async () => {
+    const harness = await createHostedDependencyHarness({ parentHasNoDependencies: true });
+    await runWithHostedPlatformDependencies(harness.parsed, async () => {
+      assertEquals(getActivePlatformToolDependencies(harness.scope), undefined);
+    });
+    const child = await harness.admitChild();
+    await runWithHostedPlatformDependencies(child, async () => {
+      assertEquals(
+        getActivePlatformToolDependencies(harness.childScope),
+        harness.childDependencies,
+      );
+    });
+    assertEquals(harness.effects, []);
+  });
+
+  it("rejects mutated and wrong-scope child admission JWTs before dispatch", async () => {
+    const harness = await createHostedDependencyHarness();
+    const parts = harness.childFixture.token.split(".");
+    parts[1] = encodeJsonBase64Url({
+      ...apiRunEventWriterContract.payload,
+      ...harness.childScope,
+      agentId: "forged-agent",
+    });
+    const tokens = [parts.join(".")];
+    for (
+      const wrongScope of [
+        { runId: "sibling-run" },
+        { agentId: "sibling-agent" },
+        { projectId: "22222222-2222-4222-8222-222222222222" },
+      ]
+    ) {
+      tokens.push(
+        (await createRs256JwtFixture({
+          ...apiRunEventWriterContract.payload,
+          ...harness.childScope,
+          ...wrongScope,
+          platformToolDependencies: harness.childDependencies,
+        }, harness.fixture.keyPair)).token,
+      );
+    }
+    for (const token of tokens) {
+      harness.controls.eventToken = token;
+      await assertRejects(() => harness.admitChild());
+    }
+    assertEquals(harness.effects, []);
+  });
+
+  it("preserves explicit child source denial for hidden platform dependencies", async () => {
+    const harness = await createHostedDependencyHarness();
+    harness.controls.deniedOperations = ["create_file", "veryfront__create_file"];
+    const child = await harness.admitChild();
+    await assertRejects(() =>
+      runWithHostedPlatformDependencies(child, async () => {
+        await executeConfiguredTool(
+          "persist_attachment",
+          {},
+          harness.tools,
+          { ...harness.childScope, toolCallId: "denied-wrapper" },
+          [],
+          [],
+          undefined,
+          { strictConfiguredToolsOnly: true },
+        );
+      })
+    );
+    assertEquals(harness.effects, []);
+  });
+
+  it("revokes partial child authority when source configuration fails", async () => {
+    const harness = await createHostedDependencyHarness();
+    harness.controls.failSource = true;
+    await assertRejects(() => harness.admitChild());
+    assert(harness.controls.failedOwner);
+    await assertRejects(async () =>
+      await runWithHostedPlatformDependencies(harness.controls.failedOwner!, async () => {})
+    );
+    assertEquals(harness.effects, []);
+  });
+
+  it("revokes a child while discovery is suspended when its parent settles", async () => {
+    const harness = await createHostedDependencyHarness();
+    const child = await harness.admitChild();
+    let resume!: () => void;
+    let entered!: () => void;
+    const enteredDiscovery = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    harness.controls.discoveryWait = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    harness.controls.onDiscovery = entered;
+    const operation = runWithHostedPlatformDependencies(child, async () => {
+      await executeConfiguredTool(
+        "persist_attachment",
+        {},
+        harness.tools,
+        { ...harness.childScope, toolCallId: "settled-wrapper" },
+        [],
+        [],
+        undefined,
+        { strictConfiguredToolsOnly: true },
+      );
+    });
+    await enteredDiscovery;
+    revokeHostedPlatformDependencies(harness.parsed);
+    resume();
+    await assertRejects(() => operation);
+    await assertRejects(async () => await runWithHostedPlatformDependencies(child, async () => {}));
+    assertEquals(harness.effects, []);
+  });
+
+  it("binds cross-project inherited admission to the exact child project", async () => {
+    const harness = await createHostedDependencyHarness({
+      childProjectId: "22222222-2222-4222-8222-222222222222",
+    });
+    const child = await harness.admitChild();
+    await runWithHostedPlatformDependencies(child, async () => {
+      assertEquals(
+        getActivePlatformToolDependencies(harness.childScope),
+        harness.childDependencies,
+      );
+      assertEquals(
+        getActivePlatformToolDependencies({
+          ...harness.childScope,
+          projectId: harness.scope.projectId,
+        }),
+        undefined,
+      );
+    });
+    assertEquals(harness.effects, []);
+  });
+
+  it("executes source-owned platform dependencies through actual admitted hosted child forks", async () => {
+    const harness = await createHostedDependencyHarness();
+    const { scope, childScope, childDependencies, effects, persisted, tools } = harness;
+    const child = await harness.admitChild();
+    assertEquals(Object.keys(tools), ["persist_attachment"]);
+    const context = { ...childScope, toolCallId: "fixture-source-wrapper" };
+    for (
+      const invalidContext of [
+        { ...context, projectId: "22222222-2222-4222-8222-222222222222" },
+        { ...context, runId: scope.runId },
+        { ...context, agentId: scope.agentId },
+        { ...context, abortSignal: AbortSignal.abort() },
+      ]
+    ) {
+      await assertRejects(() =>
+        runWithHostedPlatformDependencies(child, async () => {
+          await executeConfiguredTool(
+            "persist_attachment",
+            {},
+            tools,
+            invalidContext,
+            [],
+            [],
+            undefined,
+            { strictConfiguredToolsOnly: true },
+          );
+        })
+      );
+    }
+    await assertRejects(() =>
+      runWithHostedPlatformDependencies({ ...child }, async () => {
+        await executeConfiguredTool("persist_attachment", {}, tools, context, [], [], undefined, {
+          strictConfiguredToolsOnly: true,
+        });
+      })
+    );
+    assertEquals(effects, []);
+    await runWithHostedPlatformDependencies(child, async () => {
+      assertEquals(getActivePlatformToolDependencies(childScope), childDependencies);
+      await executeConfiguredTool("persist_attachment", {}, tools, context, [], [], undefined, {
+        strictConfiguredToolsOnly: true,
+      });
+    });
+    assertEquals(effects, ["create_file", "outlook__upload_attachment", "get_file_version"]);
+    assertEquals(persisted.get("fixture-record"), { path: "fixture-record" });
+    effects.length = 0;
+    const identifiers = {
+      childConversationId: child.conversationId,
+      childMessageId: child.messageId,
+      childRunId: child.runId,
+      childCanonicalRunId: child.canonicalRunId,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    };
+    transferHostedTerminalAuthority(child, identifiers);
+    const model: ModelRuntime = {
+      provider: "fixture",
+      modelId: "fixture/hosted-dependency",
+      doGenerate: async () => {
+        throw new Error("unused");
+      },
+      doStream: async (options) => {
+        assertEquals(options.tools?.map((tool) => tool.name), ["persist_attachment"]);
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "actual-fork-wrapper",
+                toolName: "persist_attachment",
+                input: {},
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    await runWithHostedPlatformDependencies(child, async () => {
+      const started = startHostedChildForkRuntimeWithHostTools({
+        apiUrl: "https://api.example.test",
+        authToken: "fixture-session",
+        projectId: childScope.projectId,
+        durableChildRun: identifiers,
+        monitorChildRunStatus: async () => {},
+        forkTools: tools,
+        provider: "fixture",
+        forkModel: "fixture/hosted-dependency",
+        maxSteps: 1,
+        buildInstructions: () => "Persist selected artifact",
+        prompt: "Persist selected artifact",
+        runStep: async (stepInput) => {
+          stepInput.resolveModelRuntime = () => model;
+          return await runAgentRuntimeForkStep(stepInput);
+        },
+      });
+      for await (
+        const _part of started.streamResult.fullStream
+      ) { /* Consume actual runtime tool execution. */ }
+      await started.streamResult.steps;
+      await started.childRunMonitorPromise;
+    });
+    assertEquals(effects, ["create_file", "outlook__upload_attachment", "get_file_version"]);
+    const callback = harness.retainedCallback();
+    assert(callback);
+    await assertRejects(() => callback("veryfront__create_file", {}));
+    revokeHostedPlatformDependencies(child);
+    await assertRejects(async () =>
+      await runWithHostedPlatformDependencies(child, async () => {
+        await executeConfiguredTool("persist_attachment", {}, tools, context, [], [], undefined, {
+          strictConfiguredToolsOnly: true,
+        });
+      })
+    );
+    assertEquals(effects.length, 3);
+  });
+
   it("binds wrapper grants to verified writer identity and does not brand clones", async () => {
     const platformToolDependencies = [{
       toolId: "intake",
@@ -481,6 +1156,32 @@ describe("agent/agent-service-auth", () => {
       platformToolDependencies,
     );
     assertEquals(getVerifiedPlatformToolDependencies({ ...verification }, scope), undefined);
+    for (const forged of [{ ...verification }, { verified: true }]) {
+      const parent = {};
+      const child = {};
+      registerHostedPlatformDependencyRequest(
+        parent,
+        forged,
+        scope,
+        auth.verifyRunEventAppendToken,
+        "fixture-session",
+      );
+      await registerHostedChildPlatformDependencies(
+        parent,
+        child,
+        scope,
+        fixture.token,
+        "fixture-session",
+      );
+      assertEquals(
+        await runWithHostedPlatformDependencies(
+          child,
+          async () => getActivePlatformToolDependencies(scope),
+        ),
+        undefined,
+      );
+    }
+
     assertEquals(
       getVerifiedPlatformToolDependencies(verification, { ...scope, runId: "run_other" }),
       undefined,

@@ -30,6 +30,7 @@ const StringSlice = String.prototype.slice;
 const ObjectFreeze = Object.freeze;
 
 type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
+const verifiedHostedWriterScopes = createPrivateWeakStore<object, PlatformDependencyScope>();
 const verifiedPlatformDependencies = createPrivateWeakStore<
   object,
   PlatformDependencyScope & { dependencies: VerifiedPlatformToolDependencies }
@@ -158,6 +159,16 @@ export function getActivePlatformToolDependencies(
       state.scope.runId === scope.runId && state.scope.agentId === scope.agentId
     ? state.dependencies
     : undefined;
+}
+
+/** Check original verified writer provenance even when this run declares no dependencies. */
+export function hasVerifiedHostedPlatformDependencyWriter(
+  verification: HostedServiceRunEventAppendTokenResult,
+  scope: PlatformDependencyScope,
+): boolean {
+  const verified = verifiedHostedWriterScopes.get(verification);
+  return verified?.projectId === scope.projectId && verified.runId === scope.runId &&
+    verified.agentId === scope.agentId;
 }
 
 /** Read host-owned grants only from the original signature-verification result and exact scope. */
@@ -922,6 +933,16 @@ export function createHostedServiceAuth(
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         };
+        if (input.agentId && payload.agentId === input.agentId) {
+          verifiedHostedWriterScopes.set(
+            result,
+            ObjectFreeze({
+              projectId: input.projectId,
+              runId: input.runId,
+              agentId: input.agentId,
+            }),
+          );
+        }
         if (dependencies !== undefined && input.agentId) {
           verifiedPlatformDependencies.set(
             result,

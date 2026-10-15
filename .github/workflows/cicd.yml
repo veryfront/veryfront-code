@@ -689,7 +689,11 @@ jobs:
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
-            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
+            tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
+            tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
+            tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
+            tests/integration/server/agent-stream.programmatic-platform.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
       - name: Merge coverage reports for SonarQube
