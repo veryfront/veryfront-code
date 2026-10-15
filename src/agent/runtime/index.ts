@@ -70,6 +70,7 @@ import {
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
@@ -93,7 +94,11 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import {
+  CONFIG_INVALID,
+  DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
+  isVeryfrontError,
+} from "#veryfront/errors";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -217,6 +222,15 @@ import {
   setProviderObservedSkillBodies,
 } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
+import {
+  resolveRuntimeSkillBootstrapId,
+  validateRuntimeSkillBootstrapResult,
+} from "./skill-bootstrap.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  prepareFrameworkSkillBootstrap,
+  runWithFrameworkSkillBootstrap,
+} from "#veryfront/skill/loader-provenance.ts";
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
@@ -470,6 +484,9 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const IntrinsicURL = URL;
 const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
+/** Replacement sets that carried the configured skill loader, so startup can still use it. */
+const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
+
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "load_skill",
   "load_skill_reference",
@@ -2204,6 +2221,16 @@ function getRequiredToolResultReaderNames(exposeReader: boolean): readonly strin
   return exposeReader ? [GET_TOOL_RESULT_TOOL_NAME] : undefined;
 }
 
+/** Names provider schema capping must keep: the result reader and authored startup tools. */
+function getRequiredRuntimeToolNames(
+  exposeReader: boolean,
+  bootstrapToolNames: readonly string[],
+): readonly string[] | undefined {
+  const reader = getRequiredToolResultReaderNames(exposeReader);
+  if (bootstrapToolNames.length === 0) return reader;
+  return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
+}
+
 function shouldHandleToolResultRead(input: {
   toolName: string;
   plan: ToolExposurePlan;
@@ -2565,6 +2592,93 @@ function findAdmittedToolResult(
 function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, Tool> | undefined {
   const knowledgeTool = config.tools === true ? createAgentKnowledgeTool(config) : undefined;
   return knowledgeTool === undefined ? undefined : { search_knowledge: knowledgeTool };
+}
+
+/**
+ * Load the authored startup skill through the trusted framework loader before
+ * the first model call. The call and its result are recorded like a normal
+ * load so the active skill policy and history stay consistent.
+ */
+async function executeStartupSkill(input: {
+  agentId: string;
+  skillId: string;
+  authorized: readonly ToolDefinition[];
+  messages: Message[];
+  persistMessage: (message: Message) => Promise<void>;
+  skillState: AgentLoopSkillState;
+  toolCalls: ToolCall[];
+  onToolCall?: (toolCall: ToolCall) => void;
+  resolveLoader: (toolName: string) => unknown;
+  execute: (
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    admittedTurn: AdmittedToolTurn,
+  ) => Promise<unknown>;
+}): Promise<void> {
+  const definition = filterPrivateArray(
+    input.authorized,
+    (entry) => isLoadSkillToolName(entry.name) && hasTrustedPlatformPolicyToolDefinition(entry),
+  )[0];
+  const loader = definition ? input.resolveLoader(definition.name) : undefined;
+  // Both loader shapes accept the canonical ID, while the runtime loader only
+  // authorizes canonical IDs, so execution and validation use the same one.
+  const skillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
+  const args = definition ? prepareFrameworkSkillBootstrap(loader, skillId) : undefined;
+  if (!definition || !args) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapSkill requires an authorized framework skill loader",
+    });
+  }
+  const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
+  const message: Message = {
+    id: generateMessageId(),
+    role: "assistant",
+    parts: [{
+      type: `tool-${definition.name}`,
+      toolCallId,
+      toolName: definition.name,
+      args,
+    }],
+  };
+  const admittedTurn = snapshotAdmittedToolTurn(message, input.messages.length);
+  pushPrivateArray(input.messages, message);
+  await input.persistMessage(message);
+  const toolCall: ToolCall = { id: toolCallId, name: definition.name, args, status: "executing" };
+  pushPrivateArray(input.toolCalls, toolCall);
+  const startTime = Date.now();
+  let result: unknown;
+  try {
+    // An observer failure settles the persisted call like an execution failure.
+    input.onToolCall?.(toolCall);
+    result = await runWithFrameworkSkillBootstrap(
+      loader,
+      () => input.execute(definition.name, toolCallId, args, admittedTurn),
+    );
+    validateRuntimeSkillBootstrapResult(result, skillId);
+  } catch (error) {
+    toolCall.status = "error";
+    toolCall.error = "Startup skill preparation failed";
+    toolCall.executionTime = Date.now() - startTime;
+    const failed = createToolErrorMessage(toolCallId, definition.name, toolCall.error);
+    pushPrivateArray(input.messages, failed);
+    await input.persistMessage(failed);
+    throw error;
+  }
+  toolCall.status = "completed";
+  toolCall.result = result;
+  toolCall.executionTime = Date.now() - startTime;
+  const resultMessage = createPolicyAwareToolResultMessage(
+    toolCallId,
+    definition.name,
+    result,
+    definition,
+    false,
+    true,
+  );
+  pushPrivateArray(input.messages, resultMessage);
+  await input.persistMessage(resultMessage);
+  input.skillState.applySuccessfulResult(result);
 }
 
 async function traceConfiguredToolExecution(input: {
@@ -3381,8 +3495,15 @@ export class AgentRuntime {
     }
 
     const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    let retainedLoader = false;
     for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
       if (tools[toolName]) {
+        // A replacement that already carries a trusted framework loader keeps
+        // startup available, exactly like one this helper inserts.
+        if (
+          isLoadSkillToolName(toolName) && hasTrustedHostToolProvenance(tools[toolName]) &&
+          prepareFrameworkSkillBootstrap(tools[toolName], toolName) !== undefined
+        ) retainedLoader = true;
         continue;
       }
       const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {
@@ -3390,8 +3511,10 @@ export class AgentRuntime {
       });
       if (configuredTool) {
         tools[toolName] = configuredTool;
+        if (isLoadSkillToolName(toolName)) retainedLoader = true;
       }
     }
+    if (retainedLoader) replacementsRetainingSkillLoader.set(tools, true);
     return tools;
   }
 
@@ -4043,6 +4166,7 @@ export class AgentRuntime {
           ...runConfig,
           tools: runtimeToolsConfig,
           skills: undefined,
+          bootstrapTools: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
@@ -4081,6 +4205,12 @@ export class AgentRuntime {
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
       let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
+      // A submitted form continues a turn whose startup already ran, and the
+      // post-form skill policy forbids loading or switching skill bodies.
+      // Replacements suppress startup unless they retain the configured loader.
+      let startupSkillLoaded =
+        (hasToolReplacements && replacementsRetainingSkillLoader.get(toolReplacements) !== true) ||
+        this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -4110,10 +4240,14 @@ export class AgentRuntime {
           unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
           unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
           supportsToolCalling,
+          includeStartupAuthorizedTools: !startupSkillLoaded,
           messages: currentMessages,
           mode: "generate",
           modelRuntime: languageModel,
           providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+          // The authorization catalog is independent of whether the model can
+          // call tools; only the model-visible provider tools are withheld.
+          authorizedProviderToolNames: providerTools,
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -4140,6 +4274,51 @@ export class AgentRuntime {
             reloadable: runtimeStepToolLoading.mode === "deferred",
           })
           : preparedStep.toolExposurePlan;
+        if (!startupSkillLoaded) {
+          await executeStartupSkill({
+            agentId: this.id,
+            skillId: this.config.bootstrapSkill!,
+            authorized: preparedStep.startupAuthorizedTools,
+            messages: currentMessages,
+            persistMessage,
+            skillState,
+            toolCalls,
+            resolveLoader: (name) =>
+              resolveConfiguredTool(runtimeToolsConfig, name, { agentId: this.id }),
+            execute: async (toolName, toolCallId, args, admittedTurn) => {
+              const context = applicationExecutionContext(toolContext);
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName,
+                toolCallId,
+                args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
+                toolsConfig: runtimeToolsConfig,
+                context,
+                allowedRemoteToolNames,
+                remoteToolSources,
+                sourceIntegrationPolicy,
+                frameworkLocalTools,
+              });
+              await this.notifyToolResult({
+                mode: "generate",
+                toolName,
+                toolCallId,
+                input: args,
+                result,
+                context,
+              });
+              return result;
+            },
+          });
+          startupSkillLoaded = true;
+          // Refresh the active skill policy without consuming a model step.
+          step--;
+          continue;
+        }
         assertToolResultReaderNameAvailable({
           plan: effectiveToolExposurePlan,
           context: toolResultContext,
@@ -4176,7 +4355,10 @@ export class AgentRuntime {
           model: effectiveModel,
           ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           providerTools: stepProviderTools,
-          requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+          requiredToolNames: getRequiredRuntimeToolNames(
+            exposeToolResultReader,
+            preparedStep.configuredBootstrapToolNames,
+          ),
         });
         currentSystemPrompt = withIntegrationToolDiscoveryStatus(
           synchronizeRuntimeToolInventory(
@@ -5067,6 +5249,9 @@ export class AgentRuntime {
     let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
     let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
     let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
+    // A pause can precede startup preparation; checkpoint existence is not completion.
+    let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
+      this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
@@ -5083,6 +5268,7 @@ export class AgentRuntime {
           completed: completedWithinStepBudget,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
           recoveredEmptyResponse,
+          startupSkillLoaded,
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
@@ -5144,22 +5330,6 @@ export class AgentRuntime {
       step++
     ) {
       throwIfAborted(abortSignal);
-      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
-      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
-        ? crypto.randomUUID()
-        : undefined;
-      sendSSE(controller, encoder, {
-        type: "step-start",
-        ...(runtimeObservationStepId
-          ? {
-            privateRuntimeObservation: {
-              version: 1,
-              kind: "step_started",
-              stepId: runtimeObservationStepId,
-            },
-          }
-          : {}),
-      });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
       const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
@@ -5183,10 +5353,12 @@ export class AgentRuntime {
         unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
         unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
         supportsToolCalling,
+        includeStartupAuthorizedTools: !startupSkillLoaded,
         messages: currentMessages,
         mode: "stream",
         modelRuntime: languageModel,
         providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+        authorizedProviderToolNames: providerTools,
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],
@@ -5212,6 +5384,71 @@ export class AgentRuntime {
           reloadable: toolLoadingResolution.mode === "deferred",
         })
         : preparedStep.toolExposurePlan;
+      if (!startupSkillLoaded) {
+        await executeStartupSkill({
+          agentId: this.id,
+          skillId: this.config.bootstrapSkill!,
+          authorized: preparedStep.startupAuthorizedTools,
+          messages: currentMessages,
+          persistMessage,
+          skillState,
+          toolCalls,
+          onToolCall: callbacks?.onToolCall,
+          resolveLoader: (name) =>
+            resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
+          execute: async (toolName, toolCallId, args, admittedTurn) => {
+            const context = applicationExecutionContext(toolContext);
+            const result = await traceConfiguredToolExecution({
+              mode: "stream",
+              agentId: this.id,
+              toolName,
+              toolCallId,
+              args,
+              admittedTurn,
+              owner: currentMessages,
+              prepareTerminalDispatch,
+              toolsConfig: this.config.tools,
+              context,
+              allowedRemoteToolNames,
+              remoteToolSources,
+              sourceIntegrationPolicy,
+              frameworkLocalTools,
+            });
+            await this.notifyToolResult({
+              mode: "stream",
+              toolName,
+              toolCallId,
+              input: args,
+              result,
+              context,
+            });
+            return result;
+          },
+        });
+        startupSkillLoaded = true;
+        // A pause requested while the loader ran must hold before the first
+        // provider call; the checkpoint records the completed startup load.
+        await pauseAtBoundary(step);
+        // Refresh the active skill policy without consuming a model step.
+        step--;
+        continue;
+      }
+      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
+      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
+        ? crypto.randomUUID()
+        : undefined;
+      sendSSE(controller, encoder, {
+        type: "step-start",
+        ...(runtimeObservationStepId
+          ? {
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_started",
+              stepId: runtimeObservationStepId,
+            },
+          }
+          : {}),
+      });
       assertToolResultReaderNameAvailable({
         plan: effectiveToolExposurePlan,
         context: toolResultContext,
@@ -5436,7 +5673,10 @@ export class AgentRuntime {
         model: effectiveModel,
         ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         providerTools: stepProviderTools,
-        requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+        requiredToolNames: getRequiredRuntimeToolNames(
+          exposeToolResultReader,
+          preparedStep.configuredBootstrapToolNames,
+        ),
       });
       currentSystemPrompt = withIntegrationToolDiscoveryStatus(
         synchronizeRuntimeToolInventory(

@@ -12,6 +12,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type {
@@ -3738,4 +3739,86 @@ it("explicit canonical platform grant survives legacy denial through remote exec
   await assertRejects(async () =>
     await assembly.remoteToolSources[0]!.executeTool("create_file", {})
   );
+});
+
+it("hosted deferred inventory includes authored bootstrap tools and keeps the rest deferred", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ load_skill: localTool("Loader") }),
+      { sleep: localTool("Sleep"), other: localTool("Other") },
+    ),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    toolLoading: "deferred",
+    bootstrapTools: ["sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, ["sleep", "tool_search", "veryfront__load_skill"]);
+  assertEquals(taskContext.availableToolNames, assembly.modelVisibleToolNames);
+  assertEquals(assembly.availableToolNames.includes("other"), true);
+});
+
+it("hosted bootstrap selection does not bypass an explicit tool denial", async () => {
+  const error = await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          agentId: "agent-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Base instructions",
+        localTools: { sleep: localTool("Sleep") },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        toolLoading: "deferred",
+        bootstrapTools: ["sleep"],
+        deniedToolNames: ["sleep"],
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      }),
+    VeryfrontError,
+    "outside the authorized executable catalog",
+  );
+  assertEquals((error as VeryfrontError).slug, "config-invalid");
+});
+
+it("hosted eager capping retains the selected authored remote startup tool", async () => {
+  const tools = Array.from(
+    { length: 130 },
+    (_, index) => remoteTool(`remote_${String(index).padStart(3, "0")}`, "Remote"),
+  );
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", projectId: "project-1", model: "openai/gpt-4.1" },
+    instructions: "Base",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ id: "custom", endpoint: "https://custom.example/mcp" }],
+    toolLoading: "eager",
+    bootstrapTools: ["remote_129"],
+    preloadLatestConversationUserText: false,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "platform",
+      listTools: async () => tools,
+      executeTool: async () => "ok",
+    }),
+  });
+  assertEquals(assembly.modelVisibleToolNames?.includes("remote_129"), true);
+  assertEquals(assembly.remoteToolNames.includes("remote_129"), true);
+  assertEquals(assembly.modelVisibleToolNames?.length, 128);
 });

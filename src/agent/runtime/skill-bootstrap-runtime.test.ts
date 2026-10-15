@@ -1,0 +1,922 @@
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
+import { traceHostTools } from "#veryfront/tool/tracing.ts";
+import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { defineSchema } from "#veryfront/schemas";
+import { tool } from "#veryfront/tool";
+import { agent } from "../index.ts";
+import { scriptedModel, toolNamesOf } from "./model-runtime.test-helpers.ts";
+import { createRuntimeLoadSkillTool } from "./load-skill-tool.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { clearMCPRegistry } from "#veryfront/mcp/registry.ts";
+import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
+
+describe("startup skill and tool bootstrap", () => {
+  it("startup supports the Code framework's flat-input skill loader", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("code-plan", {
+      id: "code-plan",
+      rootPath: "/skills/code-plan",
+      metadata: { name: "code-plan", description: "Plan guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/code-plan/SKILL.md": "# Code planning guidance",
+      }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Code planning guidance");
+      return { text: "Ready" };
+    }], { only: "generate" });
+    const assistant = agent({
+      id: "bootstrap-code-loader",
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "code-plan",
+      skills: ["code-plan"],
+      tools: { load_skill: createLoadSkillTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      const response = await assistant.generate({ input: "Plan the task" });
+      assertEquals(response.toolCalls?.[0]?.args, { skillId: "code-plan" });
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("startup resolves an agent-owned skill short name to its canonical ID", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("researcher--cite", {
+      id: "researcher--cite",
+      ownerAgentId: "researcher",
+      shortName: "cite",
+      rootPath: "/skills/researcher--cite",
+      metadata: { name: "cite", description: "Citation guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/researcher--cite/SKILL.md": "# Citation guidance",
+      }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Citation guidance");
+      return { text: "Ready" };
+    }], { only: "generate" });
+    const assistant = agent({
+      id: "researcher",
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "cite",
+      skills: ["cite"],
+      tools: { load_skill: createLoadSkillTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      const response = await assistant.generate({ input: "Cite the sources" });
+      assertEquals(response.toolCalls?.[0]?.args, { skillId: "researcher--cite" });
+      assertEquals(response.toolCalls?.[0]?.result, {
+        skillId: "researcher--cite",
+        instructions: "# Citation guidance",
+        references: [],
+        scripts: [],
+      });
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("startup passes the canonical skill ID to an operation-shaped loader for a short name", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("researcher--cite", {
+      id: "researcher--cite",
+      ownerAgentId: "researcher",
+      shortName: "cite",
+      rootPath: "/skills/researcher--cite",
+      metadata: { name: "cite", description: "Citation guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/researcher--cite/SKILL.md": "# Citation guidance",
+      }),
+    });
+    const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+      context: { authToken: "fixture-token", availableSkillIds: ["researcher--cite"] },
+      skillsDir: "/skills",
+      builtinSkillIds: ["researcher--cite"],
+      projectSkillLoader: {
+        loadProjectSkill: async () => null,
+        listProjectSkillReferences: async () => [],
+        loadProjectSkillReference: async () => null,
+      },
+      builtinStore: {
+        readSkill: async () => "# Canonical citation guidance",
+        listReferences: async () => [],
+        readReferenceFile: async () => null,
+      },
+    }));
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Canonical citation guidance");
+      return { text: "Ready" };
+    }], { only: "generate" });
+    const assistant = agent({
+      id: "researcher",
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "cite",
+      skills: ["cite"],
+      tools: createToolsFromHostDefinitions({ load_skill: loader }),
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      const response = await assistant.generate({ input: "Cite the sources" });
+      assertEquals(response.toolCalls?.[0]?.args, { load: { skillId: "researcher--cite" } });
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`startup skill loads for a ${mode} model without tool calling`, async () => {
+      clearMCPRegistry();
+      skillRegistryInternal.clearAll();
+      registerSkill("code-plan", {
+        id: "code-plan",
+        rootPath: "/skills/code-plan",
+        metadata: { name: "code-plan", description: "Plan guidance" },
+        fsAdapter: createSkillTestAdapter({
+          "/skills/code-plan/SKILL.md": "# Code planning guidance",
+        }),
+      });
+      const model = scriptedModel([(options) => {
+        assertStringIncludes(JSON.stringify(options.prompt), "Code planning guidance");
+        assertEquals(options.tools ?? [], []);
+        return { text: "Ready" };
+      }], { only: mode });
+      Object.assign(model, {
+        runtimeCapabilities: { ...model.runtimeCapabilities, toolCalling: false as const },
+      });
+      const assistant = agent({
+        id: `bootstrap-text-only-${mode}`,
+        system: "Help with the task.",
+        model: model.modelId,
+        bootstrapSkill: "code-plan",
+        skills: ["code-plan"],
+        tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+      try {
+        if (mode === "generate") {
+          const response = await assistant.generate({ input: "Plan the task" });
+          assertEquals(response.toolCalls?.[0]?.args, { skillId: "code-plan" });
+        } else {
+          const response = await assistant.stream({ input: "Plan the task" });
+          assertStringIncludes(await response.toDataStreamResponse().text(), "Ready");
+        }
+        assertEquals(model.callCount, 1);
+      } finally {
+        skillRegistryInternal.clearAll();
+      }
+    });
+  }
+
+  it("startup skill preparation does not open an unmatched streamed step", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("code-plan", {
+      id: "code-plan",
+      rootPath: "/skills/code-plan",
+      metadata: { name: "code-plan", description: "Plan guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/code-plan/SKILL.md": "# Code planning guidance",
+      }),
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const runtime = new AgentRuntime("bootstrap-stream-lifecycle", {
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "code-plan",
+      skills: ["code-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      const text = await new Response(
+        await runtime.stream([{
+          id: "request",
+          role: "user",
+          parts: [{ type: "text", text: "Plan the task" }],
+        }]),
+      ).text();
+      const steps = text.split("\n").filter((line) => line.startsWith("data: "))
+        .map((line) => JSON.parse(line.slice(6)))
+        .filter((part) => part.type === "step-start" || part.type === "step-end")
+        .map((part) => part.type);
+      assertEquals(model.callCount, 1);
+      assertEquals(steps, ["step-start", "step-end"]);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`startup skill loads guidance before the first ${mode} model call`, async () => {
+      clearMCPRegistry();
+      let reads = 0;
+      const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+        context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+        skillsDir: "/skills",
+        builtinSkillIds: ["plan"],
+        projectSkillLoader: {
+          loadProjectSkill: () => Promise.resolve(null),
+          listProjectSkillReferences: () => Promise.resolve([]),
+          loadProjectSkillReference: () => Promise.resolve(null),
+        },
+        builtinStore: {
+          readSkill: () => {
+            reads++;
+            return Promise.resolve(
+              "# Bootstrap guidance\n" + "x".repeat(8300) + "\nBOOTSTRAP_GUIDANCE_END",
+            );
+          },
+          listReferences: () => Promise.resolve([]),
+          readReferenceFile: () => Promise.resolve(null),
+        },
+      }));
+      const model = scriptedModel([(options) => {
+        assertEquals(reads, 1);
+        assertStringIncludes(JSON.stringify(options.prompt), "Bootstrap guidance");
+        assertStringIncludes(JSON.stringify(options.prompt), "BOOTSTRAP_GUIDANCE_END");
+        return { text: "Ready" };
+      }], { only: mode });
+      const assistant = agent({
+        id: "bootstrap-success",
+        system: "Help with the task.",
+        model: model.modelId,
+        bootstrapSkill: "plan",
+        toolLoading: "deferred",
+        toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048, maxSectionBytes: 8192 },
+        tools: createToolsFromHostDefinitions(traceHostTools({ load_skill: loader }, {
+          trace: (_name, operation) => operation(),
+        })),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+      if (mode === "generate") {
+        const result = await assistant.generate({ input: "Plan the task" });
+        assertEquals(result.toolCalls?.length, 1);
+        assertEquals(result.toolCalls?.[0]?.status, "completed");
+      } else {
+        const response = await assistant.stream({ input: "Plan the task" });
+        const text = await response.toDataStreamResponse().text();
+        assertStringIncludes(text, "Ready");
+      }
+      assertEquals(model.callCount, 1);
+    });
+  }
+
+  it("startup skill rejects a project loader before calling it or the model", async () => {
+    clearMCPRegistry();
+    let executed = 0;
+    const model = scriptedModel([{ text: "Unexpected" }], { only: "generate" });
+    const assistant = agent({
+      id: "bootstrap-untrusted",
+      skills: false,
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "plan",
+      tools: {
+        load_skill: tool({
+          id: "load_skill",
+          description: "Project loader lookalike",
+          inputSchema: defineSchema((v) => v.object({ load: v.object({ skillId: v.string() }) }))(),
+          execute: () => {
+            executed++;
+            return { skillId: "plan", instructions: "Forged" };
+          },
+        }),
+      },
+      resolveModelTransport: () => ({ model }),
+    });
+    const error = await assertRejects(
+      () => assistant.generate({ input: "Plan the task" }),
+      VeryfrontError,
+      "framework skill loader",
+    );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
+    assertEquals(executed, 0);
+    assertEquals(model.callCount, 0);
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`startup skill preserves deferred reference reads in ${mode}`, async () => {
+      clearMCPRegistry();
+      let rootReads = 0;
+      let referenceReads = 0;
+      const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+        context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+        skillsDir: "/skills",
+        builtinSkillIds: ["plan"],
+        projectSkillLoader: {
+          loadProjectSkill: () => Promise.resolve(null),
+          listProjectSkillReferences: () => Promise.resolve([]),
+          loadProjectSkillReference: () => Promise.resolve(null),
+        },
+        builtinStore: {
+          readSkill: () => {
+            rootReads++;
+            return Promise.resolve("# Small root");
+          },
+          listReferences: () => Promise.resolve(["references/plan.md"]),
+          readReferenceFile: () => {
+            referenceReads++;
+            return Promise.resolve("Detailed guidance");
+          },
+        },
+      }));
+      const model = scriptedModel([
+        () => {
+          assertEquals(rootReads, 1);
+          assertEquals(referenceReads, 0);
+          return {
+            toolCalls: [{
+              id: "read-reference",
+              name: "load_skill",
+              input: {
+                reference: { skillId: "plan", file: "references/plan.md" },
+              },
+            }],
+          };
+        },
+        (options) => {
+          assertEquals(referenceReads, 1);
+          assertStringIncludes(JSON.stringify(options.prompt), "Detailed guidance");
+          return { text: "Reference read" };
+        },
+      ], { only: mode });
+      const assistant = agent({
+        id: "bootstrap-reference",
+        system: "Help with the task.",
+        model: model.modelId,
+        bootstrapSkill: "plan",
+        tools: { load_skill: loader },
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model }),
+      });
+      if (mode === "generate") {
+        await assistant.generate({ input: "Use detailed planning guidance" });
+      } else {
+        const response = await assistant.stream({ input: "Use detailed planning guidance" });
+        assertStringIncludes(await response.toDataStreamResponse().text(), "Reference read");
+      }
+      assertEquals(model.callCount, 2);
+      assertEquals(rootReads, 1);
+      assertEquals(referenceReads, 1);
+    });
+  }
+
+  it("replacement tools ignore the configured bootstrap selection", async () => {
+    const configured = tool({
+      id: "configured",
+      description: "Configured",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => "configured",
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "generate" });
+    const assistant = agent({
+      id: "bootstrap-replacement",
+      system: "Help",
+      model: model.modelId,
+      tools: { configured },
+      bootstrapTools: ["configured"],
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    await assistant.generate({ input: "Go", tools: {} });
+    assertEquals(model.callCount, 1);
+  });
+
+  it("initial pause resumes startup guidance before its first model call", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("pause-plan", {
+      id: "pause-plan",
+      rootPath: "/skills/pause-plan",
+      metadata: { name: "pause-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/pause-plan/SKILL.md": "# Required resumed guidance",
+      }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Required resumed guidance");
+      return { text: "Ready" };
+    }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const config = {
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "pause-plan",
+      skills: ["pause-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    };
+    let saved: unknown;
+    const messages = [{
+      id: "request",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Go" }],
+    }];
+    try {
+      const paused = new AgentRuntime("bootstrap-paused", config, {
+        manualPause: {
+          load: async () => null,
+          requested: async () => true,
+          acknowledge: async (checkpoint) => {
+            saved = checkpoint;
+            return true;
+          },
+        },
+      });
+      await new Response(await paused.stream(messages)).text();
+      assertEquals(model.callCount, 0);
+      assertEquals(saved !== undefined, true);
+      const resumed = new AgentRuntime("bootstrap-paused", config, {
+        manualPause: { load: async () => saved, acknowledge: async () => false },
+      });
+      const body = await new Response(await resumed.stream(messages)).text();
+      assertEquals(model.callCount, 1);
+      assertStringIncludes(body, "Ready");
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("concurrent startup runs sharing one loader each receive the complete skill root", async () => {
+    clearMCPRegistry();
+    const both = Promise.withResolvers<void>();
+    let loads = 0;
+    const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+      context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+      skillsDir: "/skills",
+      builtinSkillIds: ["plan"],
+      projectSkillLoader: {
+        loadProjectSkill: async () => {
+          if (++loads >= 2) both.resolve();
+          await both.promise;
+          return null;
+        },
+        listProjectSkillReferences: async () => [],
+        loadProjectSkillReference: async () => null,
+      },
+      builtinStore: {
+        readSkill: async () => "# Complete concurrent startup guidance",
+        listReferences: async () => [],
+        readReferenceFile: async () => null,
+      },
+    }));
+    const check = (options: { prompt: unknown }) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Complete concurrent startup guidance");
+      return { text: "Ready" };
+    };
+    const model = scriptedModel([check, check], { only: "generate" });
+    const assistant = agent({
+      id: "shared-bootstrap",
+      model: model.modelId,
+      system: "Help",
+      bootstrapSkill: "plan",
+      tools: createToolsFromHostDefinitions({ load_skill: loader }),
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    await Promise.all([
+      assistant.generate({ input: "First" }),
+      assistant.generate({ input: "Second" }),
+    ]);
+    assertEquals(model.callCount, 2);
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`startup guidance loads for a text-only ${mode} model without exposing tools`, async () => {
+      clearMCPRegistry();
+      const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+        context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+        skillsDir: "/skills",
+        builtinSkillIds: ["plan"],
+        projectSkillLoader: {
+          loadProjectSkill: async () => null,
+          listProjectSkillReferences: async () => [],
+          loadProjectSkillReference: async () => null,
+        },
+        builtinStore: {
+          readSkill: async () => "# Text-only startup guidance",
+          listReferences: async () => [],
+          readReferenceFile: async () => null,
+        },
+      }));
+      const model = scriptedModel([(options) => {
+        assertStringIncludes(JSON.stringify(options.prompt), "Text-only startup guidance");
+        assertEquals(Object.keys(options.tools ?? {}).length, 0);
+        return { text: "Ready" };
+      }], { only: mode });
+      const assistant = agent({
+        id: "text-only-startup",
+        system: "Help",
+        model: model.modelId,
+        bootstrapSkill: "plan",
+        tools: createToolsFromHostDefinitions({ load_skill: loader }),
+        maxSteps: 1,
+        resolveModelTransport: () => ({
+          model: { ...model, runtimeCapabilities: { toolCalling: false } },
+        }),
+      });
+      if (mode === "generate") await assistant.generate({ input: "Go" });
+      else {assertStringIncludes(
+          await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+          "Ready",
+        );}
+      assertEquals(model.callCount, 1);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`configured bootstrap tools do not break a text-only ${mode} model`, async () => {
+      clearMCPRegistry();
+      const lookup = tool({
+        id: "lookup",
+        description: "Lookup",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "value",
+      });
+      const model = scriptedModel([(options) => {
+        assertEquals(Object.keys(options.tools ?? {}).length, 0);
+        return { text: "Ready" };
+      }], { only: mode });
+      const assistant = agent({
+        id: "text-bootstrap-tools",
+        system: "Help",
+        model: model.modelId,
+        tools: { lookup },
+        bootstrapTools: ["lookup"],
+        maxSteps: 1,
+        resolveModelTransport: () => ({
+          model: { ...model, runtimeCapabilities: { toolCalling: false } },
+        }),
+      });
+      if (mode === "generate") await assistant.generate({ input: "Go" });
+      else {assertStringIncludes(
+          await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+          "Ready",
+        );}
+      assertEquals(model.callCount, 1);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`configured provider bootstrap tools stay authorized for a text-only ${mode} model`, async () => {
+      clearMCPRegistry();
+      const model = scriptedModel([(options) => {
+        assertEquals(Object.keys(options.tools ?? {}).length, 0);
+        return { text: "Ready" };
+      }], { provider: "anthropic", modelId: "claude-sonnet-4-6", only: mode });
+      const assistant = agent({
+        id: "text-provider-bootstrap",
+        system: "Help",
+        model: "anthropic/claude-sonnet-4-6",
+        skills: false,
+        tools: {},
+        providerTools: ["web_search"],
+        bootstrapTools: ["web_search"],
+        maxSteps: 1,
+        resolveModelTransport: () => ({
+          model: { ...model, runtimeCapabilities: { toolCalling: false } },
+        }),
+      });
+      if (mode === "generate") await assistant.generate({ input: "Go" });
+      else {assertStringIncludes(
+          await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+          "Ready",
+        );}
+      assertEquals(model.callCount, 1);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`a submitted form continuation does not reload the startup skill in ${mode}`, async () => {
+      clearMCPRegistry();
+      let reads = 0;
+      const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+        context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+        skillsDir: "/skills",
+        builtinSkillIds: ["plan"],
+        projectSkillLoader: {
+          loadProjectSkill: async () => null,
+          listProjectSkillReferences: async () => [],
+          loadProjectSkillReference: async () => null,
+        },
+        builtinStore: {
+          readSkill: async () => {
+            reads += 1;
+            return "# Plan guidance";
+          },
+          listReferences: async () => [],
+          readReferenceFile: async () => null,
+        },
+      }));
+      const model = scriptedModel([{ text: "Ready" }], { only: mode });
+      const assistant = agent({
+        id: "form-continuation-startup",
+        system: "Help",
+        model: model.modelId,
+        bootstrapSkill: "plan",
+        tools: createToolsFromHostDefinitions({ load_skill: loader }),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+      const input = { input: "Continue", context: { hasSubmittedFormInputResult: true } };
+      if (mode === "generate") await assistant.generate(input);
+      else await (await assistant.stream(input)).toDataStreamResponse().text();
+      assertEquals(reads, 0);
+      assertEquals(model.callCount, 1);
+    });
+  }
+  it("startup skill load notifies the stream onToolCall observer", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("observed-plan", {
+      id: "observed-plan",
+      rootPath: "/skills/observed-plan",
+      metadata: { name: "observed-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/observed-plan/SKILL.md": "# Observed" }),
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "stream" });
+    const assistant = agent({
+      id: "observed-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "observed-plan",
+      skills: ["observed-plan"],
+      tools: { load_skill: createLoadSkillTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: string[] = [];
+    try {
+      const result = await assistant.stream({
+        input: "Go",
+        onToolCall: (toolCall) => observed.push(`${toolCall.name}:${toolCall.id}`),
+      });
+      await result.toDataStreamResponse().text();
+      assertEquals(observed.length, 1);
+      assertStringIncludes(observed[0]!, "load_skill:bootstrap_skill_");
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("a throwing onToolCall observer settles the persisted startup call with an error result", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("throwing-observer-plan", {
+      id: "throwing-observer-plan",
+      rootPath: "/skills/throwing-observer-plan",
+      metadata: { name: "throwing-observer-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/throwing-observer-plan/SKILL.md": "# Observer guidance",
+      }),
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const runtime = new AgentRuntime("bootstrap-throwing-observer", {
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "throwing-observer-plan",
+      skills: ["throwing-observer-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      memory: { type: "conversation" },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      await new Response(
+        await runtime.stream(
+          [{ id: "request", role: "user", parts: [{ type: "text", text: "Go" }] }],
+          undefined,
+          {
+            onToolCall: () => {
+              throw new Error("observer failed");
+            },
+          },
+        ),
+      ).text();
+      assertEquals(model.callCount, 0);
+      const memory = Reflect.get(runtime, "memory") as {
+        getMessages(): Promise<Array<{ role: string; parts: Array<Record<string, unknown>> }>>;
+      };
+      const persisted = await memory.getMessages();
+      const callIds = persisted.flatMap((message) =>
+        message.role === "assistant"
+          ? message.parts.flatMap((part) => "toolCallId" in part ? [String(part.toolCallId)] : [])
+          : []
+      );
+      const resultIds = persisted.flatMap((message) =>
+        message.role === "tool"
+          ? message.parts.flatMap((part) => "toolCallId" in part ? [String(part.toolCallId)] : [])
+          : []
+      );
+      assertEquals(callIds.length, 1);
+      assertStringIncludes(callIds[0]!, "bootstrap_skill_");
+      assertEquals(resultIds, callIds);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("a pause requested during the startup load holds before the first model call", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    let reads = 0;
+    registerSkill("held-plan", {
+      id: "held-plan",
+      rootPath: "/skills/held-plan",
+      metadata: { name: "held-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/held-plan/SKILL.md": "# Held guidance" }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Held guidance");
+      return { text: "Ready" };
+    }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const config = {
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "held-plan",
+      skills: ["held-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      onToolResult: () => {
+        reads += 1;
+      },
+    };
+    const messages = [{
+      id: "request",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Go" }],
+    }];
+    let checks = 0;
+    let saved: unknown;
+    try {
+      const paused = new AgentRuntime("bootstrap-held", config, {
+        manualPause: {
+          load: async () => null,
+          // The initial boundary passes; the pause arrives while the loader runs.
+          requested: async () => ++checks > 1,
+          acknowledge: async (checkpoint) => {
+            saved = checkpoint;
+            return true;
+          },
+        },
+      });
+      await new Response(await paused.stream(messages)).text();
+      assertEquals(model.callCount, 0);
+      assertEquals(reads, 1);
+      assertEquals((saved as { startupSkillLoaded?: boolean }).startupSkillLoaded, true);
+      const resumed = new AgentRuntime("bootstrap-held", config, {
+        manualPause: { load: async () => saved, acknowledge: async () => false },
+      });
+      assertStringIncludes(await new Response(await resumed.stream(messages)).text(), "Ready");
+      assertEquals(model.callCount, 1);
+      assertEquals(reads, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("eager provider capping keeps authored bootstrap tools instead of rejecting them", async () => {
+    clearMCPRegistry();
+    const names = Array.from(
+      { length: 140 },
+      (_, index) => `cap_${String(index).padStart(3, "0")}`,
+    );
+    const tools = Object.fromEntries(names.map((name) => [
+      name,
+      tool({
+        id: name,
+        description: name,
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "ok",
+      }),
+    ]));
+    const model = scriptedModel([(options) => {
+      const visible = toolNamesOf(options);
+      assertEquals(visible.length <= 128, true);
+      assertEquals(visible.includes("cap_139"), true);
+      return { text: "Ready" };
+    }], { provider: "openai", modelId: "gpt-4.1", only: "generate" });
+    const assistant = agent({
+      id: "eager-capped-bootstrap",
+      system: "Help",
+      model: "openai/gpt-4.1",
+      skills: false,
+      tools,
+      toolLoading: "eager",
+      bootstrapTools: ["cap_139"],
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    await assistant.generate({ input: "Go" });
+    assertEquals(model.callCount, 1);
+  });
+  for (const retain of [true, false]) {
+    it(`replacement tools ${retain ? "retaining" : "without"} the skill loader ${retain ? "load" : "skip"} the startup skill`, async () => {
+      clearMCPRegistry();
+      skillRegistryInternal.clearAll();
+      registerSkill("eval-plan", {
+        id: "eval-plan",
+        rootPath: "/skills/eval-plan",
+        metadata: { name: "eval-plan", description: "Guidance" },
+        fsAdapter: createSkillTestAdapter({ "/skills/eval-plan/SKILL.md": "# Eval guidance" }),
+      });
+      const model = scriptedModel([(options) => {
+        assertEquals(JSON.stringify(options.prompt).includes("Eval guidance"), retain);
+        return { text: "Ready" };
+      }], { only: "generate" });
+      const lookup = tool({
+        id: "lookup",
+        description: "Lookup",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "value",
+      });
+      const assistant = agent({
+        id: "eval-startup",
+        system: "Help",
+        model: model.modelId,
+        bootstrapSkill: "eval-plan",
+        skills: ["eval-plan"],
+        tools: { load_skill: createLoadSkillTool() },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+      try {
+        await assistant.generate({
+          input: "Go",
+          tools: { lookup },
+          retainSkillLoaderTools: retain,
+        });
+        assertEquals(model.callCount, 1);
+      } finally {
+        skillRegistryInternal.clearAll();
+      }
+    });
+  }
+  it("replacement tools that already carry the framework loader still load the startup skill", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("carried-plan", {
+      id: "carried-plan",
+      rootPath: "/skills/carried-plan",
+      metadata: { name: "carried-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/carried-plan/SKILL.md": "# Carried guidance" }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Carried guidance");
+      return { text: "Ready" };
+    }], { only: "generate" });
+    const loader = createLoadSkillTool();
+    const trusted = markTrustedHostToolProvenance(createLoadSkillTool());
+    const assistant = agent({
+      id: "eval-carried-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "carried-plan",
+      skills: ["carried-plan"],
+      tools: { load_skill: loader },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      await assistant.generate({
+        input: "Go",
+        // Both framework aliases are already present, so none is inserted.
+        tools: { load_skill: trusted, veryfront__load_skill: trusted },
+        retainSkillLoaderTools: true,
+      });
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+});

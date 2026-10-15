@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
@@ -118,6 +119,8 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolBootstrapNames?: readonly string[];
   /** Tool schema target trusted preparation resolved from the run's served catalog. */
   __vfToolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Authored startup tools a host already merged; provider capping must retain them. */
+  __vfRetainedBootstrapToolNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
@@ -189,6 +192,39 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
   }
   const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
   return snapshotStringArray(raw) ?? [];
+}
+
+/** Maximum number of authored startup tool schemas. */
+export const MAX_CONFIGURED_BOOTSTRAP_TOOLS = 16;
+
+/** Snapshot an authored startup selection without widening its tool authorization. */
+export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  const names = ArrayIsArray(value) && value.length <= MAX_CONFIGURED_BOOTSTRAP_TOOLS
+    ? snapshotStringArray(value)
+    : undefined;
+  if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools must contain at most 16 exact tool names",
+    });
+  }
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (
+      name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
+    ) {
+      throw CONFIG_INVALID.create({
+        detail: "bootstrapTools requires exact executable tool names, excluding tool_search",
+      });
+    }
+  }
+  return names;
+}
+
+/** Host-merged authored startup tools that provider schema capping must retain. */
+export function getRuntimeRetainedBootstrapToolNames(config: AgentConfig): readonly string[] {
+  return snapshotStringArray((config as RuntimeToolFilterConfig).__vfRetainedBootstrapToolNames) ??
+    [];
 }
 
 export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {

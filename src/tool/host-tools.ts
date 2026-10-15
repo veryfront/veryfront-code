@@ -1,3 +1,4 @@
+import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { dynamicTool, tool } from "./factory.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
@@ -220,7 +221,10 @@ export function createToolsFromHostDefinitions(
         defineOwnDataProperty(
           tools,
           toolName,
-          inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
+          inheritTrustedHostToolProvenance(
+            originalDefinition,
+            inheritFrameworkSkillLoader(originalDefinition, toolWithRemoteProvenance),
+          ),
           { enumerable: true, configurable: true, writable: true },
         );
       }

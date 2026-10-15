@@ -451,6 +451,8 @@ it("runtime definitions retain structured discovery and access settings", () => 
     skills: { "support-*": true, "support-internal": false },
     knowledge: { "support/**": true, "support/private/**": false },
     toolLoading: "deferred" as const,
+    bootstrapTools: ["get_run"],
+    bootstrapSkill: "support",
     toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048 },
   };
   const result = getRuntimeAgentMarkdownDefinitionSchema().parse({
@@ -476,6 +478,9 @@ knowledge:
   support/**: true
   support/private/**: false
 tool-loading: deferred
+bootstrap-tools:
+  - get_run
+bootstrap-skill: support
 tool-result-context:
   maxInlineBytes: 8192
 ---
@@ -484,6 +489,8 @@ Help users.`,
   assertEquals(result.skills, { "support-*": true, "support-internal": false });
   assertEquals(result.knowledge, { "support/**": true, "support/private/**": false });
   assertEquals(result.toolLoading, "deferred");
+  assertEquals(result.bootstrapTools, ["get_run"]);
+  assertEquals(result.bootstrapSkill, "support");
   assertEquals(result.toolResultContext, { maxInlineBytes: 8192 });
 });
 
@@ -531,4 +538,13 @@ Use available project tools.
 `,
       }),
   );
+});
+
+it("runtime definitions reject excessive or malformed startup schema selections", () => {
+  const base = { id: "startup", name: "Startup", description: "Startup", instructions: "Help." };
+  for (const bootstrapTools of [Array(17).fill("get_run"), [""], ["x".repeat(513)], "get_run"]) {
+    assertThrows(() =>
+      getRuntimeAgentMarkdownDefinitionSchema().parse({ ...base, bootstrapTools })
+    );
+  }
 });

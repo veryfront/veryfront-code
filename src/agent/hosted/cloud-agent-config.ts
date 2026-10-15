@@ -36,6 +36,7 @@ import {
   isProviderReplayCheckpointEmissionEnabled,
   PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV,
 } from "./chat-preparation.ts";
+import { isProjectDefinitionBootstrapEnabled } from "./project-definition-bootstrap.ts";
 import {
   createRuntimeObservationCaptureOptIn,
   type RuntimeObservationCaptureOptIn,
@@ -64,6 +65,14 @@ export function resolveProviderReplayCheckpointEmissionBootstrap(
   return isProviderReplayCheckpointEmissionEnabled(
     environment?.[PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV] ?? "",
   );
+}
+
+/** Snapshot the deployment-owned project definition bootstrap gate from the service environment. */
+export function resolveProjectDefinitionBootstrapEnabled(
+  input: Parameters<typeof resolveEnvironment>[0],
+): boolean {
+  const environment = resolveEnvironment(input);
+  return isProjectDefinitionBootstrapEnabled((name) => environment?.[name]);
 }
 
 /** Resolve the deployment-owned exact capture opt-in. */
@@ -101,6 +110,10 @@ export function createNodeVeryfrontCloudAgentServiceContext(
     projectDir: resolveProjectDir(options),
     infrastructure,
     providerReplayCheckpointEmissionEnabled: resolveProviderReplayCheckpointEmissionBootstrap({
+      env: options.env,
+      processTarget,
+    }),
+    projectDefinitionBootstrapEnabled: resolveProjectDefinitionBootstrapEnabled({
       env: options.env,
       processTarget,
     }),

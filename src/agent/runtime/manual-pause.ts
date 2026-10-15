@@ -28,6 +28,7 @@ export interface AgentPauseCheckpoint {
   completed: boolean;
   finishReason?: string;
   recoveredEmptyResponse: boolean;
+  startupSkillLoaded?: boolean;
   recoveredInterruptedLocalToolBatch: boolean;
   resumeToolCallExecuted?: boolean;
   agentWriteFinalResponseToolGuardEnabled?: boolean;
@@ -96,6 +97,7 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
     completed: v.boolean(),
     finishReason: v.string().optional(),
     recoveredEmptyResponse: v.boolean(),
+    startupSkillLoaded: v.boolean().optional(),
     recoveredInterruptedLocalToolBatch: v.boolean(),
     resumeToolCallExecuted: v.boolean().optional(),
     agentWriteFinalResponseToolGuardEnabled: v.boolean().optional(),
