@@ -1,3 +1,8 @@
+import {
+  ConnectedLocalAdmissionError,
+  type ConnectedLocalRun,
+  getConnectedLocalRuntime,
+} from "./connected-local-runtime.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
@@ -459,6 +464,7 @@ async function createDirectAgentUpstream(options: {
   onFinish: (response: AgentResponse) => void;
   privateRuntime?: PrivateApplicationInferenceRuntime;
   preserveRestrictedToolCatalog?: boolean;
+  localRun?: ConnectedLocalRun;
 }): Promise<DirectAgentUpstream> {
   const privateRuntime = options.privateRuntime;
   if (privateRuntime) {
@@ -493,19 +499,29 @@ async function createDirectAgentUpstream(options: {
     };
   }
 
-  const result = await options.streamAgent.stream({
-    messages: options.messages,
-    context: options.context,
-    ...(options.request.model ? { model: options.request.model } : {}),
-    ...(options.request.maxOutputTokens
-      ? { maxOutputTokens: options.request.maxOutputTokens }
-      : {}),
-    onFinish: options.onFinish,
-  });
+  const connectedAgent = options.localRun
+    ? await options.localRun.prepareAgent(options.streamAgent)
+    : options.streamAgent;
+  const startStream = () =>
+    connectedAgent.stream({
+      messages: options.messages,
+      context: options.context,
+      ...(options.request.model ? { model: options.request.model } : {}),
+      ...(options.request.maxOutputTokens
+        ? { maxOutputTokens: options.request.maxOutputTokens }
+        : {}),
+      onFinish: options.onFinish,
+      ...(options.localRun ? { abortSignal: options.localRun.signal } : {}),
+    });
+  const result = await (options.localRun ? options.localRun.execute(startStream) : startStream());
 
   const upstream = result.toDataStreamResponse();
   return {
-    body: upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body,
+    body: upstream.body
+      ? options.toolDataEvents.wrapStream(
+        options.localRun ? options.localRun.wrapStream(upstream.body) : upstream.body,
+      )
+      : upstream.body,
     status: upstream.status,
     statusText: upstream.statusText,
   };
@@ -557,7 +573,14 @@ async function createAgUiDirectStreamResponse(
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-  const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
+  const connectedRuntime = getConnectedLocalRuntime();
+  const localRun = await connectedRuntime?.admit({
+    agentId: agent.id,
+    threadId,
+    messages: request.messages,
+    signal: rawRequest.signal,
+  });
+  const privateRuntime = localRun ? undefined : await getRequiredPrivateApplicationInferenceRuntime(
     agent.id,
     request.model ?? getAgentExecutionConfig(agent.config).model,
     rawRequest.signal,
@@ -568,7 +591,7 @@ async function createAgUiDirectStreamResponse(
       beforeStreamResult: beforeStreamResult ?? undefined,
       context,
       baseContext,
-      runId,
+      runId: localRun?.runId ?? runId,
       privateRuntime,
     });
     messages = prepared.messages;
@@ -598,7 +621,7 @@ async function createAgUiDirectStreamResponse(
     // A restricted run uses a fresh ephemeral agent, so it has no prior memory
     // to clear. Do not call mutable methods on the source agent before the
     // capability ceiling is in place.
-    if (streamAgent === agent) await agent.clearMemory();
+    if (streamAgent === agent && !localRun) await agent.clearMemory();
 
     let upstream: DirectAgentUpstream;
     try {
@@ -612,6 +635,7 @@ async function createAgUiDirectStreamResponse(
         onFinish,
         privateRuntime,
         preserveRestrictedToolCatalog,
+        localRun,
       });
     } catch (error) {
       privateRuntime?.onAbandon();
@@ -637,6 +661,7 @@ async function createAgUiDirectStreamResponse(
       },
       onCancel: () => {
         privateRuntime?.finish("cancelled");
+        void localRun?.finish("cancelled").catch(() => {});
       },
       onComplete: onComplete
         ? (response) =>
@@ -652,6 +677,7 @@ async function createAgUiDirectStreamResponse(
     });
   } catch (error) {
     privateRuntime?.onAbandon();
+    await localRun?.finish("failed");
     throw error;
   }
 }
@@ -928,6 +954,11 @@ export function createAgUiHandler(
       }
 
       if (parsed.tools.length > 0) {
+        if (getConnectedLocalRuntime()) {
+          return Response.json({
+            error: "Client-injected tools are not supported by connected local development.",
+          }, { status: 501 });
+        }
         if (options?.runtimeRestrictions?.allowedTools !== undefined) {
           // The injected-tools path merges client tool definitions into the
           // agent runtime, so those tools would run outside a tool allowlist.
@@ -982,6 +1013,9 @@ export function createAgUiHandler(
         options?.runtimeRestrictions,
       );
     } catch (error) {
+      if (error instanceof ConnectedLocalAdmissionError) {
+        return Response.json({ error: error.message }, { status: error.status });
+      }
       if (
         error instanceof Error &&
         "issues" in error &&

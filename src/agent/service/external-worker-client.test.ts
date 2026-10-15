@@ -5,6 +5,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorker,
+  readExternalAgentWorkerRunAuthority,
 } from "./external-worker-client.ts";
 import type { AgentWorkerRuntimeOwnershipProbe } from "./agent-worker-runtime-ownership-probe.ts";
 
@@ -294,6 +295,40 @@ describe("external agent worker client", () => {
       { status: "completed", output: null },
       "completeRun must post the terminal status",
     );
+  });
+
+  it("keeps inference credentials private and refreshes them with the lease", async () => {
+    const first = {
+      ...claim(),
+      credentials: { ...credentials, inference_token: "inference-first" },
+    };
+    const second = {
+      ...claim(),
+      credentials: { ...credentials, inference_token: "inference-renewed" },
+    };
+    const { fetchImpl } = fetchSequence(
+      jsonResponse(first),
+      jsonResponse(second),
+      jsonResponse({ run: null }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    const run = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    assertEquals(JSON.stringify(run).includes("inference-first"), false);
+    assertEquals(
+      readExternalAgentWorkerRunAuthority(client, RUN_ID).inference_token,
+      "inference-first",
+    );
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    assertEquals(
+      readExternalAgentWorkerRunAuthority(client, RUN_ID).inference_token,
+      "inference-renewed",
+    );
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    await assertRejects(async () => readExternalAgentWorkerRunAuthority(client, RUN_ID));
   });
 
   it("clears previous authority when renewal cannot issue current credentials", async () => {

@@ -24,7 +24,7 @@ import {
   resolveRestApiBaseUrl,
   trimTrailingSlashes,
 } from "./constants.ts";
-import { readProjectLinkForControlPlane } from "./project-link.ts";
+import { readProjectLink, readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -727,6 +727,10 @@ async function resolveConfigBase(
   } else if (configFileResolution.jsonProjectSlug !== undefined) {
     projectSlug = configFileResolution.jsonProjectSlug;
     projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
+    const linked = await readProjectLink(dir);
+    if (linked?.projectSlug === projectSlug) {
+      projectId = (await readProjectLinkForControlPlane(dir, apiUrl))?.projectId;
+    }
   } else {
     const tenantReference = resolveEnvironmentProjectReference();
     if (tenantReference) {

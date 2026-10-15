@@ -21,7 +21,12 @@ import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.t
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { type AuthIdentity, isApiKeyIdentity, login } from "../../auth/login.ts";
+import {
+  type AuthIdentity,
+  ensureAuthenticated,
+  isApiKeyIdentity,
+  login,
+} from "../../auth/login.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
 import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
@@ -31,6 +36,20 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
+import { captureDevDisplayOptions } from "./display-options.ts";
+import { connectedDevApiBaseUrl, prepareConnectedDev } from "./connected-dev.ts";
+import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
+import {
+  readProjectLinkForControlPlane,
+  saveSharedProjectAssociation,
+} from "../../shared/project-link.ts";
+import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { isInteractive } from "../../shared/interactive.ts";
+import { getCloudDomain } from "#cli/shared/constants";
+import {
+  getConnectedLocalRuntime,
+  installConnectedLocalRuntime,
+} from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
 import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 
 export interface DevOptions {
@@ -44,6 +63,8 @@ export interface DevOptions {
    */
   portExplicit?: boolean;
   projectDir: string;
+  /** Shared Cloud environment used by this local runtime. */
+  environment?: string;
   hmr?: boolean;
   open?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
@@ -224,6 +245,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       } = options;
       const startTime = Date.now();
 
+      const displayOptions = captureDevDisplayOptions();
       captureHostApiEnvironment();
       trustOperatorConfiguredVeryfrontApiOrigins();
 
@@ -262,11 +284,70 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       const env = getEnvironmentConfig();
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
-      const linkedProjectSlug = await resolveLinkedProjectSlug(
+      let linkedProjectSlug = await resolveLinkedProjectSlug(
         projectDir,
         config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       );
-      const runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      if (!linkedProjectSlug && !isProxyMode && isTTY() && isInteractive()) {
+        await chooseCloudProject(projectDir);
+        linkedProjectSlug = await resolveLinkedProjectSlug(projectDir);
+      }
+      let preflightIdentity: AuthIdentity | null = null;
+      let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      const connectedTarget = await prepareConnectedDev(
+        linkedProjectSlug,
+        options.environment ?? "preview",
+        {
+          authenticate: async () => {
+            preflightIdentity = await ensureAuthenticated(getEnvironmentConfig(), projectDir, {
+              throwOnCredentialValidationUnavailable: true,
+              timeoutMs: 10_000,
+            });
+            return Boolean(preflightIdentity);
+          },
+          resolve: async (projectSlug, environmentName) => {
+            runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
+            runtimeAuth.apiBaseUrl = connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl);
+            if (!runtimeAuth.apiToken || !runtimeAuth.apiBaseUrl) {
+              throw new Error(
+                "Veryfront Cloud credentials are unavailable. Run veryfront login and retry.",
+              );
+            }
+            await readProjectLinkForControlPlane(projectDir, runtimeAuth.apiBaseUrl);
+            const controlPlane = createHttpDeployControlPlane({
+              apiUrl: runtimeAuth.apiBaseUrl,
+              apiToken: runtimeAuth.apiToken,
+              apiTokenSource: runtimeAuth.apiTokenSource,
+              projectSlug,
+            });
+            const project = await controlPlane.getProject(projectSlug);
+            const environment = await controlPlane.getEnvironment(project.id, environmentName);
+            if (!environment) {
+              throw new Error(
+                `Environment "${environmentName}" does not exist in project "${project.slug}". Choose an existing environment with --env <name>.`,
+              );
+            }
+            await saveSharedProjectAssociation(projectDir, project.slug, runtimeAuth.apiBaseUrl);
+            return {
+              projectId: project.id,
+              projectSlug: project.slug,
+              environmentId: environment.id,
+              environmentName: environment.name,
+            };
+          },
+        },
+        isProxyMode,
+      );
+      const disposeConnectedRuntime =
+        connectedTarget && runtimeAuth.apiToken && runtimeAuth.apiBaseUrl
+          ? installConnectedLocalRuntime({
+            ...connectedTarget,
+            apiToken: runtimeAuth.apiToken,
+            apiBaseUrl: runtimeAuth.apiBaseUrl,
+            studioUrl: displayOptions.studioUrl ??
+              `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`,
+          })
+          : undefined;
       const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken, projectDir).catch(() => ({
         identity: null,
         projects: [],
@@ -300,14 +381,20 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
-      const started = await startDevServerOnFreePort(finalPort, (port) =>
-        startDevServer({
-          port,
-          projectDir,
-          enableHMR,
-          enableFastRefresh: true,
-          signal: shutdownController.signal,
-        }));
+      let started: { server: Awaited<ReturnType<typeof startDevServer>>; port: number };
+      try {
+        started = await startDevServerOnFreePort(finalPort, (port) =>
+          startDevServer({
+            port,
+            projectDir,
+            enableHMR,
+            enableFastRefresh: true,
+            signal: shutdownController.signal,
+          }));
+      } catch (error) {
+        await disposeConnectedRuntime?.();
+        throw error;
+      }
       devServer = started.server;
       const boundPort = started.port;
 
@@ -367,6 +454,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         try {
           keyboardHandler?.stop();
           shutdownController.abort();
+          await disposeConnectedRuntime?.();
           await mcpServer?.stop();
           await devServer?.stop();
         } catch {
@@ -400,6 +488,30 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       console.log();
       console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
       console.log(`  ${brand(serverUrl)}`);
+      console.log(
+        `  ${dim("Runtime")} local${
+          connectedTarget ? ` (${getConnectedLocalRuntime()?.runtimeId})` : ""
+        }`,
+      );
+      if (connectedTarget) {
+        if (preflightIdentity) console.log(`  ${dim("Account")} ${authStatus(preflightIdentity)}`);
+        console.log(`  ${dim("Project")} ${brand(connectedTarget.projectSlug)}`);
+        console.log(`  ${dim("Environment")} ${brand(connectedTarget.environmentName)} (shared)`);
+        console.log(`  ${dim("API")} ${runtimeAuth.apiBaseUrl}`);
+        const studioBase = displayOptions.studioUrl ??
+          `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`;
+        console.log(
+          `  ${dim("Studio")} ${studioBase.replace(/\/$/, "")}/projects/${
+            encodeURIComponent(connectedTarget.projectSlug)
+          }?panels=runs`,
+        );
+      } else {
+        console.log(
+          `  ${
+            dim("Cloud")
+          } Not linked. Cloud inference and Studio runs require a linked project. Run veryfront push to create or link one.`,
+        );
+      }
       const inferenceOptions = listInferenceOptions({
         apiToken: runtimeAuth.apiToken,
         projectSlug: runtimeAuth.projectSlug,
@@ -411,6 +523,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       });
       if (inferenceOptions.length > 0) {
         console.log(`  ${dim("Inference")} ${brand(inferenceOptions.join(", "))}`);
+        console.log(
+          displayOptions.defaultModel
+            ? `  ${dim("Default model")} ${brand(displayOptions.defaultModel)} (configured)`
+            : `  ${dim("Model")} selected per agent`,
+        );
       }
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored

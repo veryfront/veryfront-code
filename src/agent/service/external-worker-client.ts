@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
 
@@ -191,7 +192,25 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
   ),
 );
 
-type RunCredentials = { auth_token: string; run_event_token: string; run_terminal_token: string };
+type RunCredentials = {
+  auth_token: string;
+  run_event_token: string;
+  run_terminal_token: string;
+  inference_token?: string;
+};
+const privateWorkerCredentials = createPrivateWeakStore<
+  ExternalAgentWorkerClient,
+  (runId: string) => RunCredentials
+>();
+/** @internal Trusted local runtime access, excluded from public exports. */
+export function readExternalAgentWorkerRunAuthority(
+  client: ExternalAgentWorkerClient,
+  runId: string,
+) {
+  const read = privateWorkerCredentials.get(client);
+  if (!read) throw new Error("Trusted worker claim authority is unavailable.");
+  return read(runId);
+}
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
@@ -218,6 +237,7 @@ const WorkerClaimSchema = lazySchema(
         auth_token: v.string().min(1),
         run_event_token: v.string().min(1),
         run_terminal_token: v.string().min(1),
+        inference_token: v.string().min(1).optional(),
       }).optional(),
     })
   ),
@@ -322,6 +342,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
+    privateWorkerCredentials.set(this, (runId) => this.#credentialsFor(runId));
     this.#apiUrl = options.apiUrl.replace(/\/$/, "");
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;

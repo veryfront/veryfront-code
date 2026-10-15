@@ -5,14 +5,17 @@ import { cliLogger } from "#cli/utils";
 import type { ResolvedConfig } from "#cli/shared/config";
 import { clearProjectLink, readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
 import { normalizeControlPlane, type ProjectTarget } from "../../shared/deployment-provenance.ts";
+import { generateGitignoreContent } from "../../utils/env-prompt.ts";
 import { createPackageJson, createTypeScriptConfig } from "../init/config-generator.ts";
 
 const PACKAGE_JSON_PATH = "package.json";
 const TSCONFIG_PATH = "tsconfig.json";
+const GITIGNORE_PATH = ".gitignore";
 const PROJECT_LINK_PATH = ".veryfront/project.json";
 const LOCAL_BOOTSTRAP_PATHS = new Set([
   PACKAGE_JSON_PATH,
   TSCONFIG_PATH,
+  GITIGNORE_PATH,
   PROJECT_LINK_PATH,
 ]);
 
@@ -20,6 +23,7 @@ export interface PulledProjectBootstrapPlan {
   projectLinkAction: "create" | "update" | null;
   createPackageJson: boolean;
   createTsconfig: boolean;
+  createGitignore: boolean;
   writeCount: number;
 }
 
@@ -92,6 +96,7 @@ export async function preflightPulledProjectBootstrap(
   await readProjectLink(options.projectDir);
   await assertRegularBootstrapFile(options.projectDir, PACKAGE_JSON_PATH);
   await assertRegularBootstrapFile(options.projectDir, TSCONFIG_PATH);
+  await assertRegularBootstrapFile(options.projectDir, GITIGNORE_PATH);
 }
 
 export async function planPulledProjectBootstrap(
@@ -122,13 +127,22 @@ export async function planPulledProjectBootstrap(
     options.deletedPaths,
   ));
 
+  const createGitignore = !(await pathExistsInFinalState(
+    options.projectDir,
+    GITIGNORE_PATH,
+    options.pulledPaths,
+    options.deletedPaths,
+  ));
+
   return {
     projectLinkAction,
     createPackageJson,
     createTsconfig,
+    createGitignore,
     writeCount: Number(projectLinkAction !== null) +
       Number(createPackageJson) +
-      Number(createTsconfig),
+      Number(createTsconfig) +
+      Number(createGitignore),
   };
 }
 
@@ -144,6 +158,7 @@ export async function ensurePulledProjectBootstrap(
       }
       if (plan.createPackageJson) cliLogger.info(`  Would create: ${PACKAGE_JSON_PATH}`);
       if (plan.createTsconfig) cliLogger.info(`  Would create: ${TSCONFIG_PATH}`);
+      if (plan.createGitignore) cliLogger.info(`  Would create: ${GITIGNORE_PATH}`);
     }
     return;
   }
@@ -174,6 +189,11 @@ export async function ensurePulledProjectBootstrap(
     if (plan.createTsconfig) {
       createdFiles.push(join(options.projectDir, TSCONFIG_PATH));
       await createTypeScriptConfig(options.projectDir);
+    }
+    if (plan.createGitignore) {
+      const gitignorePath = join(options.projectDir, GITIGNORE_PATH);
+      await Deno.writeTextFile(gitignorePath, generateGitignoreContent(), { createNew: true });
+      createdFiles.push(gitignorePath);
     }
   } catch (error) {
     const rollbackErrors: unknown[] = [];

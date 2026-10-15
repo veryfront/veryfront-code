@@ -157,7 +157,11 @@ class CredentialValidationUnavailableError extends Error {
     readonly kind: CredentialValidationUnavailableKind,
     readonly status?: number,
   ) {
-    super("Could not validate existing login credentials");
+    super(
+      `Veryfront API is unavailable (${kind}${
+        status ? `, HTTP ${status}` : ""
+      }). Check the API URL and service, then retry. Your login was retained.`,
+    );
   }
 }
 
@@ -860,6 +864,7 @@ export async function login(
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | null> {
   const humanOutput = !isJsonMode();
 
@@ -870,14 +875,18 @@ export async function ensureAuthenticated(
       credential = await validateCredential(
         candidate.apiToken,
         candidate.validationEnv,
-        candidate.apiTokenSource === "token-store"
-          ? { throwOnCredentialValidationUnavailable: true }
-          : undefined,
+        {
+          ...(candidate.apiTokenSource === "token-store"
+            ? { throwOnCredentialValidationUnavailable: true }
+            : {}),
+          ...validationOptions,
+        },
       );
     } catch (error) {
       if (
         candidate.apiTokenSource === "token-store" &&
-        error instanceof CredentialValidationUnavailableError
+        error instanceof CredentialValidationUnavailableError &&
+        !validationOptions.throwOnCredentialValidationUnavailable
       ) {
         return null;
       }

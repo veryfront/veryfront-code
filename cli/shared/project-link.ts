@@ -170,3 +170,39 @@ export async function clearProjectLink(projectDir: string): Promise<void> {
   const inspected = await inspectProjectLinkPath(projectDir);
   if (inspected.linkExists) await Deno.remove(projectLinkPath(projectDir));
 }
+
+/** Track project identity and API origin so collaborators can reuse the association after clone. */
+export async function saveSharedProjectAssociation(
+  projectDir: string,
+  projectSlug: string,
+  apiUrl?: string,
+): Promise<void> {
+  const path = join(projectDir, "veryfront.json");
+  let existing: Record<string, unknown> = {};
+  try {
+    const info = await Deno.lstat(path);
+    if (info.isSymlink || !info.isFile) {
+      throw new Error("veryfront.json must be a regular file to save the project association.");
+    }
+    existing = JSON.parse(await Deno.readTextFile(path));
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      throw new Error("veryfront.json must contain a JSON object.");
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  const temporary = join(projectDir, `.veryfront-association-${crypto.randomUUID()}.tmp`);
+  try {
+    await Deno.writeTextFile(
+      temporary,
+      `${JSON.stringify({ ...existing, projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
+    );
+    await Deno.rename(temporary, path);
+  } finally {
+    try {
+      await Deno.remove(temporary);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+}

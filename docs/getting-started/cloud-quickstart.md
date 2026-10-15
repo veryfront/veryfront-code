@@ -21,15 +21,21 @@ npm create veryfront@latest support-agent -- --template ai-agent
 cd support-agent
 ```
 
-## Sign in and link the project
+## Select a Cloud project
+
+During scaffolding, select a new or existing Veryfront project. Follow the
+browser sign-in prompt when needed. You can skip this step and select a project
+when you run `npm run dev`.
+
+The project association is saved in `veryfront.json` without credentials.
+Commit that file so teammates can reuse the association after cloning. Each
+teammate signs in with their own account.
+
+A project pulled from Studio already has an association:
 
 ```bash
-npx veryfront@latest login
-npx veryfront@latest push
+npx veryfront@latest pull <PROJECT_SLUG>
 ```
-
-Sign-in stores the CLI credential. Push creates or links the Cloud project and
-prints its protected preview URL.
 
 ## Run through the AI Gateway
 
@@ -37,13 +43,17 @@ prints its protected preview URL.
 npm run dev
 ```
 
-The CLI confirms the gateway is available:
+The CLI prints the selected project, shared environment, local runtime and
+service URLs. The default environment is `preview`. To select another existing
+environment, run:
 
-```text
-✓ Ready in 1.3s
-http://localhost:3000
-Inference Veryfront Cloud AI Gateway
+```bash
+npm run dev -- --env production
 ```
+
+Application code executes on your machine. Inference and run records use the
+selected Veryfront services. Local edits take effect without pushing source.
+The environment's application data and quotas are shared with other members.
 
 ## Verify the agent locally
 
@@ -55,6 +65,12 @@ What is 128 divided by 8?
 
 The assistant calls the calculator tool and returns `16` through the Veryfront
 Cloud AI Gateway.
+
+## Inspect a run
+
+Open the Studio link printed beside the run ID in your terminal. Studio shows
+the run status, output and events. The terminal and Studio use the same run ID.
+Application logs remain visible in the development terminal.
 
 ## Run the eval
 
@@ -69,7 +85,10 @@ the expected answer through the gateway.
 
 ## Deploy to production
 
+Publish your local source before deploying:
+
 ```bash
+npx veryfront@latest push
 npx veryfront@latest deploy --env production
 ```
 

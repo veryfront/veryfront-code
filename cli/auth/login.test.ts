@@ -427,6 +427,27 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       });
     }
 
+    it("reports API unavailability instead of asking to log in during connected dev", async () => {
+      const originalFetch = globalThis.fetch;
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("connection refused"))) as typeof fetch;
+        const { ensureAuthenticated } = await import("./login.ts");
+        await assertRejects(
+          () =>
+            ensureAuthenticated({ ...testEnv, apiToken: "vf_test_secret" }, undefined, {
+              throwOnCredentialValidationUnavailable: true,
+            }),
+          Error,
+          "API is unavailable",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+      }
+    });
+
     it("retains a stored session and propagates unexpected validation failures", async () => {
       const originalFetch = globalThis.fetch;
       await saveToken("stored-unexpected-token", testEnv);

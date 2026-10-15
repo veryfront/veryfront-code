@@ -156,6 +156,10 @@ describe("resolveOrCreateProject", () => {
         assertEquals(calls.getProject, ["proj_1"]);
         if (outcome.kind !== "existing") throw new Error("unreachable");
         assertEquals(outcome.persisted, true);
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(join(dir, "veryfront.json"))).projectSlug,
+          "my-app",
+        );
         assertEquals(outcome.config.projectId, "proj_1");
         assertEquals(outcome.config.projectSlug, "my-app");
         assertEquals(await readLink(dir), {
