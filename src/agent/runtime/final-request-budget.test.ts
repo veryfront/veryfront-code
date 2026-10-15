@@ -18,6 +18,7 @@ import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import {
   enforceFinalRequestBudget,
   enforceProviderRequestBudget,
+  estimateRequestTokens,
   IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO,
   memoizeRequestBudgetInspection,
 } from "./final-request-budget.ts";
@@ -1528,6 +1529,41 @@ describe("invoke_agent child request budget", () => {
     });
     assertEquals(crowded.maxOutputTokens, 4_096);
   });
+
+  it("counts every dense script per character", () => {
+    for (const character of ["\u6f22", "\u3042", "\u30a2", "\ud55c", "\uff21"]) {
+      assert(
+        estimateRequestTokens(character.repeat(1_000)) >= 1_000,
+        `${character} must count at least one token per character`,
+      );
+    }
+  });
+
+  for (
+    const [script, text] of [
+      ["Cyrillic", "\u041f\u0440\u0438\u0432\u0435\u0442 \u043c\u0438\u0440 "],
+      ["Arabic", "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645 "],
+    ] as const
+  ) {
+    it(`admits a long ${script} history that fits the window`, () => {
+      // About 300k characters tokenizes to roughly 75k-100k real tokens, well
+      // inside a 200k window; counting each character as a token would reject it.
+      const history = Array.from({ length: 100 }, (_, index) => ({
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: text.repeat(Math.ceil(3_000 / text.length)),
+      }));
+      const result = enforceFinalRequestBudget({
+        system: "ok",
+        messages: history,
+        limit: { context: 200_000, output: 64_000 },
+        requestedOutputTokens: 64_000,
+      });
+      const estimate = result.estimatedInputTokens ?? 0;
+      assert(estimate < 200_000 - 4_096, `${script} estimate ${estimate} would reject`);
+      // Still conservative: at least two characters per token are counted.
+      assert(estimate >= 300_000 / 2);
+    });
+  }
 
   it("reserves an explicit output request in full", () => {
     const input = {

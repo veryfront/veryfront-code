@@ -16,21 +16,45 @@ function own(value: unknown, key: string): unknown {
 }
 
 /**
+ * Whether a UTF-16 unit belongs to a dense script, where one character is
+ * usually at least one token: CJK ideographs, radicals and punctuation, kana,
+ * Bopomofo, Hangul and full-width forms. Surrogate halves (astral CJK
+ * extensions, emoji) also count here, so an astral character counts as two.
+ */
+function isDenseUnit(code: number): boolean {
+  return (code >= 0x1100 && code <= 0x11ff) || // Hangul Jamo
+    (code >= 0x2e80 && code <= 0x9fff) || // CJK radicals .. CJK unified ideographs
+    (code >= 0xa960 && code <= 0xa97f) || // Hangul Jamo Extended-A
+    (code >= 0xac00 && code <= 0xdfff) || // Hangul syllables, Jamo Ext-B, surrogates
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+    (code >= 0xfe30 && code <= 0xfe4f) || // CJK compatibility forms
+    (code >= 0xff00 && code <= 0xffef); // Half-width and full-width forms
+}
+
+/** Characters per token assumed for non-ASCII text outside the dense scripts. */
+const OTHER_SCRIPT_CHARS_PER_TOKEN = 2;
+
+/**
  * Estimate the tokens of one serialized request value. ASCII text averages
- * about four characters per token, but dense scripts do not: a CJK, kana or
- * Hangul character is usually at least one token on its own, and other
- * non-ASCII text is close to that. Each non-ASCII UTF-16 unit therefore counts
- * as one token, so dense text is not underestimated several times over.
+ * about four characters per token. Dense scripts (CJK, kana, Hangul) count one
+ * token per character, so they are not underestimated several times over.
+ * Other non-ASCII scripts, such as Cyrillic, Greek, Arabic or Hebrew, usually
+ * tokenize at two to four characters per token, so they count conservatively
+ * at two without rejecting long histories that fit.
  */
 export function estimateRequestTokens(value: unknown): number {
   const text = stringifyChatJson(value ?? "");
   let ascii = 0;
   let dense = 0;
+  let other = 0;
   for (let index = 0; index < text.length; index++) {
-    if (text.charCodeAt(index) < 0x80) ascii++;
-    else dense++;
+    const code = text.charCodeAt(index);
+    if (code < 0x80) ascii++;
+    else if (isDenseUnit(code)) dense++;
+    else other++;
   }
-  return Math.ceil(ascii / DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken) + dense;
+  return Math.ceil(ascii / DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken) + dense +
+    Math.ceil(other / OTHER_SCRIPT_CHARS_PER_TOKEN);
 }
 
 /**
