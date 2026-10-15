@@ -550,11 +550,14 @@ function trustedSafeParseSucceeds(
   return IntrinsicReflectApply(parse, schema, [value]).success === true;
 }
 
+/** Records and arrays the deny-all mapping reads from or writes to. */
+type OwnDataContainer = Record<string, unknown> | readonly unknown[];
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !ArrayIsArray(value);
 }
 
-function readOwn(source: object, key: string | number): unknown {
+function readOwn(source: OwnDataContainer, key: string | number): unknown {
   if (!ObjectHasOwn(source, key)) return undefined;
   const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
@@ -565,7 +568,7 @@ function readOwn(source: object, key: string | number): unknown {
  * both record keys and generated array elements: plain `[]`/`{}` assignment
  * would run an `Object.prototype`/`Array.prototype` setter instead.
  */
-function defineOwnData(target: object, key: string | number, value: unknown): void {
+function defineOwnData(target: OwnDataContainer, key: string | number, value: unknown): void {
   // A null-prototype descriptor: inherited `get`/`set` cannot leak into it.
   const descriptor = ObjectCreate(null) as PropertyDescriptor;
   descriptor.value = value;
