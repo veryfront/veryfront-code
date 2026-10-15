@@ -902,6 +902,30 @@ describe("automated review evidence", () => {
     }
   });
 
+  it("accepts a no-findings verdict behind the Codex review receipt marker", async () => {
+    const receipt = codexComment();
+    receipt.body = `<!-- codex-review-receipt:v1 -->\n\n${receipt.body}`;
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [receipt] },
+        HEAD,
+        (ref) => Promise.resolve(ref === HEAD.slice(0, 10) ? HEAD : undefined),
+      ))?.source,
+      "codex-comment",
+    );
+
+    const finding = codexFindingComment();
+    finding.body = `<!-- codex-review-receipt:v1 -->\n\n${finding.body}`;
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [finding] },
+        HEAD,
+        (ref) => Promise.resolve(ref === HEAD.slice(0, 10) ? HEAD : undefined),
+      ),
+      undefined,
+    );
+  });
+
   it("accepts an exact-head Codex approval but not a findings review", async () => {
     assertEquals(
       (await findAutomatedReview({

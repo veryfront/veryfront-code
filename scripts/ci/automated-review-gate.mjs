@@ -7,6 +7,8 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+// The connector may prefix its verdict with this receipt marker.
+const CODEX_REVIEW_RECEIPT = /^<!-- codex-review-receipt:v1 -->\s*/;
 const CODEX_REVIEW_SUMMARY_MARKER =
   "<!-- codex-pull-request-review-summary -->";
 const CODEX_REVIEW_SUMMARY_ROW =
@@ -1240,7 +1242,8 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      const cleanVerdict = comment.body.startsWith(CODEX_NO_FINDINGS);
+      const cleanVerdict = comment.body.replace(CODEX_REVIEW_RECEIPT, "")
+        .startsWith(CODEX_NO_FINDINGS);
       const freshness = evidenceFreshness(
         comment,
         "commented",
