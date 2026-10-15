@@ -887,6 +887,20 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("rejects a deny-all config that is oversized only through an unknown field", () => {
+    const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["web_search"],
+        unknownPadding: "x".repeat(70_000),
+      }),
+      tools: [{ name: "web_search", description: "Injected caller tool", parameters: {} }],
+      forwardedProps: {
+        runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+      },
+    }));
+    assertEquals(parsed.success, false);
+  });
+
   it("rejects malformed caller-injected tools on a deny-all invocation instead of clearing them", () => {
     for (const tools of ["web_search", [{ description: "missing name" }]]) {
       const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({

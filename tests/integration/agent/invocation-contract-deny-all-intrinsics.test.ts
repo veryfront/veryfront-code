@@ -1,16 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { parseRuntimeAgentRunInvocationValue } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+import {
+  getRuntimeAgentRuntimeOverridesSchema,
+  parseRuntimeAgentRunInvocationValue,
+  safeParseRuntimeAgentRunInvocationValue,
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
-// These tests install an inherited Array.prototype element setter to prove the
-// deny-all mapping defines generated allowlist entries as own data, so they
-// run in integration rather than unit.
+// These tests install inherited Array.prototype / Object.prototype accessors
+// and replace a materialized schema method to prove the deny-all mapping uses
+// own data and captured parsers, so they run in integration rather than unit.
 
 const projectId = "10000000-1000-4000-8000-100000000005";
 const userId = "10000000-1000-4000-8000-100000000004";
 
-function createDenyAllInvocation(): Record<string, unknown> {
+function createDenyAllInvocation(
+  providerTools: string[] = ["web_search"],
+): Record<string, unknown> {
   return {
     run: {
       agentServiceId: "1-runtime-provider",
@@ -41,7 +47,7 @@ function createDenyAllInvocation(): Record<string, unknown> {
       description: "Runs without host tools.",
       instructions: "Answer directly.",
       tools: false,
-      providerTools: ["web_search"],
+      providerTools,
     },
   };
 }
@@ -77,4 +83,41 @@ it("keeps generated deny-all allowlists intact when an Array.prototype element s
   const runtimeOverrides = parsed.forwardedProps?.runtimeOverrides as Record<string, unknown>;
   assertEquals(runtimeOverrides.allowedTools, ["web_search"]);
   assertEquals(runtimeOverrides.toolAllowlist, ["web_search"]);
+});
+
+it("does not restore discarded deny-all fields through inherited Object.prototype getters", () => {
+  const invocation = createDenyAllInvocation();
+  (invocation.agentConfig as Record<string, unknown>).bootstrapSkill = "support-triage";
+  Object.defineProperty(Object.prototype, "bootstrapSkill", {
+    configurable: true,
+    get() {
+      return "support-triage";
+    },
+  });
+
+  let parsed: ReturnType<typeof parseRuntimeAgentRunInvocationValue>;
+  try {
+    parsed = parseRuntimeAgentRunInvocationValue(invocation);
+  } finally {
+    delete (Object.prototype as Record<string, unknown>).bootstrapSkill;
+  }
+
+  assertEquals(Object.hasOwn(parsed.agentConfig ?? {}, "bootstrapSkill"), false);
+});
+
+it("rejects an oversized deny-all allowlist when the live override schema method is replaced", () => {
+  const providerTools = Array.from({ length: 101 }, (_, index) => `provider_tool_${index}`);
+  const invocation = createDenyAllInvocation(providerTools);
+  const schema = getRuntimeAgentRuntimeOverridesSchema() as unknown as Record<string, unknown>;
+  const originalSafeParse = schema.safeParse;
+  schema.safeParse = (data: unknown) => ({ success: true, data });
+
+  let parsed: ReturnType<typeof safeParseRuntimeAgentRunInvocationValue>;
+  try {
+    parsed = safeParseRuntimeAgentRunInvocationValue(invocation);
+  } finally {
+    schema.safeParse = originalSafeParse;
+  }
+
+  assertEquals(parsed.success, false);
 });

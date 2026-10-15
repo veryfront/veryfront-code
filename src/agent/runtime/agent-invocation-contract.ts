@@ -582,12 +582,21 @@ function appendOwn<T>(target: T[], value: T): void {
   defineOwnData(target, target.length, value);
 }
 
-/** Copy own data properties without re-reading accessors (they are dropped). */
+/** A record with no prototype: inherited properties can never be read from it. */
+function createNullPrototypeRecord(): Record<string, unknown> {
+  return ObjectCreate(null) as Record<string, unknown>;
+}
+
+/**
+ * Copy own data properties without re-reading accessors (they are dropped).
+ * The copy has a null prototype, so an omitted key cannot reappear through an
+ * inherited `Object.prototype` getter when the schema reads known fields.
+ */
 function copyOwnDataRecord(
   source: Record<string, unknown>,
   omit: readonly string[] = [],
 ): Record<string, unknown> {
-  const copy: Record<string, unknown> = {};
+  const copy = createNullPrototypeRecord();
   const keys = ObjectKeys(source);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
@@ -707,7 +716,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   const normalized = copyOwnDataRecord(value);
   // Validate the authored config (with the deny-all selector expressed as the
   // equivalent empty selector) before any field is discarded. A config that
-  // fails keeps its invalid fields so the invocation schema reports them.
+  // fails keeps `tools: false`, which the invocation schema always rejects:
+  // the schema strips unknown fields before its size refinement, so leaving
+  // only the invalid fields in place would not reliably fail closed.
   const validationAgentConfig = copyOwnDataRecord(agentConfig);
   defineOwnData(validationAgentConfig, "tools", []);
   if (
@@ -717,7 +728,7 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
       validationAgentConfig,
     ) || !isWithinJsonSizeLimit(validationAgentConfig, MAX_AGENT_CONFIG_BYTES)
   ) {
-    defineOwnData(normalized, "agentConfig", validationAgentConfig);
+    defineOwnData(normalized, "agentConfig", copyOwnDataRecord(agentConfig));
     return { value: normalized, denyAll: true };
   }
   // Deny-all forbids the skill loader, so no skill is selectable either; an
@@ -757,7 +768,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     // Leave malformed caller data for the invocation schema to reject.
     return { value: normalized, denyAll: true };
   }
-  const forwardedRecord = forwardedProps === undefined ? {} : copyOwnDataRecord(forwardedProps);
+  const forwardedRecord = forwardedProps === undefined
+    ? createNullPrototypeRecord()
+    : copyOwnDataRecord(forwardedProps);
   defineOwnData(normalized, "forwardedProps", forwardedRecord);
   const runtimeOverrides = readOwn(forwardedRecord, "runtimeOverrides");
   if (runtimeOverrides !== undefined && !isPlainRecord(runtimeOverrides)) {
@@ -767,7 +780,7 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // Forwarded integration tools are remote tool sources as well; deny-all
   // drops them so none can claim an allowlisted provider-native name.
   const runtimeOverridesRecord = runtimeOverrides === undefined
-    ? {}
+    ? createNullPrototypeRecord()
     : copyOwnDataRecord(runtimeOverrides, DENY_ALL_DISCARDED_RUNTIME_OVERRIDE_KEYS);
   defineOwnData(forwardedRecord, "runtimeOverrides", runtimeOverridesRecord);
   // A present but malformed caller restriction is left in place so the
@@ -837,7 +850,13 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
 const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
   getRuntimeAgentRunInvocationSchema().superRefine((input, ctx) => {
     const runtimeOverrides = input.forwardedProps?.runtimeOverrides;
-    const parsed = getRuntimeAgentRuntimeOverridesSchema().safeParse(runtimeOverrides);
+    // Captured parser: replacing the live schema method after module load
+    // cannot approve an invalid generated override.
+    const parsed = IntrinsicReflectApply(
+      TrustedDenyAllRuntimeOverridesSafeParse,
+      trustedDenyAllRuntimeOverridesSchema,
+      [runtimeOverrides],
+    );
     const toolAllowlist = isPlainRecord(runtimeOverrides)
       ? readOwnStrictStringArray(runtimeOverrides, "toolAllowlist")
       : MALFORMED;
