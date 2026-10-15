@@ -3,6 +3,7 @@ import { DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS } from "#veryfront/chat/stream-watc
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { parseAgentServiceConfig } from "../service/config.ts";
 import {
+  hostedFirstProgressWindowMs,
   resetHostedModelStreamTimeoutWarningsForTests,
   resolveHostedModelRuntimeOptions,
   resolveHostedModelStreamTimeouts,
@@ -18,13 +19,27 @@ describe("host-owned model stream timeouts", () => {
     for (let request = 0; request < 3; request++) {
       assertEquals(
         resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), 120_000, warn),
-        { firstProgressTimeoutMs: 59_999 },
+        { firstProgressTimeoutMs: 54_000 },
       );
     }
     assertEquals(warnings.length, 1);
     assertStringIncludes(warnings[0]!.message, "VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS");
     assertStringIncludes(warnings[0]!.message, "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000ms");
-    assertStringIncludes(warnings[0]!.message, "59999ms");
+    assertStringIncludes(warnings[0]!.message, "54000ms");
+  });
+
+  it("leaves real headroom below the watchdog for the retry of a derived budget", () => {
+    for (const idle of [10_000, 30_000, 120_000]) {
+      const resolved = resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), idle);
+      const firstProgress = resolved?.firstProgressTimeoutMs;
+      if (firstProgress === undefined) throw new Error(`${idle}ms derives no budget`);
+      // The whole replayed window still ends well before the outer watchdog.
+      const spare = idle - hostedFirstProgressWindowMs(firstProgress);
+      assertEquals(spare >= Math.max(1_000, idle * 0.1), true, `${idle}ms leaves ${spare}ms`);
+      if (resolved?.semanticIdleTimeoutMs !== undefined) {
+        assertEquals(idle - resolved.semanticIdleTimeoutMs >= 1_000, true);
+      }
+    }
   });
 
   it("names the env vars and effective values when an explicit budget does not fit", () => {
@@ -67,11 +82,11 @@ describe("host-owned model stream timeouts", () => {
       VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "20000",
     });
     assertEquals(resolveHostedModelStreamTimeouts(config, 90_000), {
-      firstProgressTimeoutMs: 44_999,
+      firstProgressTimeoutMs: 40_500,
       semanticIdleTimeoutMs: 20_000,
     });
     assertEquals(resolveHostedModelStreamTimeouts(config, 120_000), {
-      firstProgressTimeoutMs: 59_999,
+      firstProgressTimeoutMs: 54_000,
       semanticIdleTimeoutMs: 20_000,
     });
     assertEquals(resolveHostedModelStreamTimeouts(config, DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS), {
@@ -115,13 +130,13 @@ describe("host-owned model stream timeouts", () => {
 
   it("derives unset defaults under an outer budget shorter than both", () => {
     assertEquals(resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), 10_000), {
-      firstProgressTimeoutMs: 4_999,
-      semanticIdleTimeoutMs: 9_999,
+      firstProgressTimeoutMs: 4_500,
+      semanticIdleTimeoutMs: 9_000,
     });
     assertThrows(
-      () => resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), 1),
+      () => resolveHostedModelStreamTimeouts(parseAgentServiceConfig({}), 1_000),
       TypeError,
-      "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=1ms",
+      "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=1000ms",
     );
   });
 
@@ -131,7 +146,7 @@ describe("host-owned model stream timeouts", () => {
     });
     assertEquals(resolveHostedModelStreamTimeouts(config, 10_000), {
       firstProgressTimeoutMs: 4_000,
-      semanticIdleTimeoutMs: 9_999,
+      semanticIdleTimeoutMs: 9_000,
     });
   });
 

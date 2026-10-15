@@ -453,8 +453,9 @@ service rejects an explicitly set budget at or above that watchdog when it
 creates the chat runtime, and the error names both variables and their
 effective values. When a variable is unset and its default does not fit, for
 example with the watchdog pinned to the previous `120000` default, the service
-uses the largest budget that fits (`59999` for first progress) and logs a
-one-time warning instead of rejecting requests.
+uses the largest budget that fits while leaving at least 1 second or 10% of
+the watchdog for the retry (`54000` for first progress) and logs a one-time
+warning instead of rejecting requests.
 
 Delegated child agents inherit a budget only when its window is shorter than
 the child stream watchdog (`45000`). A longer budget leaves that child on the

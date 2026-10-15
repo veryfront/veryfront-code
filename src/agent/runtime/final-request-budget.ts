@@ -16,45 +16,44 @@ function own(value: unknown, key: string): unknown {
 }
 
 /**
- * Whether a UTF-16 unit belongs to a dense script, where one character is
- * usually at least one token: CJK ideographs, radicals and punctuation, kana,
- * Bopomofo, Hangul and full-width forms. Surrogate halves (astral CJK
- * extensions, emoji) also count here, so an astral character counts as two.
+ * Whether a UTF-16 unit belongs to a script that common tokenizers are known
+ * to cover efficiently: Latin-1 and Latin Extended (with combining marks),
+ * Greek, Cyrillic, Hebrew, Arabic and general punctuation. This is an explicit
+ * allowlist; every other script is treated as dense by default.
  */
-function isDenseUnit(code: number): boolean {
-  return (code >= 0x1100 && code <= 0x11ff) || // Hangul Jamo
-    (code >= 0x2e80 && code <= 0x9fff) || // CJK radicals .. CJK unified ideographs
-    (code >= 0xa960 && code <= 0xa97f) || // Hangul Jamo Extended-A
-    (code >= 0xac00 && code <= 0xdfff) || // Hangul syllables, Jamo Ext-B, surrogates
-    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
-    (code >= 0xfe30 && code <= 0xfe4f) || // CJK compatibility forms
-    (code >= 0xff00 && code <= 0xffef); // Half-width and full-width forms
+function isEfficientScriptUnit(code: number): boolean {
+  return (code >= 0x0080 && code <= 0x052f) || // Latin-1, Latin Ext-A/B, IPA, marks, Greek, Cyrillic
+    (code >= 0x0590 && code <= 0x06ff) || // Hebrew, Arabic
+    (code >= 0x0750 && code <= 0x077f) || // Arabic Supplement
+    (code >= 0x1e00 && code <= 0x1fff) || // Latin Extended Additional, Greek Extended
+    (code >= 0x2000 && code <= 0x206f); // General punctuation
 }
 
-/** Characters per token assumed for non-ASCII text outside the dense scripts. */
-const OTHER_SCRIPT_CHARS_PER_TOKEN = 2;
+/** Characters per token assumed for the allowlisted non-ASCII scripts. */
+const EFFICIENT_SCRIPT_CHARS_PER_TOKEN = 2;
 
 /**
- * Estimate the tokens of one serialized request value. ASCII text averages
- * about four characters per token. Dense scripts (CJK, kana, Hangul) count one
- * token per character, so they are not underestimated several times over.
- * Other non-ASCII scripts, such as Cyrillic, Greek, Arabic or Hebrew, usually
- * tokenize at two to four characters per token, so they count conservatively
- * at two without rejecting long histories that fit.
+ * Estimate the tokens of one serialized request value, safe by default. ASCII
+ * text averages about four characters per token, and the allowlisted scripts
+ * (see {@link isEfficientScriptUnit}) usually two to four, so they count at
+ * two. Every other non-ASCII UTF-16 unit counts as one token: CJK, kana,
+ * Hangul, Thai, Devanagari, Ethiopic and any script without a known bound can
+ * use one or more tokens per character, and an astral character such as an
+ * emoji counts as two through its surrogate pair.
  */
 export function estimateRequestTokens(value: unknown): number {
   const text = stringifyChatJson(value ?? "");
   let ascii = 0;
+  let efficient = 0;
   let dense = 0;
-  let other = 0;
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index);
     if (code < 0x80) ascii++;
-    else if (isDenseUnit(code)) dense++;
-    else other++;
+    else if (isEfficientScriptUnit(code)) efficient++;
+    else dense++;
   }
-  return Math.ceil(ascii / DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken) + dense +
-    Math.ceil(other / OTHER_SCRIPT_CHARS_PER_TOKEN);
+  return Math.ceil(ascii / DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken) +
+    Math.ceil(efficient / EFFICIENT_SCRIPT_CHARS_PER_TOKEN) + dense;
 }
 
 /**

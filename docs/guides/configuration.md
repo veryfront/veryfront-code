@@ -400,8 +400,8 @@ Upgrade note: the default watchdog moved from `120000` to `150000` so that two
 `60000` first-progress attempts fit. When a budget variable is unset and its
 default does not fit under a pinned watchdog (such as
 `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000`), the service derives the largest
-budget that fits (`59999`) and logs a one-time warning instead of rejecting
-requests. Raise the watchdog or set the budget explicitly to silence it.
+budget that fits while leaving at least 1 second or 10% of the watchdog spare
+(`54000`), and logs a one-time warning instead of rejecting requests. Raise the watchdog or set the budget explicitly to silence it.
 
 Delegated child agents inherit a budget only when its window (twice the value
 for first progress) is shorter than the child stream watchdog (`45000`). A

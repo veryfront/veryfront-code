@@ -1530,13 +1530,26 @@ describe("invoke_agent child request budget", () => {
     assertEquals(crowded.maxOutputTokens, 4_096);
   });
 
-  it("counts every dense script per character", () => {
-    for (const character of ["\u6f22", "\u3042", "\u30a2", "\ud55c", "\uff21"]) {
+  it("counts scripts outside the efficient allowlist at least one token per character", () => {
+    const scripts = {
+      CJK: "\u6f22",
+      Hiragana: "\u3042",
+      Katakana: "\u30a2",
+      Hangul: "\ud55c",
+      FullWidth: "\uff21",
+      Thai: "\u0e01",
+      Devanagari: "\u0915",
+      Ethiopic: "\u1200",
+      Unassigned: "\u0fff",
+    };
+    for (const [script, character] of Object.entries(scripts)) {
       assert(
         estimateRequestTokens(character.repeat(1_000)) >= 1_000,
-        `${character} must count at least one token per character`,
+        `${script} must count at least one token per character`,
       );
     }
+    // An astral character such as an emoji counts as two tokens.
+    assert(estimateRequestTokens("\u{1F600}".repeat(1_000)) >= 2_000);
   });
 
   for (

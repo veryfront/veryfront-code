@@ -13,6 +13,16 @@ export function hostedFirstProgressWindowMs(firstProgressTimeoutMs: number): num
   return firstProgressTimeoutMs * RUNTIME_PROVIDER_STREAM_ATTEMPTS;
 }
 
+/**
+ * Time a derived budget leaves below the outer watchdog: at least one second,
+ * or a tenth of the watchdog. It covers cancelling a timed-out stream, opening
+ * the replay and propagating the model deadline, so the model error, not the
+ * generic watchdog stall, reaches the caller.
+ */
+export function hostedDerivedBudgetHeadroomMs(outerIdleTimeoutMs: number): number {
+  return Math.max(1_000, Math.ceil(outerIdleTimeoutMs * 0.1));
+}
+
 const FIRST_PROGRESS_ENV = "VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS";
 const SEMANTIC_IDLE_ENV = "VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS";
 const CHAT_IDLE_ENV = "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS";
@@ -49,7 +59,8 @@ function warnDerivedBudgetOnce(
  * outer chat watchdog is a configuration error. An unset budget whose
  * framework default does not fit (for example a watchdog pinned to the
  * pre-150s default of 120000ms) is instead derived as the largest value that
- * fits, with a one-time warning, so upgrades never reject every request.
+ * fits with {@link hostedDerivedBudgetHeadroomMs} to spare, with a one-time
+ * warning, so upgrades never reject every request.
  */
 export function resolveHostedModelStreamTimeouts(
   config: Pick<
@@ -73,7 +84,10 @@ export function resolveHostedModelStreamTimeouts(
   } else {
     const defaultMs = DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs;
     if (hostedFirstProgressWindowMs(defaultMs) >= outerIdleTimeoutMs) {
-      const derivedMs = Math.floor((outerIdleTimeoutMs - 1) / RUNTIME_PROVIDER_STREAM_ATTEMPTS);
+      const derivedMs = Math.floor(
+        (outerIdleTimeoutMs - hostedDerivedBudgetHeadroomMs(outerIdleTimeoutMs)) /
+          RUNTIME_PROVIDER_STREAM_ATTEMPTS,
+      );
       if (derivedMs < 1) {
         throw new TypeError(
           `Hosted chat stream idle timeout is too short for any model first progress budget: effective ${CHAT_IDLE_ENV}=${outerIdleTimeoutMs}ms`,
@@ -102,7 +116,7 @@ export function resolveHostedModelStreamTimeouts(
   } else {
     const defaultMs = DEFAULT_STREAM_LIFECYCLE_POLICY.semanticIdleTimeoutMs;
     if (defaultMs >= outerIdleTimeoutMs) {
-      const derivedMs = outerIdleTimeoutMs - 1;
+      const derivedMs = outerIdleTimeoutMs - hostedDerivedBudgetHeadroomMs(outerIdleTimeoutMs);
       if (derivedMs < 1) {
         throw new TypeError(
           `Hosted chat stream idle timeout is too short for any model semantic idle budget: effective ${CHAT_IDLE_ENV}=${outerIdleTimeoutMs}ms`,
