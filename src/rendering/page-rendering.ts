@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { ensureError, getErrorMessage, RENDER_ERROR } from "#veryfront/errors";
 import type * as BundledReact from "react";
@@ -343,10 +345,12 @@ export function handleMDXPage(
     contentSourceId?: string;
     /** React version resolved for this project. */
     reactVersion?: string;
+    reactPeers?: LocalReactPeerSnapshot;
     /** Request-scoped dependency-pinning state used by transform caches. */
     dependencyPinningCacheKey?: string;
     /** Immutable package map paired with dependencyPinningCacheKey. */
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
     /** Bare npm package roots that the runtime resolves without bundling. */
@@ -380,9 +384,11 @@ export function handleMDXPage(
           // module loader and #3844's production-leaning default.
           mode: options?.mode === "development" ? "development" : "production",
           reactVersion: options?.reactVersion,
+          reactPeers: options?.reactPeers,
           serverExternalPackages: options?.serverExternalPackages,
           dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
           dependencyPinningDependencies: options?.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
           dependencyPinningSource: options?.dependencyPinningSource,
           moduleServerOrigin: options?.url?.origin,
           isLocalProject: options?.isLocalProject,
@@ -427,7 +433,7 @@ export function handleMDXPage(
         }
 
         // Get project's React for createElement to ensure element symbols match user components
-        const React = await getProjectReact(options?.reactVersion, adapter);
+        const React = await getProjectReact(options?.reactVersion, adapter, options?.reactPeers);
         const pageElement = React.createElement(
           MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,
           { components: mergedComponents },

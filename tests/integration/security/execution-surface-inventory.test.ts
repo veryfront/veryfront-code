@@ -124,6 +124,10 @@ const GUARDED_SURFACES: Record<
     surface: "Renderer capability",
     guards: 2,
   },
+  "src/rendering/snippet-renderer.ts": {
+    surface: "Snippet compilation and SSR capability",
+    guards: 3,
+  },
   "src/routing/api/handler.ts": {
     surface: "API route ownership and host-realm selection",
     guards: 11,
@@ -189,8 +193,8 @@ const GUARDED_SURFACES: Record<
     guards: 2,
   },
   "src/server/handlers/request/snippet.handler.ts": {
-    surface: "Component snippets",
-    guards: 1,
+    surface: "Component snippets and captured host grant",
+    guards: 3,
   },
   "src/server/handlers/request/ssr/ssr.handler.ts": {
     surface: "SSR handler",

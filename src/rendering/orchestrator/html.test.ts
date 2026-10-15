@@ -1,3 +1,4 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { registerTailwindExtension } from "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
@@ -579,7 +580,10 @@ describe("HTMLGenerator helpers", () => {
         return JSON.parse(json) as { dependencyPinningCacheKey?: string };
       };
 
-      assertStringIncludes(parseImportMap(snapshotBHtml).react!, "react@19.0.0");
+      assertStringIncludes(
+        parseImportMap(snapshotBHtml).react!,
+        isNode || isBun ? "react@19.2.4" : "react@19.0.0",
+      );
       assertStringIncludes(parseImportMap(snapshotAHtml).react!, "react@18.3.1");
       assertEquals(
         parseHydrationData(snapshotAHtml).dependencyPinningCacheKey,

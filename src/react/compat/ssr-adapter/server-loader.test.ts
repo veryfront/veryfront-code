@@ -111,7 +111,7 @@ describe("react/compat/ssr-adapter/server-loader", () => {
     assertStrictEquals(await getProjectReact(React.version), React);
     assertEquals(
       references.map((reference) => reference.kind === "package" && reference.specifier).sort(),
-      ["react", "react-dom/server"],
+      ["react", "react", "react-dom/server"],
     );
     await assertRejects(() => getProjectReact("17.0.2", adapter), Error, "React runtime version");
   });

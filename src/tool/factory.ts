@@ -263,7 +263,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
 export interface DynamicToolConfig {
   id?: string;
   description: string;
-  /** Catalog navigation hints for `tool_search`, without execution authority. */
+  /** Catalog navigation hints for `veryfront__tool_search`, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   inputSchema: unknown;
   inputSchemaJson?: JsonSchema;

@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
@@ -43,6 +45,7 @@ import type {
 const logger = rendererLogger.component("layout-applicator");
 
 export interface LayoutApplicationOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   projectDir: string;
   projectId: string;
   projectSlug: string;
@@ -69,6 +72,7 @@ export interface LayoutApplicationOptions {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Server-trusted local-project identity. */
   isLocalProject?: boolean;
@@ -81,6 +85,7 @@ interface LayoutApplicatorDependencies {
 }
 
 export class LayoutApplicator {
+  private readonly reactPeers?: LocalReactPeerSnapshot;
   private projectDir: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
@@ -100,6 +105,7 @@ export class LayoutApplicator {
   private readonly configuredReactVersion?: string;
   private readonly dependencyPinningCacheKey?: string;
   private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  private readonly dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   private readonly dependencyPinningSource?: DependencyPinningSourceInput;
   private readonly isLocalProject: boolean;
   private readonly signal?: AbortSignal;
@@ -133,6 +139,8 @@ export class LayoutApplicator {
     this.configuredReactVersion = options.reactVersion;
     this.dependencyPinningCacheKey = options.dependencyPinningCacheKey;
     this.dependencyPinningDependencies = options.dependencyPinningDependencies;
+    this.dependencyPinningConfiguredVersions = options.dependencyPinningConfiguredVersions;
+    this.reactPeers = options.reactPeers;
     this.dependencyPinningSource = options.dependencyPinningSource;
     this.isLocalProject = options.isLocalProject === true;
     this.signal = options.signal;
@@ -152,10 +160,13 @@ export class LayoutApplicator {
     this.reactVersionPromise ??= this.configuredReactVersion
       ? Promise.resolve(this.configuredReactVersion)
       : resolveProjectReactVersion({
+        adapter: this.adapter,
+        reactPeers: this.reactPeers,
         projectDir: this.projectDir,
         config: this.config,
         dependencyPinningCacheKey: this.dependencyPinningCacheKey,
         dependencyPinningDependencies: this.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
       });
     return this.reactVersionPromise;
   }
@@ -188,7 +199,7 @@ export class LayoutApplicator {
             layoutDataMap,
             reactVersion,
           );
-          const React = await getProjectReact(reactVersion, this.adapter);
+          const React = await getProjectReact(reactVersion, this.adapter, this.reactPeers);
           const island = React.createElement(
             "div",
             { id: CLIENT_PAGE_ISLAND_ID },
@@ -232,7 +243,7 @@ export class LayoutApplicator {
           wrappedElement = await this.wrapWithAppComponent(wrappedElement);
         }
 
-        const React = await getProjectReact(reactVersion, this.adapter);
+        const React = await getProjectReact(reactVersion, this.adapter, this.reactPeers);
 
         const headingsArray = this.headings ?? [];
         const flatParams = flattenRouteParams(this.params);
@@ -331,6 +342,8 @@ export class LayoutApplicator {
           this.config,
           this.isLocalProject,
           this.signal,
+          this.dependencyPinningConfiguredVersions,
+          this.reactPeers,
         );
       },
       {
@@ -409,6 +422,8 @@ export class LayoutApplicator {
       reactVersion: await this.getReactVersion(),
       dependencyPinningCacheKey: this.dependencyPinningCacheKey,
       dependencyPinningDependencies: this.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
+      reactPeers: this.reactPeers,
       dependencyPinningSource: this.dependencyPinningSource,
       moduleServerOrigin: this.requestUrl?.origin,
       signal: this.signal,
@@ -477,6 +492,8 @@ export class LayoutApplicator {
                   reactVersion: await this.getReactVersion(),
                   dependencyPinningCacheKey: this.dependencyPinningCacheKey,
                   dependencyPinningDependencies: this.dependencyPinningDependencies,
+                  dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
+                  reactPeers: this.reactPeers,
                   dependencyPinningSource: this.dependencyPinningSource,
                   serverExternalPackages: this.config?.build?.serverExternalPackages,
                   signal: this.signal,
@@ -487,7 +504,11 @@ export class LayoutApplicator {
 
           if (!App) return pageElement;
 
-          const React = await getProjectReact(await this.getReactVersion(), this.adapter);
+          const React = await getProjectReact(
+            await this.getReactVersion(),
+            this.adapter,
+            this.reactPeers,
+          );
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
@@ -536,6 +557,8 @@ export class LayoutApplicator {
           reactVersion: await this.getReactVersion(),
           dependencyPinningCacheKey: this.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
+          reactPeers: this.reactPeers,
           dependencyPinningSource: this.dependencyPinningSource,
           serverExternalPackages: this.config?.build?.serverExternalPackages,
           signal: this.signal,
@@ -556,7 +579,7 @@ export class LayoutApplicator {
       SpanNames.LAYOUT_WRAP_RESERVED,
       async () => {
         const reactVersion = await this.getReactVersion();
-        const React = await getProjectReact(reactVersion, this.adapter);
+        const React = await getProjectReact(reactVersion, this.adapter, this.reactPeers);
 
         try {
           const segmentDir = dirname(pageFilePath);
@@ -584,6 +607,8 @@ export class LayoutApplicator {
               this.config?.build?.serverExternalPackages,
               this.signal,
               reservedDeps,
+              this.dependencyPinningConfiguredVersions,
+              this.reactPeers,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -601,6 +626,8 @@ export class LayoutApplicator {
               this.config?.build?.serverExternalPackages,
               this.signal,
               reservedDeps,
+              this.dependencyPinningConfiguredVersions,
+              this.reactPeers,
             ),
           ]);
 

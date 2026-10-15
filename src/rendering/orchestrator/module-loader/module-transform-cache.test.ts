@@ -62,6 +62,50 @@ describe("module-loader/module-transform-cache", () => {
     await esbuild.stop();
   });
 
+  it("invalidates the outer transform cache when peer runtime scope changes at fixed versions", async () => {
+    const cache = new Map<string, string>();
+    let computes = 0;
+    const deps = createDeps({
+      getOrComputeTransform: async (key, compute) => {
+        const cached = cache.get(key);
+        if (cached !== undefined) return { code: cached, cacheHit: true };
+        const code = await compute();
+        cache.set(key, code);
+        return { code, cacheHit: false };
+      },
+      transformToESM: () => Promise.resolve(`export const generation = ${++computes};`),
+      validateCachedBundlesByManifestOrCode: () =>
+        Promise.resolve({ valid: true, failedHashes: [], source: "code" }),
+    });
+    const input = {
+      fileContent: "export const page = 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production" as const,
+      adapter: {} as RuntimeAdapter,
+      reactVersion: "19.2.4",
+      deps,
+    };
+    const before = await transformModuleCodeWithCache({
+      ...input,
+      runtimeScope: "node:peer19.2.4:same-path",
+    });
+    const repeated = await transformModuleCodeWithCache({
+      ...input,
+      runtimeScope: "node:peer19.2.4:same-path",
+    });
+    const after = await transformModuleCodeWithCache({
+      ...input,
+      runtimeScope: "node:peer19.2.5:same-path",
+    });
+    assertEquals(repeated.cacheKey, before.cacheKey);
+    assertEquals(repeated.code, before.code);
+    assertEquals(after.cacheKey === before.cacheKey, false);
+    assertEquals(after.code === before.code, false);
+    assertEquals(computes, 2);
+  });
+
   it("forwards module-loading cancellation into the SSR transform", async () => {
     const callerController = new AbortController();
     const transformController = new AbortController();

@@ -52,27 +52,24 @@ it("keeps saved selectors and deny policies with canonical discovery", async () 
       });
     }, async () => {
       assertEquals((await source.listTools()).map((tool) => tool.name), [
-        canonicalDiscovery ? "veryfront__get_file" : "get_file",
+        "veryfront__get_file",
         "gmail__list_emails",
-        canonicalDiscovery ? "get_file" : "veryfront__get_file",
       ]);
       await assertRejects(
         async () => await source.executeTool("update_file", {}),
         Error,
-        "not allowed",
+        "not in the platform catalog",
       );
       await assertRejects(
         async () => await source.executeTool("veryfront__update_file", {}),
         Error,
-        "not allowed",
+        "not in the platform catalog",
       );
-      await source.executeTool("get_file", {});
+      await assertRejects(async () => await source.executeTool("get_file", {}));
       await source.executeTool("veryfront__get_file", {});
       assertEquals(
         calledNames,
-        canonicalDiscovery
-          ? ["veryfront__get_file", "veryfront__get_file"]
-          : ["get_file", "get_file"],
+        canonicalDiscovery ? ["veryfront__get_file"] : ["get_file"],
       );
     });
   }

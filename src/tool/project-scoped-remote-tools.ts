@@ -169,7 +169,9 @@ export function isProjectNavigationRemoteTool(
     return false;
   }
 
-  return getProjectNavigationToolNames(options).has(toolName);
+  const names = getProjectNavigationToolNames(options);
+  return names.has(toolName) ||
+    [...names].some((name) => !name.includes("__") && toolName === `veryfront__${name}`);
 }
 
 /** Check whether a remote tool name is allowed. */

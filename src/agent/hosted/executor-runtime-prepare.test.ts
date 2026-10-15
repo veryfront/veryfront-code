@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
 } from "#veryfront/tool";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
@@ -612,7 +613,7 @@ describe("executor runtime preparation", () => {
       mcpServers: [{
         kind: "veryfront-studio",
         required: false,
-        toolPolicy: { allow: ["search_knowledge"] },
+        toolPolicy: { allow: ["veryfront__search_knowledge"] },
       }],
     } satisfies RuntimeAgentMarkdownDefinition;
     const largeResultTool = tool({
@@ -627,7 +628,7 @@ describe("executor runtime preparation", () => {
       source,
       grant: {
         ...grant,
-        allowedToolNames: ["large_result", "search_knowledge"],
+        allowedToolNames: ["large_result", "veryfront__search_knowledge"],
         execution: { kind: "ephemeral", projectId: "project-1", branchId: "branch-1" },
       },
       facades: {
@@ -708,7 +709,7 @@ describe("executor runtime preparation", () => {
 
       assertCleanCompletion(events);
       assertEquals(visibleTools[0]?.includes("large_result"), true);
-      assertEquals(visibleTools[0]?.includes("search_knowledge"), true);
+      assertEquals(visibleTools[0]?.includes("veryfront__search_knowledge"), true);
       assert(providerInputs[1] !== undefined);
       assertEquals(JSON.stringify(providerInputs[1]).includes("tool_result_reference"), true);
     } finally {
@@ -772,11 +773,11 @@ describe("executor runtime preparation", () => {
 
   for (
     const selection of [
-      { allowed: "load_skill", replayed: "veryfront__load_skill" },
-      { allowed: "veryfront__load_skill", replayed: "load_skill" },
+      { allowed: "load_skill" },
+      { allowed: "veryfront__load_skill" },
     ]
   ) {
-    it(`executes a hidden loader alias through the granted facade (${selection.allowed})`, async () => {
+    it(`publishes the canonical loader identity from the granted facade (${selection.allowed})`, async () => {
       const visible: string[][] = [];
       const executed: string[] = [];
       const result = { skillId: "example", instructions: "Granted facade instructions" };
@@ -788,14 +789,6 @@ describe("executor runtime preparation", () => {
           execute: () => {
             executed.push(selection.allowed);
             return Promise.resolve(result);
-          },
-        },
-        [selection.replayed]: {
-          id: selection.replayed,
-          description: "Ungrantable loader operation",
-          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-          execute: () => {
-            throw new Error("The ungranted facade operation must not execute");
           },
         },
       });
@@ -827,8 +820,8 @@ describe("executor runtime preparation", () => {
                 visible.push(options.tools?.map((tool) => tool.name) ?? []);
                 return {
                   toolCalls: [{
-                    id: "hidden-loader-call",
-                    name: selection.replayed,
+                    id: "canonical-loader-call",
+                    name: "veryfront__load_skill",
                     input: { skillId: "example" },
                   }],
                 };
@@ -845,7 +838,7 @@ describe("executor runtime preparation", () => {
         const events = await Array.fromAsync(await preparedStream(f));
         assertCleanCompletion(events);
         assertEquals(executed, [selection.allowed]);
-        assertEquals(visible, [[selection.allowed], [selection.allowed]]);
+        assertEquals(visible, [["veryfront__load_skill"], ["veryfront__load_skill"]]);
       } finally {
         await f.owner.close();
       }
@@ -1192,6 +1185,67 @@ describe("executor runtime preparation", () => {
       const events = await Array.fromAsync(await preparedStream(f));
       assertCleanCompletion(events);
       assertEquals(exposedTool, true);
+      assertEquals(executions, ["studio_suggestions"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("publishes and executes trusted Studio broker tools only under canonical names", async () => {
+    const visible: string[][] = [];
+    const executions: string[] = [];
+    let modelCalls = 0;
+    const studioSource = markTrustedPlatformSource<RemoteToolSource>({
+      id: "studio",
+      listTools: () => Promise.resolve([syntheticRemoteTool("studio_suggestions")]),
+      executeTool: (name) => {
+        executions.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const f = fixture({
+      config: {
+        tools: { veryfront__studio_suggestions: true },
+        toolLoading: "eager",
+        mcpServers: [{
+          id: "studio",
+          kind: "veryfront-studio",
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["veryfront__studio_suggestions"],
+        remoteToolSourceIds: ["studio"],
+      },
+      facades: {
+        remoteToolSources: new Map([["studio", studioSource]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible.push(
+              (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
+            );
+            const toolName = modelCalls === 0
+              ? "veryfront__studio_suggestions"
+              : modelCalls === 1
+              ? "studio_suggestions"
+              : undefined;
+            modelCalls++;
+            return finishStream(toolName);
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
+      assertEquals(
+        visible,
+        Array.from({ length: 3 }, () => [
+          "veryfront__studio_suggestions",
+        ]),
+      );
       assertEquals(executions, ["studio_suggestions"]);
     } finally {
       await f.owner.close();
@@ -1881,19 +1935,19 @@ describe("executor runtime preparation review regressions", () => {
       {
         name: "omitted tools",
         tools: "",
-        expected: ["invoke_agent", "load_skill"],
+        expected: ["veryfront__invoke_agent", "veryfront__load_skill"],
       },
       {
         name: "configured tools",
         tools: "tools: [read_file]",
-        expected: ["invoke_agent", "load_skill", "read_file"],
+        expected: ["veryfront__invoke_agent", "veryfront__load_skill", "veryfront__read_file"],
       },
       { name: "empty caller selector", tools: "", requested: [], expected: [] },
       {
         name: "caller narrows configured tools",
         tools: "tools: [read_file]",
         requested: ["read_file"],
-        expected: ["read_file"],
+        expected: ["veryfront__read_file"],
       },
       { name: "missing grants", tools: "", granted: [], expected: [] },
       {
@@ -1966,7 +2020,9 @@ describe("executor runtime preparation review regressions", () => {
             doStream(options) {
               visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
               return finishStream(
-                calls++ === 0 && visible.includes("invoke_agent") ? "invoke_agent" : undefined,
+                calls++ === 0 && visible.includes("veryfront__invoke_agent")
+                  ? "veryfront__invoke_agent"
+                  : undefined,
               );
             },
           }),
@@ -1982,7 +2038,9 @@ describe("executor runtime preparation review regressions", () => {
         assertEquals([...visible].sort(), [...selection.expected].sort());
         assertEquals(
           executions,
-          selection.expected.some((name) => name === "invoke_agent") ? ["invoke_agent"] : [],
+          selection.expected.some((name) => name === "veryfront__invoke_agent")
+            ? ["invoke_agent"]
+            : [],
         );
       } finally {
         await f.owner.close();

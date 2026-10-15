@@ -1,3 +1,5 @@
+import { getModuleFetcherReactRuntimeIdentity } from "./react-runtime-identity.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Module Fetcher
  *
@@ -14,7 +16,6 @@
 
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
@@ -336,7 +337,7 @@ export async function fetchAndCacheModule(
       projectSlug,
       parentModulePath,
     );
-  const startFetch = (): Promise<string | null> => {
+  const startFetch = async (): Promise<string | null> => {
     if (context.sourceCapture) {
       return captureResolvedModule(
         normalizedPath,
@@ -388,6 +389,16 @@ export async function fetchAndCacheModule(
   }
 }
 
+/** Reuse one peer snapshot across every module of a request-scoped context. */
+export function getModuleFetcherReactRuntimeScope(
+  context: ModuleFetcherContext,
+  readScope?: () => Promise<string>,
+): Promise<string> {
+  return readScope
+    ? context.reactRuntimeScope ??= readScope()
+    : getModuleFetcherReactRuntimeIdentity(context).scope;
+}
+
 /**
  * Internal implementation of module fetching.
  */
@@ -400,7 +411,8 @@ async function doFetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
-  const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const identity = getModuleFetcherReactRuntimeIdentity(context);
+  const effectiveReactVersion = identity.reactVersion;
   const dev = context.dev === true;
   const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
   const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
@@ -408,6 +420,7 @@ async function doFetchAndCacheModule(
     : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
+  const runtimeScope = await identity.scope;
   const versionedKey = getVersionedPathCacheKey(
     normalizedPath,
     effectiveReactVersion,
@@ -415,6 +428,7 @@ async function doFetchAndCacheModule(
     moduleServerOrigin,
     context.serverExternalPackages,
     dev,
+    runtimeScope,
   );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
@@ -449,6 +463,7 @@ async function doFetchAndCacheModule(
         moduleServerOrigin,
         serverExternalPackages: context.serverExternalPackages,
         dev,
+        runtimeScope,
         parentModulePath,
       });
     }
@@ -475,6 +490,7 @@ async function doFetchAndCacheModule(
         moduleServerOrigin,
         context.serverExternalPackages,
         dev,
+        runtimeScope,
       )
       : null;
 
@@ -510,10 +526,12 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        reactPeers: identity.peers,
         serverExternalPackages: context.serverExternalPackages,
         moduleServerOrigin,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: context.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
@@ -548,6 +566,7 @@ async function doFetchAndCacheModule(
       moduleServerOrigin,
       serverExternalPackages: context.serverExternalPackages,
       dev,
+      runtimeScope,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -578,6 +597,7 @@ export function createModuleFetcherContext(
   projectId: string,
   options?: {
     sourceCapture?: ModuleFetcherContext["sourceCapture"];
+    reactRuntimeIdentity?: ModuleFetcherContext["reactRuntimeIdentity"];
     contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;
@@ -587,6 +607,7 @@ export function createModuleFetcherContext(
     moduleServerOrigin?: string;
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
     serverExternalPackages?: readonly string[];
     logger?: Logger;

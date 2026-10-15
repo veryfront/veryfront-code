@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import { computeShortContentHash } from "../esm/transform-utils.ts";
 import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
 import type {
@@ -40,9 +41,11 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    reactPeers: options.reactPeers,
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     dependencyPinningSource: options.dependencyPinningSource,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     onProgress: options.onProgress,
@@ -58,7 +61,11 @@ export async function createTransformContext(
 ): Promise<TransformContext> {
   const [contentHash, reactVersion] = await Promise.all([
     computeShortContentHash(source),
-    Promise.resolve(options.reactVersion ?? DEFAULT_REACT_VERSION),
+    Promise.resolve(
+      options.reactVersion ?? options.reactPeers?.versions.react ??
+        (options.ssr ? resolveInstalledReactRange() : undefined) ??
+        DEFAULT_REACT_VERSION,
+    ),
   ]);
 
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
@@ -77,7 +84,9 @@ export function createTransformContextSync(
     projectDir,
     contentHash,
     options,
-    options.reactVersion ?? DEFAULT_REACT_VERSION,
+    options.reactVersion ?? options.reactPeers?.versions.react ??
+      (options.ssr ? resolveInstalledReactRange() : undefined) ??
+      DEFAULT_REACT_VERSION,
   );
 }
 

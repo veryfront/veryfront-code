@@ -12,10 +12,21 @@ import { rendererLogger } from "#veryfront/utils";
 import type { SSROptions } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
+import {
+  assertReactDOMPeerVersion,
+  assertReactPackageDeclaration,
+  getLocalReactPath,
+  getLocalReactPaths,
+  getLocalReactVersions,
+  type LocalReactPeerSnapshot,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 const logger = rendererLogger.component("server-loader");
 
 export interface ReactDOMServer {
+  readonly version?: string;
   renderToString: typeof import("react-dom/server").renderToString;
   renderToStaticMarkup: typeof import("react-dom/server").renderToStaticMarkup;
   renderToPipeableStream?: typeof import("react-dom/server").renderToPipeableStream;
@@ -43,7 +54,7 @@ function isReactDOMServer(
 
 /** Select an explicit runtime without reading or modifying the legacy module caches. */
 export async function resolveSSRRuntime(
-  options: Pick<SSROptions, "reactVersion" | "reactRuntime" | "renderContext">,
+  options: Pick<SSROptions, "reactVersion" | "reactRuntime" | "renderContext" | "reactPeers">,
   adapter?: RuntimeAdapter,
 ): Promise<{ server: ReactDOMServer; react: typeof import("react") | null }> {
   const supplied = options.reactRuntime;
@@ -55,12 +66,13 @@ export async function resolveSSRRuntime(
         detail: "Explicit React server runtime has invalid render exports",
       });
     }
+    if (server.version !== undefined) assertReactDOMPeerVersion(react.version, server.version);
     return { react, server };
   }
   const [server, react] = await Promise.all([
-    getReactDOMServer(options.reactVersion, adapter),
-    options.renderContext || getRuntimeModuleLoader(adapter)
-      ? getProjectReact(options.reactVersion, adapter)
+    getReactDOMServer(options.reactVersion, adapter, options.reactPeers),
+    options.renderContext || options.reactPeers || getRuntimeModuleLoader(adapter)
+      ? getProjectReact(options.reactVersion, adapter, options.reactPeers)
       : Promise.resolve(null),
   ]);
   return { react, server };
@@ -78,7 +90,7 @@ function validateReactRuntimeVersion(
   }
   if (
     requestedVersion !== undefined &&
-    version.replace(/^v/, "") !== resolveReactVersion(requestedVersion).replace(/^v/, "")
+    versionAdmission(version, requestedVersion) === false
   ) {
     throw INITIALIZATION_ERROR.create({
       detail: "React runtime version does not match the selected project version",
@@ -86,7 +98,12 @@ function validateReactRuntimeVersion(
   }
 }
 
-type ServerModuleLoader = (url: string, label: string, reactVersion: string) => Promise<unknown>;
+type ServerModuleLoader = (
+  url: string,
+  label: string,
+  reactVersion: string,
+  reactPeers?: LocalReactPeerSnapshot,
+) => Promise<unknown>;
 
 const projectReactCache = new Map<string, typeof import("react")>();
 const reactDOMServerCache = new Map<string, ReactDOMServer>();
@@ -99,8 +116,19 @@ export function resetReactCache(): void {
   reactDOMServerCache.clear();
 }
 
-function resolveReactVersion(version?: string): string {
-  return normalizeReactVersion(version ? stripSemverRange(version) : undefined);
+function resolveReactVersion(version?: string, peers?: LocalReactPeerSnapshot): string {
+  if (peers?.versions.react) {
+    assertReactPackageDeclaration(version);
+    if (version !== undefined && versionAdmission(peers.versions.react, version) === false) {
+      throw new TypeError("Captured React runtime does not match the selected project version");
+    }
+    return peers.versions.react;
+  }
+  const installed = resolveInstalledReactRange(version);
+  if (installed) return installed;
+  const normalized = normalizeReactVersion(version ? stripSemverRange(version) : undefined);
+  // Exact SemVer permits a v prefix; package exports report the bare version.
+  return normalized.startsWith("v") ? normalized.slice(1) : normalized;
 }
 
 export function __injectReactDOMServerForTests(
@@ -112,7 +140,7 @@ export function __injectReactDOMServerForTests(
     return;
   }
 
-  reactDOMServerCache.set(resolveReactVersion(version), server);
+  reactDOMServerCache.set(rendererRuntimeCacheKey(resolveReactVersion(version)), server);
 }
 
 export function __injectProjectReactForTests(
@@ -123,18 +151,41 @@ export function __injectProjectReactForTests(
     projectReactCache.clear();
     return;
   }
-  projectReactCache.set(resolveReactVersion(version), react);
+  projectReactCache.set(rendererRuntimeCacheKey(resolveReactVersion(version)), react);
 }
 
 async function loadFromCachedHttpModule<T>(
   url: string,
   label: string,
   reactVersion: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<T> {
+  const localPath = getLocalReactPath(
+    label === "React" ? "react" : label,
+    reactVersion,
+    reactPeers,
+  );
+  if (localPath) {
+    const module = await import(localPath);
+    if (label === "React") validateReactRuntimeVersion(module.default ?? module, reactVersion);
+    return module as T;
+  }
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir, reactVersion);
   logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });
   return (await import(cachedPath)) as T;
+}
+
+const encodeCachePart = JSON.stringify;
+
+/** Keep renderer modules and flights on the same fresh physical peer identity. */
+function rendererRuntimeCacheKey(version: string, peers?: LocalReactPeerSnapshot): string {
+  const paths = peers?.paths ?? getLocalReactPaths({ fresh: true });
+  const versions = peers?.versions ?? getLocalReactVersions();
+  // Quote only primitives; inherited object/array toJSON hooks cannot merge keys.
+  return `${encodeCachePart(version)}|${encodeCachePart(paths.react ?? "")}|${
+    encodeCachePart(paths["react-dom/server"] ?? "")
+  }|${encodeCachePart(versions.react ?? "")}|${encodeCachePart(versions["react-dom"] ?? "")}`;
 }
 
 let serverModuleLoader: ServerModuleLoader = loadFromCachedHttpModule;
@@ -146,6 +197,7 @@ export function __setServerModuleLoaderForTests(loader: ServerModuleLoader | nul
 export function getProjectReact(
   version?: string,
   adapter?: RuntimeAdapter,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<typeof import("react")> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -155,12 +207,13 @@ export function getProjectReact(
       return react;
     });
   }
-  const normalizedVersion = resolveReactVersion(version);
-  const cached = projectReactCache.get(normalizedVersion);
+  const normalizedVersion = resolveReactVersion(version, reactPeers);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion, reactPeers);
+  const cached = projectReactCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
-  return reactLoadFlight.do(`react:${normalizedVersion}`, async () => {
-    const cachedInFlight = projectReactCache.get(normalizedVersion);
+  return reactLoadFlight.do(`react:${cacheKey}`, async () => {
+    const cachedInFlight = projectReactCache.get(cacheKey);
     if (cachedInFlight) return cachedInFlight;
 
     // Always load React from cached HTTP modules to ensure the same React
@@ -177,9 +230,10 @@ export function getProjectReact(
       reactUrl,
       "React",
       normalizedVersion,
+      reactPeers,
     ) as { default?: typeof import("react") };
     const loadedReact = (reactModule.default ?? reactModule) as typeof import("react");
-    projectReactCache.set(normalizedVersion, loadedReact);
+    projectReactCache.set(cacheKey, loadedReact);
     return loadedReact;
   });
 }
@@ -187,6 +241,7 @@ export function getProjectReact(
 export function getReactDOMServer(
   version?: string,
   adapter?: RuntimeAdapter,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<ReactDOMServer> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -197,16 +252,20 @@ export function getReactDOMServer(
             detail: "Prepared React server module has invalid render exports",
           });
         }
-        return module;
+        return getProjectReact(version, adapter).then((react) => {
+          assertReactDOMPeerVersion(react.version, module.version);
+          return module;
+        });
       },
     );
   }
-  const normalizedVersion = resolveReactVersion(version);
-  const cached = reactDOMServerCache.get(normalizedVersion);
+  const normalizedVersion = resolveReactVersion(version, reactPeers);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion, reactPeers);
+  const cached = reactDOMServerCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
-  return reactDOMServerLoadFlight.do(`react-dom-server:${normalizedVersion}`, async () => {
-    const cachedInFlight = reactDOMServerCache.get(normalizedVersion);
+  return reactDOMServerLoadFlight.do(`react-dom-server:${cacheKey}`, async () => {
+    const cachedInFlight = reactDOMServerCache.get(cacheKey);
     if (cachedInFlight) return cachedInFlight;
 
     const react18Plus = Number(normalizedVersion.split(".")[0]) >= 18;
@@ -225,16 +284,21 @@ export function getReactDOMServer(
       serverUrl,
       "react-dom/server",
       normalizedVersion,
+      reactPeers,
     ) as typeof import("react-dom/server");
 
+    // Node may retain a module instance when package files change in place.
+    // A refreshed manifest must never relabel an older renderer as the new peer.
+    assertReactDOMPeerVersion(normalizedVersion, serverModule.version);
     const loadedServer = {
+      version: serverModule.version,
       renderToString: serverModule.renderToString,
       renderToStaticMarkup: serverModule.renderToStaticMarkup,
       renderToPipeableStream: react18Plus ? serverModule.renderToPipeableStream : undefined,
       renderToReadableStream: react18Plus ? serverModule.renderToReadableStream : undefined,
     };
 
-    reactDOMServerCache.set(normalizedVersion, loadedServer);
+    reactDOMServerCache.set(cacheKey, loadedServer);
     return loadedServer;
   });
 }

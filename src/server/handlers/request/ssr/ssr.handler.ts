@@ -351,6 +351,7 @@ export class SSRHandler extends BaseHandler {
           useNoCache,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
           dependencyPinningSource: dependencySource,
           applicationIdentity: ctx.applicationIdentity ?? null,
         });

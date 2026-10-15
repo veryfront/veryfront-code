@@ -240,7 +240,7 @@ Deno.test("project agent runtime keeps framework knowledge out of hosted tool pr
   if (!configuredTools || configuredTools === true) {
     throw new Error("expected finite factory tool configuration");
   }
-  assertEquals("search_knowledge" in configuredTools, true);
+  assertEquals("veryfront__search_knowledge" in configuredTools, true);
 
   const definition = await createRuntimeAgentDefinitionFromAgent(support);
   const inlineTools = getProjectAgentRuntimeInlineTools({

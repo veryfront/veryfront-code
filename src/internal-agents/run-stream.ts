@@ -535,6 +535,12 @@ export function buildMergedTools(
     isFrameworkInvokeAgentTool(configuredCanonicalInvokeAgent);
   const injectedTools = Object.fromEntries(
     input.tools
+      .map((tool) =>
+        tool.name === INVOKE_AGENT_TOOL_ID &&
+          (controlPlaneOwnsCanonicalDelegation || controlPlaneOwnsDelegation)
+          ? { ...tool, name: CANONICAL_INVOKE_AGENT_TOOL_ID }
+          : tool
+      )
       .filter((tool) =>
         (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
@@ -610,6 +616,9 @@ export function buildMergedTools(
     }
 
     if (entry && typeof entry === "object") {
+      if (
+        isFrameworkInvokeAgentTool(entry) && injectedTools[CANONICAL_INVOKE_AGENT_TOOL_ID]
+      ) continue;
       merged[toolName] = entry;
     }
   }

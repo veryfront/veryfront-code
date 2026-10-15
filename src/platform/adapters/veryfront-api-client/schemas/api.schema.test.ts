@@ -352,6 +352,18 @@ describe("schemas", () => {
       );
     });
 
+    it("names environment file and domain lookup parameters as the API does", () => {
+      assertEquals(
+        API_ENDPOINTS.listEnvironmentFiles.path,
+        "/projects/{project_reference}/environments/{environment_name}/files",
+      );
+      assertEquals(
+        API_ENDPOINTS.getEnvironmentFile.path,
+        "/projects/{project_reference}/environments/{environment_name}/files/{file_path}",
+      );
+      assertEquals(API_ENDPOINTS.lookupDomain.path, "/projects/{project_reference}");
+    });
+
     it("should have paths starting with /", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
         assertEquals(endpoint.path.startsWith("/"), true);

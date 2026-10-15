@@ -20,31 +20,46 @@ Add Veryfront Code to an existing or blank Node.js, Deno, or Bun project.
 <CodeGroup>
 
 ```bash npm
-npm install veryfront
+npm install veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash pnpm
-pnpm add veryfront
+pnpm add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash yarn
-yarn add veryfront
+yarn add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash bun
-bun add veryfront
+bun add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash deno
-deno add npm:veryfront
+deno add npm:veryfront npm:react@19.2.4 npm:react-dom@19.2.4
 ```
 
 </CodeGroup>
 
-Installing the package adds the framework, the CLI, and `react` / `react-dom`,
-which ship as dependencies of `veryfront`. It does not scaffold any files or
-touch your `package.json` beyond the dependency entry. Add the four pieces
-below yourself. `veryfront init` writes all of them for you, see
+`veryfront` provides the framework and CLI. React and React DOM are required
+peer dependencies; the commands above install a matching supported pair
+explicitly. Node.js and Bun SSR use this installed pair. Keep both packages at
+the same version when upgrading; the supported peer range starts at 19.2.4
+within React 19. Package managers such as Yarn may require you to install peers
+yourself. Install the official registry packages as `react` and `react-dom`.
+Registry versions, ranges and tags are supported. Package aliases, workspace
+or file/link sources, git references and tarball URLs are unsupported for this
+runtime pair because server and browser rendering must use the same package.
+
+React component SSR captures the installed peer graph for each render. Local
+TS/JS script pages use the runtime's native module loader and its process-lifetime
+dependency cache. Restart the server after replacing installed React packages;
+changing packages in a running process is unsupported for native script pages.
+Script execution does not use per-render peer snapshots. Adapters that provide
+a prepared module graph retain control of their loader.
+
+These commands add the dependency entries without scaffolding files. Add the
+four pieces below yourself. `veryfront init` writes all of them for you, see
 [Create project](./create-project.md).
 
 ### Set the module type
@@ -161,28 +176,44 @@ adds approximately 500 MB, and supported model weights add 0.9 to 6 GB.
 ### npm (recommended)
 
 ```bash
-npm install -g veryfront@latest
+npm install -g veryfront@latest react@19.2.4 react-dom@19.2.4
 ```
 
 This installs the latest published Veryfront CLI and adds `veryfront` to your
-shell path.
+shell path. When run inside a project with `veryfront` installed, the npm
+launcher uses that project's CLI and React peer graph. Install the framework
+and matching peers locally as shown above for project rendering.
+
+For Yarn Plug'n'Play, enable its ESM loader in `.yarnrc.yml` and regenerate the
+installation:
+
+```yaml title=".yarnrc.yml"
+pnpEnableEsmLoader: true
+```
+
+```bash
+yarn install
+```
+
+The launcher starts Node with the project's PnP loaders so zipped dependencies
+and virtual peer bindings use the project graph.
 
 ### pnpm
 
 ```bash
-pnpm add -g veryfront
+pnpm add -g veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### yarn
 
 ```bash
-yarn global add veryfront
+yarn global add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### bun
 
 ```bash
-bun add -g veryfront
+bun add -g veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### deno
@@ -280,3 +311,10 @@ veryfront --version
 
 You should see the installed version printed. If the command is not found,
 restart your shell so the new `PATH` entry takes effect.
+
+Prepared adapters retain authority over their admitted module graph. When calling
+`renderSnippet` with an adapter that provides `moduleLoader`, supply `filePath`
+with the original source identifier admitted to that graph. Inline content without
+an admitted identifier is rejected before compilation; prepared adapters do not
+fall back to host evaluation or fetch unknown source. Ordinary local adapters
+continue to support inline snippets without `filePath`.

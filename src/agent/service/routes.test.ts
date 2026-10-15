@@ -1346,10 +1346,16 @@ it("durable-chat resume after a form restores tools discovered before the form",
     __vfToolLoadingMode: "deferred",
   } satisfies RuntimeToolFilterConfig;
 
-  // First dispatch: tool_search loads create_file and the runtime persists the checkpoint.
+  // First dispatch: veryfront__tool_search loads create_file and the runtime persists the checkpoint.
   let persisted: ToolExposureCheckpoint | undefined;
   const discoveryModel = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "create_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "create_file" },
+      }],
+    },
     { text: "Opening the form." },
   ], { only: "stream" });
   await (await createEphemeralAgentWithRuntimeOptions({

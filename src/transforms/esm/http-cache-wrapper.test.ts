@@ -166,6 +166,7 @@ describe("transforms/esm/http-cache-wrapper", () => {
             importMap,
             importMapFingerprint,
             serverExternalPackages: ["knex"],
+            localReact: true,
           });
         }
 
@@ -193,6 +194,7 @@ describe("transforms/esm/http-cache-wrapper", () => {
           url: "https://modules.example.com/a.js",
           reactVersion: undefined,
           serverExternalPackages: ["knex"],
+          localReact: true,
           importMap,
           importMapFingerprint,
         });

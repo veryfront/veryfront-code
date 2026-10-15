@@ -11,11 +11,14 @@
 
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { agent as createAgent } from "#veryfront/agent";
-import { isFrameworkInvokeAgentTool } from "#veryfront/agent/runtime/agent-delegation.ts";
-import { tool } from "#veryfront/tool";
+import {
+  createInvokeAgentTool,
+  isFrameworkInvokeAgentTool,
+} from "#veryfront/agent/runtime/agent-delegation.ts";
+import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
@@ -48,26 +51,40 @@ const controlPlaneInvokeAgent = {
 };
 
 describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
-  it("replaces the framework invoke_agent with the control-plane tool", () => {
-    const runtimeAgent = createAgent({
-      id: "intake-orchestrator",
-      model: "hosted/invoke-merge-model",
-      system: "Delegate classification.",
-      tools: { invoke_agent: true },
-      skills: false,
-    });
-    const configured = (runtimeAgent.config.tools as Record<string, unknown>).invoke_agent;
-    assert(isFrameworkInvokeAgentTool(configured));
+  beforeEach(() => toolRegistry.clear());
+  for (const forwardedName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const configuredTool of [true, createInvokeAgentTool()]) {
+      it(`replaces framework delegation with the ${forwardedName} control-plane tool`, () => {
+        const runtimeAgent = createAgent({
+          id: "intake-orchestrator",
+          model: "hosted/invoke-merge-model",
+          system: "Delegate classification.",
+          tools: { invoke_agent: configuredTool },
+          skills: false,
+        });
+        const configured =
+          (runtimeAgent.config.tools as Record<string, unknown>).veryfront__invoke_agent ??
+            (runtimeAgent.config.tools as Record<string, unknown>).invoke_agent;
+        assert(isFrameworkInvokeAgentTool(configured));
 
-    const merged = buildMergedTools(
-      runtimeAgent,
-      runInput("run_invoke_merge_framework", [controlPlaneInvokeAgent]),
-      new AgentRunSessionManager(),
-    ) as Record<string, unknown>;
+        const merged = buildMergedTools(
+          runtimeAgent,
+          runInput("run_invoke_merge_framework", [{
+            ...controlPlaneInvokeAgent,
+            name: forwardedName,
+          }]),
+          new AgentRunSessionManager(),
+        ) as Record<string, unknown>;
 
-    assert(merged.invoke_agent !== configured, "the control-plane tool must replace the local one");
-    assertEquals(isFrameworkInvokeAgentTool(merged.invoke_agent), false);
-  });
+        assert(
+          merged.veryfront__invoke_agent !== configured,
+          "the control-plane tool must replace the local one",
+        );
+        assertEquals(isFrameworkInvokeAgentTool(merged.veryfront__invoke_agent), false);
+        assertEquals(merged.invoke_agent, undefined);
+      });
+    }
+  }
 
   it("keeps a custom inline tool named invoke_agent", () => {
     const customInvokeAgent = tool({
@@ -93,22 +110,60 @@ describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
     assertEquals(merged.invoke_agent, customInvokeAgent);
   });
 
+  for (const forwardedName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    it(`preserves a project collision while replacing ${forwardedName} delegation`, () => {
+      const customInvokeAgent = tool({
+        id: "invoke_agent",
+        description: "Project-specific delegation",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      });
+      const runtimeAgent = createAgent({
+        id: "intake-orchestrator",
+        model: "hosted/invoke-merge-model",
+        system: "Delegate classification.",
+        tools: { invoke_agent: customInvokeAgent, veryfront__invoke_agent: true },
+        skills: false,
+      });
+
+      const merged = buildMergedTools(
+        runtimeAgent,
+        runInput("run_invoke_merge_custom", [{ ...controlPlaneInvokeAgent, name: forwardedName }]),
+        new AgentRunSessionManager(),
+      ) as Record<string, unknown>;
+
+      assertEquals(merged.invoke_agent, customInvokeAgent);
+      assert(merged.veryfront__invoke_agent);
+      assertEquals(isFrameworkInvokeAgentTool(merged.veryfront__invoke_agent), false);
+    });
+  }
+
   it("waits for the control-plane invoke_agent result instead of starting another model call", async () => {
     const model = scriptedModel([
       {
         toolCalls: [{
           id: "toolu_invoke_1",
-          name: "invoke_agent",
+          name: "veryfront__invoke_agent",
           input: { agent_id: "classifier", prompt: "Classify the message." },
         }],
       },
       { text: "Discarded follow-up step." },
     ], { modelId: "hosted/invoke-park-model", only: "stream" });
+    let projectCalls = 0;
+    const projectTool = tool({
+      id: "invoke_agent",
+      description: "Project operation",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        projectCalls++;
+        return { ok: true };
+      },
+    });
     const runtimeAgent = createAgent({
       id: "intake-orchestrator",
       model: "hosted/invoke-park-model",
       system: "Delegate classification.",
-      tools: { invoke_agent: true },
+      tools: { invoke_agent: projectTool, veryfront__invoke_agent: true },
       skills: false,
       maxSteps: 4,
       resolveModelTransport: () => Promise.resolve({ model }),
@@ -140,6 +195,7 @@ describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
     assertEquals(model.callCount, 1, "the parked run must not start another model call");
     assert(text.includes("toolu_invoke_1"), "the invoke_agent tool call must be streamed");
     assertEquals(text.includes("Discarded follow-up step."), false);
+    assertEquals(projectCalls, 0);
   });
 
   it("aborts the in-flight model call when the control plane cancels the run", async () => {

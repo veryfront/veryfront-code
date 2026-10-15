@@ -11,7 +11,7 @@ import { OpenAIProvider } from "../extensions/ext-llm-openai/src/index.ts";
 export type ToolSearchLiveProof = {
   model: string;
   loadingPath: "framework-fallback";
-  toolCalls: ["tool_search", "read_release_marker"];
+  toolCalls: ["veryfront__tool_search", "read_release_marker"];
   targetExecutionCount: 1;
   searchResultContainsSchema: false;
   completed: true;
@@ -92,11 +92,11 @@ export type ExtractHiMeasurementInput = {
 
 const TARGET_TOOL = "read_release_marker";
 const TARGET_DESCRIPTION = "Read the release marker for this verification run.";
-const EXPECTED_TOOL_CALLS = ["tool_search", TARGET_TOOL] as const;
+const EXPECTED_TOOL_CALLS = ["veryfront__tool_search", TARGET_TOOL] as const;
 const BOOTSTRAP_TOOL_NAMES = new Set([
   "form_input",
   "load_skill",
-  "tool_search",
+  "veryfront__tool_search",
 ]);
 const SEARCH_RESULT_KEYS = [
   "loadedCount",
@@ -279,7 +279,7 @@ function hasExactKeys(
 function validateSearchResult(value: unknown): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(
-      "tool_search must return the exact schema-free ToolSearchResult object",
+      "veryfront__tool_search must return the exact schema-free ToolSearchResult object",
     );
   }
   const result = value as Record<string, unknown>;
@@ -294,7 +294,7 @@ function validateSearchResult(value: unknown): void {
     typeof result.nextStep !== "string"
   ) {
     throw new Error(
-      "tool_search must return the exact schema-free ToolSearchResult shape",
+      "veryfront__tool_search must return the exact schema-free ToolSearchResult shape",
     );
   }
   const match = matches[0];
@@ -306,7 +306,7 @@ function validateSearchResult(value: unknown): void {
     (match as Record<string, unknown>).status !== "loaded"
   ) {
     throw new Error(
-      "tool_search must return the expected schema-free ToolSearchResult match",
+      "veryfront__tool_search must return the expected schema-free ToolSearchResult match",
     );
   }
 }
@@ -320,7 +320,7 @@ export function extractToolSearchLiveProof(
   }
   const firstCatalog = input.requestCatalogs[0] ?? [];
   if (
-    !firstCatalog.includes("tool_search") ||
+    !firstCatalog.includes("veryfront__tool_search") ||
     firstCatalog.includes(TARGET_TOOL) ||
     firstCatalog.some((name) => !BOOTSTRAP_TOOL_NAMES.has(name))
   ) {
@@ -364,7 +364,7 @@ export function extractToolSearchLiveProof(
   return {
     model: parsed.model,
     loadingPath: "framework-fallback",
-    toolCalls: ["tool_search", TARGET_TOOL],
+    toolCalls: ["veryfront__tool_search", TARGET_TOOL],
     targetExecutionCount: 1,
     searchResultContainsSchema: false,
     completed: true,
@@ -416,7 +416,7 @@ export async function runToolSearchLiveProof(
       model: resolved.model,
       system: [
         "Verify framework deferred tool loading.",
-        "First call tool_search with the query release marker.",
+        "First call veryfront__tool_search with the query release marker.",
         `On the next step call ${TARGET_TOOL} exactly once.`,
         "After the tool result, reply with a short confirmation and do not call more tools.",
       ].join(" "),
@@ -428,7 +428,7 @@ export async function runToolSearchLiveProof(
 
     const response = await verifier.generate({
       input:
-        `Use tool_search before ${TARGET_TOOL}, execute the marker tool once, then finish.`,
+        `Use veryfront__tool_search before ${TARGET_TOOL}, execute the marker tool once, then finish.`,
     });
     return extractToolSearchLiveProof({
       model: resolved.model,
@@ -494,8 +494,8 @@ export function extractHiMeasurement(input: ExtractHiMeasurementInput): HiMeasur
     );
   }
   const initialCatalog = input.requestCatalogs[0] ?? [];
-  if (initialCatalog.length !== 1 || initialCatalog[0] !== "tool_search") {
-    throw new Error("The exact hi measurement must expose only tool_search initially");
+  if (initialCatalog.length !== 1 || initialCatalog[0] !== "veryfront__tool_search") {
+    throw new Error("The exact hi measurement must expose only veryfront__tool_search initially");
   }
   const baselineCatalog = input.baselineRequestCatalogs[0] ?? [];
   const expectedBaselineCatalog = expectedHiMeasurementCatalog();

@@ -460,13 +460,13 @@ describe("eval/metrics", () => {
     );
   });
 
-  it("evaluates knowledge retrieval metrics from search_knowledge traces", async () => {
+  it("evaluates knowledge retrieval metrics from canonical search_knowledge traces", async () => {
     const record = createRecord({
       trace: {
         events: [],
         toolCalls: [
           {
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             status: "ok",
             output: {
               data: [
@@ -505,7 +505,7 @@ describe("eval/metrics", () => {
         pass: true,
         label: "Knowledge recall@2",
         evidence: {
-          tool: "search_knowledge",
+          tool: "veryfront__search_knowledge",
           k: 2,
           retrieved: [
             "knowledge/login-troubleshooting.md",
@@ -538,7 +538,7 @@ describe("eval/metrics", () => {
         pass: true,
         label: "Knowledge precision@2",
         evidence: {
-          tool: "search_knowledge",
+          tool: "veryfront__search_knowledge",
           k: 2,
           retrieved: [
             "knowledge/login-troubleshooting.md",
@@ -567,7 +567,7 @@ describe("eval/metrics", () => {
         pass: true,
         label: "Knowledge MRR",
         evidence: {
-          tool: "search_knowledge",
+          tool: "veryfront__search_knowledge",
           k: 3,
           retrieved: [
             "knowledge/login-troubleshooting.md",
@@ -580,6 +580,46 @@ describe("eval/metrics", () => {
         },
       },
     );
+  });
+
+  it("prefers canonical default knowledge calls and keeps explicit tool names exact", async () => {
+    const record = createRecord({
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "search_knowledge",
+            status: "ok",
+            output: { data: [{ path: "knowledge/legacy.md" }] },
+          },
+          {
+            name: "veryfront__search_knowledge",
+            status: "ok",
+            output: { data: [{ path: "knowledge/canonical.md" }] },
+          },
+          {
+            name: "project_search",
+            status: "ok",
+            output: { data: [{ path: "knowledge/project.md" }] },
+          },
+        ],
+      },
+    });
+
+    const canonicalDefault = await metrics.knowledge.recallAtK({
+      k: 1,
+      expected: ["knowledge/canonical.md"],
+    }).evaluate(record);
+    assertEquals(canonicalDefault.score, 1);
+    assertEquals(canonicalDefault.evidence?.tool, "veryfront__search_knowledge");
+
+    const explicitProjectTool = await metrics.knowledge.recallAtK({
+      k: 1,
+      tool: "project_search",
+      expected: ["knowledge/project.md"],
+    }).evaluate(record);
+    assertEquals(explicitProjectTool.score, 1);
+    assertEquals(explicitProjectTool.evidence?.tool, "project_search");
   });
 
   it("matches tool inputs by own JSON keys without prototype collisions", async () => {
@@ -756,7 +796,7 @@ describe("eval/metrics", () => {
     );
   });
 
-  it("reads citations from the output and retrieved context from search_knowledge traces", async () => {
+  it("reads citations from canonical search_knowledge traces", async () => {
     const record = createRecord({
       output: {
         text: "Check the billing credits runbook and cite the source.",
@@ -769,7 +809,7 @@ describe("eval/metrics", () => {
         events: [],
         toolCalls: [
           {
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             status: "ok",
             output: {
               data: [
@@ -783,9 +823,7 @@ describe("eval/metrics", () => {
     });
 
     assertEquals(
-      await metrics.knowledge.citationPrecision({
-        expected: ["knowledge/billing/credits.md"],
-      }).gate({ min: 0.5 }).evaluate(record),
+      await metrics.knowledge.citationPrecision().gate({ min: 0.5 }).evaluate(record),
       {
         name: "knowledge.citationPrecision",
         family: "knowledge",
@@ -794,12 +832,15 @@ describe("eval/metrics", () => {
         pass: true,
         label: "Knowledge citations were precise",
         evidence: {
-          tool: "search_knowledge",
+          tool: "veryfront__search_knowledge",
           citations: [
             "knowledge/billing/credits.md",
             "knowledge/unrelated.md",
           ],
-          expected: ["knowledge/billing/credits.md"],
+          retrieved: [
+            "knowledge/billing/credits.md",
+            "knowledge/support/playbooks/billing-ledger.md",
+          ],
           supported: ["knowledge/billing/credits.md"],
           unsupported: ["knowledge/unrelated.md"],
           supportedCount: 1,
@@ -827,7 +868,7 @@ describe("eval/metrics", () => {
           events: [],
           toolCalls: [
             {
-              name: "search_knowledge",
+              name: "veryfront__search_knowledge",
               status: "ok",
               output: {
                 data: [
@@ -851,7 +892,7 @@ describe("eval/metrics", () => {
         explanation: "Answer is supported by the retrieved SSO runbook.",
         label: "Answer was grounded in its sources",
         evidence: {
-          tool: "search_knowledge",
+          tool: "veryfront__search_knowledge",
           evidenceCount: 1,
           sources: ["knowledge/login-troubleshooting.md"],
         },

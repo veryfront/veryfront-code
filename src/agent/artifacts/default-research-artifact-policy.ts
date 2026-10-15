@@ -93,7 +93,6 @@ export function buildDefaultResearchArtifactPathReminder(input: {
     `- Then create or update the current topic report at exactly ${artifactPaths.currentReportPath}.`,
     `- Supporting artifacts can live at ${artifactPaths.findingsPath} and ${artifactPaths.sourcesPath} when useful.`,
     `CRITICAL: The task is incomplete until ${artifactPaths.runReportPath} and ${artifactPaths.currentReportPath} both exist with the final report content.`,
-    "Use create_file or update_file yourself before finishing.",
   ], "\n");
 }
 

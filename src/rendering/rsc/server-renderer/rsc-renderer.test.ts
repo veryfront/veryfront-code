@@ -61,7 +61,13 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
       resetReactCache();
       __setServerModuleLoaderForTests((_url, label, reactVersion) => {
         versions.push(reactVersion);
-        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
+        // This loader tests version threading using local render functions; its
+        // mocked module metadata must represent the requested dependency graph.
+        return Promise.resolve(
+          label === "React"
+            ? { default: { ...React, version: reactVersion } }
+            : { ...ReactDOMServer, version: reactVersion },
+        );
       });
 
       try {
@@ -88,7 +94,13 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
       resetReactCache();
       __setServerModuleLoaderForTests((_url, label, reactVersion) => {
         versions.push(reactVersion);
-        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
+        // This loader tests version threading using local render functions; its
+        // mocked module metadata must represent the requested dependency graph.
+        return Promise.resolve(
+          label === "React"
+            ? { default: { ...React, version: reactVersion } }
+            : { ...ReactDOMServer, version: reactVersion },
+        );
       });
 
       try {

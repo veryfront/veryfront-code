@@ -203,8 +203,7 @@ describe("agent/hosted-form-input-tool", () => {
       values: { topic: "Support FAQ assistant" },
       inputRequestId: INPUT_REQUEST_ID,
       reused: true,
-      reason:
-        "A submitted form_input result already exists for this run. Use these values as final input, do not call form_input again, and continue to the requested output.",
+      reason: "A submitted form already exists for this run. These are its final values.",
     });
     assertEquals(calls.length, 2);
   });
