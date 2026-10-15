@@ -826,6 +826,37 @@ it("accepted service invocations report one process identity across both launch 
   assertEquals(native.headers.get("x-veryfront-runtime-mode"), "service");
 });
 
+it("accepted service attribution preserves response body and multi-value headers", async () => {
+  const nativeJson = Response.json;
+  const { routeSet } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    prepareExecution: async () => {
+      Response.json = (data, init) => {
+        const response = nativeJson(data, init);
+        response.headers.append("x-service-extra", "first");
+        response.headers.append("x-service-extra", "second");
+        response.headers.append("set-cookie", "first=1; Path=/");
+        response.headers.append("set-cookie", "second=2; Path=/");
+        return response;
+      };
+      return { executionId: "exec-1" };
+    },
+  });
+  let response: Response;
+  try {
+    response = await routeSet.handleDurableChatRunExecuteRequest({
+      request: createDefaultChatStartRequest(),
+    });
+  } finally {
+    Response.json = nativeJson;
+  }
+  assertEquals(response.status, 202);
+  assertEquals(response.headers.get("content-type"), "application/json");
+  assertEquals(response.headers.get("x-service-extra"), "first, second");
+  assertEquals(response.headers.getSetCookie(), ["first=1; Path=/", "second=2; Path=/"]);
+  assertEquals(await response.json(), { accepted: true, duplicate: false });
+});
+
 for (const surface of ["legacy", "native"] as const) {
   for (const replacement of ["iterator", "set", "response"] as const) {
     it(`accepted ${surface} service identity survives project-mutated ${replacement}`, async () => {
