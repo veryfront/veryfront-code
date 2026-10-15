@@ -9,7 +9,7 @@
  *   // head.title, head.description, head.metas are now available
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import {
   aggregateManagedHeadDescriptors,
   assertManagedHeadDescriptorBudget,

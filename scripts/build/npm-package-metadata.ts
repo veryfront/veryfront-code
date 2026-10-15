@@ -1,3 +1,5 @@
+import { BROWSER_MODULE_REPLACEMENTS } from "./browser-safe-exports.mjs";
+
 type PackageJson = {
 	name?: string;
 	version?: string;
@@ -9,6 +11,7 @@ type PackageJson = {
 	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	devDependencies?: Record<string, string>;
 	overrides?: Record<string, string>;
+	browser?: Record<string, string | false>;
 };
 
 import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
@@ -157,6 +160,12 @@ const REQUIRED_NPM_OVERRIDES = {
 } as const;
 
 export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
+	pkg.browser ??= {};
+	for (const [source, replacement] of Object.entries(BROWSER_MODULE_REPLACEMENTS)) {
+		pkg.browser[`./esm/${source.replace(/\.tsx?$/, ".js")}`] =
+			`./esm/${replacement.replace(/\.tsx?$/, ".js")}`;
+	}
+
 	if (pkg.files) {
 		pkg.files = pkg.files.filter((entry) => entry !== "src" && entry !== "/src");
 	}
