@@ -867,7 +867,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   configDerivedSelector: boolean,
 ): Promise<FacadedHostedChatRuntimeToolAssemblyResult> {
   const projectToolNames = createPrivateSet<string>();
-  for (const name of ownKeys(input.localTools)) {
+  const projectToolKeys = ownKeys(input.localTools);
+  for (let index = 0; index < projectToolKeys.length; index++) {
+    if (!objectHasOwn(projectToolKeys, index)) continue;
+    const name = projectToolKeys[index]!;
     const definition = ownDataValue(input.localTools, name);
     if (typeof definition !== "object" || definition === null) continue;
     const owner = ownDataValue(definition, "ownerAgentId");

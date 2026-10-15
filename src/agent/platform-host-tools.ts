@@ -23,10 +23,7 @@ function ownKeys(value: HostToolSet | HostToolDefinition): string[] {
   return reflectApply(objectKeys, Object, [value]) as string[];
 }
 
-function hasOwn(
-  value: HostToolSet | HostToolDefinition | PropertyDescriptor,
-  key: string,
-): boolean {
+function hasOwn(value: object, key: PropertyKey): boolean {
   return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
 }
 
@@ -169,7 +166,10 @@ export function retainTrustedSkillLoaderAliases(input: {
 /** Publish one canonical identity for each authorized platform host operation. */
 export function canonicalPlatformHostTools(input: HostToolSet): HostToolSet {
   const tools = objectCreate(null) as HostToolSet;
-  for (const name of ownKeys(input)) {
+  const names = ownKeys(input);
+  for (let index = 0; index < names.length; index++) {
+    if (!hasOwn(names, index)) continue;
+    const name = names[index]!;
     const definition = ownDataValue(input, name);
     if (definition === undefined) continue;
     if (!hasTrustedHostToolProvenance(definition)) {
