@@ -127,10 +127,6 @@ import {
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
-  readVeryfrontCloudModelFacts,
-  type VeryfrontCloudSurfaceId,
-} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
   getRuntimeRemoteToolSources,
@@ -464,6 +460,7 @@ import {
   currentVeryfrontCloudCatalogScopeKey,
   readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
+  type VeryfrontCloudSurfaceId,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import {
