@@ -82,6 +82,11 @@ Open the Studio link printed beside the run ID in your terminal. Studio shows
 the run status, output and events. The terminal and Studio use the same run ID.
 Application logs remain visible in the development terminal.
 
+When stopping a connected dev server with `Ctrl+C`, the CLI allows up to one
+minute and fifteen seconds to save pending events and cancel active runs. A failed or timed-out
+cleanup prints a warning and exits unsuccessfully. Pressing `Ctrl+C` again
+stops immediately and can leave cancellation unsaved.
+
 ## Run the eval
 
 Stop the dev server with `Ctrl+C`, then run:

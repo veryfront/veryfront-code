@@ -486,25 +486,35 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       async function shutdown(): Promise<void> {
         if (shuttingDown) {
-          if (!demoMode) exitProcess(0);
+          if (!demoMode) {
+            console.log("  ! Stopping immediately. Run cancellation may not have been saved.");
+            exitProcess(1);
+          }
           return;
         }
         shuttingDown = true;
-
-        const timeout = demoMode ? null : setTimeout(() => exitProcess(0), 3000);
+        let shutdownExitCode = 0;
 
         try {
           keyboardHandler?.stop();
           shutdownController.abort();
-          await stopDevServices([
-            () => disposeConnectedRuntime?.(),
-            () => mcpServer?.stop(),
-            () => devServer?.stop(),
-          ]);
+          await stopDevServices(
+            [
+              () => disposeConnectedRuntime?.(),
+              () => mcpServer?.stop(),
+              () => devServer?.stop(),
+            ],
+            demoMode ? undefined : {
+              connected: Boolean(disposeConnectedRuntime),
+              forceExit: () => {
+                console.log("  ! Shutdown timed out. Run cancellation may not have been saved.");
+                exitProcess(1);
+              },
+            },
+          );
         } catch {
-          // ignore
-        } finally {
-          if (timeout) clearTimeout(timeout);
+          shutdownExitCode = 1;
+          console.log("  ! Cleanup failed. Run cancellation may not have been saved.");
         }
 
         if (demoMode) {
@@ -512,7 +522,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           return;
         }
 
-        exitProcess(0);
+        exitProcess(shutdownExitCode);
       }
 
       registerTerminationSignals(() => void shutdown());

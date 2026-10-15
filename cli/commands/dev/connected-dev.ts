@@ -7,6 +7,8 @@ import { createHttpDeployControlPlane } from "../../shared/deployment/control-pl
 import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { DEFAULT_API_URL } from "../../shared/constants.ts";
+
+const CONNECTED_DEV_SHUTDOWN_TIMEOUT_MS = 75_000;
 /** Admission preflight for a directory that explicitly names a Cloud project. */
 export interface ConnectedDevTarget {
   projectId: string;
@@ -39,15 +41,31 @@ export function connectedDevApiBaseUrl(apiBaseUrl?: string): string {
 }
 
 /** Release every owned service even if one cleanup fails. */
-export async function stopDevServices(cleanups: Array<() => void | Promise<void>>): Promise<void> {
-  const results = await Promise.allSettled(
-    cleanups.map((cleanup) => Promise.resolve().then(cleanup)),
-  );
-  const errors = results.filter((result): result is PromiseRejectedResult =>
-    result.status === "rejected"
-  ).map((result) => result.reason);
-  if (errors.length) {
-    throw new AggregateError(errors, "Some local development services could not stop cleanly.");
+export async function stopDevServices(
+  cleanups: Array<() => void | Promise<void>>,
+  shutdown?: { connected: boolean; forceExit(): void },
+): Promise<void> {
+  // Connected cleanup drains pending admission/events before terminal persistence;
+  // renewal, pending append, final flush and completion can each take 15 seconds.
+  // Leave additional time for scheduling before reporting an incomplete shutdown.
+  const timeout = shutdown
+    ? setTimeout(
+      () => shutdown.forceExit(),
+      shutdown.connected ? CONNECTED_DEV_SHUTDOWN_TIMEOUT_MS : 3_000,
+    )
+    : undefined;
+  try {
+    const results = await Promise.allSettled(
+      cleanups.map((cleanup) => Promise.resolve().then(cleanup)),
+    );
+    const errors = results.filter((result): result is PromiseRejectedResult =>
+      result.status === "rejected"
+    ).map((result) => result.reason);
+    if (errors.length) {
+      throw new AggregateError(errors, "Some local development services could not stop cleanly.");
+    }
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 

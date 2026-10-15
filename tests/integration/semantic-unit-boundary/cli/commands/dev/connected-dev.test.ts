@@ -10,11 +10,13 @@ import {
   replaceAmbientFetchForFaultInjection,
   withMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
+  stopDevServices,
 } from "../../../../../../cli/commands/dev/connected-dev.ts";
 
 describe("connected local development", () => {
@@ -105,6 +107,48 @@ it("stops MCP and dev servers even when connected runtime disposal rejects", asy
   assertEquals(stopped, ["mcp", "dev"]);
   assertEquals(caught instanceof AggregateError, true);
   assertEquals((caught as AggregateError).errors, [failure]);
+});
+
+it("allows connected cancellation to drain beyond three seconds and clears its exit deadline", async () => {
+  const time = new FakeTime();
+  try {
+    let forced = 0;
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => complete = resolve);
+    const stopped = stopDevServices([() => pending], {
+      connected: true,
+      forceExit: () => forced++,
+    });
+    await time.tickAsync(4_000);
+    assertEquals(forced, 0);
+    complete();
+    await stopped;
+    await time.tickAsync(75_000);
+    assertEquals(forced, 0);
+  } finally {
+    time.restore();
+  }
+});
+
+it("reports a bounded connected shutdown deadline instead of abandoning cleanup after three seconds", async () => {
+  const time = new FakeTime();
+  try {
+    let forced = 0;
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => complete = resolve);
+    const stopped = stopDevServices([() => pending], {
+      connected: true,
+      forceExit: () => forced++,
+    });
+    await time.tickAsync(3_000);
+    assertEquals(forced, 0);
+    await time.tickAsync(72_000);
+    assertEquals(forced, 1);
+    complete();
+    await stopped;
+  } finally {
+    time.restore();
+  }
 });
 
 it("connected preflight ignores a project-replaced global fetch", async () => {
