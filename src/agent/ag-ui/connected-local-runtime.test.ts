@@ -13,6 +13,7 @@ import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/ca
 
 function fixture(
   options: {
+    lostResponseOnce?: string;
     abortOnPath?: string;
     controller?: AbortController;
     claimNull?: boolean;
@@ -31,6 +32,10 @@ function fixture(
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
+  const createdMessages: unknown[] = [];
+  const createdRuns: unknown[] = [];
+  const admittedWrites = new Set<string>();
+  let responseLost = false;
   const completed: string[] = [];
   const logs: string[] = [];
   let markAppendStarted!: () => void;
@@ -103,6 +108,19 @@ function fixture(
       const path = new URL(String(_url)).pathname;
       const body = JSON.parse(String(init?.body ?? "{}"));
       requests.push({ path, body, headers: new Headers(init?.headers) });
+      if (path.endsWith("/messages") || path === "/runs") {
+        const key = path === "/runs"
+          ? new Headers(init?.headers).get("Idempotency-Key")
+          : body.idempotency_key;
+        if (!key || !admittedWrites.has(`${path}:${key}`)) {
+          (path === "/runs" ? createdRuns : createdMessages).push(body);
+          if (key) admittedWrites.add(`${path}:${key}`);
+        }
+        if (path === options.lostResponseOnce && !responseLost) {
+          responseLost = true;
+          return Promise.reject(new Error("accepted response lost"));
+        }
+      }
       if (path === options.apiFailure?.path) {
         return Promise.resolve(
           options.apiFailure.invalidJson
@@ -125,6 +143,8 @@ function fixture(
     runtime,
     requests,
     completed,
+    createdMessages,
+    createdRuns,
     batches,
     sequences,
     logs,
@@ -696,6 +716,36 @@ describe("connected local execution", () => {
     );
     assertEquals(f.logs.some((line) => line.includes("not-json")), false);
   });
+  for (const path of ["/runs", "/conversations/conversation-1/messages"]) {
+    it(`retries an ambiguously accepted ${path} without duplicating the message or run`, async () => {
+      const f = fixture({ lostResponseOnce: path });
+      const input = {
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [{ role: "user", parts: [{ type: "text", text: "Hello" }] }],
+        signal: new AbortController().signal,
+      };
+      await assertRejects(() => f.runtime.admit(input), Error, "accepted response lost");
+      const run = await f.runtime.admit({
+        ...input,
+        messages: structuredClone(input.messages),
+        signal: new AbortController().signal,
+      });
+      try {
+        assertEquals(f.createdMessages.length, 1);
+        assertEquals(f.createdRuns.length, 1);
+        assertEquals(
+          f.requests.filter((request) => request.path === "/runs").every((request) =>
+            typeof request.headers.get("Idempotency-Key") === "string"
+          ),
+          true,
+        );
+      } finally {
+        await run.finish("completed");
+      }
+    });
+  }
+
   it("reuses a conversation and sends only the latest user message as run input", async () => {
     const f = fixture();
     const input = {
@@ -719,6 +769,16 @@ describe("connected local execution", () => {
     const second = await f.runtime.admit(input);
     await second.finish("completed");
     assertEquals(first.conversationId, second.conversationId);
+    assertEquals(f.createdMessages.length, 2);
+    assertEquals(f.createdRuns.length, 2);
+    assertEquals(
+      new Set(
+        f.requests.filter((request) => request.path === "/runs").map((request) =>
+          request.headers.get("Idempotency-Key")
+        ),
+      ).size,
+      2,
+    );
     assertEquals(f.requests.filter((r) => r.path === "/conversations").length, 1);
     const latestMessage = input.messages.at(-1);
     if (!latestMessage) throw new Error("Expected the latest user message fixture");

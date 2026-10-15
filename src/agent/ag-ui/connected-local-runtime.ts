@@ -122,6 +122,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
   const conversations = new Map<string, string>();
+  const pendingAdmissions = new Map<string, string>();
   const active = new Set<ConnectedLocalRun>();
   let worker: Promise<{ id: string }> | undefined;
   let admissionTail: Promise<unknown> = Promise.resolve();
@@ -172,6 +173,19 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   ): Promise<ConnectedLocalRun> {
     const operation = admissionTail.then(async () => {
       input.signal.throwIfAborted();
+      // A failed response does not tell us whether admission committed. Keep the
+      // write identity until its run receipt arrives, including across cloned retries.
+      const requestIdentity = JSON.stringify([
+        input.threadId,
+        input.agentId,
+        input.agentName,
+        input.messages,
+      ]);
+      let admissionKey = pendingAdmissions.get(requestIdentity);
+      if (!admissionKey) {
+        admissionKey = `local:${crypto.randomUUID()}`;
+        pendingAdmissions.set(requestIdentity, admissionKey);
+      }
       worker ??= client.registerWorker({
         projectReference: options.projectId,
         implementationKind: "veryfront-local",
@@ -190,6 +204,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       if (!conversationId) {
         conversationId = (await api("/conversations", {
           project_reference: options.projectId,
+          idempotency_key: `${admissionKey}:conversation`,
           title: `Local ${input.agentId}`,
         })).id;
         conversations.set(input.threadId, conversationId);
@@ -200,6 +215,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         await api(`/conversations/${conversationId}/messages`, {
           role: "user",
           parts: lastUser.parts,
+          idempotency_key: `${admissionKey}:message`,
         });
       }
       input.signal.throwIfAborted();
@@ -225,7 +241,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             worker_key: workerKey,
           },
         },
-      });
+      }, { "Idempotency-Key": `${admissionKey}:run` });
+      pendingAdmissions.delete(requestIdentity);
       try {
         input.signal.throwIfAborted();
         const claim = await client.claimRun({
