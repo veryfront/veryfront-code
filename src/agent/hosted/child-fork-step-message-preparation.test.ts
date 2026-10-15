@@ -620,3 +620,60 @@ it("hosted startup preserves canonical source history across synchronous resolve
     assertEquals(hasTrustedPlatformPolicyToolResultPart(result), true);
   }
 });
+
+it("hosted startup survives compression of a prior answer and still rejects an oversized latest turn", () => {
+  const skillId = "child--compress";
+  const root = markTrustedPlatformPolicyToolResultPart({
+    type: "tool-result" as const,
+    toolCallId: "compression-root",
+    toolName: "load_skill",
+    result: { skillId, instructions: "Keep this canonical root", references: [], scripts: [] },
+  });
+  const history: Message[] = [
+    { id: "first", role: "user", parts: [{ type: "text", text: "Start" }] },
+    {
+      id: "call",
+      role: "assistant",
+      parts: [{
+        type: "tool-load_skill",
+        toolName: "load_skill",
+        toolCallId: "compression-root",
+        args: { skillId },
+      }],
+    },
+    { id: "root", role: "tool", parts: [root] },
+    { id: "answer", role: "assistant", parts: [{ type: "text", text: "x".repeat(800_000) }] },
+    { id: "next", role: "user", parts: [{ type: "text", text: "Continue" }] },
+  ];
+  for (const resolveSystem of [undefined, () => "Refreshed instructions"]) {
+    const prepared = prepareHostedChildForkRuntimeStepMessages({
+      messages: history,
+      bootstrapSkill: skillId,
+      forkToolNames: ["load_skill"],
+      buildInstructions: () => "Instructions",
+      resolveSystem,
+    });
+    assertEquals(hydrateActiveSkillStateFromMessages(prepared.messages).activeSkillId, skillId);
+    const result = prepared.messages.flatMap((message) => message.parts).find((part) =>
+      part.type === "tool-result" && part.toolCallId === "compression-root"
+    ) as ToolResultPart;
+    assertEquals(result.result, root.result);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(result), true);
+    assertEquals(JSON.stringify(prepared.messages).length < 10_000, true);
+  }
+  assertThrows(
+    () =>
+      prepareHostedChildForkRuntimeStepMessages({
+        messages: [...history.slice(0, 3), {
+          id: "oversized",
+          role: "user",
+          parts: [{ type: "text", text: "x".repeat(800_000) }],
+        }],
+        bootstrapSkill: skillId,
+        forkToolNames: ["load_skill"],
+        buildInstructions: () => "Instructions",
+      }),
+    RangeError,
+    "context budget",
+  );
+});

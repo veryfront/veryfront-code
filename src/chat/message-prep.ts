@@ -260,7 +260,13 @@ export function enforceTokenBudgetWithTurnCompression(
   messages: ProviderModelMessage[],
   budget: number,
   overhead: number,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
+  const preservedIds = new Set(preserveSourceMessageIds);
+  const isPreserved = (message: ProviderModelMessage): boolean => {
+    const sourceId = getProviderModelMessageSourceId(message);
+    return sourceId !== undefined && preservedIds.has(sourceId);
+  };
   if (!Number.isSafeInteger(budget) || budget < 0) {
     throw new TypeError("Chat message token budget must be a non-negative safe integer");
   }
@@ -287,7 +293,13 @@ export function enforceTokenBudgetWithTurnCompression(
 
     // Read from `result`: after the first splice, turn indices are positions
     // in the mutated array, not in the original `messages`.
-    const compressed = compressTurn(result, turn.startIdx, turn.endIdx);
+    const turnMessages = result.slice(turn.startIdx, turn.endIdx + 1);
+    const preserved = turnMessages.filter(isPreserved);
+    const compressible = turnMessages.filter((message) => !isPreserved(message));
+    const summary = compressTurn(compressible, 0, compressible.length - 1);
+    const compressed = preserved.length === 0
+      ? summary
+      : [summary[0]!, ...preserved, ...summary.slice(1)];
     const compressedTokens = compressed.reduce(
       (sum, message) => sum + estimateTokens(message.content),
       0,
@@ -318,21 +330,23 @@ export function enforceTokenBudgetWithTurnCompression(
 
   const finalTurns = collectTurns(result);
   const finalMinKeep = Math.min(2, finalTurns.length);
-  let dropCount = 0;
-  while (totalTokens > effectiveBudget && dropCount < finalTurns.length - finalMinKeep) {
-    const turn = finalTurns[dropCount];
-    if (!turn) break;
+  const droppedIndices = new Set<number>();
+  for (
+    let index = 0;
+    totalTokens > effectiveBudget && index < finalTurns.length - finalMinKeep;
+    index++
+  ) {
+    const turn = finalTurns[index];
+    if (!turn) continue;
+    if (result.slice(turn.startIdx, turn.endIdx + 1).some(isPreserved)) continue;
     totalTokens -= turn.tokens;
-    dropCount++;
+    for (let messageIndex = turn.startIdx; messageIndex <= turn.endIdx; messageIndex++) {
+      droppedIndices.add(messageIndex);
+    }
   }
-
-  if (dropCount === 0) return result;
-
-  const firstKeptTurn = finalTurns[dropCount];
-  if (!firstKeptTurn) return result;
-
-  const firstKeepIdx = firstKeptTurn.startIdx;
-  return result.slice(firstKeepIdx);
+  return droppedIndices.size === 0
+    ? result
+    : result.filter((_, index) => !droppedIndices.has(index));
 }
 
 const BUDGET_RATIO = 0.85;
@@ -1688,6 +1702,7 @@ export function compactForStep(
     ),
     DEFAULT_TOKEN_BUDGET,
     overhead,
+    options.historicalToolInputRetention?.preserveSourceMessageIds,
   );
 
   let end = compacted.length;
@@ -1807,10 +1822,16 @@ export function enforceTokenBudget(
   messages: ProviderModelMessage[],
   budget: number = DEFAULT_TOKEN_BUDGET,
   overhead: number = 0,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
   if (messages.length === 0) {
     return messages;
   }
 
-  return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
+  return enforceTokenBudgetWithTurnCompression(
+    messages,
+    budget,
+    overhead,
+    preserveSourceMessageIds,
+  );
 }
