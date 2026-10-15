@@ -125,6 +125,8 @@ export type DefaultHostedInvokeAgentConfig = {
 /** Resolved project-agent settings applied to a fixed hosted child run. */
 export type DefaultHostedChildAgentExecutionConfig = {
   system: AgentSystem;
+  /** Canonical startup skill authored by the target agent, never inherited. */
+  bootstrapSkill?: string;
   model?: string;
   temperature?: number;
   parallelToolCalls?: boolean;
@@ -262,7 +264,8 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
 const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
   agent_id: v.string()
     .min(1, "agent_id is required")
-    .regex(/\S/, "agent_id must not be blank")
+    // Local providers cannot compile the nonblank regex into a sampling grammar.
+    .refine((value: string) => /\S/.test(value), "agent_id must not be blank")
     .describe("Built-in child agent type or user-defined agent id."),
 });
 
@@ -674,6 +677,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         : {}),
       projectId: scopedOptions.context.projectId || null,
       forkInput,
+      ...(runtimeOptions.childConfig?.bootstrapSkill === undefined
+        ? {}
+        : { bootstrapSkill: runtimeOptions.childConfig.bootstrapSkill }),
       ...(runtimeOptions.childConfig?.parallelToolCalls === undefined
         ? {}
         : { parallelToolCalls: runtimeOptions.childConfig.parallelToolCalls }),

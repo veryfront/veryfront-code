@@ -86,7 +86,6 @@ describe("math", () => {
 | `scaleMs`                | Scale a duration for the current test runtime.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts)                    |
 | `setEnv`                 | Sets env.                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)       |
 | `stat`                   | Read file metadata.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
-| `test`                   | Shared test value.                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
 | `testDelay`              | Wait for a test-scaled duration.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts)                    |
 | `waitFor`                | Wait until a condition succeeds.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
 | `withEnv`                | Applies env.                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
@@ -109,6 +108,7 @@ describe("math", () => {
 | `isBun`  | True if running in Bun runtime (Bun also exposes process.versions.node). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
 | `isDeno` | True if running in the real Deno runtime rather than a dnt shim.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
 | `isNode` | True if running in Node.js rather than a more specific compatible host.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
+| `test`   | Shared test value.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)             |
 
 ## Deep imports
 
@@ -161,7 +161,6 @@ import { afterAll, afterEach, beforeAll } from "veryfront/testing/bdd";
 | `describe`   | Group related BDD tests.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 | `initBdd`    | Initialize the BDD test adapter.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 | `it`         | Define a BDD test case.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
-| `test`       | Shared test value.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 
 #### Types
 
@@ -169,3 +168,9 @@ import { afterAll, afterEach, beforeAll } from "veryfront/testing/bdd";
 | ---------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `BddTestContext` | Context passed to hooks and tests (BDD-specific)       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 | `TestOptions`    | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+
+#### Constants
+
+| Name   | Description        | Source                                                                             |
+| ------ | ------------------ | ---------------------------------------------------------------------------------- |
+| `test` | Shared test value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |

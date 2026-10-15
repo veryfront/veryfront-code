@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { hasExplicitHostedToolName } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 /**
@@ -511,6 +512,16 @@ export async function resolveHostedChildAgentExecutionConfig(
     agentId: childAgentId,
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
+  // Resolve startup inside the target's existing authorization, never the parent's catalog.
+  const bootstrapSkill = agentConfig.bootstrapSkill === undefined
+    ? undefined
+    : (skillSelectorSnapshot.definitions.find((skill) =>
+      skill.ownerAgentId === childAgentId && skill.shortName === agentConfig.bootstrapSkill
+    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === agentConfig.bootstrapSkill))
+      ?.id;
+  if (agentConfig.bootstrapSkill !== undefined && bootstrapSkill === undefined) {
+    throw CONFIG_INVALID.create({ detail: "Configured startup skill is not authorized" });
+  }
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);
   // The skill catalog and the load_skill fork guidance both advertise the
   // loader, so they must track its effective availability: an undefined
@@ -531,6 +542,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       availableToolNames: toolNames,
       skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(toolNames),
     }),
+    ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
     ...(agentConfig.parallelToolCalls === undefined

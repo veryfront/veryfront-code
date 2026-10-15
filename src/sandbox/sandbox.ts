@@ -44,6 +44,7 @@ import type {
   CommandStreamEvent,
   SandboxAttachment,
   SandboxCapabilities,
+  SandboxCapabilitiesOptions,
   SandboxClientOptions,
   SandboxDetails,
   SandboxEnvironment,
@@ -67,6 +68,7 @@ export type {
   SandboxAccessScope,
   SandboxAttachment,
   SandboxCapabilities,
+  SandboxCapabilitiesOptions,
   SandboxClientOptions,
   SandboxDetails,
   SandboxEnvironment,
@@ -189,13 +191,21 @@ export class Sandbox {
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl, false);
   }
 
-  /** Get sandbox capabilities, limits and defaults for the current caller. */
-  static async capabilities(options: SandboxClientOptions = {}): Promise<SandboxCapabilities> {
+  /** Get platform features or selected-project creation eligibility. Creation rechecks capacity. */
+  static async capabilities(
+    options: SandboxCapabilitiesOptions = {},
+  ): Promise<SandboxCapabilities> {
+    assertSandboxSelector(options.projectReference, "projectReference");
+    const query = new URLSearchParams();
+    if (options.projectReference !== undefined) {
+      query.set("project_reference", options.projectReference);
+    }
+    const path = `/sandboxes/capabilities${query.size ? `?${query}` : ""}`;
     return parseSandboxCapabilities(
       await requestSandboxControlPlane(
         resolveSandboxApiUrl(options),
         resolveSandboxAuthToken(options),
-        "/sandboxes/capabilities",
+        path,
       ),
     );
   }

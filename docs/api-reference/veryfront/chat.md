@@ -574,9 +574,9 @@ import {
 
 ```ts
 import {
+  assertPreparedMessageBudget,
   compactForStep,
   compactHistoricalUiMessageToolInputs,
-  compactOldToolInputs,
 } from "veryfront/chat/message-prep";
 ```
 
@@ -590,6 +590,7 @@ import {
 
 | Name                                         | Description                                                                             | Source                                                                                                        |
 | -------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `assertPreparedMessageBudget`                | Reject provider messages that exceed the shared prepared context budget.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-budget.ts)               |
 | `compactForStep`                             | Compact for step.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `compactHistoricalUiMessageToolInputs`       | Compact large historical UI-message tool inputs after matching results are available.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `compactOldToolInputs`                       | Compact large historical tool-call inputs after matching results are available.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
@@ -599,8 +600,8 @@ import {
 | `enforceTokenBudgetWithTurnCompression`      | Enforce token budget with turn compression.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `ensureToolCallInputs`                       | Ensure tool call inputs helper.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `estimateMessageTokenBreakdown`              | Estimate token categories for provider, UI, or runtime messages.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
-| `estimateOverhead`                           | Estimate overhead.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
-| `estimateTokens`                             | Estimate tokens.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
+| `estimateOverhead`                           | Estimate overhead.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-budget.ts)               |
+| `estimateTokens`                             | Estimate tokens.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-budget.ts)               |
 | `isModelSupportedFileMediaType`              | Check whether the model supports the file media type.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `maskOldToolOutputs`                         | Mask old tool outputs while retaining preceding-turn file evidence for follow-up edits. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |
 | `normalizeMessageFilePartMediaTypes`         | Normalizes message file part media types.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts)                      |

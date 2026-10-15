@@ -1,3 +1,13 @@
+import {
+  assertPreparedMessageBudget,
+  DEFAULT_TOKEN_BUDGET,
+  estimateTokens,
+} from "./message-prep-budget.ts";
+export {
+  assertPreparedMessageBudget,
+  estimateOverhead,
+  estimateTokens,
+} from "./message-prep-budget.ts";
 import { inheritToolResultSource } from "./tool-result-source.ts";
 import { cleanContent, hasValidContent } from "./provider-message-content.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
@@ -61,13 +71,6 @@ export type {
   MessageTokenBreakdown,
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
-
-const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Estimate tokens. */
-export function estimateTokens(value: unknown): number {
-  return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
-}
 
 function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
   return {
@@ -260,7 +263,13 @@ export function enforceTokenBudgetWithTurnCompression(
   messages: ProviderModelMessage[],
   budget: number,
   overhead: number,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
+  const preservedIds = new Set(preserveSourceMessageIds);
+  const isPreserved = (message: ProviderModelMessage): boolean => {
+    const sourceId = getProviderModelMessageSourceId(message);
+    return sourceId !== undefined && preservedIds.has(sourceId);
+  };
   if (!Number.isSafeInteger(budget) || budget < 0) {
     throw new TypeError("Chat message token budget must be a non-negative safe integer");
   }
@@ -287,7 +296,13 @@ export function enforceTokenBudgetWithTurnCompression(
 
     // Read from `result`: after the first splice, turn indices are positions
     // in the mutated array, not in the original `messages`.
-    const compressed = compressTurn(result, turn.startIdx, turn.endIdx);
+    const turnMessages = result.slice(turn.startIdx, turn.endIdx + 1);
+    const preserved = turnMessages.filter(isPreserved);
+    const compressible = turnMessages.filter((message) => !isPreserved(message));
+    const summary = compressTurn(compressible, 0, compressible.length - 1);
+    const compressed = preserved.length === 0
+      ? summary
+      : [summary[0]!, ...preserved, ...summary.slice(1)];
     const compressedTokens = compressed.reduce(
       (sum, message) => sum + estimateTokens(message.content),
       0,
@@ -318,27 +333,24 @@ export function enforceTokenBudgetWithTurnCompression(
 
   const finalTurns = collectTurns(result);
   const finalMinKeep = Math.min(2, finalTurns.length);
-  let dropCount = 0;
-  while (totalTokens > effectiveBudget && dropCount < finalTurns.length - finalMinKeep) {
-    const turn = finalTurns[dropCount];
-    if (!turn) break;
+  const droppedIndices = new Set<number>();
+  for (
+    let index = 0;
+    totalTokens > effectiveBudget && index < finalTurns.length - finalMinKeep;
+    index++
+  ) {
+    const turn = finalTurns[index];
+    if (!turn) continue;
+    if (result.slice(turn.startIdx, turn.endIdx + 1).some(isPreserved)) continue;
     totalTokens -= turn.tokens;
-    dropCount++;
+    for (let messageIndex = turn.startIdx; messageIndex <= turn.endIdx; messageIndex++) {
+      droppedIndices.add(messageIndex);
+    }
   }
-
-  if (dropCount === 0) return result;
-
-  const firstKeptTurn = finalTurns[dropCount];
-  if (!firstKeptTurn) return result;
-
-  const firstKeepIdx = firstKeptTurn.startIdx;
-  return result.slice(firstKeepIdx);
+  return droppedIndices.size === 0
+    ? result
+    : result.filter((_, index) => !droppedIndices.has(index));
 }
-
-const BUDGET_RATIO = 0.85;
-const DEFAULT_CONTEXT_WINDOW = 200_000;
-const DEFAULT_TOKEN_BUDGET = Math.floor(DEFAULT_CONTEXT_WINDOW * BUDGET_RATIO);
-const TOKENS_PER_TOOL = 250;
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
@@ -1634,12 +1646,6 @@ export function compactHistoricalUiMessageToolInputs(
   return mutated ? result : messages;
 }
 
-/** Estimate overhead. */
-export function estimateOverhead(instructions: unknown, toolCount: number): number {
-  const instructionTokens = estimateTokens(instructions);
-  return instructionTokens + toolCount * TOKENS_PER_TOOL;
-}
-
 /** Ensure tool call inputs helper. */
 export function ensureToolCallInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let mutated = false;
@@ -1677,6 +1683,8 @@ export function compactForStep(
   overhead: number = 0,
   options: {
     historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+    /** Reject a latest turn that still exceeds the existing budget after compaction. */
+    requireBudgetFit?: boolean;
   } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
@@ -1686,6 +1694,7 @@ export function compactForStep(
     ),
     DEFAULT_TOKEN_BUDGET,
     overhead,
+    options.historicalToolInputRetention?.preserveSourceMessageIds,
   );
 
   let end = compacted.length;
@@ -1695,7 +1704,9 @@ export function compactForStep(
 
   const trimmed = end < compacted.length ? compacted.slice(0, end) : compacted;
 
-  return ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  const prepared = ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  if (options.requireBudgetFit) assertPreparedMessageBudget(prepared, overhead);
+  return prepared;
 }
 
 /** Dedupe tool history. */
@@ -1797,10 +1808,16 @@ export function enforceTokenBudget(
   messages: ProviderModelMessage[],
   budget: number = DEFAULT_TOKEN_BUDGET,
   overhead: number = 0,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
   if (messages.length === 0) {
     return messages;
   }
 
-  return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
+  return enforceTokenBudgetWithTurnCompression(
+    messages,
+    budget,
+    overhead,
+    preserveSourceMessageIds,
+  );
 }
