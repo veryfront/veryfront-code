@@ -96,6 +96,12 @@ describe("accepted task input receipt validation", () => {
     }
   });
 
+  it("rejects non-object nested payloads before a receipt can be persisted", () => {
+    for (const payload of [null, "input", 42, true, []]) {
+      assertThrows(() => snapshot({ ...receipt(), payload }));
+    }
+  });
+
   it("rejects accessor-backed receipt fields before executing application code", () => {
     let reads = 0;
     const value = Object.defineProperty(receipt(), "payload", {

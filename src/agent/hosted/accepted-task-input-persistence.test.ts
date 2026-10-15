@@ -71,6 +71,24 @@ it("grants an exact-parent child receipt only after authenticated event persiste
   assertThrows(() => hostedAcceptedTaskInputReference(receipt, parentRunId, "foreign-child"));
 });
 
+it("rejects malformed nested input before authenticated persistence transport", async () => {
+  let calls = 0;
+  const writer = capability(() => {
+    calls++;
+    return Promise.resolve(result());
+  });
+  for (const payload of [null, "input", 42, true, []]) {
+    await assertRejects(() =>
+      persistHostedAcceptedTaskInput({
+        capability: writer,
+        parentRunId,
+        event: Object.defineProperty({ ...event }, "payload", { value: payload }),
+      })
+    );
+  }
+  assertEquals(calls, 0);
+});
+
 it("rejects absent or wrong-parent persistence authority before transport", async () => {
   await assertRejects(() => persistHostedAcceptedTaskInput({ parentRunId, event }));
   await assertRejects(() =>

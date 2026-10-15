@@ -27,6 +27,8 @@ export function snapshotHostedAcceptedTaskInputEvent(
   if (
     Object.keys(snapshot).sort((left, right) => left.localeCompare(right, "en")).join(",") !==
       "artifactVersions,payload,sourceEventIds,targetAgentId,type,version" ||
+    snapshot.payload === null || typeof snapshot.payload !== "object" ||
+    Array.isArray(snapshot.payload) ||
     snapshot.type !== ACCEPTED_TASK_INPUT_EVENT_TYPE || snapshot.version !== 1 ||
     typeof snapshot.targetAgentId !== "string" || !snapshot.targetAgentId ||
     snapshot.targetAgentId.length > 255 || !Array.isArray(snapshot.sourceEventIds) ||
