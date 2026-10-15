@@ -125,6 +125,8 @@ export type DefaultHostedInvokeAgentConfig = {
 /** Resolved project-agent settings applied to a fixed hosted child run. */
 export type DefaultHostedChildAgentExecutionConfig = {
   system: AgentSystem;
+  /** Canonical startup skill authored by the target agent, never inherited. */
+  bootstrapSkill?: string;
   model?: string;
   temperature?: number;
   parallelToolCalls?: boolean;
@@ -674,6 +676,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         : {}),
       projectId: scopedOptions.context.projectId || null,
       forkInput,
+      ...(runtimeOptions.childConfig?.bootstrapSkill === undefined
+        ? {}
+        : { bootstrapSkill: runtimeOptions.childConfig.bootstrapSkill }),
       ...(runtimeOptions.childConfig?.parallelToolCalls === undefined
         ? {}
         : { parallelToolCalls: runtimeOptions.childConfig.parallelToolCalls }),
