@@ -50,15 +50,13 @@ import {
 } from "./connected-dev.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
 } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
-import {
-  createVeryfrontApiOriginBoundOutboundFetch,
-  trustOperatorConfiguredVeryfrontApiOrigins,
-} from "#cli/outbound-fetch";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -109,6 +107,15 @@ function authStatus(identity: AuthIdentity): string {
   return isApiKeyIdentity(identity)
     ? "Authenticated with an API key"
     : `Logged in as ${identity.email}`;
+}
+
+/** Authentication options used after executable project configuration has loaded. */
+export function createConnectedDevAuthenticationOptions(apiBaseUrl: string, timeoutMs = 10_000) {
+  return {
+    throwOnCredentialValidationUnavailable: true,
+    transport: createCloudOnboardingTransport(apiBaseUrl, timeoutMs),
+    timeoutMs,
+  };
 }
 
 export async function preloadDevAuth(
@@ -311,13 +318,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         options.environment ?? "preview",
         {
           authenticate: async () => {
-            preflightIdentity = await ensureAuthenticated(getEnvironmentConfig(), projectDir, {
-              throwOnCredentialValidationUnavailable: true,
-              transport: createVeryfrontApiOriginBoundOutboundFetch(
+            preflightIdentity = await ensureAuthenticated(
+              getEnvironmentConfig(),
+              projectDir,
+              createConnectedDevAuthenticationOptions(
                 connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
               ),
-              timeoutMs: 10_000,
-            });
+            );
             return Boolean(preflightIdentity);
           },
           resolve: async (projectSlug, environmentName) => {
