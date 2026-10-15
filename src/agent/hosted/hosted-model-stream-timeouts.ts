@@ -52,6 +52,30 @@ function warnDerivedBudgetOnce(
 }
 
 /**
+ * Warn once when an explicit budget fits under the outer watchdog with less
+ * than {@link hostedDerivedBudgetHeadroomMs} to spare. The value stays valid,
+ * since rejecting it would break a working deployment on upgrade, but the
+ * outer watchdog may then win the race and report a generic stall.
+ */
+function warnThinHeadroomOnce(
+  warn: HostedModelStreamTimeoutWarn | undefined,
+  env: string,
+  valueMs: number,
+  windowMs: number,
+  outerIdleTimeoutMs: number,
+): void {
+  const headroomMs = hostedDerivedBudgetHeadroomMs(outerIdleTimeoutMs);
+  const spareMs = outerIdleTimeoutMs - windowMs;
+  if (spareMs >= headroomMs) return;
+  warnDerivedBudgetOnce(
+    warn,
+    `thin:${env}:${valueMs}:${outerIdleTimeoutMs}`,
+    `${env}=${valueMs}ms leaves only ${spareMs}ms under ${CHAT_IDLE_ENV}=${outerIdleTimeoutMs}ms; the chat watchdog may report a generic stall before the model timeout. Leave at least ${headroomMs}ms spare.`,
+    { [env]: valueMs, [CHAT_IDLE_ENV]: outerIdleTimeoutMs, spareMs, headroomMs },
+  );
+}
+
+/**
  * Resolve only host-owned model stream budgets, leaving omitted fields at
  * framework defaults.
  *
@@ -81,6 +105,13 @@ export function resolveHostedModelStreamTimeouts(
         `Hosted model first progress timeout window must be shorter than the chat stream idle timeout: ${FIRST_PROGRESS_ENV}=${firstProgressTimeoutMs} x ${RUNTIME_PROVIDER_STREAM_ATTEMPTS} attempts = ${windowMs}ms, effective ${CHAT_IDLE_ENV}=${outerIdleTimeoutMs}ms`,
       );
     }
+    warnThinHeadroomOnce(
+      warn,
+      FIRST_PROGRESS_ENV,
+      firstProgressTimeoutMs,
+      windowMs,
+      outerIdleTimeoutMs,
+    );
   } else {
     const defaultMs = DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs;
     if (hostedFirstProgressWindowMs(defaultMs) >= outerIdleTimeoutMs) {
@@ -113,6 +144,13 @@ export function resolveHostedModelStreamTimeouts(
         `Hosted model semantic idle timeout window must be shorter than the chat stream idle timeout: ${SEMANTIC_IDLE_ENV}=${semanticIdleTimeoutMs}ms, effective ${CHAT_IDLE_ENV}=${outerIdleTimeoutMs}ms`,
       );
     }
+    warnThinHeadroomOnce(
+      warn,
+      SEMANTIC_IDLE_ENV,
+      semanticIdleTimeoutMs,
+      semanticIdleTimeoutMs,
+      outerIdleTimeoutMs,
+    );
   } else {
     const defaultMs = DEFAULT_STREAM_LIFECYCLE_POLICY.semanticIdleTimeoutMs;
     if (defaultMs >= outerIdleTimeoutMs) {

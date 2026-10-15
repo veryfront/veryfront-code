@@ -42,6 +42,30 @@ describe("host-owned model stream timeouts", () => {
     }
   });
 
+  it("warns once when an explicit budget leaves less than the headroom", () => {
+    const warnings: string[] = [];
+    const warn = (message: string) => warnings.push(message);
+    const thin = parseAgentServiceConfig({
+      VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: "74999",
+      VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "149000",
+    });
+    for (let request = 0; request < 2; request++) {
+      assertEquals(resolveHostedModelStreamTimeouts(thin, 150_000, warn), {
+        firstProgressTimeoutMs: 74_999,
+        semanticIdleTimeoutMs: 149_000,
+      });
+    }
+    assertEquals(warnings.length, 2);
+    assertStringIncludes(warnings[0]!, "leaves only 2ms");
+    assertStringIncludes(warnings[1]!, "leaves only 1000ms");
+    const roomy = parseAgentServiceConfig({
+      VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: "60000",
+      VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "120000",
+    });
+    resolveHostedModelStreamTimeouts(roomy, 150_000, warn);
+    assertEquals(warnings.length, 2);
+  });
+
   it("names the env vars and effective values when an explicit budget does not fit", () => {
     const error = assertThrows(
       () =>

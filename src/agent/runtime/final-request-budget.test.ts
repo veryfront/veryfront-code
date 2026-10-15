@@ -399,6 +399,68 @@ describe("final model request budget", () => {
     assertEquals(JSON.stringify(remembered).includes("Rejected output request"), false);
   });
 
+  for (const mode of ["generate", "stream"] as const) {
+    it(`keeps the admission snapshot when a catalog refresh adds a limit mid-${mode}`, async () => {
+      const catalog = (limit?: { context: number; output: number }) =>
+        __setVeryfrontCloudCatalogForTests({
+          models: [{
+            id: "small",
+            modelId: "acme/small",
+            provider: "acme",
+            surface: "openai",
+            aliases: [],
+            operations: ["chat-completions"],
+            ...(limit ? { capabilities: { limit } } : {}),
+          }],
+        });
+      // The turn is admitted while the loaded catalog declares no limit, so it
+      // takes the non-transactional path and commits its input.
+      const model = servedModel(mode, 256, [{ text: "ok" }, { text: "unexpected" }]);
+      catalog();
+      let refreshes = 0;
+      const runtime = new AgentRuntime(`refresh-${mode}-agent`, {
+        model: model.modelId,
+        system: "Mandatory system guidance ".repeat(100),
+        maxSteps: 1,
+        skills: false,
+        tools: {},
+        memory: { type: "buffer", maxMessages: 10 },
+        middleware: [async (_context, next) => {
+          // A concurrent refresh lands between admission and the budget check.
+          refreshes++;
+          catalog({ context: 256, output: 32 });
+          return await next();
+        }],
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+      const run = async (input: string) => {
+        if (mode === "generate") return await runtime.generate(input);
+        const stream = await runtime.stream([{
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{ type: "text", text: input }],
+        }]);
+        await new Response(stream).text();
+      };
+      // The refreshed limit cannot reject this turn: its committed input could
+      // not be rolled back, and a rejection would leave it saved for replay.
+      await run("First request");
+      assertEquals(refreshes, 1);
+      assertEquals(model.callCount, 1);
+      // The next turn reads the refreshed catalog, is admitted transactionally,
+      // and its rejection rolls the input back.
+      if (mode === "generate") {
+        await assertRejects(() => run("Second request"), VeryfrontError);
+      } else {
+        await run("Second request").catch(() => {});
+      }
+      assertEquals(model.callCount, 1);
+      const remembered = JSON.stringify(await runtime.getMemory().getMessages());
+      assertEquals(remembered.includes("First request"), true);
+      assertEquals(remembered.includes("Second request"), false);
+    });
+  }
+
   it("keeps enforcing a settled model's served limit after its catalog scope is evicted", async () => {
     // No catalog is loaded for this scope, as after the bounded cache evicts
     // it; the model still carries the limit it was built with.

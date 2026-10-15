@@ -2360,6 +2360,20 @@ function requiresServedModelAdmission(languageModel: ModelRuntime, model: string
 }
 
 /**
+ * Turns admitted on the non-transactional path because their served catalog
+ * declared no limit when the turn started. Such a turn has already committed
+ * its input, so a limit that a concurrent catalog refresh adds mid-turn must
+ * not reject it: that rejection could not roll the input back. The admission
+ * snapshot (no limit) holds for the whole turn; the next turn reads the
+ * refreshed catalog and is admitted transactionally.
+ */
+const unlimitedServedAdmissions = new WeakSet<TurnProviderRequestAdmission>();
+
+function admitWithoutServedLimit(admission: TurnProviderRequestAdmission): void {
+  unlimitedServedAdmissions.add(admission);
+}
+
+/**
  * Fit one step's request to the served context window before dispatch: first
  * project old tool results to retrievable references, then unload previously
  * loaded deferred schemas. Source history and authorization stay unchanged.
@@ -2388,6 +2402,8 @@ async function fitRuntimeStepRequestToServedBudget(input: {
     typeof persistToolExposureCheckpointBeforeContinuation
   >[0]["persist"];
   requireToolExposureCheckpointPersistence: boolean;
+  /** The turn's provider admission, whose served-limit snapshot applies. */
+  turnAdmission: TurnProviderRequestAdmission;
 }): Promise<{
   modelMessages: Message[];
   plan: ToolExposurePlan;
@@ -2399,7 +2415,9 @@ async function fitRuntimeStepRequestToServedBudget(input: {
    */
   commitToolExposure: () => Promise<void>;
 }> {
-  const servedLimit = readServedModelLimit(input.languageModel, input.model);
+  const servedLimit = unlimitedServedAdmissions.has(input.turnAdmission)
+    ? undefined
+    : readServedModelLimit(input.languageModel, input.model);
   let modelMessages = input.modelMessages;
   let plan = input.plan;
   let commitToolExposure = async () => {};
@@ -3896,15 +3914,19 @@ export class AgentRuntime {
         // validated again. A middleware that answers without calling `next()`
         // (a cache hit) still accepted the turn, so persistence runs after the
         // chain resolves when the continuation never reached it.
+        // Decide served-limit admission once, from one catalog snapshot, and
+        // keep that decision for the whole turn (see admitWithoutServedLimit).
+        const servedAdmission = requiresServedModelAdmission(
+          transport.languageModel,
+          resolveRuntimeModel(resolvedModelString),
+        );
         const turnPersistence = this.createTurnPersistence(
           inputMessages,
           agentContext,
           abortSignal,
-          requiresServedModelAdmission(
-            transport.languageModel,
-            resolveRuntimeModel(resolvedModelString),
-          ),
+          servedAdmission,
         );
+        if (!servedAdmission) admitWithoutServedLimit(turnPersistence.validateProviderRequest);
 
         const chain = new MiddlewareChain(this.config.middleware);
         let response: AgentResponse;
@@ -4123,15 +4145,19 @@ export class AgentRuntime {
       // a later, benign turn. A middleware that answers without calling `next()`
       // (a cache hit) still accepted the turn, so persistence runs after the
       // chain resolves when the continuation never reached it.
+      // Decide served-limit admission once, from one catalog snapshot, and
+      // keep that decision for the whole turn (see admitWithoutServedLimit).
+      const servedAdmission = requiresServedModelAdmission(
+        transport.languageModel,
+        resolveRuntimeModel(transport.resolvedModelString),
+      );
       const turnPersistence = this.createTurnPersistence(
         inputMessages,
         agentContext,
         streamAbortSignal,
-        requiresServedModelAdmission(
-          transport.languageModel,
-          resolveRuntimeModel(transport.resolvedModelString),
-        ),
+        servedAdmission,
       );
+      if (!servedAdmission) admitWithoutServedLimit(turnPersistence.validateProviderRequest);
 
       // Deferring persistence into the stream body moved the memory calls past
       // the point where the route can still return a 5xx, so probe the memory
@@ -4657,6 +4683,7 @@ export class AgentRuntime {
           toolExposureState,
           persistToolExposureCheckpoint,
           requireToolExposureCheckpointPersistence,
+          turnAdmission: validateProviderRequest,
         });
         const modelMessages = fittedRequest.modelMessages;
         effectiveToolExposurePlan = fittedRequest.plan;
@@ -6028,6 +6055,7 @@ export class AgentRuntime {
         toolExposureState,
         persistToolExposureCheckpoint,
         requireToolExposureCheckpointPersistence,
+        turnAdmission: validateProviderRequest,
       });
       const modelMessages = fittedRequest.modelMessages;
       effectiveToolExposurePlan = fittedRequest.plan;
