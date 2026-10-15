@@ -159,7 +159,6 @@ import {
   getTurnMessageValidator,
   getTurnProviderRequestValidator,
   markStatefulTurn,
-  type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -2241,6 +2240,18 @@ function getRequiredRuntimeToolNames(
   return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
 }
 
+/** Internal admission boundary: external validators never receive preparation callbacks. */
+type TurnProviderRequestAdmission = (
+  system: AgentSystem,
+  messages: Message[],
+  preparation?: {
+    /** Prepare durable state; false means no dispatch or pause was accepted. */
+    beforeAcceptance?: () => Promise<void | boolean>;
+    /** Validate a pause preview without accepting a provider request. */
+    deferAcceptance?: boolean;
+  },
+) => Promise<void>;
+
 type RuntimeStepRequestInput = {
   messages: Message[];
   plan: ToolExposurePlan;
@@ -2411,15 +2422,18 @@ async function fitRuntimeStepRequestToServedBudget(input: {
     // rejects it, and a smaller retry must not lose previously loaded tools.
     if (fitted.evictedNames.length > 0 && inspect(modelMessages, plan).fits) {
       commitToolExposure = async () => {
+        await persistToolExposureCheckpointBeforeContinuation({
+          checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, {
+            loadedToolNames: fitted.plan.loadedToolNames,
+          }),
+          persist: input.persistToolExposureCheckpoint,
+          required: input.requireToolExposureCheckpointPersistence,
+        });
+        // Publish the in-memory exposure only after its durable checkpoint exists.
         input.toolExposureState.loadedToolNames.clear();
         for (const name of fitted.plan.loadedToolNames) {
           input.toolExposureState.loadedToolNames.add(name);
         }
-        await persistToolExposureCheckpointBeforeContinuation({
-          checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, input.toolExposureState),
-          persist: input.persistToolExposureCheckpoint,
-          required: input.requireToolExposureCheckpointPersistence,
-        });
       };
     }
   }
@@ -3273,6 +3287,7 @@ export class AgentRuntime {
     inputMessages: Message[],
     context?: AgentContext,
     abortSignal?: AbortSignal,
+    transactionalAdmission = false,
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
@@ -3290,12 +3305,10 @@ export class AgentRuntime {
     // stored chain; callers still observe the rejection through the returned
     // promise.
     //
-    // Only a turn that actually runs a cross-turn validator is queued. Without
-    // one there is nothing to serialize: the write no longer depends on the
-    // history read, so a stateless agent (no `memory` config, where
-    // `createAgentMemory(undefined)` persists nothing) and every agent without
-    // the security middleware keep the pre-existing concurrency, and one slow
-    // memory backend cannot hold up unrelated concurrent turns.
+    // Stateful validation and provider admission both stage writes until the
+    // request can be accepted. Keep these transactions ordered. Stateless agents
+    // and direct-provider turns without transactional admission retain their
+    // existing concurrency.
     //
     // Keep the queue until the entire turn finalizes: every provider step can
     // reject the caller input, and overlapping rollback snapshots can restore
@@ -3303,10 +3316,10 @@ export class AgentRuntime {
     // turns on one runtime instance, including time spent awaiting tools.
     if (
       this.memory instanceof NoMemory || !context ||
-      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
-        !getTurnMessageProjectionValidator(context)
+      !transactionalAdmission && !getTurnMessageValidator(context) &&
+        !getTurnProviderRequestValidator(context) && !getTurnMessageProjectionValidator(context)
     ) {
-      return this.#commitTurnMessages(inputMessages, context);
+      return this.#commitTurnMessages(inputMessages, context, transactionalAdmission);
     }
 
     const leaveLineage = enterSerializedTurn(this);
@@ -3314,7 +3327,11 @@ export class AgentRuntime {
     const task = chainPrivatePromise(awaitAbortable(predecessor, abortSignal), async () => {
       try {
         throwIfAborted(abortSignal);
-        const prepared = await this.#commitTurnMessages(inputMessages, context);
+        const prepared = await this.#commitTurnMessages(
+          inputMessages,
+          context,
+          transactionalAdmission,
+        );
         return {
           ...prepared,
           commit: async () => {
@@ -3353,6 +3370,7 @@ export class AgentRuntime {
     inputMessages: Message[],
     context: AgentContext,
     abortSignal?: AbortSignal,
+    servedModelAdmission = false,
   ): {
     persisted: boolean;
     persist: () => Promise<Message[]>;
@@ -3361,9 +3379,12 @@ export class AgentRuntime {
     commit: () => Promise<void>;
     finalize: () => Promise<void>;
     validationState: () => "pending" | "accepted" | "rejected";
-    validateProviderRequest: TurnProviderRequestValidator;
+    validateProviderRequest: TurnProviderRequestAdmission;
   } {
     if (!(this.memory instanceof NoMemory)) markStatefulTurn(context);
+    const transactionalAdmission = servedModelAdmission || this.#manualPause !== undefined ||
+      getRuntimeToolExposureCheckpointPersister(this.config) !== undefined ||
+      isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
     // Memoized on the first call: persistence now runs inside the middleware
     // continuation, so a middleware that invokes `next()` more than once (a
     // retry or fallback wrapper) would otherwise write this turn's input to
@@ -3411,6 +3432,7 @@ export class AgentRuntime {
           resolveValidatedTurnInput(context.input, inputMessages),
           context,
           abortSignal,
+          transactionalAdmission,
         );
         return chainPrivatePromise(transaction, ({ messages }) => messages);
       },
@@ -3444,7 +3466,11 @@ export class AgentRuntime {
       },
       finalize: () => validationState === "accepted" ? commit() : rollback(),
       validationState: () => validationState,
-      validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
+      validateProviderRequest: async (
+        providerSystem: AgentSystem,
+        messages: Message[],
+        preparation?: Parameters<TurnProviderRequestAdmission>[2],
+      ) => {
         if (rejection) throw rejection.error;
         try {
           await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
@@ -3454,7 +3480,19 @@ export class AgentRuntime {
           await rollback();
           throw rejection.error;
         }
-        validationState = "accepted";
+        let accept: void | boolean;
+        try {
+          accept = await preparation?.beforeAcceptance?.();
+        } catch (error) {
+          // A later step can fail after an earlier request was dispatched. Keep
+          // that accepted history, but roll back an undispatched first request.
+          if (validationState === "accepted") throw error;
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
+          validationState = "rejected";
+          await rollback();
+          throw rejection.error;
+        }
+        if (!preparation?.deferAcceptance && accept !== false) validationState = "accepted";
         // Keep validated stateful turns serialized until finalization. An
         // overlapping rollback could otherwise restore another rejected turn.
       },
@@ -3465,6 +3503,7 @@ export class AgentRuntime {
   async #commitTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
+    transactionalAdmission = false,
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
@@ -3494,7 +3533,8 @@ export class AgentRuntime {
     const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
     const validateProviderRequest = context && getTurnProviderRequestValidator(context);
     let memoryTransaction =
-      validateTurnMessages || validateProjectedMessages || validateProviderRequest
+      transactionalAdmission || validateTurnMessages || validateProjectedMessages ||
+        validateProviderRequest
         ? await beginMemoryTransaction(this.memory)
         : undefined;
     let turnMemory = memoryTransaction ?? this.memory;
@@ -3502,7 +3542,10 @@ export class AgentRuntime {
     let history: Message[] = [];
     let persisted: Message[];
     try {
-      if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
+      if (
+        transactionalAdmission || validateTurnMessages || validateProjectedMessages ||
+        validateProviderRequest
+      ) {
         history = await turnMemory.getMessages();
         restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
         if (history.length > 0) validated = concatPrivateArrays(history, committedInputMessages);
@@ -3833,6 +3876,8 @@ export class AgentRuntime {
           inputMessages,
           agentContext,
           abortSignal,
+          transport.languageModel.provider === "veryfront-cloud" ||
+            readVeryfrontCloudModelFacts(transport.languageModel) !== undefined,
         );
 
         const chain = new MiddlewareChain(this.config.middleware);
@@ -4056,6 +4101,8 @@ export class AgentRuntime {
         inputMessages,
         agentContext,
         streamAbortSignal,
+        transport.languageModel.provider === "veryfront-cloud" ||
+          readVeryfrontCloudModelFacts(transport.languageModel) !== undefined,
       );
 
       // Deferring persistence into the stream body moved the memory calls past
@@ -4305,7 +4352,7 @@ export class AgentRuntime {
   async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
-    validateProviderRequest: TurnProviderRequestValidator,
+    validateProviderRequest: TurnProviderRequestAdmission,
     persistMessage: (message: Message) => Promise<void>,
     prepareTerminalDispatch: () => Promise<void>,
     toolContextBase: ToolExecutionContext | undefined,
@@ -4624,8 +4671,8 @@ export class AgentRuntime {
           await validateProviderRequest(
             providerSystemPrompt,
             modelMessages,
+            { beforeAcceptance: fittedRequest.commitToolExposure },
           );
-          await fittedRequest.commitToolExposure();
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
@@ -5363,7 +5410,7 @@ export class AgentRuntime {
   async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
-    validateProviderRequest: TurnProviderRequestValidator,
+    validateProviderRequest: TurnProviderRequestAdmission,
     persistMessage: (message: Message) => Promise<void>,
     prepareTerminalDispatch: () => Promise<void>,
     controller: ReadableStreamDefaultController,
@@ -5541,12 +5588,24 @@ export class AgentRuntime {
         );
         throw agentManualPauseBoundary();
       }
-      if (await this.#manualPause.acknowledge(saved)) throw agentManualPauseBoundary();
+      let acknowledged = false;
+      await validateProviderRequest(
+        withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+        currentMessages,
+        {
+          beforeAcceptance: async () => {
+            acknowledged = await this.#manualPause!.acknowledge(saved);
+            return acknowledged;
+          },
+        },
+      );
+      if (acknowledged) throw agentManualPauseBoundary();
     };
     if (this.#manualPause) {
       await validateProviderRequest(
         withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
         currentMessages,
+        { deferAcceptance: true },
       );
       if (checkpoint) {
         const persistedIds = createPrivateSet(mapPrivateArray(messages, (message) => message.id));
@@ -5977,8 +6036,8 @@ export class AgentRuntime {
       await validateProviderRequest(
         providerSystemPrompt,
         modelMessages,
+        { beforeAcceptance: fittedRequest.commitToolExposure },
       );
-      await fittedRequest.commitToolExposure();
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
       const streamSource = createRuntimeStreamSource((streamSignal) =>

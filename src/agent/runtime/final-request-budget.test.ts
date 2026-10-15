@@ -598,6 +598,132 @@ describe("final model request budget", () => {
   }
 
   for (const mode of ["generate", "stream"] as const) {
+    for (const withValidator of [false, true]) {
+      it(`rolls back a rejected exposure checkpoint (${mode}, validator=${withValidator})`, async () => {
+        const { registerTurnProviderRequestValidator } = await import(
+          "../middleware/turn-validation.ts"
+        );
+        const largeTool = tool({
+          id: "large_tool",
+          description: "Inspect a saved object.",
+          inputSchema: defineSchema((v) =>
+            v.object({
+              payload: v.string().describe(`Schema guidance ${"detail ".repeat(1_200)}`),
+            })
+          )(),
+          execute: () => ({ ok: true }),
+        });
+        const checkpoints: unknown[] = [];
+        const model = servedModel(mode, 1_500, [{ text: "unexpected" }]);
+        const runtime = new AgentRuntime(
+          `checkpoint-failure-${mode}`,
+          {
+            model: model.modelId,
+            system: "Answer using the latest result.",
+            maxSteps: 1,
+            skills: false,
+            memory: { type: "buffer", maxMessages: 10 },
+            tools: { large_tool: largeTool },
+            toolLoading: "deferred",
+            __vfToolExposureCheckpoint: { version: 2, loadedToolNames: ["large_tool"] },
+            __vfToolExposureCheckpointPersistenceRequired: true,
+            __vfPersistToolExposureCheckpoint: (value: unknown) => {
+              checkpoints.push(value);
+              return Promise.reject(new Error("checkpoint write failed"));
+            },
+            middleware: withValidator
+              ? [async (context, next) => {
+                registerTurnProviderRequestValidator(context, () => Promise.resolve());
+                return await next();
+              }]
+              : [],
+            resolveModelTransport: () => ({ model }),
+          } as AgentConfig & RuntimeToolFilterConfig,
+        );
+        const input: Message[] = [
+          {
+            id: "old-call",
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "old", toolName: "large_tool", args: {} }],
+          },
+          {
+            id: "old-result",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "old",
+              toolName: "large_tool",
+              result: { ok: true },
+            }],
+          },
+          { id: "user", role: "user", parts: [{ type: "text", text: "Answer now" }] },
+        ];
+        if (mode === "generate") {
+          await assertRejects(() => runtime.generate(input), Error, "checkpoint write failed");
+        } else await new Response(await runtime.stream(input)).text();
+        assertEquals(model.callCount, 0);
+        assert(checkpoints.some((value) => JSON.stringify(value).includes('"loadedToolNames":[]')));
+        assertEquals(
+          await runtime.getMemory().getMessages(),
+          [],
+          "failed pre-dispatch checkpoint must not retain input",
+        );
+      });
+    }
+  }
+
+  for (const withValidator of [false, true]) {
+    for (const pauseProbe of ["inactive", "unacknowledged", "failed"] as const) {
+      it(`rolls back an undispatched stream with ${pauseProbe} pause authority (validator=${withValidator})`, async () => {
+        const { registerTurnProviderRequestValidator } = await import(
+          "../middleware/turn-validation.ts"
+        );
+        const model = servedModel("stream", 256, [{ text: "unexpected" }]);
+        let acknowledgements = 0;
+        const runtime = new AgentRuntime("pause-budget-failure", {
+          model: model.modelId,
+          system: "Short system",
+          maxSteps: 1,
+          skills: false,
+          memory: { type: "buffer", maxMessages: 10 },
+          middleware: withValidator
+            ? [async (context, next) => {
+              registerTurnProviderRequestValidator(context, () => Promise.resolve());
+              return await next();
+            }]
+            : [],
+          resolveModelTransport: () => ({ model }),
+        }, {
+          manualPause: {
+            load: () => Promise.resolve(null),
+            requested: () => Promise.resolve(pauseProbe !== "inactive"),
+            acknowledge: () => {
+              acknowledgements++;
+              return pauseProbe === "failed"
+                ? Promise.reject(new Error("pause acknowledgement failed"))
+                : Promise.resolve(false);
+            },
+          },
+        });
+        await new Response(
+          await runtime.stream([{
+            id: "oversized",
+            role: "user",
+            parts: [{ type: "text", text: "Oversized request ".repeat(200) }],
+          }]),
+        ).text();
+        assertEquals(model.callCount, 0);
+        assertEquals(acknowledgements, pauseProbe === "inactive" ? 0 : 1);
+        assertEquals(
+          await runtime.getMemory().getMessages(),
+          [],
+          "inactive pause must not accept an undispatched turn",
+        );
+      });
+    }
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
     it(`evicts an older deferred schema, checkpoints it, and allows reactivation (${mode})`, async () => {
       const makeLargeTool = () =>
         tool({
