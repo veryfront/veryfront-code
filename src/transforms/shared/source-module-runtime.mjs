@@ -95,3 +95,10 @@ export function createSourceModuleMeta(native, url, peers) {
   }
   return meta;
 }
+
+/** Import retained native dependencies with their original issuer and promise semantics. */
+export async function importSourceModule(specifier, options, url, peers) {
+  // Compilation prepares this issuer; coerce the target before yielding, like native import.
+  const resolved = createSourceModuleMeta(import.meta, url, peers).resolve(`${specifier}`);
+  return import(resolved, options);
+}

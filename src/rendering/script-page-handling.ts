@@ -2,7 +2,7 @@ import {
   buildSourceModuleMetaBinding,
   getSourceModuleRuntimeUrl,
 } from "#veryfront/transforms/shared/source-module-location.ts";
-import { bindDynamicScriptRequires } from "./script-module-imports.ts";
+import { bindScriptModuleImports } from "./script-module-imports.ts";
 import { isBuiltin } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
@@ -427,11 +427,19 @@ async function transpileWithEsbuild(
         __filename: JSON.stringify(path),
       },
     });
-    const code = transformed.code.includes(meta.name)
-      ? `${meta.banner}
-${transformed.code}`
+    const bound = reactPeers
+      ? await bindScriptModuleImports(
+        transformed.code,
+        path,
+        reactPeers,
+        getSourceModuleRuntimeUrl(),
+      )
       : transformed.code;
-    return reactPeers ? bindDynamicScriptRequires(code, path, reactPeers) : code;
+    const code = bound.includes(meta.name)
+      ? `${meta.banner}
+${bound}`
+      : bound;
+    return code;
   };
 
   const result = await build({

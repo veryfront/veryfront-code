@@ -126,6 +126,74 @@ describe("react-paths", () => {
     }
   });
 
+  for (
+    const kind of [
+      "require.resolve",
+      "dynamic import",
+      "CommonJS dynamic import",
+      "glob dynamic import",
+    ]
+  ) {
+    it(`preserves dependency issuers for ${kind}`, async () => {
+      if (!isNode && !isBun) return;
+      const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const directory = mkdtempSync(join(tmpdir(), "script-issuer-"));
+      const adapter = createMockAdapter();
+      const page = join(directory, "page.js");
+      const child = join(
+        directory,
+        "lib",
+        kind.includes("CommonJS") || kind === "require.resolve" ? "helper.cjs" : "helper.js",
+      );
+      fs.mkdirSync(join(directory, "lib"));
+      fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      fs.writeFileSync(join(directory, "lib", "asset.txt"), "child asset");
+      fs.writeFileSync(join(directory, "lib", "value.js"), 'export default "child import";');
+      fs.mkdirSync(join(directory, "lib", "views"));
+      fs.writeFileSync(
+        join(directory, "lib", "views", "value.tsx"),
+        "export default <span>child import</span>;",
+      );
+      fs.writeFileSync(
+        child,
+        kind === "require.resolve"
+          ? 'module.exports = () => require("node:fs").readFileSync(require.resolve("./asset.txt"), "utf8");'
+          : kind === "glob dynamic import"
+          ? 'export default async () => { const name = "value"; return (await import(`./views/${name}.tsx`)).default.props.children; };'
+          : `${
+            kind === "dynamic import" ? "export default" : "module.exports ="
+          } async () => { let path = "./value.js"; const target = { toString: () => path }; const pending = import(target); path = "./missing.js"; const invalid = Symbol(); await import(invalid).then(() => { throw new Error("expected rejection"); }, () => {}); return (await pending).default; };`,
+      );
+      const source = `import child from "./lib/${
+        kind.includes("CommonJS") || kind === "require.resolve" ? "helper.cjs" : "helper.js"
+      }"; export default async () => "<main>" + await child() + "</main>";`;
+      fs.writeFileSync(page, source);
+      adapter.fs.files.set(page, source);
+      try {
+        const rendered = await handleScriptPage(
+          { entity: { path: page, frontmatter: {} } } as never,
+          "page",
+          {
+            mode: "production",
+            projectDir: directory,
+            adapter,
+            config: {},
+            reactPeers: captureLocalReactPeers(),
+          },
+        );
+        assertEquals(
+          rendered.html.includes(
+            kind === "require.resolve" ? "<main>child asset</main>" : "<main>child import</main>",
+          ),
+          true,
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("preserves source-relative assets in local scripts and their dependencies", async () => {
     if (!isNode && !isBun) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
