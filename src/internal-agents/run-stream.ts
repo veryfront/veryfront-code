@@ -537,8 +537,7 @@ export function buildMergedTools(
     input.tools
       .map((tool) =>
         tool.name === INVOKE_AGENT_TOOL_ID &&
-          (controlPlaneOwnsCanonicalDelegation || controlPlaneOwnsDelegation) &&
-          (configuredInvokeAgent === undefined || controlPlaneOwnsDelegation)
+          (controlPlaneOwnsCanonicalDelegation || controlPlaneOwnsDelegation)
           ? { ...tool, name: CANONICAL_INVOKE_AGENT_TOOL_ID }
           : tool
       )

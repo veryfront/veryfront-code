@@ -661,7 +661,7 @@ describe("managed executor broker", () => {
     assertEquals(untrusted.result.content, undefined);
     assertStringIncludes(
       untrusted.result.error ?? "",
-      'Read the load_skill result for "review"',
+      'Reference files for skill "review" are unavailable until its instructions have been read.',
     );
   });
   it("enables the producer from an exact runtime-observation persistence sink", async () => {

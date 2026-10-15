@@ -758,15 +758,9 @@ Use form_input once, then produce the plan.`,
 
   assertStringIncludes(firstResult.instructions, "Use form_input once");
   assertStringIncludes(secondResult.instructions, 'Skill "write" is already loaded');
-  assertStringIncludes(
-    secondResult.instructions,
-    'Do not call load_skill for the "write" body again',
-  );
-  assertStringIncludes(
-    secondResult.instructions,
-    'To read a listed reference file, use this same exposed skill-loader tool with {"reference":{"skillId":"write","file":"<listed-relative-path>"}}.',
-  );
-  assertStringIncludes(secondResult.instructions, "do not call form_input again");
+  assertEquals(secondResult.instructions, 'Skill "write" is already loaded in this turn.');
+  assertEquals(secondResult.instructions.includes("form_input"), false);
+  assertEquals(secondResult.instructions.includes("load_skill"), false);
   assertEquals(secondResult.maxSteps, 8);
   assertEquals(secondResult.references, ["references/write.md"]);
 });
@@ -2507,7 +2501,7 @@ Deno.test("createRuntimeLoadSkillTool binds provider observation to the current 
   assertEquals(secondBody.references, ["references/project-2.md", "references/shared.md"]);
   assertEquals(await tool.execute(read, observedFirstScope), {
     error:
-      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+      'Reference files for skill "plan" are unavailable until its instructions have been read.',
   });
 
   const observedSecondScope = {};
@@ -2537,12 +2531,10 @@ Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill b
   });
 
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/ROUTES.md" }), {
-    error:
-      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call veryfront__load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
+    error: 'Skill "veryfront" must be loaded before reference file "references/ROUTES.md".',
   });
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
-    error:
-      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call veryfront__load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
+    error: 'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md".',
   });
 });
 
@@ -2606,8 +2598,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
       { ...resumedExecutionContext, activeSkillId: "other" },
     ),
     {
-      error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+      error: 'Skill "research" must be loaded before reference file "assets/template.txt".',
     },
   );
   assertEquals(
@@ -2616,8 +2607,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
       resumedExecutionContext,
     ),
     {
-      error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+      error: 'Skill "research" must be loaded before reference file "assets/template.txt".',
     },
   );
 });
@@ -2676,8 +2666,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes cold reference reads from provi
       {},
     ),
     {
-      error:
-        'Skill "research" must be loaded before reference file "resources/schema.json". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+      error: 'Skill "research" must be loaded before reference file "resources/schema.json".',
     },
   );
 
@@ -2693,7 +2682,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes cold reference reads from provi
     ),
     {
       error:
-        'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+        'Reference files for skill "research" are unavailable until its instructions have been read.',
     },
   );
 });
@@ -2733,7 +2722,7 @@ Deno.test("createRuntimeLoadSkillTool rejects cold observed refs for wrong body,
   }]);
   assertEquals(await create().execute(readResearch, wrongRefs), {
     error:
-      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+      'Reference files for skill "research" are unavailable until its instructions have been read.',
   });
 
   const wrongSkill = {};
@@ -2743,13 +2732,12 @@ Deno.test("createRuntimeLoadSkillTool rejects cold observed refs for wrong body,
   }]);
   assertEquals(await create().execute(readResearch, wrongSkill), {
     error:
-      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+      'Reference files for skill "research" are unavailable until its instructions have been read.',
   });
 
   const untrusted = {};
   assertEquals(await create().execute(readResearch, untrusted), {
-    error:
-      'Skill "research" must be loaded before reference file "resources/schema.json". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+    error: 'Skill "research" must be loaded before reference file "resources/schema.json".',
   });
 
   const observed = {};
@@ -2861,7 +2849,7 @@ Deno.test("createRuntimeLoadSkillTool waits until provider observes body before 
     ),
     {
       error:
-        'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+        'Reference files for skill "plan" are unavailable until its instructions have been read.',
     },
   );
 
@@ -2902,7 +2890,7 @@ Deno.test("createRuntimeLoadSkillTool can require a provider observation snapsho
   await required.execute({ skillId: "plan" });
   assertEquals(await required.execute(read, {}), {
     error:
-      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+      'Reference files for skill "plan" are unavailable until its instructions have been read.',
   });
   const observedContext = {};
   setProviderObservedSkillBodies(observedContext, [
@@ -3002,8 +2990,7 @@ Deno.test("createRuntimeLoadSkillTool makes same-reference reloads concise and i
   assertEquals(secondResult, {
     skillId: "plan",
     file: "references/project.md",
-    content:
-      'Reference file "plan/references/project.md" is already loaded in this turn. Do not call load_skill for this file again. Continue from the existing reference content and produce the next useful response now.',
+    content: 'Reference file "plan/references/project.md" is already loaded in this turn.',
   });
 });
 
@@ -3175,8 +3162,7 @@ it("createRuntimeLoadSkillTool names the canonical loader when inventory is unav
   });
 
   assertEquals(await tool.execute({}), {
-    error:
-      "The authorized skill inventory is unavailable. Call veryfront__load_skill with a known skillId.",
+    error: "The authorized skill inventory is unavailable.",
   });
 });
 

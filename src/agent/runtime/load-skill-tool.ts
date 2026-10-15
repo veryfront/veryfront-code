@@ -622,17 +622,9 @@ function buildAlreadyLoadedSkillResponse(
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
   const copied = copyLoadedSkillResponse(response);
-  const references = copied.references;
-  const referenceGuidance = references !== undefined && references.length > 0
-    ? `To read a listed reference file, use this same exposed skill-loader tool with {"reference":{"skillId":"${skillId}","file":"<listed-relative-path>"}}. `
-    : "";
   return {
     ...copied,
-    instructions:
-      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for the "${skillId}" body again. ` +
-      referenceGuidance +
-      "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
-      "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
+    instructions: `Skill "${skillId}" is already loaded in this turn.`,
   };
 }
 
@@ -653,9 +645,7 @@ function buildAlreadyLoadedSkillReferenceResponse(
   return {
     skillId,
     file,
-    content:
-      `Reference file "${skillId}/${file}" is already loaded in this turn. Do not call load_skill for this file again. ` +
-      "Continue from the existing reference content and produce the next useful response now.",
+    content: `Reference file "${skillId}/${file}" is already loaded in this turn.`,
   };
 }
 
@@ -1355,8 +1345,7 @@ function buildRuntimeSkillInventoryPage(
   const knownSkillIds = getKnownRuntimeSkillIds(options);
   if (knownSkillIds === null) {
     return {
-      error:
-        "The authorized skill inventory is unavailable. Call veryfront__load_skill with a known skillId.",
+      error: "The authorized skill inventory is unavailable.",
     };
   }
 
@@ -1477,7 +1466,7 @@ function buildRuntimeLoadSkillInputSchema(
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
-          `Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: ${
+          `Already-loaded skill ID with no advertised reference files. Repeated body loads return a compact marker. Loaded skill IDs: ${
             loadedEnumValues.join(", ")
           }`,
         ),
@@ -1528,7 +1517,7 @@ function buildRuntimeLoadSkillInputSchema(
       ...(unreferenceableEnumValues === null ? [] : [
         v.object({
           skillId: v.enum(unreferenceableEnumValues).describe(
-            `Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: ${
+            `Already-loaded skill ID with no advertised reference files. Repeated body loads return a compact marker. Loaded skill IDs: ${
               unreferenceableEnumValues.join(", ")
             }`,
           ),
@@ -1548,7 +1537,7 @@ function buildRuntimeLoadSkillInputSchema(
 function buildUnobservedSkillBodyError(skillId: string): RuntimeLoadSkillErrorOutput {
   return {
     error:
-      `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,
+      `Reference files for skill "${skillId}" are unavailable until its instructions have been read.`,
   };
 }
 
@@ -1617,8 +1606,7 @@ async function loadRuntimeSkillReferenceFile(
       !observedBodyMayAuthorizeColdReference
     ) {
       return {
-        error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
-          `Call veryfront__load_skill with {"load":{"skillId":"${skillId}"}} first, then request one of the listed reference files.`,
+        error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}".`,
       };
     }
 
@@ -2071,7 +2059,7 @@ export function createRuntimeLoadSkillTool(
       request = normalizeRuntimeLoadSkillToolInput(runtimeLoadSkillToolInputSchema.parse(input));
     } catch (error) {
       throw INPUT_VALIDATION_FAILED.create({
-        detail: `Tool "load_skill" input validation failed: ${
+        detail: `Skill loader input validation failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       });
@@ -2107,14 +2095,14 @@ export function createRuntimeLoadSkillTool(
       );
     } catch (error) {
       throw INPUT_VALIDATION_FAILED.create({
-        detail: `Tool "load_skill" input validation failed: ${
+        detail: `Skill loader input validation failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       });
     }
     if (!("skillId" in parsed)) {
       throw INPUT_VALIDATION_FAILED.create({
-        detail: 'Tool "load_skill" input validation failed: skillId is required.',
+        detail: "Skill loader input validation failed: skillId is required.",
       });
     }
     skillId = normalizeRuntimeLoadSkillInputSkillId(options, parsed.skillId);

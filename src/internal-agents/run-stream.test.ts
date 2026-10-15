@@ -1214,7 +1214,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sameBatchReferenceResult?.isError, true);
     assertStringIncludes(
       errorTextFrom(sameBatchReferenceResult?.content),
-      'Read the load_skill result for "review" before requesting reference files.',
+      'Reference files for skill "review" are unavailable until its instructions have been read.',
     );
     assertEquals(
       JSON.stringify(sameBatchReferenceResult).includes("Detailed checklist content"),
