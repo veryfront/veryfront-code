@@ -13,6 +13,8 @@ import {
   writeProjectLink,
 } from "./project-link.ts";
 
+import { setJsonMode } from "./json-output.ts";
+
 const LINK: Omit<ProjectLink, "version"> = {
   controlPlane: "https://api.veryfront.com/control-plane/",
   projectId: "550e8400-e29b-41d4-a716-446655440000",
@@ -264,5 +266,34 @@ Deno.test("shared association warns about legacy credentials without exposing or
       port: 3551,
       projectSlug: "linked-project",
     });
+  });
+});
+
+Deno.test("unchanged shared association preserves the original file bytes", async () => {
+  await withTempProject(async (dir) => {
+    const path = join(dir, "veryfront.json");
+    const original =
+      '{"projectSlug":"linked-project", "apiUrl":"https://api.veryfront.com", "port":3551}\n';
+    await Deno.writeTextFile(path, original);
+    await saveSharedProjectAssociation(dir, "linked-project", "https://api.veryfront.com");
+    assertEquals(await Deno.readTextFile(path), original);
+  });
+});
+
+Deno.test("legacy association warnings preserve JSON command output", async () => {
+  await withTempProject(async (dir) => {
+    await Deno.writeTextFile(
+      join(dir, "veryfront.json"),
+      JSON.stringify({ apiToken: "private-token" }),
+    );
+    const warnings: unknown[] = [];
+    using _warning = stub(console, "warn", (...args: unknown[]) => warnings.push(args));
+    setJsonMode(true);
+    try {
+      await saveSharedProjectAssociation(dir, "linked-project");
+      assertEquals(warnings.length, 0);
+    } finally {
+      setJsonMode(false);
+    }
   });
 });
