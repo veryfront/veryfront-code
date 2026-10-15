@@ -1904,7 +1904,7 @@
         ]
       },
       "jsr:@veryfront/react@0.1.0": {},
-      "jsr:veryfront@0.1.1275": {
+      "jsr:veryfront@0.1.1276-rc": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/async@1.2.0",
