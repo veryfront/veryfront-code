@@ -163,6 +163,13 @@ describe("provider/veryfront-cloud/catalog-client deployments", () => {
     assertEquals(catalog?.models[0]?.limit, limit);
   });
 
+  it("reads an empty deployment list as a catalog without models", () => {
+    assertEquals(parseVeryfrontCloudCatalog({ deployments: [] }), {
+      models: [],
+      defaultModelId: undefined,
+    });
+  });
+
   it("skips a deployment whose model has no short ID", () => {
     const [row] = LEGACY_ROWS;
     const deployment = deploymentOf(row!);

@@ -282,13 +282,16 @@ function parseDeployments(
 }
 
 /**
- * Whether `deployments` carries routing. An API that serves `deployments`
- * without it predates the full contract, so its deprecated `models` list is
- * still the one that says how to call a model.
+ * The payload's `deployments`, unless it also serves the deprecated `models`
+ * and no deployment carries `routing`: such an API predates the full contract,
+ * so `models` still says how to call a model.
  */
-function deploymentsCarryRouting(deployments: unknown): deployments is readonly unknown[] {
-  return Array.isArray(deployments) &&
+function routedDeployments(payload: Record<string, unknown>): readonly unknown[] | undefined {
+  const { deployments, models } = payload;
+  if (!Array.isArray(deployments)) return undefined;
+  const routed = !Array.isArray(models) ||
     deployments.some((row) => isRecord(row) && isRecord(row.routing));
+  return routed ? deployments : undefined;
 }
 
 /**
@@ -300,9 +303,8 @@ function deploymentsCarryRouting(deployments: unknown): deployments is readonly 
  */
 export function parseVeryfrontCloudCatalog(payload: unknown): VeryfrontCloudCatalog | undefined {
   if (!isRecord(payload)) return undefined;
-  if (deploymentsCarryRouting(payload.deployments)) {
-    return parseDeployments(payload.deployments, payload.models);
-  }
+  const deployments = routedDeployments(payload);
+  if (deployments) return parseDeployments(deployments, payload.models);
   if (!Array.isArray(payload.models)) return undefined;
   const models: VeryfrontCloudCatalogModel[] = [];
   for (const row of payload.models) {
