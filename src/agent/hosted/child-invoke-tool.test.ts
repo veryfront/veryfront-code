@@ -93,6 +93,6 @@ Deno.test("createHostedChildInvokeTool blocks same-turn retry after a cancellati
     success: false,
     terminalErrorCode: "INVOKE_AGENT_RETRY_BLOCKED",
     terminalErrorMessage:
-      "A delegated child run was cancelled in this response. Start a fresh turn instead of retrying invoke_agent again in the same run.",
+      "A delegated child run was cancelled in this response. Child retries are unavailable until the next turn.",
   });
 });

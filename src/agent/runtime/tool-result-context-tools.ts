@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "#veryfront/tool";
 import type { ToolResultContext } from "./tool-result-context.ts";
 
-export const GET_TOOL_RESULT_TOOL_NAME = "get_tool_result";
+export const GET_TOOL_RESULT_TOOL_NAME = "veryfront__get_tool_result";
 
 /** Infrastructure schema for retrieving a bounded section of a run-owned result. */
 export function createToolResultReadDefinition(): ToolDefinition {
@@ -58,7 +58,7 @@ export function readToolResultContext(context: ToolResultContext, args: Record<s
       (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) ||
         args.maxBytes < 4))
   ) {
-    throw new TypeError("Invalid get_tool_result arguments");
+    throw new TypeError("Invalid veryfront__get_tool_result arguments");
   }
   return context.read({
     ref: args.ref,

@@ -12,6 +12,24 @@ import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/
 const repoRoot = new URL("../../", import.meta.url);
 
 describe("guide content contracts", () => {
+  it("uses canonical model tool names in run and delegation guidance", async () => {
+    const expected = {
+      "docs/guides/multi-agent.md": ["invoke_agent"],
+      "src/run-events/payload.ts": ["invoke_agent"],
+      "docs/concepts/run.md": ["succeed_run", "fail_run", "finalize"],
+      "docs/concepts/webhook.md": ["invoke_agent"],
+      "docs/concepts/schedule.md": ["invoke_agent"],
+      "docs/guides/memory-and-streaming.md": ["list_run_events"],
+      "src/run-events/envelope.ts": ["list_run_events"],
+      "src/tool/types.ts": ["load_skill"],
+      "src/knowledge/index.ts": ["search_knowledge"],
+    };
+    for (const [path, names] of Object.entries(expected)) {
+      const content = await Deno.readTextFile(new URL(path, repoRoot));
+      for (const name of names) assertStringIncludes(content, `\`veryfront__${name}\``);
+    }
+  });
+
   it("states installation sizes and local inference boundaries", async () => {
     const readme = await Deno.readTextFile(new URL("README.md", repoRoot));
     const installation = await Deno.readTextFile(
@@ -554,12 +572,12 @@ describe("guide content contracts", () => {
     );
     const docs = [agentsGuide, toolsGuide, architecture].join("\n");
 
-    assertStringIncludes(toolsGuide, "`form_input` is authorized but deferred");
+    assertStringIncludes(toolsGuide, "`veryfront__form_input` is authorized but deferred");
     assertStringIncludes(docs, "configured `providerTools`");
     assertStringIncludes(docs, "provider's native schema on the next model step");
     assertEquals(docs.includes("does not search or load provider-native `providerTools`"), false);
     assertEquals(docs.includes("does not search `providerTools`"), false);
-    assertEquals(docs.includes("bootstrap tools (`form_input`"), false);
+    assertEquals(docs.includes("bootstrap tools (`veryfront__form_input`"), false);
   });
 
   it("documents the exact-run writer capability migration", async () => {

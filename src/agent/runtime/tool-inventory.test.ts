@@ -99,7 +99,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     assertStringIncludes(capturedSystem, "Tool discovery and tool execution are unavailable.");
     assertStringIncludes(
       capturedSystem,
-      "Do not fabricate tool calls, tool results, or tool_search calls.",
+      "Do not fabricate tool calls, tool results, or veryfront__tool_search calls.",
     );
   });
 
@@ -110,7 +110,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     // model to treat that list as what it actually has.
     const [, inventory] = withRuntimeToolInventory(
       "Base system",
-      ["form_input", "tool_search"],
+      ["form_input", "veryfront__tool_search"],
       [{ name: "calculator", description: "Perform arithmetic." }],
     );
 
@@ -118,8 +118,8 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     const callableList = content.slice(0, content.indexOf("Only treat the tools"));
     assertEquals(callableList.includes("calculator"), false);
     assertEquals(content.includes("- calculator: Perform arithmetic."), true);
-    assertEquals(content.includes("You cannot call these until they are loaded"), true);
-    assertEquals(content.includes("You must not call a deferred tool directly."), true);
+    assertEquals(content.includes("Load a deferred tool before calling it."), true);
+    assertEquals(content.includes("You MUST call"), false);
   });
 
   it("bounds large deferred tool inventories while keeping search guidance", () => {
@@ -129,7 +129,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     }));
     const [, inventory] = withRuntimeToolInventory(
       "Base system",
-      ["tool_search"],
+      ["veryfront__tool_search"],
       deferredTools,
     );
 
@@ -139,10 +139,8 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     assertEquals(content.includes("- catalog_tool_020: "), false);
     assertEquals(content.includes("30 additional authorized deferred tools are omitted"), true);
     assertEquals(
-      content.includes(
-        "Use tool_search search or inventory to find omitted tools.",
-      ),
-      true,
+      content.includes("Use veryfront__tool_search search or inventory"),
+      false,
     );
     assertEquals(content.includes("SCHEMA_LEAK_SENTINEL"), false);
     assertEquals(content.length < 7_000, true);
@@ -162,13 +160,13 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     // removal guard does not recognise that ending, the old inventory survives
     // and a second one is appended on the next step.
     const first = flattenSystemInstructions(
-      withRuntimeToolInventory("Base system", ["tool_search"], [{
+      withRuntimeToolInventory("Base system", ["veryfront__tool_search"], [{
         name: "calculator",
         description: "Perform arithmetic.",
       }]),
     );
     const second = flattenSystemInstructions(
-      withRuntimeToolInventory(first, ["tool_search"], [{ name: "web_search" }]),
+      withRuntimeToolInventory(first, ["veryfront__tool_search"], [{ name: "web_search" }]),
     );
 
     assertEquals(second.split("Current run tool inventory:").length - 1, 1);
@@ -195,7 +193,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
 Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.
-No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.`,
+No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or veryfront__tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.`,
       },
     ]);
   });
@@ -291,22 +289,25 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     );
   });
 
-  it("explains how deferred tools become available when tool_search is visible", () => {
-    assertEquals(withRuntimeToolInventory("Base system", ["form_input", "tool_search"]), [
-      { role: "system", content: "Base system" },
-      {
-        role: "system",
-        content: `Current run tool inventory:
+  it("explains how deferred tools become available when veryfront__tool_search is visible", () => {
+    assertEquals(
+      withRuntimeToolInventory("Base system", ["form_input", "veryfront__tool_search"]),
+      [
+        { role: "system", content: "Base system" },
+        {
+          role: "system",
+          content: `Current run tool inventory:
 
 - form_input
-- tool_search
+- veryfront__tool_search
 
 Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.
-When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.`,
-      },
-    ]);
+Additional authorized tools may be deferred.`,
+        },
+      ],
+    );
   });
 
   it("flattens non-empty system text with blank-line separation", () => {

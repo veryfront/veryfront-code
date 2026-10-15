@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
   createInvokeAgentTool,
   isFrameworkChildRunTool,
   isProviderSafeDelegateId,
@@ -130,7 +131,7 @@ describe("invoke_agent", () => {
     const runtimeTools = convertToolsToRuntimeTools([definition], {
       model: "openai/qwen2.5-7b-instruct",
     });
-    const runtimeTool = runtimeTools?.invoke_agent as {
+    const runtimeTool = runtimeTools?.[CANONICAL_INVOKE_AGENT_TOOL_ID] as {
       inputSchema: { jsonSchema: { properties: { agent_id: Record<string, unknown> } } };
     };
     const selection = runtimeTool.inputSchema.jsonSchema.properties.agent_id;
@@ -199,6 +200,7 @@ describe("invoke_agent", () => {
       resolveAgent: (id) => id === "writer" ? writer : undefined,
     });
 
+    assertEquals(invokeAgent.id, "veryfront__invoke_agent");
     const result = await invokeAgent.execute({
       agent_id: "writer",
       description: "Draft support reply",

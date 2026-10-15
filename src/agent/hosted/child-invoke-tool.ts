@@ -33,7 +33,7 @@ export interface CreateHostedChildInvokeToolOptions<TInput, TResult> {
 const DEFAULT_RETRY_BLOCKED_ERROR_CODE = "INVOKE_AGENT_RETRY_BLOCKED";
 const DEFAULT_STARTER_INTENT_ROOT_OWNERSHIP_ERROR_CODE = "STARTER_INTENT_ROOT_OWNERSHIP_REQUIRED";
 const DEFAULT_RETRY_BLOCKED_MESSAGE =
-  "A delegated child run was cancelled in this response. Start a fresh turn instead of retrying invoke_agent again in the same run.";
+  "A delegated child run was cancelled in this response. Child retries are unavailable until the next turn.";
 
 function shouldBlockForStarterIntentRootOwnership(context?: ToolExecutionContext): boolean {
   return isStarterIntentRootOwnershipRequired(

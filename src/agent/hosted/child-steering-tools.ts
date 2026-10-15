@@ -87,7 +87,7 @@ export function wrapHostedChildProjectSwitchTool(
   }
 
   const originalExecute = toolDefinition.execute;
-  input.tools[toolName] = {
+  input.tools[toolName] = inheritTrustedHostToolProvenance(toolDefinition, {
     ...toolDefinition,
     execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
@@ -104,5 +104,5 @@ export function wrapHostedChildProjectSwitchTool(
         ? createUnconfirmedProjectContextSwitchResult()
         : result;
     },
-  };
+  });
 }

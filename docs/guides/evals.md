@@ -435,8 +435,8 @@ for dangerous side-effect tools, and `toolCallCount` for exact, minimum, or
 maximum call budgets.
 
 Use knowledge metrics when an agent should retrieve the right project knowledge
-before answering. They read retrieved items from the `search_knowledge` tool
-trace by default and compare them with expected sources or passages. For larger
+before answering. They read retrieved items from the `veryfront__search_knowledge` tool
+trace by default (falling back to `search_knowledge` for project-authored or historical traces) and compare them with expected sources or passages. For larger
 datasets, put the expected knowledge on each example under
 `metadata.expectedKnowledge`:
 
@@ -557,7 +557,7 @@ metrics.answer.groundedness({
 }).gate({ min: 0.8 });
 ```
 
-The metric extracts evidence from `search_knowledge` by default and passes it to
+The metric extracts evidence from `veryfront__search_knowledge` by default, falls back to `search_knowledge` when no canonical call exists, and passes it to
 the judge. The built-in LLM judge asks for structured JSON, fails closed when
 the response is malformed, and checks semantic support instead of brittle string
 overlap.
@@ -646,9 +646,9 @@ export default evalAgent({
 Mock tools are strict and local-only. When present, no configured agent tools,
 remote tools, provider tools, MCP tools, or sandbox tools are advertised or used
 unless they are explicitly included in the `mockTools` result. Skills agents keep
-only the read-only skill loader tools, `load_skill` and
-`load_skill_reference`, so a skills agent can inspect skill instructions during a
-mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
+only the read-only skill loader tools, `veryfront__load_skill` and
+`veryfront__load_skill_reference`, so a skills agent can inspect skill instructions during a
+mocked eval; `veryfront__execute_skill_script` is not retained unless `mockTools` supplies
 it explicitly.
 
 Loaded-skill allowed-tool policies and delegation overrides are

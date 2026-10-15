@@ -780,7 +780,7 @@ describe("agentAsTool", () => {
       async (invocation) => {
         owned++;
         assertEquals(invocation.agentId, "research");
-        assertEquals(invocation.toolName, "invoke_agent");
+        assertEquals(invocation.toolName, "veryfront__invoke_agent");
         assertEquals(invocation.context?.toolCallId, "actual-call");
         assertEquals(invocation.input, "Find facts");
         return await invocation.execute();

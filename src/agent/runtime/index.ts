@@ -498,8 +498,6 @@ const logger = serverLogger.component("agent");
 const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
 
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
-  "load_skill",
-  "load_skill_reference",
   "veryfront__load_skill",
   "veryfront__load_skill_reference",
 ] as const;
@@ -1613,7 +1611,9 @@ const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] 
 function readToolSearchArg(args: Record<string, unknown>, key: string): unknown {
   const property = ObjectGetOwnPropertyDescriptor(args, key);
   if (!property) return undefined;
-  if (!ObjectHasOwn(property, "value")) throw new Error("tool_search requires data properties");
+  if (!ObjectHasOwn(property, "value")) {
+    throw new Error("veryfront__tool_search requires data properties");
+  }
   return property.value;
 }
 
@@ -1629,7 +1629,9 @@ function executeFrameworkToolSearch(input: {
   result: FrameworkToolSearchResult & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
-  if (isProxyWithoutHooks(input.args)) throw new Error("tool_search requires data properties");
+  if (isProxyWithoutHooks(input.args)) {
+    throw new Error("veryfront__tool_search requires data properties");
+  }
   // The provider schema has no root combinator, so enforce exactly one mode here.
   const modes = filterPrivateArray(
     TOOL_SEARCH_MODES,
@@ -1637,7 +1639,7 @@ function executeFrameworkToolSearch(input: {
   );
   if (modes.length !== 1) {
     throw new Error(
-      `tool_search requires exactly one of schema, search, inventory, or query; received ${
+      `veryfront__tool_search requires exactly one of schema, search, inventory, or query; received ${
         modes.length === 0 ? "none" : joinPrivateArray(modes, ", ")
       }`,
     );
@@ -1648,7 +1650,9 @@ function executeFrameworkToolSearch(input: {
   );
   if (modes[0] !== "inventory" && inventoryOptions.length > 0) {
     throw new Error(
-      `tool_search ${joinPrivateArray(inventoryOptions, ", ")} applies only with inventory`,
+      `veryfront__tool_search ${
+        joinPrivateArray(inventoryOptions, ", ")
+      } applies only with inventory`,
     );
   }
   const available = filterPrivateArray(
@@ -1660,7 +1664,9 @@ function executeFrameworkToolSearch(input: {
     const phrase = readToolSearchArg(input.args, "search");
     const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
     if (!query) {
-      throw new Error("tool_search search requires a non-empty capability phrase string");
+      throw new Error(
+        "veryfront__tool_search search requires a non-empty capability phrase string",
+      );
     }
     const result = searchToolExposureMetadata({
       query,
@@ -1680,7 +1686,7 @@ function executeFrameworkToolSearch(input: {
   if (modes[0] === "schema") {
     const name = readToolSearchArg(input.args, "schema");
     if (typeof name !== "string" || !name) {
-      throw new Error("tool_search schema requires one exact tool name string");
+      throw new Error("veryfront__tool_search schema requires one exact tool name string");
     }
     const contract = readToolExposureContract({ name, authorized: input.plan.authorized });
     if (contract === undefined) {
@@ -1728,7 +1734,7 @@ function executeFrameworkToolSearch(input: {
     const resource = readToolSearchArg(input.args, "resource");
     if (scope !== "all" && scope !== "platform") {
       throw new Error(
-        'tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
+        'veryfront__tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
       );
     }
     if (domain !== undefined && typeof domain !== "string") {
@@ -1765,7 +1771,7 @@ function executeFrameworkToolSearch(input: {
   const phrase = readToolSearchArg(input.args, "query");
   const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
   if (!query) {
-    throw new Error('tool_search requires a non-empty "query" string');
+    throw new Error('veryfront__tool_search requires a non-empty "query" string');
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
@@ -1788,7 +1794,7 @@ function executeFrameworkToolSearch(input: {
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
-        ? "No executable tool matched this query. Use tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
+        ? "No executable tool matched this query. Use veryfront__tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
         : "Continue with the available tools or answer without a tool.",
     },
     checkpoint: checkpoint(),
@@ -2842,7 +2848,7 @@ function findAdmittedToolResult(
 
 function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, Tool> | undefined {
   const knowledgeTool = config.tools === true ? createAgentKnowledgeTool(config) : undefined;
-  return knowledgeTool === undefined ? undefined : { search_knowledge: knowledgeTool };
+  return knowledgeTool === undefined ? undefined : { veryfront__search_knowledge: knowledgeTool };
 }
 
 /**
