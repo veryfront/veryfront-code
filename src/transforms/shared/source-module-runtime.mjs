@@ -18,9 +18,9 @@ let registered = false;
 /** Preload a native resolver without adding top-level await to user modules. */
 async function prepareResolver(url) {
   if (nativeResolveHasParent || resolvers.has(url)) return;
-  let operation = pending.get(url);
-  if (!operation) {
-    operation = (async () => {
+  let entry = pending.get(url);
+  if (!entry) {
+    const operation = (async () => {
       if (!registered) {
         nodeModule.register(new URL("./source-module-resolver-hooks.mjs", import.meta.url), {
           data: { marker },
@@ -33,12 +33,13 @@ async function prepareResolver(url) {
       resolvers.set(url, loaded.resolve);
       sourceConditions.set(url, loaded.conditions);
     })();
-    pending.set(url, operation);
+    entry = { operation };
+    pending.set(url, entry);
   }
   try {
-    await operation;
+    await entry.operation;
   } finally {
-    if (pending.get(url) === operation) pending.delete(url);
+    if (pending.get(url) === entry) pending.delete(url);
   }
 }
 
