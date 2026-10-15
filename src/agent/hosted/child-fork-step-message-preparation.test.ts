@@ -677,3 +677,44 @@ it("hosted startup survives compression of a prior answer and still rejects an o
     "context budget",
   );
 });
+
+it("hosted budget validation uses the final resolved system instead of provisional instructions", () => {
+  let resolverCalls = 0;
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [{ id: "request", role: "user", parts: [{ type: "text", text: "Process fixture" }] }],
+    bootstrapSkill: "child--process",
+    forkToolNames: ["load_skill"],
+    buildInstructions: () => "Provisional instructions. ".repeat(50_000),
+    resolveSystem: () => {
+      resolverCalls++;
+      return "Final small system";
+    },
+  });
+  assertEquals(resolverCalls, 1);
+  assertEquals(prepared.system, "Final small system");
+  assertEquals(prepared.messages.some((message) => message.role === "user"), true);
+});
+
+it("hosted final oversized resolver instructions reject after the resolver runs", () => {
+  let resolverCalls = 0;
+  assertThrows(
+    () =>
+      prepareHostedChildForkRuntimeStepMessages({
+        messages: [{
+          id: "request",
+          role: "user",
+          parts: [{ type: "text", text: "Process fixture" }],
+        }],
+        bootstrapSkill: "child--process",
+        forkToolNames: ["load_skill"],
+        buildInstructions: () => "Provisional instructions. ".repeat(50_000),
+        resolveSystem: () => {
+          resolverCalls++;
+          return "Oversized final instructions. ".repeat(50_000);
+        },
+      }),
+    RangeError,
+    "context budget",
+  );
+  assertEquals(resolverCalls, 1);
+});

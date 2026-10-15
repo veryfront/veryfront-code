@@ -275,7 +275,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
     estimateOverhead(flattenedInstructions, input.forkToolNames.length),
     {
       historicalToolInputRetention: { preserveSourceMessageIds: preservedId ? [preservedId] : [] },
-      requireBudgetFit: input.bootstrapSkill !== undefined,
+      requireBudgetFit: input.bootstrapSkill !== undefined && input.resolveSystem === undefined,
     },
   );
   const resolvedSystem = input.resolveSystem?.({
