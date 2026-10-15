@@ -3,6 +3,7 @@ import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
+  observeFetchRequestInit,
   replaceAmbientFetchForFaultInjection,
   withMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
@@ -60,11 +61,13 @@ for (const command of [pullCommand, pushCommand]) {
               dispatched++;
               projectPaths.push(path);
               assertEquals(
-                new Headers(init?.headers).get("authorization"),
+                new Headers(observeFetchRequestInit(init).headers).get("authorization"),
                 "Bearer operator-token",
               );
             }
-            if (newProject && init?.method === "POST" && path === "/projects") {
+            if (
+              newProject && observeFetchRequestInit(init).method === "POST" && path === "/projects"
+            ) {
               reservations++;
               return Promise.resolve(createdResponse);
             }
@@ -163,7 +166,7 @@ it("dev sync returns response headers while the source body remains pending", as
   let timer: ReturnType<typeof setTimeout> | undefined;
   let requestSignal: AbortSignal | null | undefined;
   await withMockFetch((_input, init) => {
-    requestSignal = init?.signal;
+    requestSignal = observeFetchRequestInit(init).signal;
     return Promise.resolve(response);
   }, async () => {
     const transport = createConnectedDevSyncTransport("https://api.veryfront.com");

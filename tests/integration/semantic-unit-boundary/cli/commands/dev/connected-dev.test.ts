@@ -164,9 +164,10 @@ it("requires a Studio override for an unsupported connected API", () => {
 for (const path of ["project", "environment"]) {
   it(`bounds connected ${path} preflight without reporting a missing target`, async () => {
     await withMockFetch((_input, init) => {
-      if (!init?.signal) throw new Error("unbounded onboarding request");
+      const signal = observeFetchRequestInit(init).signal;
+      if (!signal) throw new Error("unbounded onboarding request");
       return new Promise<Response>((_resolve, reject) => {
-        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       });
     }, async () => {
       const controlPlane = createConnectedDevControlPlane({
