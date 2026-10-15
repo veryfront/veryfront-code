@@ -473,8 +473,10 @@ function inheritedExecutionResponse(
   });
 }
 
+type FetchTransport = typeof globalThis.fetch;
+
 function inheritedBinding(
-  fetch: typeof globalThis.fetch = () => Promise.reject(new Error("Unexpected fetch")),
+  fetch: FetchTransport = () => Promise.reject(new Error("Unexpected fetch")),
 ) {
   return {
     projectId: "project-1",
