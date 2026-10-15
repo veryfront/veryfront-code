@@ -33,6 +33,7 @@ interface TransformCrossProjectImportFlowOptions {
     | "reactVersion"
     | "dependencyPinningCacheKey"
     | "dependencyPinningDependencies"
+    | "dependencyPinningConfiguredVersions"
     | "dependencyPinningSource"
     | "adapter"
   >;
@@ -150,6 +151,7 @@ export async function transformCrossProjectImportFlow(
         reactVersion: options.reactVersion,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
         dependencyPinningSource: options.dependencyPinningSource,
       };
 

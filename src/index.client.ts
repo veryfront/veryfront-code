@@ -19,7 +19,11 @@
  * @module veryfront
  */
 
-export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
+export {
+  defineConfig,
+  defineConfigWithEnv,
+  mergeConfigs,
+} from "#veryfront/config/define-config.client.ts";
 export type { VeryfrontConfig } from "#veryfront/config";
 
 // Source `getEnv` from its browser-safe leaf, not the `#veryfront/platform`
@@ -48,7 +52,7 @@ export {
 } from "#veryfront/http/responses";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/routing";
 
-export { notFound, redirect } from "#veryfront/data";
+export { notFound, redirect } from "#veryfront/data/helpers.ts";
 export type {
   DataContext,
   DataResponseMetadata,

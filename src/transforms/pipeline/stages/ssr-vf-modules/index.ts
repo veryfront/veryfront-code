@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { CIRCULAR_DEPENDENCY } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type {
@@ -269,6 +270,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           ctx.projectDir,
           resolved.content,
           importMapFingerprint,
+          await getSSRReactRuntimeCacheScope(ctx.reactPeers),
         );
         const cachePath = await runFrameworkTransformFlight(
           transformKey,
@@ -283,6 +285,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
               importMap,
               importMapFingerprint,
               abortSignal,
+              ctx.reactPeers,
             );
 
             // Skip cycle placeholders - don't cache or use them

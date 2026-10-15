@@ -8,6 +8,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./context",
   "./fonts",
   "./ui",
+  "./ui/adapter",
   "./ui/icons",
   "./chat",
   "./chat/ag-ui",
@@ -17,6 +18,9 @@ export const BROWSER_SAFE_EXPORTS = [
   "./markdown",
   "./mdx",
   "./agent/identity",
+  "./schemas",
+  "./platform/env",
+  "./workflow/claude-code/react",
   // The Agent Events Protocol parser and schema-derived contract. API, Code,
   // and Studio consume it in browser bundles with an injected schema adapter.
   "./events",
@@ -41,12 +45,6 @@ export const BROWSER_SAFE_DNT_TIMER_MODULES = [
 // normal relative imports. They are browser-compatible source modules, but dnt
 // injects Node shim/polyfill imports for runtime features they do not use in
 // the browser-safe graph.
-export const BROWSER_SAFE_TRANSITIVE_EXPORTS = [
-  "./chat/ag-ui",
-  "./run-events",
-  "./events/ag-ui",
-];
-
 export const BROWSER_SAFE_TRANSITIVE_MODULES = [
   "src/extensions/contracts.js",
   "src/schemas/index.js",
@@ -76,3 +74,10 @@ export const BROWSER_SAFE_CLIENT_MODULES = [
   "src/workflow/react/use-workflow-list.js",
   "src/workflow/react/use-workflow-start.js",
 ];
+
+// Browser builds use the existing polyfill; native runtimes retain request isolation.
+/** @type {Readonly<Record<string, string>>} */
+export const BROWSER_MODULE_REPLACEMENTS = {
+  "src/platform/compat/async-context.ts":
+    "src/platform/polyfills/node-async-hooks.ts",
+};

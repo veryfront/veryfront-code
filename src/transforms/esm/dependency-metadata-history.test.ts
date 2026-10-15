@@ -77,6 +77,60 @@ describe("API-derived dependency metadata history", () => {
     assertEquals(result?.expiresAt, now + 60_000);
   });
 
+  it("recovers pre-peer-selection keys using the prior normalized effective version", () => {
+    const dependencies = { react: "^18" };
+    const current = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const previous = { react: { declaration: "^19.2.0", effective: "19.2.0" } };
+    const legacy: Record<string, string> = { react: "19.2.0" };
+    const key = `on:${hashDependencyPins(legacy, previous)}`;
+    const envelope = history(dependencies);
+    const before = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, current, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, legacy);
+    assertEquals(result?.snapshot.configuredVersions, previous);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), before);
+    assertEquals(
+      selectHistoricalDependencySnapshot(envelope, scope, key, {
+        react: { declaration: "^19.1.0", effective: "19.2.4" },
+      }, now),
+      undefined,
+    );
+    assertEquals(
+      selectHistoricalDependencySnapshot(envelope, scope, key, current, now + 60_000),
+      undefined,
+    );
+  });
+
+  it("preserves authored-map migration keys with their original captured configuration", () => {
+    const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const dependencies: Record<string, string> = { react: "^19.2.0" };
+    const key = `on:${hashDependencyPins(dependencies, config)}`;
+    const envelope = history({});
+    const bytes = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, config, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, dependencies);
+    assertEquals(result?.snapshot.configuredVersions, config);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), bytes);
+  });
+
+  it("retains legacy effective React snapshot identities without rewriting history", () => {
+    const dependencies = { react: "^18" };
+    const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const legacy: Record<string, string> = { react: "19.2.4" };
+    const key = `on:${hashDependencyPins(legacy, config)}`;
+    const envelope = history(dependencies);
+    const before = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, config, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, legacy);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), before);
+  });
+
   it("combines raw history with captured configuration before matching", () => {
     const dependencies = { react: "^18", veryfront: "~0.1.1", other: "^2" };
     const config = {

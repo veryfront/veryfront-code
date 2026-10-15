@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
@@ -148,8 +149,8 @@ describe("SSR module distributed cache on a local dev server", () => {
         assertEquals((first.default as () => string)(), "before");
 
         const parentFileKey = (firstLoader as unknown as {
-          cache: { getCacheKey(filePath: string): string };
-        }).cache.getCacheKey(parentPath);
+          cache: { getCacheKey(filePath: string, runtimeScope?: string): string };
+        }).cache.getCacheKey(parentPath, await getSSRReactRuntimeCacheScope());
         const parentEntry = memory.globalModuleCache.get(parentFileKey);
         const parentContentKey = parentEntry
           ? [...memory.globalModuleCache.entries()].find(([key, entry]) =>

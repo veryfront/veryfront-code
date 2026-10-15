@@ -29,6 +29,19 @@ function setFrontmatter(payload: CachePayload, value: unknown): void {
   payload.result.frontmatter = value as CachePayload["result"]["frontmatter"];
 }
 
+it("preserves bounded alias generations through cache serialization", () => {
+  const payload = {
+    ...payloadWithNodeMap(),
+    aliasEpoch: "00000000-0000-4000-8000-000000000001",
+    aliasProjectEpoch: "00000000-0000-4000-8000-000000000002",
+  };
+  const decoded = parseSerializedCachePayload(serializeCachePayload(payload));
+  assertEquals(decoded?.aliasEpoch, payload.aliasEpoch);
+  assertEquals(decoded?.aliasProjectEpoch, payload.aliasProjectEpoch);
+  assertThrows(() => cloneCachePayload({ ...payload, aliasEpoch: "invalid token" }));
+  assertThrows(() => cloneCachePayload({ ...payload, aliasProjectEpoch: "invalid token" }));
+});
+
 describe("rendering/cache/cache-payload", () => {
   it("round-trips custom response headers through memory and serialized payloads", () => {
     const payload = payloadWithNodeMap();

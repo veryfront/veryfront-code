@@ -1,3 +1,4 @@
+import { hashDependencyPins } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import "#veryfront/schemas/_test-setup.ts";
 /**
  * Module Server Tests
@@ -40,6 +41,7 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
+  selectReactDeclarationVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import {
   DEPENDENCY_PINNING_PROJECTS_ENV,
@@ -800,6 +802,80 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(headResponse.status, 413);
     assertEquals((await getResponse.text()).includes("value3"), false);
     assertEquals(await headResponse.text(), "");
+  });
+
+  it("preserves authored React ranges on a cold bundled client request", async () => {
+    const projectDir = "/cold-prepared-client-range";
+    const effective = selectReactDeclarationVersion("^19.2.0");
+    const preparedVersion = effective === "19.2.0" ? "19.2.1" : "19.2.0";
+    const dependencies = { react: effective };
+    const configuredVersions = { react: { declaration: "^19.2.0", effective } };
+    const requestedCacheKey = `on:${hashDependencyPins(dependencies, configuredVersions)}`;
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(`${projectDir}/package.json`, JSON.stringify({ dependencies }));
+    adapter.fs.files.set(
+      `${projectDir}/app/client.tsx`,
+      '"use client"; export default function Client() {}',
+    );
+    Object.assign(adapter, {
+      moduleLoader: {
+        importModule: (ref: { kind: string; specifier?: string }) => {
+          if (
+            ref.kind === "package" &&
+            (ref.specifier === "react" || ref.specifier === "react-dom/server")
+          ) return Promise.resolve({ default: { version: preparedVersion } });
+          throw new Error("unexpected prepared module");
+        },
+      },
+    });
+    const previous = tryResolve<Bundler>("Bundler");
+    register<Bundler>("Bundler", {
+      bundle: () =>
+        Promise.resolve({
+          outputFiles: [{
+            path: "out.js",
+            contents: new TextEncoder().encode("export default 1;"),
+            text: "export default 1;",
+          }],
+          warnings: [],
+          errors: [],
+        }),
+      transform: () => Promise.resolve({ code: "", warnings: [] }),
+    });
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "100");
+    clearReactVersionCache();
+    try {
+      const { serveModule } = await import("./module-server.ts");
+      const config = { experimental: { rsc: true }, react: { version: "^19.2.0" } };
+      const response = await serveModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/app/client.js?pins=${
+            encodeURIComponent(requestedCacheKey)
+          }`,
+        ),
+        {
+          adapter,
+          projectDir,
+          projectId: "cold-prepared-client-range",
+          isLocalProject: false,
+          isProxyMode: true,
+          mode: "preview",
+          config,
+          dependencyPinningSource: {
+            projectDir,
+            fs: adapter.fs,
+            cacheNamespace: "cold-prepared-client-range",
+            config,
+          },
+        },
+      );
+      assertEquals(response.status, 200, await response.text());
+    } finally {
+      clearReactVersionCache();
+      if (previous) register("Bundler", previous);
+      else unregister("Bundler");
+    }
   });
 
   it("defers client-boundary dependency metadata until browser admission", async () => {

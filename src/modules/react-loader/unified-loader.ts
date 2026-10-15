@@ -61,6 +61,7 @@ async function resolveUnifiedTransformOptions(
     dependencyPinningSource,
     options?.dependencyPinningCacheKey,
     options?.dependencyPinningDependencies,
+    options?.dependencyPinningConfiguredVersions,
   );
   return {
     projectId: options?.projectId ?? projectDir,
@@ -72,6 +73,7 @@ async function resolveUnifiedTransformOptions(
     reactVersion: options?.reactVersion,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
     dependencyPinningSource,
   };
 }

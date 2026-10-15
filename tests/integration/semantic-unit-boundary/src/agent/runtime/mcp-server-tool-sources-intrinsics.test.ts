@@ -136,7 +136,7 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
         [],
       );
     } finally {
-      delete (Array.prototype as Record<string, unknown>)["0"];
+      Reflect.deleteProperty(Array.prototype, "0");
     }
 
     assertEquals(setterCalls, []);
@@ -205,7 +205,7 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
         [],
       );
     } finally {
-      delete (Array.prototype as Record<string, unknown>)["0"];
+      Reflect.deleteProperty(Array.prototype, "0");
     }
 
     assertEquals(inheritedReads, 0);

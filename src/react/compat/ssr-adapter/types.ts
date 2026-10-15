@@ -1,4 +1,6 @@
 export interface SSROptions {
+  /** Request-owned physical peers shared with module transforms. */
+  reactPeers?: import("#veryfront/platform/compat/react-paths.ts").LocalReactPeerSnapshot;
   /** React version used to select an isolated server renderer module. */
   reactVersion?: string;
   /**

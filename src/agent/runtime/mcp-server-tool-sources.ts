@@ -99,10 +99,10 @@ function appendUnique(target: string[], value: string): void {
 }
 
 export function getRuntimeUnavailableOptionalRemoteTools(
-  config: AgentConfig,
+  config: AgentConfig & RuntimeRemoteToolConfig,
   remoteToolSources: readonly RemoteToolSource[] | undefined,
 ): { names: string[]; prefixes: string[] } {
-  const runtimeConfig = config as RuntimeRemoteToolConfig;
+  const runtimeConfig = config;
   const names = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolNames);
   const prefixes = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes);
   const remoteSourceIds = createPrivateSet(
