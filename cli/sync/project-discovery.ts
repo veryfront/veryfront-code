@@ -56,20 +56,21 @@ export async function fetchRemoteProjects(
       // Keep invalid URL failures inside the existing discovery error path.
     }
   }
-  const transport: typeof fetch = explicitLoopback
-    ? withOnboardingDeadline(guardedExactHttpLoopbackOutboundFetch)
-    : createCloudOnboardingTransport(apiUrl);
-  const user = apiKeyCredential ? null : await validateToken(token, env, { transport });
-
-  if (!apiKeyCredential && !user) {
-    return {
-      user: null,
-      projects: [],
-      error: "Session expired. Press A to login again.",
-    };
-  }
-
+  let user: UserInfo | null = null;
   try {
+    const transport: typeof fetch = explicitLoopback
+      ? withOnboardingDeadline(guardedExactHttpLoopbackOutboundFetch)
+      : createCloudOnboardingTransport(apiUrl);
+    user = apiKeyCredential ? null : await validateToken(token, env, { transport });
+
+    if (!apiKeyCredential && !user) {
+      return {
+        user: null,
+        projects: [],
+        error: "Session expired. Press A to login again.",
+      };
+    }
+
     const response = await transport(`${apiUrl}/projects`, {
       headers: {
         Authorization: `Bearer ${token}`,
