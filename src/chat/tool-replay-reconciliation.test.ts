@@ -128,6 +128,34 @@ describe("tool-replay-reconciliation", () => {
     assertEquals(matches.matchedToolResultNames.get(equalButDistinctResult), undefined);
   });
 
+  it("preserves closed occurrences only across distinct trusted source messages", () => {
+    const call1 = rawToolCall("dup", "bash", { command: "one" });
+    const result1 = rawToolResult("dup", { text: "one" }, "bash");
+    const call2 = rawToolCall("dup", "bash", { command: "two" });
+    const result2 = rawToolResult("dup", { text: "two" }, "bash");
+    const messages = [
+      assistantMessage([call1], "call-1"),
+      toolMessage([result1], "result-1"),
+      assistantMessage([call2], "call-2"),
+      toolMessage([result2], "result-2"),
+    ];
+    const ids = messages.map((message) => message.id);
+    const matches = findProviderVisibleToolReplayMatches(messages, ids);
+    assertEquals(matches.supersededToolCallParts.has(call1), false);
+    assertEquals(matches.supersededToolResultParts.has(result1), false);
+    assertEquals(matches.matchedToolCallParts.has(call2), true);
+    const partial = findProviderVisibleToolReplayMatches(
+      messages,
+      ids.filter((id) => id !== "result-1"),
+    );
+    assertEquals(partial.supersededToolCallParts.has(call1), true);
+    const sameSource = findProviderVisibleToolReplayMatches([messages[0]!, messages[1]!, {
+      ...messages[2]!,
+      id: "call-1",
+    }, messages[3]!], ids);
+    assertEquals(sameSource.supersededToolCallParts.has(call1), true);
+  });
+
   it("supersedes an earlier call/result occurrence when a later same-id call wins the match", () => {
     // Core of the algorithm: two split call/result pairs share a toolCallId
     // across four messages. The later occurrence is authoritative; the

@@ -948,6 +948,104 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("accepts completed provider tool-id reuse in later replay messages", async () => {
+    const messages = [
+      { id: "call-1", role: "assistant", parts: [rawReplayToolCallPart] },
+      { id: "result-1", role: "tool", parts: [rawReplayToolResultPart] },
+      {
+        id: "call-2",
+        role: "assistant",
+        parts: [{ ...rawReplayToolCallPart, name: "github__get_pr" }],
+      },
+      {
+        id: "result-2",
+        role: "tool",
+        parts: [{ ...rawReplayToolResultPart, tool_name: "github__get_pr" }],
+      },
+    ];
+    const invocation = { ...createRuntimeInvocation(), messages };
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "fixture" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    assertEquals(parsed instanceof Response, false);
+    if (!(parsed instanceof Response)) {
+      assertEquals(
+        parsed.messages.map((message) => message.id),
+        messages.map((message) => message.id),
+      );
+      assertEquals(parsed.messages[3]?.parts[0], {
+        type: "tool_call",
+        toolCallId: rawReplayToolCallPart.id,
+        toolName: "github__get_pr",
+        input: rawReplayToolCallPart.input,
+        state: "output-available",
+        output: replayOutput,
+      });
+    }
+    assertHostedChatRequestError([
+      ...messages.slice(0, 3),
+      { id: "bad-result", role: "tool", parts: [rawReplayToolResultPart] },
+    ], "tool_result tool_name must match its preceding tool_call");
+    assertHostedChatRequestError([
+      ...messages,
+      { id: "duplicate-result", role: "tool", parts: [rawReplayToolResultPart] },
+    ], "tool_result for tool_call_id must be unique");
+  });
+
+  it("rejects reuse of an unresolved provider tool id across replay messages", () => {
+    assertHostedChatRequestError([
+      {
+        id: "pending-1",
+        role: "assistant",
+        parts: [{ ...rawReplayToolCallPart, state: "pending" }],
+      },
+      { id: "pending-2", role: "assistant", parts: [rawReplayToolCallPart] },
+      { id: "result-2", role: "tool", parts: [rawReplayToolResultPart] },
+    ], "tool_call id must be unique");
+    assertHostedChatRequestError([
+      { id: "same-message", role: "assistant", parts: [...rawReplayParts, ...rawReplayParts] },
+    ], "tool_call id must be unique");
+  });
+
+  it("rejects closing and reusing a provider tool id in the same native replay message", async () => {
+    const invocation = {
+      ...createRuntimeInvocation(),
+      messages: [
+        { id: "call-1", role: "assistant", parts: [rawReplayToolCallPart] },
+        { id: "mixed", role: "assistant", parts: [rawReplayToolResultPart, rawReplayToolCallPart] },
+        { id: "result-2", role: "tool", parts: [rawReplayToolResultPart] },
+      ],
+    };
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "fixture" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    assertEquals(parsed instanceof Response, true);
+    if (parsed instanceof Response) {
+      assertEquals(parsed.status, 400);
+      assertStringIncludes(await parsed.text(), "tool_call id must be unique");
+    }
+  });
+
   it("rejects duplicate replay tool-call ids", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([

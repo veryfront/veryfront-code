@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -53,6 +54,117 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  function bootstrapStepInput(
+    bootstrapTools: string[],
+    overrides: Partial<Parameters<typeof prepareAgentRuntimeStep>[0]> = {},
+  ): Parameters<typeof prepareAgentRuntimeStep>[0] {
+    return {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: false,
+        toolLoading: "deferred",
+        bootstrapTools,
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("read_state"), toolDefinition("write_state")],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      ...overrides,
+    };
+  }
+
+  it("exposes authored bootstrap tools immediately and keeps the rest deferred", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["read_state"]));
+    assertEquals(prepared.tools.map((tool) => tool.name).sort(), ["read_state", "tool_search"]);
+    assertEquals(prepared.toolExposurePlan.deferred.map((tool) => tool.name), ["write_state"]);
+  });
+
+  it("reports host-merged startup tools for provider capping to retain", async () => {
+    const input = bootstrapStepInput([]);
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      config: {
+        ...input.config,
+        bootstrapTools: undefined,
+        __vfRetainedBootstrapToolNames: ["write_state"],
+      } as AgentConfig,
+    });
+    assertEquals(prepared.configuredBootstrapToolNames, ["write_state"]);
+  });
+
+  it("rejects authored bootstrap tools outside the authorized catalog", async () => {
+    const error = await assertRejects(
+      () => prepareAgentRuntimeStep(bootstrapStepInput(["delete_state"])),
+      VeryfrontError,
+      "outside the authorized executable catalog",
+    );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    for (const narrowedBy of ["skill", "exclusion"] as const) {
+      it(`keeps ${mode} bootstrap validation separate from ${narrowedBy} restrictions`, async () => {
+        const bootstrapName = "execute_skill_script";
+        const prepared = await prepareAgentRuntimeStep(bootstrapStepInput([bootstrapName], {
+          activeSkillToolAvailability: narrowedBy === "skill"
+            ? { hasActiveSkill: true, scripts: [] }
+            : undefined,
+          excludedToolNames: narrowedBy === "exclusion" ? new Set([bootstrapName]) : undefined,
+          getAvailableTools: async () => [
+            toolDefinition(bootstrapName),
+            toolDefinition("read_state"),
+          ],
+          mode,
+          step: 1,
+        }));
+        assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["read_state"]);
+        assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+      });
+    }
+  }
+
+  it("accepts an authorized provider-native startup tool", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["web_search"], {
+      config: {
+        model: "anthropic/claude-opus-4-6",
+        system: "Base",
+        tools: true,
+        toolLoading: "deferred",
+        bootstrapTools: ["web_search"],
+      } as AgentConfig,
+      getAvailableTools: async () => [],
+      providerToolNames: ["web_search"],
+    }));
+    assertEquals(prepared.tools.map((tool) => tool.name), ["web_search"]);
+  });
+  it("validates native bootstrap authorization separately from current-step filtering", async () => {
+    const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["web_search"], {
+      config: {
+        model: "anthropic/claude-opus-4-6",
+        system: "Base",
+        tools: true,
+        toolLoading: "deferred",
+        bootstrapTools: ["web_search"],
+      } as AgentConfig,
+      getAvailableTools: async () => [],
+      providerToolNames: [],
+      authorizedProviderToolNames: ["web_search"],
+      step: 1,
+    }));
+    assertEquals(prepared.tools.some((tool) => tool.name === "web_search"), false);
+  });
   it("passes the configured provider alias to runtime-state cloning", async () => {
     let providerOptionKey: unknown;
     await prepareAgentRuntimeStep({
@@ -106,6 +218,42 @@ describe("agent/runtime-step", () => {
     });
 
     assertEquals(providerOptionKey, "AWS-Anthropic");
+  });
+
+  it("caps loaded schemas by the authenticated wire surface's tool limit", async () => {
+    const names = Array.from({ length: 130 }, (_, index) => `tool_${index}`);
+    const prepare = (wireSurface?: "openai") =>
+      prepareAgentRuntimeStep({
+        agentId: "agent_1",
+        activeSkillToolAvailability: undefined,
+        allowedRemoteToolNames: undefined,
+        config: {
+          model: "veryfront-cloud/google/local-model",
+          system: "Base",
+          toolLoading: "deferred",
+        } as unknown as AgentConfig,
+        effectiveModel: "veryfront-cloud/google/local-model",
+        ...(wireSurface ? { wireSurface } : {}),
+        forwardedRemoteToolDefinitions: undefined,
+        getAvailableTools: async () => names.map(toolDefinition),
+        supportsToolCalling: true,
+        messages: [],
+        mode: "generate",
+        remoteToolSources: undefined,
+        resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+        runtimeContext: undefined,
+        step: 1,
+        systemPrompt: "Base",
+        toolContextBase: undefined,
+        toolExposureState: createToolExposureState(names),
+      });
+
+    const publisherOnly = await prepare();
+    assertEquals(publisherOnly.tools.length, 130);
+    const openaiWire = await prepare("openai");
+    assertEquals(openaiWire.tools.length <= 128, true);
+    assertEquals(openaiWire.tools.some((tool) => tool.name === "tool_search"), true);
+    assertEquals(openaiWire.toolExposurePlan.deferred.length > 0, true);
   });
 
   it("exposes only bootstrap and loaded schemas in deferred mode", async () => {
@@ -280,7 +428,7 @@ describe("agent/runtime-step", () => {
       remoteToolSources: undefined,
       resolveRuntimeState: async () => ({
         systemPrompt:
-          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.',
+          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.',
       }),
       runtimeContext: undefined,
       step: 0,
@@ -806,6 +954,34 @@ describe("agent/runtime-step", () => {
 
     assertEquals(prepared.tools.map((tool) => tool.name), []);
     assertEquals(prepared.toolContext, {});
+  });
+
+  it("loads only the startup catalog for runtimes without tool calling", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: false,
+      includeStartupAuthorizedTools: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Local",
+      toolContextBase: undefined,
+      getAvailableTools: async (_tools, options) => {
+        options?.onIntegrationToolDiscovery?.({ status: "unavailable", reason: "request_failed" });
+        return [toolDefinition("load_skill")];
+      },
+      resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
+    });
+
+    assertEquals(prepared.startupAuthorizedTools.map((tool) => tool.name), ["load_skill"]);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.integrationToolDiscovery, undefined);
   });
 
   it("loads tools for server-local runtimes that declare tool calling support", async () => {

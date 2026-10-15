@@ -1,3 +1,4 @@
+import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { ExecutorChannel } from "../executor/channel.ts";
@@ -113,6 +114,7 @@ export async function createExecutorRuntimeFacades(options: {
           ...(alias ? { ownerAgentId: alias.ownerAgentId, shortName: alias.shortName } : {}),
           title: definition.title,
           description: definition.description,
+          discovery: readToolDiscoveryMetadata(definition),
           inputSchemaJson: definition.parameters,
           async execute(args: unknown, context?: ToolExecutionContext) {
             signal.throwIfAborted();

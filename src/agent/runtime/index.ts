@@ -1,3 +1,4 @@
+import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -32,6 +33,7 @@ import {
   filterPrivateArray,
   flatMapPrivateArray,
   forEachPrivateArray,
+  joinPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   slicePrivateArray,
@@ -68,6 +70,7 @@ import {
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
@@ -83,6 +86,7 @@ import {
   getTextFromParts,
   type Message,
   type MessagePart,
+  type ModelStreamTimeouts,
   type ResolvedRuntimeState,
   type RuntimeReasoningOption,
   type ToolCall,
@@ -90,7 +94,11 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import {
+  CONFIG_INVALID,
+  DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
+  isVeryfrontError,
+} from "#veryfront/errors";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -118,6 +126,10 @@ import {
 } from "./provider-metadata.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
+import {
+  readVeryfrontCloudModelFacts,
+  type VeryfrontCloudSurfaceId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
@@ -211,6 +223,15 @@ import {
 } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import {
+  resolveRuntimeSkillBootstrapId,
+  validateRuntimeSkillBootstrapResult,
+} from "./skill-bootstrap.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  prepareFrameworkSkillBootstrap,
+  runWithFrameworkSkillBootstrap,
+} from "#veryfront/skill/loader-provenance.ts";
+import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
@@ -232,6 +253,7 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
+  getRuntimeToolSchemaTarget,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   type ProviderReplayInvokeAgentToolCall,
@@ -414,12 +436,16 @@ import {
   createToolExposureState,
   createToolSearchDefinition,
   listToolExposure,
+  readToolExposureContract,
   searchToolExposure,
+  searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
+  type ToolExposureContract,
   type ToolExposurePlan,
   type ToolExposureState,
   type ToolInventoryPage,
+  type ToolMetadataSearchResult,
   type ToolSearchMatch,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
@@ -458,6 +484,9 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const IntrinsicURL = URL;
 const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
+/** Replacement sets that carried the configured skill loader, so startup can still use it. */
+const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
+
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "load_skill",
   "load_skill_reference",
@@ -1055,8 +1084,6 @@ type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
   | { kind: "callback"; chunk: string };
 
-const MAX_RUNTIME_PROVIDER_STREAM_RETRIES = 1;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -1564,23 +1591,142 @@ function toolSearchLoadedNextStep(matches: readonly ToolSearchMatch[]): string {
   return `Loaded tools: ${names}. Call the loaded tool that fits the request in the next step to complete it.`;
 }
 
+type FrameworkToolSearchResult =
+  | ToolSearchResult
+  | ToolInventoryPage
+  | ToolMetadataSearchResult
+  | (ToolSearchResult & { contract: ToolExposureContract });
+
+const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "query"] as const;
+const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] as const;
+
+function readToolSearchArg(args: Record<string, unknown>, key: string): unknown {
+  const property = ObjectGetOwnPropertyDescriptor(args, key);
+  if (!property) return undefined;
+  if (!ObjectHasOwn(property, "value")) throw new Error("tool_search requires data properties");
+  return property.value;
+}
+
+function hasToolSearchArg(args: Record<string, unknown>, key: string): boolean {
+  return readToolSearchArg(args, key) !== undefined;
+}
+
 function executeFrameworkToolSearch(input: {
   args: Record<string, unknown>;
   plan: ToolExposurePlan;
   state: ToolExposureState;
 }): {
-  result: (ToolSearchResult | ToolInventoryPage) & { nextStep: string };
+  result: FrameworkToolSearchResult & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
-  if (ObjectHasOwn(input.args, "inventory")) {
-    if (ObjectHasOwn(input.args, "query")) throw new Error("Choose query or inventory, not both");
-    const inventory = input.args.inventory;
-    if (inventory === null || typeof inventory !== "object" || Array.isArray(inventory)) {
-      throw new Error("Tool inventory must be an object");
+  if (isProxyWithoutHooks(input.args)) throw new Error("tool_search requires data properties");
+  // The provider schema has no root combinator, so enforce exactly one mode here.
+  const modes = filterPrivateArray(
+    TOOL_SEARCH_MODES,
+    (mode) => hasToolSearchArg(input.args, mode),
+  );
+  if (modes.length !== 1) {
+    throw new Error(
+      `tool_search requires exactly one of schema, search, inventory, or query; received ${
+        modes.length === 0 ? "none" : joinPrivateArray(modes, ", ")
+      }`,
+    );
+  }
+  const inventoryOptions = filterPrivateArray(
+    TOOL_SEARCH_INVENTORY_OPTIONS,
+    (option) => hasToolSearchArg(input.args, option),
+  );
+  if (modes[0] !== "inventory" && inventoryOptions.length > 0) {
+    throw new Error(
+      `tool_search ${joinPrivateArray(inventoryOptions, ", ")} applies only with inventory`,
+    );
+  }
+  const available = filterPrivateArray(
+    input.plan.visible,
+    (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
+  );
+  const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
+  if (modes[0] === "search") {
+    const phrase = readToolSearchArg(input.args, "search");
+    const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
+    if (!query) {
+      throw new Error("tool_search search requires a non-empty capability phrase string");
     }
-    const options = inventory as Record<string, unknown>;
-    const cursor = options.cursor;
-    const limit = options.limit;
+    const result = searchToolExposureMetadata({
+      query,
+      authorized: input.plan.deferred,
+      available,
+    });
+    return {
+      result: {
+        ...result,
+        nextStep: result.miss
+          ? "No executable tool matched. Use inventory to browse authorized tool names. A project resource title is not a tool name."
+          : "These are metadata matches, not input contracts. Call an available tool directly, or use schema with one exact deferred name to read its input schema and load it for the next step.",
+      },
+      checkpoint: checkpoint(),
+    };
+  }
+  if (modes[0] === "schema") {
+    const name = readToolSearchArg(input.args, "schema");
+    if (typeof name !== "string" || !name) {
+      throw new Error("tool_search schema requires one exact tool name string");
+    }
+    const contract = readToolExposureContract({ name, authorized: input.plan.authorized });
+    if (contract === undefined) {
+      return {
+        result: {
+          matches: [],
+          resultCount: 0,
+          loadedCount: 0,
+          miss: true,
+          nextStep:
+            "No authorized executable tool has that exact name. Use search or inventory to find one, then use schema with an exact returned name.",
+        },
+        checkpoint: checkpoint(),
+      };
+    }
+    const result = searchToolExposure({
+      query: contract.name,
+      authorized: filterPrivateArray(input.plan.deferred, (tool) => tool.name === contract.name),
+      available: filterPrivateArray(available, (tool) => tool.name === contract.name),
+      state: input.state,
+      maxLoadedTools: input.plan.maxLoadedTools,
+    });
+    const isAvailable = somePrivateArray(
+      available,
+      (tool) => tool.name === contract.name,
+    );
+    return {
+      result: {
+        ...result,
+        contract,
+        nextStep: isAvailable
+          ? "This tool is already available. Call it with this input schema."
+          : result.loadedCount > 0
+          ? "This tool is loaded for the next step. Call it with this input schema."
+          : "This is the exact input schema, but the tool could not be loaded within the current tool limit.",
+      },
+      checkpoint: checkpoint(),
+    };
+  }
+  if (modes[0] === "inventory") {
+    const scope = readToolSearchArg(input.args, "inventory");
+    const cursor = readToolSearchArg(input.args, "cursor");
+    const limit = readToolSearchArg(input.args, "limit");
+    const domain = readToolSearchArg(input.args, "domain");
+    const resource = readToolSearchArg(input.args, "resource");
+    if (scope !== "all" && scope !== "platform") {
+      throw new Error(
+        'tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
+      );
+    }
+    if (domain !== undefined && typeof domain !== "string") {
+      throw new Error("Invalid tool inventory domain");
+    }
+    if (resource !== undefined && typeof resource !== "string") {
+      throw new Error("Invalid tool inventory resource");
+    }
     if (cursor !== undefined && typeof cursor !== "string") {
       throw new Error("Invalid tool inventory cursor");
     }
@@ -1589,33 +1735,32 @@ function executeFrameworkToolSearch(input: {
     }
     const result = listToolExposure({
       authorized: input.plan.deferred,
-      available: filterPrivateArray(
-        input.plan.visible,
-        (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-      ),
+      available,
       cursor,
       limit,
+      scope,
+      domain,
+      resource,
     });
     return {
       result: {
         ...result,
-        nextStep:
-          "These are executable tool names, not project definitions. Call available tools directly; use query with one exact deferred name to load its input schema for the next step. Follow nextCursor to browse another page.",
+        nextStep: result.invalidFilter
+          ? "No authorized tool has that filter value. Use one of allowedValues, or pass restartInput unchanged to browse without domain and resource filters."
+          : "These are executable tool names, not project definitions. Call available tools directly; use schema with one exact deferred name to load its input schema for the next step. Pass nextPageInput unchanged to browse the next page. A null nextPageInput means the inventory is complete.",
       },
-      checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+      checkpoint: checkpoint(),
     };
   }
-  const query = typeof input.args.query === "string" ? privateTextTrim(input.args.query) : "";
+  const phrase = readToolSearchArg(input.args, "query");
+  const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
     authorized: input.plan.deferred,
-    available: filterPrivateArray(
-      input.plan.visible,
-      (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-    ),
+    available,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
   });
@@ -1633,10 +1778,10 @@ function executeFrameworkToolSearch(input: {
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
-        ? "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then query one exact name. A project resource title is not a tool name."
+        ? "No executable tool matched this query. Use tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
         : "Continue with the available tools or answer without a tool.",
     },
-    checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+    checkpoint: checkpoint(),
   };
 }
 
@@ -1986,6 +2131,26 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
     !intrinsicArraySome(plan.authorized, (tool) => tool.name === toolName);
 }
 
+/**
+ * The model and wire surface whose provider tool rules apply this step. A
+ * built Veryfront Cloud model's own facts win; a model runtime without them
+ * (an executor proxy) uses the target trusted preparation resolved only for
+ * the same effective model. Per-request overrides keep their own provider rules.
+ */
+function resolveStepToolSchemaOptions(
+  config: AgentConfig,
+  languageModel: ModelRuntime,
+  effectiveModel: string,
+): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
+  const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
+  if (surface !== undefined) return { wireSurface: surface };
+  const target = getRuntimeToolSchemaTarget(config);
+  if (target?.model === undefined || target.model !== effectiveModel) return {};
+  return target.wireSurface === undefined
+    ? { toolSchemaModel: target.model }
+    : { toolSchemaModel: target.model, wireSurface: target.wireSurface };
+}
+
 function hasToolResultContextEnabled(
   config: Pick<AgentConfig, "toolResultContext">,
 ): boolean {
@@ -2046,8 +2211,24 @@ function withToolResultReaderTool(
   return visible;
 }
 
+// Reserve the reader's slot whenever references can be created: a result
+// produced later in the step still makes the reader required at conversion.
+function getToolResultReaderReservedSlots(context: ToolResultContext | undefined): number {
+  return context === undefined ? 0 : 1;
+}
+
 function getRequiredToolResultReaderNames(exposeReader: boolean): readonly string[] | undefined {
   return exposeReader ? [GET_TOOL_RESULT_TOOL_NAME] : undefined;
+}
+
+/** Names provider schema capping must keep: the result reader and authored startup tools. */
+function getRequiredRuntimeToolNames(
+  exposeReader: boolean,
+  bootstrapToolNames: readonly string[],
+): readonly string[] | undefined {
+  const reader = getRequiredToolResultReaderNames(exposeReader);
+  if (bootstrapToolNames.length === 0) return reader;
+  return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
 }
 
 function shouldHandleToolResultRead(input: {
@@ -2156,10 +2337,10 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
-function didReloadProjectAgentWriteTool(result: ToolSearchResult | ToolInventoryPage): boolean {
-  if ("nextCursor" in result) return false;
+function didReloadProjectAgentWriteTool(result: FrameworkToolSearchResult): boolean {
+  if (result.loadedCount === 0) return false;
   return somePrivateArray(
-    result.matches,
+    result.matches as readonly { name: string; status: string }[],
     (match) => match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name),
   );
 }
@@ -2413,6 +2594,93 @@ function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, T
   return knowledgeTool === undefined ? undefined : { search_knowledge: knowledgeTool };
 }
 
+/**
+ * Load the authored startup skill through the trusted framework loader before
+ * the first model call. The call and its result are recorded like a normal
+ * load so the active skill policy and history stay consistent.
+ */
+async function executeStartupSkill(input: {
+  agentId: string;
+  skillId: string;
+  authorized: readonly ToolDefinition[];
+  messages: Message[];
+  persistMessage: (message: Message) => Promise<void>;
+  skillState: AgentLoopSkillState;
+  toolCalls: ToolCall[];
+  onToolCall?: (toolCall: ToolCall) => void;
+  resolveLoader: (toolName: string) => unknown;
+  execute: (
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    admittedTurn: AdmittedToolTurn,
+  ) => Promise<unknown>;
+}): Promise<void> {
+  const definition = filterPrivateArray(
+    input.authorized,
+    (entry) => isLoadSkillToolName(entry.name) && hasTrustedPlatformPolicyToolDefinition(entry),
+  )[0];
+  const loader = definition ? input.resolveLoader(definition.name) : undefined;
+  // Both loader shapes accept the canonical ID, while the runtime loader only
+  // authorizes canonical IDs, so execution and validation use the same one.
+  const skillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
+  const args = definition ? prepareFrameworkSkillBootstrap(loader, skillId) : undefined;
+  if (!definition || !args) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapSkill requires an authorized framework skill loader",
+    });
+  }
+  const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
+  const message: Message = {
+    id: generateMessageId(),
+    role: "assistant",
+    parts: [{
+      type: `tool-${definition.name}`,
+      toolCallId,
+      toolName: definition.name,
+      args,
+    }],
+  };
+  const admittedTurn = snapshotAdmittedToolTurn(message, input.messages.length);
+  pushPrivateArray(input.messages, message);
+  await input.persistMessage(message);
+  const toolCall: ToolCall = { id: toolCallId, name: definition.name, args, status: "executing" };
+  pushPrivateArray(input.toolCalls, toolCall);
+  const startTime = Date.now();
+  let result: unknown;
+  try {
+    // An observer failure settles the persisted call like an execution failure.
+    input.onToolCall?.(toolCall);
+    result = await runWithFrameworkSkillBootstrap(
+      loader,
+      () => input.execute(definition.name, toolCallId, args, admittedTurn),
+    );
+    validateRuntimeSkillBootstrapResult(result, skillId);
+  } catch (error) {
+    toolCall.status = "error";
+    toolCall.error = "Startup skill preparation failed";
+    toolCall.executionTime = Date.now() - startTime;
+    const failed = createToolErrorMessage(toolCallId, definition.name, toolCall.error);
+    pushPrivateArray(input.messages, failed);
+    await input.persistMessage(failed);
+    throw error;
+  }
+  toolCall.status = "completed";
+  toolCall.result = result;
+  toolCall.executionTime = Date.now() - startTime;
+  const resultMessage = createPolicyAwareToolResultMessage(
+    toolCallId,
+    definition.name,
+    result,
+    definition,
+    false,
+    true,
+  );
+  pushPrivateArray(input.messages, resultMessage);
+  await input.persistMessage(resultMessage);
+  input.skillState.applySuccessfulResult(result);
+}
+
 async function traceConfiguredToolExecution(input: {
   mode: "generate" | "stream";
   agentId: string;
@@ -2618,6 +2886,8 @@ export type AgentRuntimeInternalOptions = {
   preserveToolCatalog?: boolean;
   /** Call controls for private models, independent of source transport hooks. */
   modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
+  /** Host-owned per-model stream deadlines. Omitted fields keep framework defaults. */
+  modelStreamTimeouts?: ModelStreamTimeouts;
   /** Observe original producer settlement before it starts, including its full cleanup. */
   onStreamCompletion?: (completion: Promise<void>) => void;
   /** Exact pending tool invocation trusted by the hosted control plane. */
@@ -2714,6 +2984,7 @@ export class AgentRuntime {
   #manualPause: AgentManualPause | undefined;
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
+  #modelStreamTimeouts: AgentRuntimeInternalOptions["modelStreamTimeouts"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
@@ -2739,6 +3010,7 @@ export class AgentRuntime {
       ObjectDefineProperty(this, name, descriptor);
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#modelStreamTimeouts = internalOptions.modelStreamTimeouts;
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
@@ -3223,8 +3495,15 @@ export class AgentRuntime {
     }
 
     const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    let retainedLoader = false;
     for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
       if (tools[toolName]) {
+        // A replacement that already carries a trusted framework loader keeps
+        // startup available, exactly like one this helper inserts.
+        if (
+          isLoadSkillToolName(toolName) && hasTrustedHostToolProvenance(tools[toolName]) &&
+          prepareFrameworkSkillBootstrap(tools[toolName], toolName) !== undefined
+        ) retainedLoader = true;
         continue;
       }
       const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {
@@ -3232,8 +3511,10 @@ export class AgentRuntime {
       });
       if (configuredTool) {
         tools[toolName] = configuredTool;
+        if (isLoadSkillToolName(toolName)) retainedLoader = true;
       }
     }
+    if (retainedLoader) replacementsRetainingSkillLoader.set(tools, true);
     return tools;
   }
 
@@ -3885,6 +4166,7 @@ export class AgentRuntime {
           ...runConfig,
           tools: runtimeToolsConfig,
           skills: undefined,
+          bootstrapTools: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
@@ -3923,6 +4205,12 @@ export class AgentRuntime {
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
       let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
+      // A submitted form continues a turn whose startup already ran, and the
+      // post-form skill policy forbids loading or switching skill bodies.
+      // Replacements suppress startup unless they retain the configured loader.
+      let startupSkillLoaded =
+        (hasToolReplacements && replacementsRetainingSkillLoader.get(toolReplacements) !== true) ||
+        this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -3941,6 +4229,8 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+          reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -3950,10 +4240,14 @@ export class AgentRuntime {
           unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
           unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
           supportsToolCalling,
+          includeStartupAuthorizedTools: !startupSkillLoaded,
           messages: currentMessages,
           mode: "generate",
           modelRuntime: languageModel,
           providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+          // The authorization catalog is independent of whether the model can
+          // call tools; only the model-visible provider tools are withheld.
+          authorizedProviderToolNames: providerTools,
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -3980,6 +4274,51 @@ export class AgentRuntime {
             reloadable: runtimeStepToolLoading.mode === "deferred",
           })
           : preparedStep.toolExposurePlan;
+        if (!startupSkillLoaded) {
+          await executeStartupSkill({
+            agentId: this.id,
+            skillId: this.config.bootstrapSkill!,
+            authorized: preparedStep.startupAuthorizedTools,
+            messages: currentMessages,
+            persistMessage,
+            skillState,
+            toolCalls,
+            resolveLoader: (name) =>
+              resolveConfiguredTool(runtimeToolsConfig, name, { agentId: this.id }),
+            execute: async (toolName, toolCallId, args, admittedTurn) => {
+              const context = applicationExecutionContext(toolContext);
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName,
+                toolCallId,
+                args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
+                toolsConfig: runtimeToolsConfig,
+                context,
+                allowedRemoteToolNames,
+                remoteToolSources,
+                sourceIntegrationPolicy,
+                frameworkLocalTools,
+              });
+              await this.notifyToolResult({
+                mode: "generate",
+                toolName,
+                toolCallId,
+                input: args,
+                result,
+                context,
+              });
+              return result;
+            },
+          });
+          startupSkillLoaded = true;
+          // Refresh the active skill policy without consuming a model step.
+          step--;
+          continue;
+        }
         assertToolResultReaderNameAvailable({
           plan: effectiveToolExposurePlan,
           context: toolResultContext,
@@ -4014,8 +4353,12 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           providerTools: stepProviderTools,
-          requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+          requiredToolNames: getRequiredRuntimeToolNames(
+            exposeToolResultReader,
+            preparedStep.configuredBootstrapToolNames,
+          ),
         });
         currentSystemPrompt = withIntegrationToolDiscoveryStatus(
           synchronizeRuntimeToolInventory(
@@ -4906,6 +5249,9 @@ export class AgentRuntime {
     let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
     let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
     let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
+    // A pause can precede startup preparation; checkpoint existence is not completion.
+    let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
+      this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
@@ -4922,6 +5268,7 @@ export class AgentRuntime {
           completed: completedWithinStepBudget,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
           recoveredEmptyResponse,
+          startupSkillLoaded,
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
@@ -4983,22 +5330,6 @@ export class AgentRuntime {
       step++
     ) {
       throwIfAborted(abortSignal);
-      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
-      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
-        ? crypto.randomUUID()
-        : undefined;
-      sendSSE(controller, encoder, {
-        type: "step-start",
-        ...(runtimeObservationStepId
-          ? {
-            privateRuntimeObservation: {
-              version: 1,
-              kind: "step_started",
-              stepId: runtimeObservationStepId,
-            },
-          }
-          : {}),
-      });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
       const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
@@ -5011,6 +5342,8 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+        reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -5020,10 +5353,12 @@ export class AgentRuntime {
         unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
         unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
         supportsToolCalling,
+        includeStartupAuthorizedTools: !startupSkillLoaded,
         messages: currentMessages,
         mode: "stream",
         modelRuntime: languageModel,
         providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+        authorizedProviderToolNames: providerTools,
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],
@@ -5049,6 +5384,71 @@ export class AgentRuntime {
           reloadable: toolLoadingResolution.mode === "deferred",
         })
         : preparedStep.toolExposurePlan;
+      if (!startupSkillLoaded) {
+        await executeStartupSkill({
+          agentId: this.id,
+          skillId: this.config.bootstrapSkill!,
+          authorized: preparedStep.startupAuthorizedTools,
+          messages: currentMessages,
+          persistMessage,
+          skillState,
+          toolCalls,
+          onToolCall: callbacks?.onToolCall,
+          resolveLoader: (name) =>
+            resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
+          execute: async (toolName, toolCallId, args, admittedTurn) => {
+            const context = applicationExecutionContext(toolContext);
+            const result = await traceConfiguredToolExecution({
+              mode: "stream",
+              agentId: this.id,
+              toolName,
+              toolCallId,
+              args,
+              admittedTurn,
+              owner: currentMessages,
+              prepareTerminalDispatch,
+              toolsConfig: this.config.tools,
+              context,
+              allowedRemoteToolNames,
+              remoteToolSources,
+              sourceIntegrationPolicy,
+              frameworkLocalTools,
+            });
+            await this.notifyToolResult({
+              mode: "stream",
+              toolName,
+              toolCallId,
+              input: args,
+              result,
+              context,
+            });
+            return result;
+          },
+        });
+        startupSkillLoaded = true;
+        // A pause requested while the loader ran must hold before the first
+        // provider call; the checkpoint records the completed startup load.
+        await pauseAtBoundary(step);
+        // Refresh the active skill policy without consuming a model step.
+        step--;
+        continue;
+      }
+      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
+      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
+        ? crypto.randomUUID()
+        : undefined;
+      sendSSE(controller, encoder, {
+        type: "step-start",
+        ...(runtimeObservationStepId
+          ? {
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_started",
+              stepId: runtimeObservationStepId,
+            },
+          }
+          : {}),
+      });
       assertToolResultReaderNameAvailable({
         plan: effectiveToolExposurePlan,
         context: toolResultContext,
@@ -5271,8 +5671,12 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         providerTools: stepProviderTools,
-        requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
+        requiredToolNames: getRequiredRuntimeToolNames(
+          exposeToolResultReader,
+          preparedStep.configuredBootstrapToolNames,
+        ),
       });
       currentSystemPrompt = withIntegrationToolDiscoveryStatus(
         synchronizeRuntimeToolInventory(
@@ -5568,6 +5972,9 @@ export class AgentRuntime {
             providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
             availableToolNames: acceptedRuntimeToolNames,
             streamLifecycleMode,
+            ...(this.#modelStreamTimeouts
+              ? { streamLifecyclePolicy: { ...this.#modelStreamTimeouts } }
+              : {}),
             traceSpanName: `chat ${effectiveModel}`,
             traceAttributes: {
               ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),

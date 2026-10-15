@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
@@ -509,6 +510,7 @@ describe("hosted HTTP host composition", () => {
   });
 
   it("never uses a broker token read that outlived its bound", async () => {
+    using time = new FakeTime(1_000_000);
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();
     let tokenReads = 0;
@@ -534,16 +536,18 @@ describe("hosted HTTP host composition", () => {
     // A caller that joins before the first caller times out shares the same read, and its
     // own bound runs later than the first caller's.
     const first = readToken();
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    time.tick(30);
     const joined = readToken();
-    await assertRejects(() => first, Error, "timed out");
+    const refused = assertRejects(() => first, Error, "timed out");
+    await time.tickAsync(20);
+    await refused;
     // While the timed-out read is pending, new callers are refused without a second read.
     await assertRejects(readToken, Error, "unavailable");
     // The timed-out read settles with a pre-rotation token: nobody receives it.
     stalled.resolve(new TextEncoder().encode("rotated-away"));
     await assertRejects(() => joined, Error, "unavailable");
     assertEquals(tokenReads, 1);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await time.runMicrotasks();
     assertEquals(await readToken(), "broker-token-3");
     assertEquals(tokenReads, 2);
   });

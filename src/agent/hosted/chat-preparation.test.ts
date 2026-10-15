@@ -970,6 +970,67 @@ it("resolves private checkpoint persistence only after the durable flush complet
   assertEquals(resolved, true);
 });
 
+Deno.test("prepareHostedChatExecution preserves distinct completed occurrences only for verified envelopes", async () => {
+  const messages: ChatUiMessage[] = [userMessage];
+  for (let index = 0; index < 2; index++) {
+    messages.push({
+      id: `call-${index}`,
+      role: "assistant",
+      parts: [{
+        type: "tool_call",
+        toolCallId: "reused",
+        toolName: "lookup",
+        input: { index },
+        state: "input-available",
+      }],
+    });
+    messages.push({
+      id: `result-${index}`,
+      role: "tool",
+      parts: [{
+        type: "tool_call",
+        toolCallId: "reused",
+        toolName: "lookup",
+        input: { index },
+        state: "output-available",
+        output: { index },
+      }],
+    });
+  }
+  for (const verified of [false, true]) {
+    const result = await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        serverEnvelopeVerified: verified ? true : undefined,
+        durableRootRun: { runId: "10000000-0000-4000-8000-000000000005", messageId: "message-1" },
+      }),
+      agentConfig: { id: "agent-1", model: "configured-model" },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId,
+      fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+      buildInstructions: () => [],
+      createRuntime: (options) =>
+        Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        }),
+    });
+    assertEquals(
+      result.finalMessages.map((message) => message.id),
+      verified ? messages.map((message) => message.id) : [userMessage.id, "call-1", "result-1"],
+    );
+  }
+});
+
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
   const result = await prepareHostedChatExecution({
     request: createParsedHostedChatRequest({

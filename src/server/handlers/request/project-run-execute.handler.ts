@@ -4904,7 +4904,7 @@ async function executeReleaseAssetBuildRun(input: {
         beginReleaseAssetManifestBuild: (version) =>
           runWhileActive(
             input.signal,
-            () => apiClient.beginReleaseAssetManifestBuild(version, undefined, input.signal),
+            () => apiClient.startReleaseAssetManifestBuild(version, undefined, input.signal),
           ),
         listAllReleaseFiles: async (version) => {
           const files = await runWhileActive(
@@ -4925,7 +4925,7 @@ async function executeReleaseAssetBuildRun(input: {
           runWhileActive(
             input.signal,
             () =>
-              apiClient.uploadReleaseAsset(
+              apiClient.writeReleaseAsset(
                 version,
                 hash,
                 contentType,
@@ -4937,13 +4937,13 @@ async function executeReleaseAssetBuildRun(input: {
         putReleaseAssetManifest: (version, manifest) =>
           runWhileActive(
             input.signal,
-            () => apiClient.putReleaseAssetManifest(version, manifest, undefined, input.signal),
+            () => apiClient.writeReleaseAssetManifest(version, manifest, undefined, input.signal),
           ),
         reportReleaseAssetManifestState: (version, state, error) =>
           runWhileActive(
             input.signal,
             () =>
-              apiClient.reportReleaseAssetManifestState(
+              apiClient.updateReleaseAssetManifestState(
                 version,
                 state,
                 error,

@@ -96,6 +96,32 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS, 8000);
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS, 64000);
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL, undefined);
+    assertEquals(config.VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS, undefined);
+    assertEquals(config.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS, undefined);
+  });
+
+  it("parses optional host-owned model stream budgets", () => {
+    const config = parseAgentServiceConfig({
+      VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: "90000",
+      VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "20000",
+    });
+    assertEquals(config.VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS, 90_000);
+    assertEquals(config.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS, 20_000);
+  });
+
+  it("rejects invalid host-owned model stream budgets", () => {
+    for (const value of ["0", "-1", "1.5", "300001", "not-a-number"]) {
+      assertThrows(() =>
+        parseAgentServiceConfig({
+          VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: value,
+        })
+      );
+      assertThrows(() =>
+        parseAgentServiceConfig({
+          VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: value,
+        })
+      );
+    }
   });
 
   it("normalizes derived URLs, booleans, port, and origins", () => {

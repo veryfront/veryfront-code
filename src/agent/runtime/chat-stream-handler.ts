@@ -101,8 +101,26 @@ const isArray = Array.isArray;
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
-const STREAM_START_IDLE_MS = 60_000;
-const STREAM_OUTPUT_IDLE_MS = 15_000;
+
+class ProviderFirstProgressTimeoutError extends Error {
+  constructor() {
+    super("Provider stream timed out before producing output");
+    this.name = "ProviderFirstProgressTimeoutError";
+  }
+}
+
+const FIRST_PROGRESS_TIMEOUT_CODE = "FIRST_PROGRESS_TIMEOUT";
+const SEMANTIC_IDLE_TIMEOUT_CODE = "SEMANTIC_IDLE_TIMEOUT";
+const FIRST_PROGRESS_TIMEOUT_MESSAGE = "Provider did not produce semantic progress";
+
+/** Curated public event for a provider stream that never produced output. */
+function resolveProviderFirstProgressTimeout(
+  error: unknown,
+): RuntimeStreamErrorEvent | undefined {
+  return error instanceof ProviderFirstProgressTimeoutError
+    ? { type: "error", error: FIRST_PROGRESS_TIMEOUT_MESSAGE, code: FIRST_PROGRESS_TIMEOUT_CODE }
+    : undefined;
+}
 
 type TraceAttributePrimitive = string | number | boolean;
 type TraceAttributeValue = TraceAttributePrimitive | readonly TraceAttributePrimitive[];
@@ -242,6 +260,8 @@ export function resolveRelayableExecutionFailure(
   }
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
+    const timeout = resolveProviderFirstProgressTimeout(providerFailure.cause);
+    if (timeout) return { message: timeout.error, code: timeout.code };
     const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
     if (!knownProviderError) return undefined;
     return {
@@ -272,6 +292,8 @@ export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStream
   }
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
+    const timeout = resolveProviderFirstProgressTimeout(providerFailure.cause);
+    if (timeout) return timeout;
     const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
     return knownProviderError
       ? {
@@ -289,12 +311,15 @@ export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStream
 export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErrorEvent {
   try {
     if (error instanceof StreamLifecycleFailure) {
+      const lifecycleCode = error.lifecycleError.code;
       return {
         type: "error",
         error: error.lifecycleError.publicMessage,
-        ...(error.lifecycleError.code === "PROVIDER_TERMINAL_ERROR" &&
-            error.lifecycleError.providerCode
+        ...(lifecycleCode === "PROVIDER_TERMINAL_ERROR" && error.lifecycleError.providerCode
           ? { code: error.lifecycleError.providerCode }
+          : lifecycleCode === FIRST_PROGRESS_TIMEOUT_CODE ||
+              lifecycleCode === SEMANTIC_IDLE_TIMEOUT_CODE
+          ? { code: lifecycleCode }
           : {}),
       };
     }
@@ -1305,6 +1330,10 @@ export function processStreamInternal(
       requestStreamIteratorReturn(streamIterator);
     };
 
+    // Host-owned model stream budgets apply to the legacy loop as well as the
+    // active lifecycle runner. Without overrides these equal the historical
+    // 60s first-output and 15s output-idle defaults.
+    const idlePolicy = resolveRuntimeLifecyclePolicy(callbacks);
     try {
       while (true) {
         // A pending provider-executed call outranks the local commit grace: its
@@ -1314,10 +1343,14 @@ export function processStreamInternal(
         const shouldStopForCommittedLocalToolCallNow = shouldStopForCommittedLocalToolCall &&
           pendingProviderExecutedToolCallIds.size === 0 &&
           (!callbacks?.requireProviderFinish || sawProviderFinishPart);
+        // Persisted reasoning is semantic progress, as the timeout classification
+        // below already treats it, so it moves the stream onto the idle budget.
+        const hasSemanticProgress = hasStreamOutput(state) ||
+          somePrivateArray(state.reasoningParts, isPersistedReasoningPart);
         const shouldStopForIdleOutput = !hasActiveLocalToolInput &&
-          !shouldStopForCommittedLocalToolCallNow && hasStreamOutput(state);
+          !shouldStopForCommittedLocalToolCallNow && hasSemanticProgress;
         const shouldStopForIdleStart = !hasActiveLocalToolInput &&
-          !shouldStopForCommittedLocalToolCallNow && !hasStreamOutput(state);
+          !shouldStopForCommittedLocalToolCallNow && !hasSemanticProgress;
         // A timeout means "the turn is over" only when nothing local is in flight
         // and nothing local was committed. Classifying a committed local tool call
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never
@@ -1367,7 +1400,7 @@ export function processStreamInternal(
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
-            callbacks?.streamIdleTimeoutMs ?? STREAM_OUTPUT_IDLE_MS,
+            idlePolicy.semanticIdleTimeoutMs,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
             abortSignal,
@@ -1376,7 +1409,7 @@ export function processStreamInternal(
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
-            callbacks?.streamIdleTimeoutMs ?? STREAM_START_IDLE_MS,
+            idlePolicy.firstProgressTimeoutMs,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
             abortSignal,
@@ -1393,9 +1426,7 @@ export function processStreamInternal(
             wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
             !somePrivateArray(state.reasoningParts, isPersistedReasoningPart)
           ) {
-            throw createRuntimeProviderStreamFailure(
-              new Error("Provider stream timed out before producing output"),
-            );
+            throw createRuntimeProviderStreamFailure(new ProviderFirstProgressTimeoutError());
           }
           if (
             callbacks?.requireProviderFinish && !sawProviderFinishPart &&

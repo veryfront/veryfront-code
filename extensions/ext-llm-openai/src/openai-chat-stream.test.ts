@@ -1,6 +1,13 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
+import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
+import {
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+  ProviderStreamProtocolError,
+} from "veryfront/provider/shared";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
@@ -35,6 +42,110 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-chat-stream", () => {
+  it("classifies an explicit streamed context error without treating it as malformed content", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: {
+          message:
+            'Engine protocol predict stream returned an error: {"code":500,"message":"Context size has been exceeded.","type":"server_error"}',
+        },
+      }))), ProviderRequestError);
+    assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assert(error instanceof ProviderRequestError);
+    assertEquals(Object.hasOwn(error, "cause"), false);
+    assertEquals(Deno.inspect(error).includes("Engine protocol"), false);
+    assertEquals(parseProviderError(error), {
+      code: "CONTEXT_LENGTH_EXCEEDED",
+      message: "Conversation is too long",
+    });
+  });
+
+  it("keeps streamed provider error records out of the thrown error cause", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "echoed secret sk-synthetic", code: "invalid_value" },
+      }))), ProviderRequestError);
+    assert(error instanceof ProviderRequestError);
+    assertEquals(Object.hasOwn(error, "cause"), false);
+    assertEquals(error.cause, undefined);
+    assertEquals(Deno.inspect(error, { depth: 10 }).includes("sk-synthetic"), false);
+  });
+
+  it("preserves retryability for transient streamed provider error codes", async () => {
+    const rateLimited = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Rate limit reached", code: "rate_limit_exceeded" },
+      }))), ProviderRateLimitError);
+    assert(rateLimited instanceof ProviderRateLimitError);
+    assertEquals(rateLimited.retryable, true);
+    assertEquals(rateLimited.status, 200);
+
+    const overloaded = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "The server had an error", code: "server_error" },
+      }))), ProviderOverloadedError);
+    assert(overloaded instanceof ProviderOverloadedError);
+    assertEquals(overloaded.retryable, true);
+
+    const quota = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Quota exceeded", code: "insufficient_quota" },
+      }))), ProviderQuotaError);
+    assert(quota instanceof ProviderQuotaError);
+    assertEquals(quota.retryable, false);
+
+    const terminal = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Bad request", code: "invalid_value" },
+      }))), ProviderRequestError);
+    assert(terminal instanceof ProviderRequestError);
+    assertEquals(terminal.retryable, false);
+  });
+
+  it("keeps unknown streamed errors private and rejects malformed error envelopes", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "private provider diagnostic" },
+      }))), ProviderRequestError);
+    assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assert(error instanceof ProviderRequestError);
+    assertEquals(error.message.includes("private provider diagnostic"), false);
+    assertEquals(parseProviderError(error), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+    await assertRejects(
+      () => collectParts(streamFromText(data({ error: null }))),
+      ProviderStreamProtocolError,
+      "event had neither choices nor usage",
+    );
+    for (const malformed of ["not an envelope", {}, { message: 7 }]) {
+      await assertRejects(
+        () => collectParts(streamFromText(data({ error: malformed }))),
+        ProviderStreamProtocolError,
+        "provider error event was malformed",
+      );
+    }
+  });
+
+  it("rejects a malformed explicit error envelope beside otherwise valid content", async () => {
+    for (const malformed of ["not an envelope", {}, { message: 7 }]) {
+      await assertRejects(
+        () =>
+          collectParts(streamFromText([
+            data({
+              error: malformed,
+              choices: [{ index: 0, delta: { content: "Ready." }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            "data: [DONE]\r\n\r\n",
+          ].join(""))),
+        ProviderStreamProtocolError,
+        "provider error event was malformed",
+      );
+    }
+  });
+
   // Verbatim frame shape from DeepSeek v4 Flash on Azure AI Foundry for a tool
   // whose parameter schema is empty: the opening fragment carries the id and
   // name with empty arguments, the next carries the object `{}`, and a third

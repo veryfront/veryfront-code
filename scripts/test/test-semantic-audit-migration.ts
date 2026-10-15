@@ -6040,7 +6040,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/handlers/request/api/project-discovery.test.ts", [
       "process",
-      "shared-cwd",
     ], {
       "disposition": "replaceable-fake",
       "owner": "server-routes",

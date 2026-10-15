@@ -490,6 +490,12 @@ function openAIProviderName(model: ModelCallRuntimeMetadata): string {
 }
 
 function openAIProviderBucketNames(model: ModelCallRuntimeMetadata): readonly string[] {
+  // Match the Chat builder: a Cloud model built on the registry-backed
+  // compatible path reads the "openai-compatible" bucket, not the Cloud one.
+  const builderName = model.provider === "veryfront-cloud"
+    ? readVeryfrontCloudModelFacts(model)?.openAIChatProviderName
+    : undefined;
+  if (builderName !== undefined) return ["openai", builderName];
   const providerName = openAIProviderName(model);
   return providerName === "openai" ? ["openai-compatible", "openai"] : ["openai", providerName];
 }
@@ -1804,13 +1810,12 @@ function suppressOpenAIFunctionToolReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): boolean {
-  // The capability is recorded for OpenAI's own models. Another provider on the
-  // same wire surface builds its request without it, so the recorded context
-  // must not apply it either.
-  if (resolveModelCallProvider(model) !== "openai" || model.provider !== "veryfront-cloud") {
-    return false;
-  }
-  const catalogId = `openai/${model.modelId}`;
+  // Every Cloud model on the Chat wire, OpenAI's own or a compatible provider,
+  // is built with the catalog's function-tool reasoning capability, so the
+  // recorded context applies the same capability.
+  const provider = resolveModelCallProvider(model);
+  if (provider === undefined || model.provider !== "veryfront-cloud") return false;
+  const catalogId = `${provider}/${model.modelId}`;
   const built = readVeryfrontCloudModelFacts(model);
   const openAITransport = resolveOpenAIContextTransport(model, options);
   const reasoningWithFunctionTools = built

@@ -1,5 +1,7 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
+import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import type { AgentConfig } from "../types.ts";
 import { defineSchema } from "#veryfront/schemas";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -13,6 +15,7 @@ import {
   type ToolExposureCheckpoint,
 } from "./tool-exposure.ts";
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
+import type { ProviderToolSchemaTarget } from "./model-resolution.ts";
 
 const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
@@ -87,7 +90,12 @@ export type ProviderReplayInvokeAgentToolName = ProviderReplayInvokeAgentToolCal
 
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
-    { name: string; description: string; parameters: Record<string, unknown> }
+    {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+      discovery?: ToolDiscoveryMetadata;
+    }
   >;
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
@@ -109,6 +117,10 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfToolLoadingMode?: RuntimeToolLoadingMode;
   __vfToolBootstrapNames?: readonly string[];
+  /** Tool schema target trusted preparation resolved from the run's served catalog. */
+  __vfToolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Authored startup tools a host already merged; provider capping must retain them. */
+  __vfRetainedBootstrapToolNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
@@ -182,6 +194,39 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
   return snapshotStringArray(raw) ?? [];
 }
 
+/** Maximum number of authored startup tool schemas. */
+export const MAX_CONFIGURED_BOOTSTRAP_TOOLS = 16;
+
+/** Snapshot an authored startup selection without widening its tool authorization. */
+export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  const names = ArrayIsArray(value) && value.length <= MAX_CONFIGURED_BOOTSTRAP_TOOLS
+    ? snapshotStringArray(value)
+    : undefined;
+  if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools must contain at most 16 exact tool names",
+    });
+  }
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (
+      name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
+    ) {
+      throw CONFIG_INVALID.create({
+        detail: "bootstrapTools requires exact executable tool names, excluding tool_search",
+      });
+    }
+  }
+  return names;
+}
+
+/** Host-merged authored startup tools that provider schema capping must retain. */
+export function getRuntimeRetainedBootstrapToolNames(config: AgentConfig): readonly string[] {
+  return snapshotStringArray((config as RuntimeToolFilterConfig).__vfRetainedBootstrapToolNames) ??
+    [];
+}
+
 export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {
   const raw = (config as RuntimeToolFilterConfig).__vfToolBootstrapNames;
   const names = snapshotStringArray(raw);
@@ -193,6 +238,21 @@ export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<s
     if (name !== undefined) reflectApply(SetAdd, bootstrapNames, [name]);
   }
   return bootstrapNames;
+}
+
+/**
+ * Return the tool schema target trusted preparation resolved for the run, for
+ * a model whose runtime carries no Veryfront Cloud facts of its own.
+ */
+export function getRuntimeToolSchemaTarget(
+  config: AgentConfig,
+): ProviderToolSchemaTarget | undefined {
+  const raw = (config as RuntimeToolFilterConfig).__vfToolSchemaTarget;
+  if (raw === null || typeof raw !== "object") return undefined;
+  const model: unknown = raw.model;
+  const wireSurface: unknown = raw.wireSurface;
+  if (typeof model !== "string" || model.length === 0) return undefined;
+  return typeof wireSurface === "string" ? { model, wireSurface } : { model };
 }
 
 /** Return trusted run-scoped source policy; malformed internal state fails closed. */
@@ -337,18 +397,24 @@ export function getRuntimeForwardedIntegrationToolDefs(
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   return raw
     .filter(
-      (def): def is { name: string; description: string; parameters: Record<string, unknown> } =>
+      (
+        def,
+      ): def is NonNullable<RuntimeToolFilterConfig["__vfForwardedIntegrationToolDefs"]>[number] =>
         typeof def === "object" &&
         def !== null &&
         typeof def.name === "string" &&
         typeof def.description === "string",
     )
-    .map((def) => ({
-      name: def.name,
-      description: def.description,
-      parameters: typeof def.parameters === "object" && def.parameters !== null &&
-          !Array.isArray(def.parameters)
-        ? def.parameters
-        : { type: "object", properties: {} },
-    }));
+    .map((def) => {
+      const definition: ToolDefinition = {
+        name: def.name,
+        description: def.description,
+        parameters: typeof def.parameters === "object" && def.parameters !== null &&
+            !Array.isArray(def.parameters)
+          ? def.parameters
+          : { type: "object", properties: {} },
+      };
+      copyToolDiscoveryMetadata(def, definition);
+      return definition;
+    });
 }

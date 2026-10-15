@@ -614,6 +614,11 @@ export interface VeryfrontCloudModelFacts {
   readonly openAITransport?: "chat-completions" | "responses";
   readonly openAIChatReasoningWithFunctionTools?: boolean;
   readonly openAIChatPreserveSystemMessages?: boolean;
+  /**
+   * Provider name the OpenAI Chat builder reads option buckets under, when it
+   * differs from the default Cloud name: the registry-backed compatible path.
+   */
+  readonly openAIChatProviderName?: "openai-compatible";
 }
 
 const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();

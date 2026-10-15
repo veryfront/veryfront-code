@@ -342,6 +342,8 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(skills === undefined ? {} : { skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
     ...(config.toolLoading === undefined ? {} : { toolLoading: config.toolLoading }),
+    ...(config.bootstrapTools === undefined ? {} : { bootstrapTools: config.bootstrapTools }),
+    ...(config.bootstrapSkill === undefined ? {} : { bootstrapSkill: config.bootstrapSkill }),
     ...(config.toolResultContext === undefined
       ? {}
       : { toolResultContext: config.toolResultContext }),

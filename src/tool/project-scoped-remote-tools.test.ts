@@ -25,6 +25,7 @@ function toolDefinition(input: {
   required?: string[];
   title?: string;
   annotations?: ToolAnnotations;
+  discovery?: ToolDefinition["discovery"];
 }): ToolDefinition {
   return {
     name: input.name,
@@ -36,6 +37,7 @@ function toolDefinition(input: {
     },
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.annotations !== undefined ? { annotations: input.annotations } : {}),
+    ...(input.discovery !== undefined ? { discovery: input.discovery } : {}),
   };
 }
 
@@ -278,6 +280,7 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
           required: ["project_reference"],
           title: "List files",
           annotations: { readOnlyHint: true },
+          discovery: { version: 1, type: "platform", domain: "files" },
         }),
         toolDefinition({ name: "delete_file", required: ["project_reference"] }),
       ];
@@ -303,6 +306,7 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
     { readOnlyHint: true },
     "remote MCP annotations survive normalization",
   );
+  assertEquals(listed[1]?.discovery, { version: 1, type: "platform", domain: "files" });
   assertEquals(listContexts, [{ projectId: "project-1" }]);
 
   const prepared = await catalog.prepareExecution({

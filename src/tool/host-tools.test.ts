@@ -20,6 +20,30 @@ import {
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("keeps only normalized discovery metadata on materialized host tools", () => {
+    const tools = createToolsFromHostDefinitions({
+      listed: {
+        description: "Listed tool",
+        inputSchemaJson: emptyJsonSchema,
+        discovery: { version: 1, type: "platform", domain: "agents", resource: "Agents" },
+        execute: () => Promise.resolve(null),
+      },
+      invalid: {
+        description: "Invalid metadata",
+        inputSchemaJson: emptyJsonSchema,
+        discovery: { version: 1, type: "other" } as unknown as HostToolSet[string]["discovery"],
+        execute: () => Promise.resolve(null),
+      },
+    });
+    assertEquals(tools.listed?.discovery, {
+      version: 1,
+      type: "platform",
+      domain: "agents",
+      resource: "Agents",
+    });
+    assertEquals(tools.invalid?.discovery, undefined);
+  });
+
   it("materializes class-defined execution methods with their original receiver", async () => {
     class Definition {
       description = "Synthetic class tool";
