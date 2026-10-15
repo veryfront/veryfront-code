@@ -61,6 +61,7 @@ import {
   RUNTIME_NAME_HEADER,
 } from "./runtime-identity.ts";
 
+const RuntimeEncodeURIComponent = encodeURIComponent;
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeObjectPrototype = Object.prototype;
@@ -353,7 +354,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
   const runtimeIdentity = getServiceRuntimeIdentity();
-  const runtimeNameHeader = encodeURIComponent(runtimeIdentity.name);
+  const runtimeNameHeader = RuntimeEncodeURIComponent(runtimeIdentity.name);
   const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";

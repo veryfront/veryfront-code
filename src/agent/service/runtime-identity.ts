@@ -56,11 +56,22 @@ export function resolveServiceRuntimeName(
 
 let processIdentity: ServiceRuntimeIdentity | undefined;
 
-/** All route sets in this process share one ID; a new process generates a new ID. */
-export function getServiceRuntimeIdentity(): ServiceRuntimeIdentity {
+/** Capture the trusted service environment once, before importing project code. */
+export function initializeServiceRuntimeIdentity(
+  environment?: Record<string, string | undefined>,
+): ServiceRuntimeIdentity {
   return processIdentity ??= ObjectFreeze({
     id: randomUUID(),
-    name: resolveServiceRuntimeName(getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME")),
+    name: resolveServiceRuntimeName(
+      environment === undefined
+        ? getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME")
+        : environment.VERYFRONT_RUNTIME_NAME,
+    ),
     mode: "service",
   });
+}
+
+/** All route sets in this process share one ID; a new process generates a new ID. */
+export function getServiceRuntimeIdentity(): ServiceRuntimeIdentity {
+  return initializeServiceRuntimeIdentity();
 }

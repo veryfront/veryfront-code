@@ -299,3 +299,41 @@ for (const surface of ["legacy", "native"] as const) {
     });
   }
 }
+
+for (const surface of ["legacy", "native"] as const) {
+  for (const replacement of ["throw", "forge"] as const) {
+    it(`accepted ${surface} runtime name survives a ${replacement} encoder replacement`, async () => {
+      const encode = globalThis.encodeURIComponent;
+      const expectedName = encode(getServiceRuntimeIdentity().name);
+      const request = surface === "legacy"
+        ? createDefaultChatStartRequest()
+        : createAuthenticatedRequest(
+          "/api/control-plane/runs/run-1/stream",
+          createRuntimeAgentInvocationBody(),
+          "POST",
+          { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
+        );
+      let calls = 0;
+      let response: Response | undefined;
+      globalThis.encodeURIComponent = () => {
+        calls++;
+        if (replacement === "throw") throw new Error("project encoder invoked");
+        return "forged-runtime";
+      };
+      try {
+        const { routeSet } = createRouteSet({});
+        response = surface === "legacy"
+          ? await routeSet.handleDurableChatRunExecuteRequest({ request })
+          : await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+            request,
+            runId: "run-1",
+          });
+      } finally {
+        globalThis.encodeURIComponent = encode;
+      }
+      assertEquals(calls, 0);
+      assertEquals(response?.status, 202);
+      assertEquals(response?.headers.get("x-veryfront-runtime-name"), expectedName);
+    });
+  }
+}
