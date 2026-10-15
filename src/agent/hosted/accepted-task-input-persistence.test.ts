@@ -26,7 +26,8 @@ const event = {
 };
 const result = () =>
   Response.json({ run_id: canonicalRunId, appended_count: 1, latest_event_id: 2 });
-const capability = (fetch: typeof globalThis.fetch = () => Promise.resolve(result())) =>
+type FetchTransport = typeof globalThis.fetch;
+const capability = (fetch: FetchTransport = () => Promise.resolve(result())) =>
   createHostedRunEventWriterCapability({
     apiUrl: "https://api.example/v1/",
     runId: parentRunId,
