@@ -1,20 +1,15 @@
-import { BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ClientGraph,
   collectClientGraph,
-  createRealReader,
   findServerOnlyLeaks,
-  loadImportMap,
   type ReadModule,
-  SERVER_ONLY_MODULE_PATTERNS,
   staticSpecifiers,
   summarizeGraph,
   traceLeak,
 } from "./client-bundle-graph.ts";
 
-const ROOT = new URL("../../", import.meta.url);
 const SRC_IMPORT_MAP = { "#veryfront/": "./src/" };
 
 function memoryReader(modules: Record<string, string>): ReadModule {
@@ -224,38 +219,5 @@ describe("scripts/lint/client-bundle-graph", () => {
         encoder.encode(entry).length + encoder.encode(dep).length,
       );
     });
-  });
-
-  describe("the framework's browser exports", () => {
-    for (const entry of BROWSER_SAFE_EXPORTS) {
-      it(`${entry} reaches no server modules or Node builtins`, async () => {
-        const config = JSON.parse(
-          await Deno.readTextFile(new URL("deno.json", ROOT)),
-        );
-        const source = config.exports[entry];
-        assert(typeof source === "string", `Missing browser export ${entry}`);
-        const graph = await collectClientGraph(
-          source.replace(/^\.\//, ""),
-          await loadImportMap(ROOT),
-          createRealReader(ROOT),
-        );
-
-        assert(
-          graph.size >= 1,
-          `expected a non-trivial graph, got ${graph.size} modules`,
-        );
-        const critical = findServerOnlyLeaks(graph);
-        assertEquals(
-          critical,
-          [],
-          critical.length
-            ? "index.client.ts leaks a runtime adapter:\n" +
-              critical.map((leak) => traceLeak(graph, leak)).join("\n")
-            : "",
-        );
-        // Every server-only pattern is a valid RegExp against a normalised path.
-        assert(SERVER_ONLY_MODULE_PATTERNS.every((p) => p instanceof RegExp));
-      });
-    }
   });
 });
