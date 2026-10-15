@@ -840,7 +840,7 @@ describe("agent/ag-ui-handler", () => {
         )) as typeof fetch,
       append: (events, sequence) => {
         appended.push(...events);
-        if (JSON.stringify(events).includes('"name":"test.report"')) {
+        if (JSON.stringify(events).includes('"kind":"test.report"')) {
           timeline.push("tool-data");
         }
         return Promise.resolve({ latestExternalEventSequence: sequence + events.length });
@@ -898,8 +898,24 @@ describe("agent/ag-ui-handler", () => {
       const body = await response.text();
       assertStringIncludes(body, "event: Custom");
       assertStringIncludes(body, '"name":"test.report"');
-      assertStringIncludes(JSON.stringify(appended), '"name":"test.report"');
-      assertStringIncludes(JSON.stringify(appended), '"status":"ready"');
+      assertEquals(
+        appended.filter((event) =>
+          typeof event === "object" && event !== null && "kind" in event &&
+          event.kind === "test.report"
+        ),
+        [{
+          type: "RUNTIME_EVENT_RECORDED",
+          runtime: "veryfront",
+          kind: "test.report",
+          value: { status: "ready" },
+        }],
+      );
+      assertEquals(
+        appended.some((event) =>
+          typeof event === "object" && event !== null && "type" in event && event.type === "CUSTOM"
+        ),
+        false,
+      );
       assertEquals(timeline, ["tool-data", "completed"]);
     } finally {
       await uninstall();

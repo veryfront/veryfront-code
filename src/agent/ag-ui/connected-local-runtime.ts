@@ -1,3 +1,4 @@
+import { buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { normalizeText } from "#veryfront/utils/logger/core.ts";
 import { createRenewingLocalModel } from "./connected-local-model.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
@@ -454,7 +455,16 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                     ? "finish-step"
                     : event.type;
                   if (!["message-start", "message-finish", "data"].includes(type)) {
-                    const events = encoder.encode({ ...event, type } as ChatStreamEvent);
+                    const events = encoder.encode({ ...event, type } as ChatStreamEvent).map(
+                      (encoded) =>
+                        encoded.type === "CUSTOM"
+                          ? buildRuntimeEventRecordedEvent({
+                            runtime: "veryfront",
+                            kind: encoded.name,
+                            value: encoded.value,
+                          }).durable
+                          : encoded,
+                    );
                     if (events.length) {
                       await append(events);
                     }
