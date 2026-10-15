@@ -1,3 +1,4 @@
+import { getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
 import { buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { normalizeText } from "#veryfront/utils/logger/core.ts";
 import { createRenewingLocalModel } from "./connected-local-model.ts";
@@ -460,7 +461,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                         encoded.type === "CUSTOM"
                           ? buildRuntimeEventRecordedEvent({
                             runtime: "veryfront",
-                            kind: encoded.name,
+                            kind: getNonEmptyStringSchema().parse(encoded.name),
                             value: encoded.value,
                           }).durable
                           : encoded,
