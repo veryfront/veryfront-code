@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
+import { createHostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
 import { createHostedExecutorSessionPool } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import { createHostedHttpFixture as fixture } from "../../../tests/fixtures/hosted-http-broker.ts";
 import { createHostedHttpBroker } from "./hosted-http-broker.ts";
@@ -12,6 +15,17 @@ import {
 
 const count = (calls: string[], name: string) => calls.filter((call) => call === name).length;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** Keep allocation timestamps and session timers on the same controlled clock. */
+function timedFixture(time: FakeTime, ...args: Parameters<typeof fixture>) {
+  const f = fixture(...args);
+  f.input.session.clock = {
+    now: () => time.now,
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+    cancel: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+  };
+  return f;
+}
 
 /** A fixture whose handler signals when a request arrives and answers when told to. */
 function heldFixture(projectId?: string) {
@@ -393,9 +407,10 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("ends a warm request at its own allocation deadline without retiring the executor", async () => {
+    using time = new FakeTime(1_000_000);
     const gate = Promise.withResolvers<void>();
     let arrived = 0;
-    const f = fixture(async () => {
+    const f = timedFixture(time, async () => {
       if (++arrived === 2) await gate.promise;
       return new Response("served");
     });
@@ -407,7 +422,7 @@ describe("hosted HTTP generation broker", () => {
       );
       // This request's authority ends long before the allocation that created the executor.
       const now = Date.now();
-      await assertRejects(() =>
+      const rejected = assertRejects(() =>
         broker.fetch(new Request("https://app.example"), {
           ...f.input,
           session: {
@@ -421,6 +436,8 @@ describe("hosted HTTP generation broker", () => {
           },
         })
       );
+      await time.tickAsync(150);
+      await rejected;
       gate.resolve();
       assertEquals(
         await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
@@ -435,13 +452,8 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("checks deadlines against the session clock a caller configured", async () => {
-    // A host clock far from wall time; the allocation is stamped against it.
-    const startedAt = Date.now();
-    const clock = {
-      now: () => 1_000_000 + (Date.now() - startedAt),
-      schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
-      cancel: (timer: unknown) => clearTimeout(timer as ReturnType<typeof setTimeout>),
-    };
+    const time = new ManualMonotonicClock();
+    const clock = createHostedExecutorSessionClock(1_000_000, time);
     const f = fixture(() => new Response("served"));
     f.input.session.clock = clock;
     // The fixture's allocator stamps expiry in wall time; restate it on the host clock.
@@ -472,27 +484,15 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("expires an in-flight request when the configured clock reaches its deadline", async () => {
-    // Timers run on real time, but every schedule call is recorded so the test can fire
-    // the request's expiry as the configured clock would, long before wall time gets there.
-    const startedAt = Date.now();
-    const scheduled: Array<{ callback: () => void; delayMs: number; cancelled: boolean }> = [];
-    const clock = {
-      now: () => 1_000_000 + (Date.now() - startedAt),
-      schedule(callback: () => void, delayMs: number) {
-        const entry = { callback, delayMs, cancelled: false };
-        scheduled.push(entry);
-        return { entry, timer: setTimeout(callback, delayMs) };
-      },
-      cancel(handle: unknown) {
-        const { entry, timer } = handle as {
-          entry: (typeof scheduled)[number];
-          timer: ReturnType<typeof setTimeout>;
-        };
-        entry.cancelled = true;
-        clearTimeout(timer);
-      },
-    };
-    const f = fixture(() => new Promise<Response>(() => {}));
+    const time = new ManualMonotonicClock();
+    const clock = createHostedExecutorSessionClock(1_000_000, time);
+    const entered = Promise.withResolvers<void>();
+    let calls = 0;
+    const f = fixture(() => {
+      if (++calls === 1) return new Response("warm");
+      entered.resolve();
+      return new Promise<Response>(() => {});
+    });
     f.input.session.clock = clock;
     const allocator = f.input.session.allocator;
     const restamp = <T>(view: T): T => ({ ...(view as object), expiresAt: 1_030_000 }) as T;
@@ -505,20 +505,25 @@ describe("hosted HTTP generation broker", () => {
     f.input.session.request.requestedAt = 1_000_000;
     f.input.session.request.prepareDeadlineAt = 1_005_000;
     f.input.session.request.hardDeadlineAt = 1_030_000;
-    const broker = createHostedHttpBroker({ maxActive: 1 });
+    const broker = createHostedHttpBroker({ maxActive: 1, drainTimeoutMs: 0 });
     try {
+      await (await broker.fetch(new Request("https://app.example"), f.input)).text();
+      f.input.session.request.hardDeadlineAt = 1_020_000;
       const pending = broker.fetch(new Request("https://app.example"), f.input);
-      pending.catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      // The request's expiry is the timer scheduled for the whole remaining lifetime.
-      const expiry = scheduled.find((entry) =>
-        !entry.cancelled && entry.delayMs > 29_000 && entry.delayMs <= 30_000
-      );
-      assert(expiry, "the request expiry must be scheduled on the configured clock");
-      expiry.callback();
-      // The clock's own timer ends the request; wall time is nowhere near the deadline.
-      await assertRejects(() => pending, Error, "cancelled");
-      assert(Date.now() - startedAt < 5_000);
+      const rejected = assertRejects(() => pending, Error, "cancelled");
+      await entered.promise;
+      let finished = false;
+      void pending.then(() => {
+        finished = true;
+      }, () => {
+        finished = true;
+      });
+      time.advanceBy(19_999);
+      await tick();
+      assertEquals(finished, false);
+      time.advanceBy(1);
+      await rejected;
+      assertEquals(clock.now(), 1_020_000);
     } finally {
       await broker.shutdown();
       await broker.settled;
@@ -526,8 +531,9 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("refuses a warm request stamped in the future without moving generation order", async () => {
-    const f = fixture(() => new Response("served"));
-    const next = fixture(() => new Response("next"));
+    using time = new FakeTime(1_000_000);
+    const f = timedFixture(time, () => new Response("served"));
+    const next = timedFixture(time, () => new Response("next"));
     next.input.installation.configurationId = "config-b";
     const broker = createHostedHttpBroker({ maxActive: 2 });
     try {
@@ -555,7 +561,7 @@ describe("hosted HTTP generation broker", () => {
       );
       // A release change authorized now is still ordered after the warm generation.
       next.input.session.request.requestedAt = Date.now() + 1;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      time.tick(1);
       assertEquals(
         await (await broker.fetch(new Request("https://app.example"), next.input)).text(),
         "next",
@@ -663,7 +669,8 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("replaces an executor whose channel closes", async () => {
-    const f = fixture(() => new Response("served"));
+    using time = new FakeTime(1_000_000);
+    const f = timedFixture(time, () => new Response("served"));
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       assertEquals(
@@ -673,18 +680,11 @@ describe("hosted HTTP generation broker", () => {
       f.crash();
       await f.releaseEntered.promise;
       assertEquals(f.calls.includes("release:canceled"), true);
-      // The crashed generation keeps its capacity until its release is confirmed.
-      let served: string | undefined;
-      for (let attempt = 0; attempt < 50 && served === undefined; attempt++) {
-        served = await broker.fetch(new Request("https://app.example"), f.input).then(
-          (response) => response.text(),
-          (error) => {
-            assertEquals(String(error).includes("capacity"), true);
-            return new Promise<undefined>((resolve) => setTimeout(resolve, 20));
-          },
-        );
-      }
-      assertEquals(served, "served");
+      await time.runMicrotasks();
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
       assertEquals(count(f.calls, "allocate"), 2);
       assertEquals(count(f.calls, "install"), 2);
     } finally {
@@ -694,13 +694,15 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("retires an idle executor and releases its allocation", async () => {
-    const f = fixture(() => new Response("served"));
+    using time = new FakeTime(1_000_000);
+    const f = timedFixture(time, () => new Response("served"));
     const broker = createHostedHttpBroker({ maxActive: 1, idleTimeoutMs: 10 });
     try {
       assertEquals(
         await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
         "served",
       );
+      await time.tickAsync(10);
       await f.releaseEntered.promise;
       assertEquals(f.calls, ["allocate", "install", "release:completed"]);
     } finally {
@@ -737,11 +739,21 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("bounds executor preparation by the allocation deadline", async () => {
-    const f = fixture(() => new Response("unreachable"), () => new Promise<void>(() => {}));
+    using time = new FakeTime(1_000_000);
+    const entered = Promise.withResolvers<void>();
+    const f = timedFixture(time, () => new Response("unreachable"), () => {
+      entered.resolve();
+      return new Promise<void>(() => {});
+    });
     f.input.session.request.prepareDeadlineAt = Date.now() + 100;
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
-      await assertRejects(() => broker.fetch(new Request("https://app.example"), f.input));
+      const rejected = assertRejects(() =>
+        broker.fetch(new Request("https://app.example"), f.input)
+      );
+      await entered.promise;
+      await time.tickAsync(100);
+      await rejected;
       await f.releaseEntered.promise;
       assertEquals(f.calls.includes("release:canceled"), true);
     } finally {
@@ -805,18 +817,21 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("retries an unconfirmed retirement and keeps its capacity until release is confirmed", async () => {
-    const a = fixture(() => new Response("a"));
+    using time = new FakeTime(1_000_000);
+    const a = timedFixture(time, () => new Response("a"));
     const release = a.input.session.allocator.release;
     a.input.session.allocator.release = () =>
       Promise.reject(new Error("synthetic allocator outage"));
-    const b = fixture(() => new Response("b"), undefined, "project-b");
+    const b = timedFixture(time, () => new Response("b"), undefined, "project-b");
     const broker = createHostedHttpBroker({ maxActive: 1, idleTimeoutMs: 10 });
     try {
       assertEquals(
         await (await broker.fetch(new Request("https://a.example"), a.input)).text(),
         "a",
       );
-      while (broker.generations > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      await time.tickAsync(10);
+      await time.runMicrotasks();
+      assertEquals(broker.generations, 0);
       await assertRejects(
         () => broker.fetch(new Request("https://b.example"), b.input),
         Error,
@@ -825,15 +840,12 @@ describe("hosted HTTP generation broker", () => {
       assertEquals(b.calls, []);
       a.input.session.allocator.observe = (binding, signal) =>
         release(binding, "completed", signal);
-      let served: string | undefined;
-      for (let attempt = 0; attempt < 60 && served === undefined; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        served = await broker.fetch(new Request("https://b.example"), b.input).then(
-          (response) => response.text(),
-          () => undefined,
-        );
-      }
-      assertEquals(served, "b");
+      await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      assertEquals(
+        await (await broker.fetch(new Request("https://b.example"), b.input)).text(),
+        "b",
+      );
     } finally {
       await broker.shutdown();
       await broker.settled;
@@ -841,7 +853,8 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("stops retirement retries when its owner signal shuts the broker down", async () => {
-    const f = fixture(() => new Response("a"));
+    using time = new FakeTime(1_000_000);
+    const f = timedFixture(time, () => new Response("a"));
     f.input.session.allocator.release = () =>
       Promise.reject(new Error("synthetic allocator outage"));
     let observations = 0;
@@ -861,13 +874,15 @@ describe("hosted HTTP generation broker", () => {
         await (await broker.fetch(new Request("https://a.example"), f.input)).text(),
         "a",
       );
-      while (broker.generations > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      await time.tickAsync(10);
+      await time.runMicrotasks();
+      assertEquals(broker.generations, 0);
       owner.abort();
       await assertRejects(() => broker.settled, AggregateError, "cleanup failed");
       // Shutdown makes one bounded confirmation attempt; no retry follows it.
-      await new Promise((resolve) => setTimeout(resolve, 200));
       const settledObservations = observations;
-      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      await time.tickAsync(2_500);
+      await time.runMicrotasks();
       assertEquals(observations, settledObservations);
     } finally {
       await broker.shutdown();
@@ -931,15 +946,16 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("allocates for a cold request only after the retired executor's release is confirmed", async () => {
-    const idle = fixture(() => new Response("idle"));
+    using time = new FakeTime(1_000_000);
+    const idle = timedFixture(time, () => new Response("idle"));
     idle.holdRelease();
-    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const cold = timedFixture(time, () => new Response("cold"), undefined, "project-b");
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
       const admitted = broker.fetch(new Request("https://b.example"), cold.input);
       await idle.releaseEntered.promise;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await time.runMicrotasks();
       assertEquals(cold.calls, []);
       idle.releaseAllowed.resolve();
       assertEquals(await (await admitted).text(), "cold");
@@ -953,10 +969,11 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("does not retire a slot that a concurrent cold request has just reserved", async () => {
-    const idle = fixture(() => new Response("idle"));
+    using time = new FakeTime(1_000_000);
+    const idle = timedFixture(time, () => new Response("idle"));
     idle.holdRelease();
     const colds = [heldFixture("project-b"), heldFixture("project-c")];
-    const next = fixture(() => new Response("next"), undefined, "project-d");
+    const next = timedFixture(time, () => new Response("next"), undefined, "project-d");
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
@@ -969,7 +986,7 @@ describe("hosted HTTP generation broker", () => {
       // Hold the retirement until both cold requests wait on it, so both resume together
       // and only one can take the freed slot.
       await idle.releaseEntered.promise;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await time.runMicrotasks();
       idle.releaseAllowed.resolve();
       const winner = await Promise.race(colds.map((f, index) => f.entered.then(() => index)));
       const loser = 1 - winner;
@@ -999,11 +1016,12 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("refuses a cold request and keeps the slot when the retired executor's release is unconfirmed", async () => {
-    const idle = fixture(() => new Response("idle"));
+    using time = new FakeTime(1_000_000);
+    const idle = timedFixture(time, () => new Response("idle"));
     const release = idle.input.session.allocator.release;
     idle.input.session.allocator.release = () =>
       Promise.reject(new Error("synthetic allocator outage"));
-    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const cold = timedFixture(time, () => new Response("cold"), undefined, "project-b");
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
@@ -1018,15 +1036,12 @@ describe("hosted HTTP generation broker", () => {
       assertEquals(cold.calls, []);
       idle.input.session.allocator.observe = (binding, signal) =>
         release(binding, "completed", signal);
-      let served: string | undefined;
-      for (let attempt = 0; attempt < 60 && served === undefined; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        served = await broker.fetch(new Request("https://b.example"), cold.input).then(
-          (response) => response.text(),
-          () => undefined,
-        );
-      }
-      assertEquals(served, "cold");
+      await time.tickAsync(1_000);
+      await time.runMicrotasks();
+      assertEquals(
+        await (await broker.fetch(new Request("https://b.example"), cold.input)).text(),
+        "cold",
+      );
       assertEquals(cold.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
@@ -1160,9 +1175,10 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("leaves no untracked executor when two releases of an environment start together", async () => {
-    const old = fixture(() => new Response("old"));
+    using time = new FakeTime(1_000_000);
+    const old = timedFixture(time, () => new Response("old"));
     old.input.session.request.requestedAt -= 1_000;
-    const next = fixture(() => new Response("next"));
+    const next = timedFixture(time, () => new Response("next"));
     next.input.installation.configurationId = "config-b";
     const broker = createHostedHttpBroker({ maxActive: 2, idleTimeoutMs: 60_000 });
     try {
@@ -1173,10 +1189,7 @@ describe("hosted HTTP generation broker", () => {
       // Whatever order the two were admitted in, the newer release is served.
       assertEquals(outcomes[1], { status: "fulfilled", value: "next" });
       // The older release either was refused or drains; it never stays allocated unseen.
-      for (let attempt = 0; attempt < 100; attempt++) {
-        if (count(old.calls, "allocate") === count(old.calls, "release:completed")) break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await time.runMicrotasks();
       assertEquals(count(old.calls, "allocate"), count(old.calls, "release:completed"));
       assertEquals(broker.generations, 1);
       assertEquals(broker.active, 1);
@@ -1427,12 +1440,18 @@ describe("hosted HTTP generation executor", () => {
 
   it("refuses a warm request inside the retirement window before its timer has run", async () => {
     const f = fixture(() => new Response("served"));
+    const time = new ManualMonotonicClock();
+    f.input.session.clock = createHostedExecutorSessionClock(
+      f.input.session.request.requestedAt,
+      time,
+    );
     // A long allocation, so the window below is not shortened to half its lifetime.
     f.input.session.request.requestedAt -= 60_000;
     const sessions = createHostedExecutorSessionPool({ maxActive: 1 });
     const input = prepareHostedHttpInput(f.input);
     const key = hostedHttpInstallationKey(input);
-    const retireBeforeDeadlineMs = input.allocation.hardDeadlineAt - Date.now() - 300;
+    const retireBeforeDeadlineMs = input.allocation.hardDeadlineAt - f.input.session.clock.now() -
+      300;
     const executor = createHostedHttpGenerationExecutor({
       input,
       sessions,
@@ -1446,8 +1465,7 @@ describe("hosted HTTP generation executor", () => {
         "served",
       );
       // Pass the boundary without yielding, as a busy event loop would delay the timer.
-      const boundary = input.allocation.hardDeadlineAt - retireBeforeDeadlineMs;
-      while (Date.now() < boundary) { /* spin */ }
+      time.advanceBy(300);
       await assertRejects(
         () => executor.render(new Request("https://app.example")),
         Error,

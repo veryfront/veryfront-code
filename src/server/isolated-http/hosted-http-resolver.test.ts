@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   assert,
   assertEquals,
@@ -129,6 +130,7 @@ const signal = () => new AbortController().signal;
 
 describe("hosted HTTP resolver", () => {
   it("orders resolutions by when authorization began, not when they finish", async () => {
+    using time = new FakeTime(1_000_000);
     const stalled = Promise.withResolvers<Record<string, string>>();
     const fake = fakeApi({
       readEnvironment: (value) =>
@@ -142,11 +144,12 @@ describe("hosted HTTP resolver", () => {
       ]),
     }));
     const earlier = resolve(authority, signal());
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    time.tick(5);
     const later = await resolve({ ...authority, releaseId: OTHER_RELEASE_ID }, signal());
     stalled.resolve({ APP_MESSAGE: "old" });
     const finishedLast = await earlier;
-    assert(finishedLast.session.request.requestedAt < later.session.request.requestedAt);
+    assertEquals(finishedLast.session.request.requestedAt, 1_000_000);
+    assertEquals(later.session.request.requestedAt, 1_000_005);
   });
 
   it("authorizes identity with the source token before reading project variables", async () => {
