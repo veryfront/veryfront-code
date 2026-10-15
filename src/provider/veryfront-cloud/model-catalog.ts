@@ -297,6 +297,16 @@ export function isVeryfrontCloudCatalogLoaded(): boolean {
 }
 
 /**
+ * @internal Whether a served catalog has loaded for a model's own catalog
+ * scope, whatever scope the ambient request carries.
+ */
+export function isVeryfrontCloudCatalogLoadedForScope(
+  scopeKey: VeryfrontCloudCatalogScopeKey,
+): boolean {
+  return withVeryfrontCloudCatalogScope(scopeKey, () => loadedCatalog() !== undefined);
+}
+
+/**
  * Whether the served catalog loaded for the current scope serves any model of
  * this provider, under any provider spelling it uses. False before it loads.
  */

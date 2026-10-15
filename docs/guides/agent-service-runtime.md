@@ -445,12 +445,16 @@ VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS=10000
 ```
 
 Both budgets must stay below `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS` (default
-`150000`), including a default that applies to an unset variable. The service
-rejects a budget at or above that watchdog when it creates the chat runtime,
-because the watchdog would fire first and report a generic stall instead of
-the fixed `FIRST_PROGRESS_TIMEOUT` code. The effective first-progress budget
-counts twice, because a stream that times out before any output can be
-replayed once. In the example, `30000` uses a `60000` window.
+`150000`), because the watchdog would otherwise fire first and report a generic
+stall instead of the fixed `FIRST_PROGRESS_TIMEOUT` code. The effective
+first-progress budget counts twice, because a stream that times out before any
+output can be replayed once. In the example, `30000` uses a `60000` window. The
+service rejects an explicitly set budget at or above that watchdog when it
+creates the chat runtime, and the error names both variables and their
+effective values. When a variable is unset and its default does not fit, for
+example with the watchdog pinned to the previous `120000` default, the service
+uses the largest budget that fits (`59999` for first progress) and logs a
+one-time warning instead of rejecting requests.
 
 Delegated child agents inherit a budget only when its window is shorter than
 the child stream watchdog (`45000`). A longer budget leaves that child on the

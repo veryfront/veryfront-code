@@ -54,6 +54,15 @@ function withoutNativeMediaPayloads(
  */
 export const MIN_IMPLICIT_OUTPUT_TOKENS = 4_096;
 
+/**
+ * Share of the context window an implicit output expansion leaves unused. The
+ * input estimate is a heuristic, not a tokenizer upper bound, so dense text
+ * (CJK, code, base64-like tool output) can tokenize above it. Keeping this
+ * slack makes an underestimate shrink the unused tail instead of producing a
+ * provider-side `input + max_tokens > context` rejection.
+ */
+export const IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO = 0.05;
+
 /** Token ceilings the served model deployment declares. */
 export type ServedRequestLimit = { readonly context?: number; readonly output?: number };
 
@@ -310,7 +319,8 @@ export function inspectFinalRequestBudget(
   // provider-specific framing can use more tokens than this estimate.
   const estimatedInputTokens = Math.ceil(rawInputTokens * 1.1) + 16;
   const availableOutputTokens = input.limit.context - estimatedInputTokens -
-    additionalOutputTokens;
+    additionalOutputTokens -
+    Math.ceil(input.limit.context * IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO);
   return {
     inputCostKnown: !measured.hasMedia,
     maxOutputTokens: input.explicitOutputTokens === true
@@ -321,5 +331,34 @@ export function inspectFinalRequestBudget(
     fits: estimatedInputTokens + reservedOutputTokens + additionalOutputTokens <=
       input.limit.context,
     outputExceeded,
+  };
+}
+
+/**
+ * Memoize request-budget inspections for one fitting pass. Fitting re-inspects
+ * the same candidate (messages array, exposure plan) repeatedly, for example
+ * the inline baseline before each historical result, and every inspection
+ * reassembles, probes and serializes the whole request. Candidates are fresh
+ * arrays, so identity is a sound key while the pass runs; `variant` captures
+ * the remaining mutable input (whether stored references expose the reader).
+ */
+export function memoizeRequestBudgetInspection<M extends object, P extends object, R>(
+  inspect: (messages: M, plan: P) => R,
+  variant: () => boolean,
+): (messages: M, plan: P) => R {
+  const cache = new WeakMap<M, Map<P, [R | undefined, R | undefined]>>();
+  return (messages, plan) => {
+    let byPlan = cache.get(messages);
+    if (!byPlan) {
+      byPlan = new Map();
+      cache.set(messages, byPlan);
+    }
+    let entry = byPlan.get(plan);
+    if (!entry) {
+      entry = [undefined, undefined];
+      byPlan.set(plan, entry);
+    }
+    const slot = variant() ? 1 : 0;
+    return entry[slot] ??= inspect(messages, plan);
   };
 }

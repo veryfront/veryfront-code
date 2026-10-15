@@ -243,17 +243,6 @@ function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEve
   }
 }
 
-/**
- * The subset of an execution failure that may cross into a PUBLIC RunError.
- *
- * The SSE stream may carry a fallback `Error.message`, but the relay writes into
- * a durable, client-visible RunError. A non-provider failure there -- a
- * persistence error from `turnPersistence.finalize()`, say -- can carry database
- * URLs or internal paths, which AGENTS.md forbids in user-facing output. Only
- * curated provider diagnostics and explicitly public lifecycle messages are
- * relayed; anything else returns undefined so the relay keeps its neutral
- * boundary message.
- */
 /** A pre-dispatch request budget rejection carries only its registered public title. */
 function registeredContextWindowErrorEvent(error: unknown): RuntimeStreamErrorEvent | undefined {
   const snapshot = snapshotVeryfrontError(error);
@@ -269,6 +258,17 @@ function registeredContextWindowErrorEvent(error: unknown): RuntimeStreamErrorEv
     : undefined;
 }
 
+/**
+ * The subset of an execution failure that may cross into a PUBLIC RunError.
+ *
+ * The SSE stream may carry a fallback `Error.message`, but the relay writes into
+ * a durable, client-visible RunError. A non-provider failure there -- a
+ * persistence error from `turnPersistence.finalize()`, say -- can carry database
+ * URLs or internal paths, which AGENTS.md forbids in user-facing output. Only
+ * curated provider diagnostics and explicitly public lifecycle messages are
+ * relayed; anything else returns undefined so the relay keeps its neutral
+ * boundary message.
+ */
 export function resolveRelayableExecutionFailure(
   error: unknown,
 ): { message: string; code?: string } | undefined {

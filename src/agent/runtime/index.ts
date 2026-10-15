@@ -449,6 +449,7 @@ import { createModelToolResultContextMessages } from "./tool-result-context-mess
 import {
   enforceProviderRequestBudget,
   inspectProviderRequestBudget,
+  memoizeRequestBudgetInspection,
   type ServedRequestLimit,
 } from "./final-request-budget.ts";
 import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
@@ -456,6 +457,7 @@ import { fitDeferredToolSchemasToBudget } from "./deferred-schema-budget.ts";
 import { resolveAdditiveReasoningOutputTokens } from "#veryfront/runtime/model-call-context-request.ts";
 import {
   currentVeryfrontCloudCatalogScopeKey,
+  isVeryfrontCloudCatalogLoadedForScope,
   readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
   type VeryfrontCloudSurfaceId,
@@ -2338,6 +2340,22 @@ function readServedModelLimit(
 }
 
 /**
+ * Whether a turn on this model needs transactional admission for the served
+ * request budget. It does when the served catalog declares a context limit,
+ * and, conservatively, while that catalog has not loaded yet, since a limit
+ * may still arrive before dispatch. A loaded catalog without a limit can never
+ * reject a request on size, so the turn keeps the cheaper, concurrent
+ * non-transactional path.
+ */
+function requiresServedModelAdmission(languageModel: ModelRuntime, model: string): boolean {
+  const facts = readVeryfrontCloudModelFacts(languageModel);
+  if (!facts && languageModel.provider !== "veryfront-cloud") return false;
+  if (readServedModelLimit(languageModel, model)?.context !== undefined) return true;
+  const catalogScopeKey = facts ? facts.catalogScopeKey : currentVeryfrontCloudCatalogScopeKey();
+  return catalogScopeKey !== undefined && !isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey);
+}
+
+/**
  * Fit one step's request to the served context window before dispatch: first
  * project old tool results to retrievable references, then unload previously
  * loaded deferred schemas. Source history and authorization stay unchanged.
@@ -2384,7 +2402,10 @@ async function fitRuntimeStepRequestToServedBudget(input: {
   if (servedLimit?.context === undefined) {
     return { modelMessages, plan, servedLimit, commitToolExposure };
   }
-  const inspect = (messages: Message[], candidatePlan: ToolExposurePlan) => {
+  const inspect = memoizeRequestBudgetInspection((
+    messages: Message[],
+    candidatePlan: ToolExposurePlan,
+  ) => {
     const request = input.assembleRequest(messages, candidatePlan);
     // Inspect the effective wire request, so native provider controls decide
     // whether compaction is needed, exactly as final enforcement does.
@@ -2401,7 +2422,7 @@ async function fitRuntimeStepRequestToServedBudget(input: {
       explicitOutputTokens: input.explicitOutputTokens,
       additionalOutputTokens: input.additionalOutputTokens,
     });
-  };
+  }, () => (input.toolResultContext?.size ?? 0) > 0);
   if (input.supportsToolCalling && input.toolResultContext) {
     modelMessages = projectHistoricalToolResultsForBudget({
       sourceMessages: input.sourceMessages,
@@ -3875,8 +3896,10 @@ export class AgentRuntime {
           inputMessages,
           agentContext,
           abortSignal,
-          transport.languageModel.provider === "veryfront-cloud" ||
-            readVeryfrontCloudModelFacts(transport.languageModel) !== undefined,
+          requiresServedModelAdmission(
+            transport.languageModel,
+            resolveRuntimeModel(resolvedModelString),
+          ),
         );
 
         const chain = new MiddlewareChain(this.config.middleware);
@@ -4100,8 +4123,10 @@ export class AgentRuntime {
         inputMessages,
         agentContext,
         streamAbortSignal,
-        transport.languageModel.provider === "veryfront-cloud" ||
-          readVeryfrontCloudModelFacts(transport.languageModel) !== undefined,
+        requiresServedModelAdmission(
+          transport.languageModel,
+          resolveRuntimeModel(transport.resolvedModelString),
+        ),
       );
 
       // Deferring persistence into the stream body moved the memory calls past
@@ -5814,6 +5839,7 @@ export class AgentRuntime {
             slicePrivateArray(currentMessages, 0, admittedTurn.start),
           ),
         );
+        let resumeAdmissionRejection: { error: unknown } | undefined;
         try {
           // The trusted parked call was already exposed in the prior segment.
           // Recheck current authorization without requiring its lost step visibility.
@@ -5846,10 +5872,15 @@ export class AgentRuntime {
           // Resuming a trusted parked tool is a real dispatch even before the
           // next provider request. Validate before its effect, then retain that
           // accepted history if later provider preparation fails.
-          await validateProviderRequest(
-            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
-            currentMessages,
-          );
+          try {
+            await validateProviderRequest(
+              withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+              currentMessages,
+            );
+          } catch (error) {
+            resumeAdmissionRejection = { error };
+            throw error;
+          }
           callbacks?.onToolCall?.(toolCall);
           const startTime = Date.now();
           const result = await runWithToolCallOccurrenceDispatch(
@@ -5913,6 +5944,9 @@ export class AgentRuntime {
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
         } catch (error) {
+          // A turn admission rejection belongs to the request, not the tool:
+          // surface it as the request error instead of a tool-output-error.
+          if (resumeAdmissionRejection?.error === error) throw error;
           await this.recordTerminalToolResult(
             error,
             toolCall,

@@ -15,7 +15,14 @@ import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import { AgentRuntime } from "./index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
-import { enforceFinalRequestBudget, enforceProviderRequestBudget } from "./final-request-budget.ts";
+import {
+  enforceFinalRequestBudget,
+  enforceProviderRequestBudget,
+  IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO,
+  memoizeRequestBudgetInspection,
+} from "./final-request-budget.ts";
+
+const IMPLICIT_SAFETY_200K = Math.ceil(200_000 * IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO);
 import {
   buildModelCallContextRequest,
   resolveAdditiveReasoningOutputTokens,
@@ -265,6 +272,56 @@ describe("final model request budget", () => {
     assertEquals(error.slug, "agent-context-window-exceeded");
     assertEquals(model.callCount, 0);
   });
+
+  for (const served of [true, false]) {
+    it(
+      `${served ? "serializes" : "keeps concurrent"} stateful cloud turns when the catalog ${
+        served ? "serves" : "omits"
+      } a limit`,
+      async () => {
+        const model = servedModel("generate", 100_000, [{ text: "ok" }, { text: "ok" }]);
+        if (!served) {
+          __setVeryfrontCloudCatalogForTests({
+            models: [{
+              id: "small",
+              modelId: "acme/small",
+              provider: "acme",
+              surface: "openai",
+              aliases: [],
+              operations: ["chat-completions"],
+            }],
+          });
+        }
+        const gate = Promise.withResolvers<void>();
+        let started = 0;
+        const generate = model.doGenerate.bind(model);
+        (model as { doGenerate: typeof generate }).doGenerate = async (options) => {
+          started++;
+          await gate.promise;
+          return await generate(options);
+        };
+        const runtime = new AgentRuntime("concurrent-cloud-agent", {
+          model: model.modelId,
+          system: "Short system",
+          maxSteps: 1,
+          skills: false,
+          tools: {},
+          memory: { type: "buffer", maxMessages: 10 },
+          resolveModelTransport: () => Promise.resolve({ model }),
+        });
+        const turns = [runtime.generate("first"), runtime.generate("second")];
+        for (let tick = 0; tick < 20 && started < 2; tick++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        // Without a served limit no request can be rejected on size, so the
+        // turns keep their concurrency instead of queueing for admission.
+        assertEquals(started, served ? 1 : 2);
+        gate.resolve();
+        await Promise.all(turns);
+        assertEquals(started, 2);
+      },
+    );
+  }
 
   it("rolls back a stateful turn rejected by the budget before provider validation", async () => {
     const { registerTurnProviderRequestValidator } = await import(
@@ -768,13 +825,18 @@ describe("final model request budget", () => {
             }
             : {}),
         });
-        await new Response(
+        const wire = await new Response(
           await runtime.stream([{
             id: "resumed-input",
             role: "user",
             parts: [{ type: "text", text: "Oversized request ".repeat(200) }],
           }]),
         ).text();
+        if (reject) {
+          // An admission rejection is the request's error, not a tool failure.
+          assertEquals(wire.includes("tool-output-error"), false, wire);
+          assert(wire.includes('"type":"error","error":"input rejected"'), wire);
+        }
         assertEquals(model.callCount, 0);
         assertEquals(effects, reject ? 0 : 1);
         const history = await runtime.getMemory().getMessages();
@@ -1283,7 +1345,7 @@ describe("invoke_agent child request budget", () => {
     assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), false);
     assertEquals(model.callCount, 1);
     const sentOutput = model.calls[0]?.maxOutputTokens ?? 0;
-    const estimatedInput = 200_000 - sentOutput;
+    const estimatedInput = 200_000 - IMPLICIT_SAFETY_200K - sentOutput;
     // The estimate tracks the dispatched payload, not an inflated catalog.
     const wireTokens = JSON.stringify(model.calls[0]?.prompt).length / 4;
     assert(sentOutput >= 4_096 && sentOutput < 64_000, `sent output ${sentOutput}`);
@@ -1291,6 +1353,56 @@ describe("invoke_agent child request budget", () => {
       estimatedInput >= wireTokens && estimatedInput <= wireTokens * 1.15,
       `estimate ${estimatedInput} for ${wireTokens} wire tokens`,
     );
+  });
+
+  it("inspects each fitting candidate once per reader exposure", () => {
+    let inspections = 0;
+    let readerExposed = false;
+    const inspect = memoizeRequestBudgetInspection(
+      (messages: Message[], plan: { id: string }) => {
+        inspections++;
+        return `${messages.length}:${plan.id}:${readerExposed}`;
+      },
+      () => readerExposed,
+    );
+    const messages: Message[] = [];
+    const plan = { id: "plan" };
+    assertEquals(inspect(messages, plan), "0:plan:false");
+    assertEquals(inspect(messages, plan), "0:plan:false");
+    assertEquals(inspections, 1);
+    readerExposed = true;
+    assertEquals(inspect(messages, plan), "0:plan:true");
+    assertEquals(inspect(messages, plan), "0:plan:true");
+    assertEquals(inspections, 2);
+    inspect(messages, { id: "other" });
+    inspect([], plan);
+    assertEquals(inspections, 4);
+  });
+
+  it("leaves a context safety margin when expanding implicit output", () => {
+    // Dense text (CJK) tokenizes well above chars/4. A small served window
+    // must keep slack so an underestimate does not reach the provider as an
+    // `input + max_tokens > context` rejection.
+    const context = 32_768;
+    const margin = Math.ceil(context * IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO);
+    const result = enforceFinalRequestBudget({
+      system: "ok",
+      messages: [{ role: "user", content: "\u6f22".repeat(30_000) }],
+      limit: { context, output: 32_768 },
+      requestedOutputTokens: 32_768,
+    });
+    const estimate = result.estimatedInputTokens ?? 0;
+    assertEquals(result.maxOutputTokens, context - estimate - margin);
+    // An input that tokenizes up to the margin above the estimate still fits.
+    assert(estimate + margin + result.maxOutputTokens <= context);
+    // The margin only shrinks the expansion; it never drops below the floor.
+    const crowded = enforceFinalRequestBudget({
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(100_000) }],
+      limit: { context, output: 32_768 },
+      requestedOutputTokens: 32_768,
+    });
+    assertEquals(crowded.maxOutputTokens, 4_096);
   });
 
   it("reserves an explicit output request in full", () => {
@@ -1301,7 +1413,10 @@ describe("invoke_agent child request budget", () => {
       requestedOutputTokens: 64_000,
     };
     const implicit = enforceFinalRequestBudget(input);
-    assertEquals(implicit.maxOutputTokens, 200_000 - (implicit.estimatedInputTokens ?? 0));
+    assertEquals(
+      implicit.maxOutputTokens,
+      200_000 - IMPLICIT_SAFETY_200K - (implicit.estimatedInputTokens ?? 0),
+    );
     assertThrows(
       () => enforceFinalRequestBudget({ ...input, explicitOutputTokens: true }),
       Error,
@@ -1364,7 +1479,8 @@ describe("invoke_agent child request budget", () => {
     const thinking = enforceFinalRequestBudget({ ...input, additionalOutputTokens: 16_384 });
     assertEquals(plain.maxOutputTokens - thinking.maxOutputTokens, 16_384);
     assertEquals(
-      (thinking.estimatedInputTokens ?? 0) + thinking.maxOutputTokens + 16_384,
+      (thinking.estimatedInputTokens ?? 0) + thinking.maxOutputTokens + 16_384 +
+        IMPLICIT_SAFETY_200K,
       200_000,
     );
     assertThrows(

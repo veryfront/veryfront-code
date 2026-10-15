@@ -1763,13 +1763,6 @@ function buildModelCallRequest(
   return objectKeys(request).length > 0 ? request : undefined;
 }
 
-/** Resolve the canonical provider recorded by the existing durable contract. */
-/**
- * The wire protocol a model's request is built for. A Veryfront Cloud model
- * speaks the surface it settled on, so a newly served provider on the Anthropic
- * or Google surface records the same native controls as `anthropic/*` or
- * `google/*`. Other models are identified by their provider name.
- */
 /**
  * Served surface of a Veryfront Cloud model. A model built here carries its
  * facts; a managed hosted proxy registers none, so its run scope's received
@@ -1787,6 +1780,12 @@ function resolveServedSurface(model: ModelCallRuntimeMetadata): string | undefin
     : undefined;
 }
 
+/**
+ * The wire protocol a model's request is built for. A Veryfront Cloud model
+ * speaks the surface it settled on, so a newly served provider on the Anthropic
+ * or Google surface records the same native controls as `anthropic/*` or
+ * `google/*`. Other models are identified by their provider name.
+ */
 function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
   const surface = resolveServedSurface(model);
   if (surface === "anthropic" || surface === "google") return surface;
@@ -1820,6 +1819,7 @@ export function resolveAdditiveReasoningOutputTokens(
   return 0;
 }
 
+/** Resolve the canonical provider recorded by the existing durable contract. */
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;
