@@ -282,8 +282,14 @@ const REMOTE_SCHEDULE_RUN_STATUSES: ReadonlySet<string> = new Set(
 function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRun {
   const candidate = run as Partial<Record<keyof RemoteScheduleRun, unknown>> | null;
   const execution = candidate?.execution as Record<string, unknown> | null | undefined;
+  const control = candidate?.control as { waiting?: unknown } | null | undefined;
+  const waiting = control?.waiting as { reason?: unknown } | null | undefined;
   const isOptionalNumber = (value: unknown) =>
     value === undefined || value === null || typeof value === "number";
+  // The CLI reports duration_ms as the command duration, so it must be a real duration. An
+  // unusable timeout_seconds falls back to the accepted timeout instead (see the poll loop).
+  const isOptionalDuration = (value: unknown) =>
+    value === undefined || value === null || (Number.isSafeInteger(value) && Number(value) >= 0);
   if (
     typeof candidate !== "object" || candidate === null ||
     candidate.id !== runId ||
@@ -292,7 +298,11 @@ function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRu
       typeof candidate.started_at === "string") ||
     !(execution === undefined || (typeof execution === "object" && execution !== null)) ||
     !isOptionalNumber(execution?.timeout_seconds) ||
-    !isOptionalNumber(execution?.duration_ms)
+    !isOptionalDuration(execution?.duration_ms) ||
+    !(control === undefined || control === null || typeof control === "object") ||
+    !(waiting === undefined || waiting === null || typeof waiting === "object") ||
+    !(waiting?.reason === undefined || waiting.reason === null ||
+      typeof waiting.reason === "string")
   ) {
     throw DEPLOYMENT_ERROR.create({
       detail: `Remote schedule returned an invalid run: ${runId}`,

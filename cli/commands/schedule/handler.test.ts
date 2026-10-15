@@ -631,6 +631,11 @@ describe("remote schedule polling", () => {
       { ...makeRun(), status: "finished" },
       { ...makeRun(), started_at: 42 },
       { ...makeRun(), execution: { timeout_seconds: "60" } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: -1 } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: 1.5 } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: "12" } },
+      { ...makeRun(), control: "waiting" },
+      { ...makeRun(), control: { waiting: { reason: 7 } } },
     ];
     for (const body of malformed) {
       let polls = 0;
