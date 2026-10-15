@@ -49,6 +49,33 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectCreate = Object.create;
 
 function sealHostResponse(response: Response): Response {
+  defineOwnDataProperty(response, "ok", IntrinsicReflectApply(ResponseOk, response, []), {
+    configurable: true,
+  });
+  defineOwnDataProperty(
+    response,
+    "statusText",
+    IntrinsicReflectApply(ResponseStatusText, response, []),
+    { configurable: true },
+  );
+  defineOwnDataProperty(response, "json", () => IntrinsicReflectApply(ResponseJson, response, []), {
+    configurable: true,
+  });
+  defineOwnDataProperty(response, "text", () => IntrinsicReflectApply(ResponseText, response, []), {
+    configurable: true,
+  });
+  defineOwnDataProperty(
+    response,
+    "arrayBuffer",
+    () => IntrinsicReflectApply(ResponseArrayBuffer, response, []),
+    { configurable: true },
+  );
+  defineOwnDataProperty(
+    response,
+    "clone",
+    () => sealHostResponse(IntrinsicReflectApply(ResponseClone, response, []) as Response),
+    { configurable: true },
+  );
   const status = IntrinsicReflectApply(ResponseStatus, response, []);
   const headers = IntrinsicReflectApply(ResponseHeaders, response, []) as Headers;
   const body = IntrinsicReflectApply(ResponseBody, response, []) as ReadableStream | null;
@@ -86,6 +113,13 @@ function bindResponseMetadata(response: Response, url: string, redirected: boole
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeResponse = Response;
+const ResponseOk = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "ok")!.get!;
+const ResponseStatusText = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "statusText")!
+  .get!;
+const ResponseJson = NativeResponse.prototype.json;
+const ResponseText = NativeResponse.prototype.text;
+const ResponseArrayBuffer = NativeResponse.prototype.arrayBuffer;
+const ResponseClone = NativeResponse.prototype.clone;
 const ResponseStatus = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
 const ResponseHeaders = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!.get!;
 const ResponseBody = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;

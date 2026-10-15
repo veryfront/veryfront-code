@@ -5,6 +5,7 @@
  * @module cli/shared/config
  */
 
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { basename, join } from "veryfront/platform/path";
@@ -905,7 +906,7 @@ export function formatApiError(data: ApiError, fallback: string): string {
 
 export function createApiClient(
   config: ResolvedConfig,
-  transport: typeof fetch = fetch,
+  transport: typeof fetch = createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl),
 ): ApiClient {
   const { apiUrl, apiToken } = config;
 

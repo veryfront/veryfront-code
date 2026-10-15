@@ -79,6 +79,54 @@ it("dev preload protects both user and project responses after configuration exe
     }
   });
   assertEquals(calls, 0);
-  assertEquals(result?.identity?.email, "trusted@example.com");
+  assertEquals((result?.identity as { email: string } | null)?.email, "trusted@example.com");
   assertEquals(result?.projects[0]?.id, "project");
+});
+
+it("default management API client ignores project fetch and refuses cross-origin token redirects", async () => {
+  const { createApiClient } = await import("../../../../../../cli/shared/config.ts");
+  const response = Response.json({ secret: "trusted" });
+  let ambientCalls = 0;
+  await withMockFetch(() => Promise.resolve(response), async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => {
+      ambientCalls++;
+      throw new Error("project received token");
+    };
+    try {
+      const client = createApiClient({
+        apiUrl: "https://api.veryfront.com",
+        apiToken: "private",
+        projectSlug: "demo",
+      });
+      assertEquals(await client.get("/projects"), { secret: "trusted" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  assertEquals(ambientCalls, 0);
+  let requests = 0;
+  await withMockFetch(() => {
+    requests++;
+    return Promise.resolve(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example/projects" },
+      }),
+    );
+  }, async () => {
+    const client = createApiClient({
+      apiUrl: "https://api.veryfront.com",
+      apiToken: "private",
+      projectSlug: "demo",
+    });
+    let failed = false;
+    try {
+      await client.get("/projects");
+    } catch {
+      failed = true;
+    }
+    assertEquals(failed, true);
+  });
+  assertEquals(requests, 1);
 });

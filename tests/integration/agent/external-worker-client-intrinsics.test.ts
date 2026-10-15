@@ -1,3 +1,4 @@
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createConnectedLocalRuntime } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -216,7 +217,17 @@ it("keeps worker token routing stable when Map.prototype.get is replaced", async
 });
 
 async function withProjectResponseHooks<T>(operation: () => Promise<T>) {
-  const fields = ["ok", "status", "statusText", "body", "headers", "json", "text", "arrayBuffer"];
+  const fields = [
+    "ok",
+    "status",
+    "statusText",
+    "body",
+    "headers",
+    "json",
+    "text",
+    "arrayBuffer",
+    "clone",
+  ];
   const descriptors = fields.map((name) =>
     [name, Object.getOwnPropertyDescriptor(Response.prototype, name)!] as const
   );
@@ -338,3 +349,60 @@ for (const status of [200, 403]) {
     }
   });
 }
+
+for (const status of [200, 403]) {
+  it(`protects worker append and completion response consumers (HTTP ${status})`, async () => {
+    const responses = [
+      jsonResponse(claim()),
+      jsonResponse({ appended: true }),
+      jsonResponse(
+        status === 200 ? { id: CANONICAL_RUN_ID, status: "completed" } : { detail: "denied" },
+        status,
+      ),
+    ];
+    const authorizations: string[] = [];
+    await withMockFetch((_input, init) => {
+      authorizations.push(new Headers(init?.headers).get("authorization")!);
+      return Promise.resolve(responses.shift()!);
+    }, async () => {
+      const client = createExternalAgentWorkerClient({
+        apiUrl: API_URL,
+        authToken: API_TOKEN,
+        fetch: createVeryfrontApiOriginBoundOutboundFetch(API_URL),
+      });
+      await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+      const result = await withProjectResponseHooks(async () => {
+        await client.appendRunEvents({
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          events: [{ type: "DONE" }],
+          expectedPreviousExternalEventSequence: 0,
+        });
+        await client.completeRun({ runId: RUN_ID, status: "completed" });
+      });
+      if (status === 200 && result.error) throw result.error;
+      if (status === 403) assertEquals((result.error as Error)?.message.includes("403"), true);
+    });
+    assertEquals(authorizations, [
+      "Bearer api-token",
+      "Bearer event-token",
+      "Bearer invocation-token",
+    ]);
+  });
+}
+
+it("keeps cloned host response consumption native after project response replacement", async () => {
+  const response = jsonResponse({ trusted: true });
+  await withMockFetch(() => Promise.resolve(response), async () => {
+    const transport = createVeryfrontApiOriginBoundOutboundFetch(API_URL);
+    const result = await withProjectResponseHooks(async () => {
+      const received = await transport(`${API_URL}/projects`);
+      const clone = received.clone();
+      assertEquals(clone.status, 200);
+      assertEquals(await received.json(), { trusted: true });
+      return await clone.json();
+    });
+    if (result.error) throw result.error;
+    assertEquals(result.value, { trusted: true });
+  });
+});

@@ -1450,6 +1450,7 @@ describe("createApiClient", () => {
           apiToken: "token",
           projectSlug: "admin",
         } satisfies ResolvedConfig,
+        globalThis.fetch,
       );
 
       await assertRejects(
@@ -1488,7 +1489,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await client.get("/test");
         const version = capturedHeaders?.get("x-veryfront-client-version");
         assertEquals(typeof version, "string");
@@ -1509,7 +1510,7 @@ describe("createApiClient", () => {
       }, async () => {
         await assertRejects(
           () =>
-            createApiClient(makeConfig()).post("/index", {}, {
+            createApiClient(makeConfig(), globalThis.fetch).post("/index", {}, {
               signal: controller.signal,
               retryPolicy: "none",
             }),
@@ -1530,7 +1531,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await client.post("/test", { foo: "bar" });
         const version = capturedHeaders?.get("x-veryfront-client-version");
         assertEquals(typeof version, "string");
@@ -1554,10 +1555,13 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     try {
-      const client = createApiClient(makeConfig({
-        apiToken: "runtime-token",
-        apiTokenSource: "env-file",
-      }));
+      const client = createApiClient(
+        makeConfig({
+          apiToken: "runtime-token",
+          apiTokenSource: "env-file",
+        }),
+        globalThis.fetch,
+      );
 
       await assertRejects(
         () => client.get("/projects/test/files"),
@@ -1582,7 +1586,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.get<{ data: string }>("/test");
         assertEquals(result.data, "ok");
         assertEquals(callCount, 2);
@@ -1603,7 +1607,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.get<{ data: string }>("/test");
         assertEquals(result.data, "ok");
         assertEquals(callCount, 2);
@@ -1624,7 +1628,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.get<{ data: string }>("/test");
         assertEquals(result.data, "ok");
         assertEquals(callCount, 2);
@@ -1642,7 +1646,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await assertRejects(
           () => client.get("/test"),
           Error,
@@ -1669,7 +1673,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
         assertEquals(result.updated, true);
         assertEquals(callCount, 2);
@@ -1694,7 +1698,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
         assertEquals(result.updated, true);
         assertEquals(callCount, 2);
@@ -1715,7 +1719,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await assertRejects(
           () => client.put("/test", { content: "same" }, { retryPolicy: "none" }),
           Error,
@@ -1738,7 +1742,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await assertRejects(
           () => client.post("/test", {}),
           Error,
@@ -1762,7 +1766,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         const result = await client.post<{ created: boolean }>("/test", {});
         assertEquals(result.created, true);
         assertEquals(callCount, 2);
@@ -1780,7 +1784,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await assertRejects(
           () => client.post("/test", {}),
           Error,
@@ -1802,7 +1806,7 @@ describe("createApiClient", () => {
       }) as typeof fetch;
 
       try {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         await assertRejects(
           () => client.post("/test", {}),
           TypeError,
@@ -1960,7 +1964,7 @@ describe("nonprompting management configuration", () => {
 describe("authenticated binary API downloads", () => {
   it("preserves no-content responses for JSON API actions", async () => {
     await withMockFetch(() => Promise.resolve(new Response(null, { status: 204 })), async () => {
-      const client = createApiClient(makeConfig());
+      const client = createApiClient(makeConfig(), globalThis.fetch);
       assertEquals(await client.delete("/projects/my-project/uploads/file"), undefined);
     });
   });
@@ -1974,7 +1978,7 @@ describe("authenticated binary API downloads", () => {
             headers: { "content-type": "application/octet-stream" },
           }),
         ), async () => {
-        const getStream = createApiClient(makeConfig()).getStream;
+        const getStream = createApiClient(makeConfig(), globalThis.fetch).getStream;
         if (!getStream) throw new Error("Missing binary download client");
         await assertRejects(
           () => getStream("/projects/my-project/uploads/file"),
@@ -1998,7 +2002,7 @@ describe("authenticated binary API downloads", () => {
           headers: { "content-type": "application/json" },
         }),
       ), async () => {
-      const getStream = createApiClient(makeConfig()).getStream;
+      const getStream = createApiClient(makeConfig(), globalThis.fetch).getStream;
       if (!getStream) throw new Error("Missing binary download client");
       await assertRejects(
         () => getStream("/projects/my-project/uploads/file"),
@@ -2019,7 +2023,7 @@ describe("authenticated binary API downloads", () => {
             headers: { "content-type": contentType },
           }),
         ), async () => {
-        const getStream = createApiClient(makeConfig()).getStream;
+        const getStream = createApiClient(makeConfig(), globalThis.fetch).getStream;
         if (!getStream) throw new Error("Missing binary download client");
         assertEquals(
           await new Response(await getStream("/projects/my-project/uploads/file")).text(),
@@ -2039,7 +2043,7 @@ describe("authenticated binary API downloads", () => {
         );
       }) as typeof fetch,
       async () => {
-        const client = createApiClient(makeConfig());
+        const client = createApiClient(makeConfig(), globalThis.fetch);
         if (!client.getStream) throw new Error("Missing binary download client");
         const stream = await client.getStream("/projects/my-project/uploads/file");
         assertEquals(await new Response(stream).text(), "binary");
