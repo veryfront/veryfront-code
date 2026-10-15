@@ -2024,6 +2024,7 @@ function resolveSavedChildAgentConfig(
     abortSignal?: AbortSignal;
     taskContext?: Record<string, unknown>;
     targetProjectId?: string;
+    getProjectInstructions?: () => Promise<string>;
   } = {},
 ) {
   const agentId = (document as { id: string }).id;
@@ -2041,7 +2042,7 @@ function resolveSavedChildAgentConfig(
           discoveryResult: { agents: new Map() },
           agentConfigs: new Map(),
           projectSteeringByAgentId: new Map([[agentId, {
-            getProjectInstructions: () => Promise.resolve(""),
+            getProjectInstructions: options.getProjectInstructions ?? (() => Promise.resolve("")),
             getSkillsConfig: () =>
               Promise.resolve([{
                 id: "navigation-notes",
@@ -2206,6 +2207,26 @@ Deno.test("hosted child execution config carries a saved agent's allowed models"
     allowed_models: ["anthropic/claude-sonnet-4-6"],
   });
   assertEquals(config?.allowedModels, ["anthropic/claude-sonnet-4-6"]);
+});
+
+Deno.test("hosted child execution config keeps provider bindings out of callable selection", async () => {
+  const config = await resolveSavedChildAgentConfig(
+    API_AGENT_SOURCE_DOCUMENTS.tools_false_provider_tools_typescript,
+  );
+  assertEquals(config?.toolNames, ["web_search"]);
+  assertEquals(config?.providerOnlyToolNames, ["web_search"]);
+});
+
+Deno.test("hosted child execution config stops waiting on steering when the parent aborts", async () => {
+  const parent = new AbortController();
+  const pending = resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown, {
+    abortSignal: parent.signal,
+    getProjectInstructions: () => {
+      parent.abort(new DOMException("Parent run cancelled", "AbortError"));
+      return new Promise<string>(() => {});
+    },
+  });
+  await assertRejects(() => pending, DOMException, "Parent run cancelled");
 });
 
 Deno.test("hosted child execution config forwards the parent abort to the agent lookup", async () => {

@@ -1352,6 +1352,16 @@ it("child denials apply to both platform spellings without denying a colliding p
   }
 });
 
+it("provider-only bindings never select a same-name host or MCP tool", () => {
+  const mcpTool = { description: "MCP web_fetch", shortName: "web_fetch" };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutProviderOnlyForkTools({
+    ok: true,
+    forkTools: { web_fetch: { description: "Host" }, mcp__crm__web_fetch: mcpTool, other: {} },
+  } as never, ["web_fetch"]);
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["other"]);
+});
+
 it("child denials preserve an explicitly selected platform loader alias", () => {
   const platform = markTrustedHostToolProvenance({ description: "Platform" });
   const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(

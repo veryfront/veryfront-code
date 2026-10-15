@@ -158,6 +158,13 @@ export type DefaultHostedChildAgentExecutionConfig = {
    * non-empty list fails the child with `CHILD_AGENT_MODEL_NOT_ALLOWED`.
    */
   allowedModels?: string[];
+  /**
+   * Provider-native tool bindings that are not also callable tool grants. They
+   * stay in `toolNames` so the provider can bind them, but a host, MCP or
+   * project tool with the same name is never selected for the child (for
+   * example when the child model does not support the provider tool).
+   */
+  providerOnlyToolNames?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -422,6 +429,23 @@ function withoutDeniedForkTools(
   };
 }
 
+function withoutProviderOnlyForkTools(
+  toolSources: DefaultHostedChildForkToolAssemblySourceResult,
+  providerOnlyToolNames: readonly string[] | undefined,
+): DefaultHostedChildForkToolAssemblySourceResult {
+  if (!toolSources.ok || !providerOnlyToolNames?.length) return toolSources;
+  const providerOnly = new Set(providerOnlyToolNames);
+  return {
+    ...toolSources,
+    forkTools: Object.fromEntries(
+      Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
+        !providerOnly.has(toolName) &&
+        (tool.shortName === undefined || !providerOnly.has(tool.shortName))
+      ),
+    ),
+  };
+}
+
 function getUnavailableOptionalStudioToolNames(
   config: DefaultHostedInvokeAgentConfig,
   clientProfile: RuntimeClientProfile | null | undefined,
@@ -498,17 +522,20 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     durableChildRun?: HostedChildRunIdentifiers;
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
-  const toolSources = withoutDeniedForkTools(
-    await prepareForkToolSources(
-      options,
-      config,
-      input.childAgentId,
-      input.childConfig,
-      input.abortSignal,
-      input.durableChildRun,
+  const toolSources = withoutProviderOnlyForkTools(
+    withoutDeniedForkTools(
+      await prepareForkToolSources(
+        options,
+        config,
+        input.childAgentId,
+        input.childConfig,
+        input.abortSignal,
+        input.durableChildRun,
+      ),
+      input.childConfig?.deniedToolNames,
+      input.childConfig?.toolNames,
     ),
-    input.childConfig?.deniedToolNames,
-    input.childConfig?.toolNames,
+    input.childConfig?.providerOnlyToolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
     requestedTools: input.requestedTools,
@@ -779,6 +806,7 @@ function applyChildAgentExecutionConfig(
 /** Test-only helpers for fixed-target hosted delegation behavior. */
 export const defaultHostedInvokeAgentToolInternals = {
   applyChildAgentExecutionConfig,
+  withoutProviderOnlyForkTools,
   withoutUnavailableOptionalStudioRequestedTools,
   withoutDeniedForkTools,
 };

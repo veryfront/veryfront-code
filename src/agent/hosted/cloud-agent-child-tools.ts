@@ -432,6 +432,26 @@ export function fetchProjectSteering(
   });
 }
 
+/** Settle with `promise`, or reject with the abort reason as soon as `signal` aborts. */
+function raceHostedChildAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+function providerOnlyToolNamesField(
+  agentConfig: RuntimeAgentMarkdownDefinition,
+): { providerOnlyToolNames?: string[] } {
+  if (agentConfig.tools === true || !agentConfig.providerTools?.length) return {};
+  const callable = new Set(agentConfig.tools ?? []);
+  const providerOnly = agentConfig.providerTools.filter((name) => !callable.has(name));
+  return providerOnly.length > 0 ? { providerOnlyToolNames: providerOnly } : {};
+}
+
 /** Resolves the execution config for a hosted child agent invocation. */
 export async function resolveHostedChildAgentExecutionConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
@@ -465,11 +485,14 @@ export async function resolveHostedChildAgentExecutionConfig(
       abortSignal,
     });
   }
-  const steering = await fetchProjectSteering(context, {
-    projectId: projectId || null,
-    authToken: taskContext.authToken,
-    branchId,
-  }, childAgentId);
+  const steering = await raceHostedChildAbort(
+    fetchProjectSteering(context, {
+      projectId: projectId || null,
+      authToken: taskContext.authToken,
+      branchId,
+    }, childAgentId),
+    abortSignal,
+  );
   const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
     skills: steering.skills,
     agentId: childAgentId,
@@ -512,6 +535,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       : {}),
     ...(agentConfig.delegates === undefined ? {} : { delegateIds: agentConfig.delegates }),
     ...(isLocallyDiscovered ? { localHostTools: true } : {}),
+    ...providerOnlyToolNamesField(agentConfig),
     ...(agentConfig.allowedModels?.length ? { allowedModels: [...agentConfig.allowedModels] } : {}),
   };
 }
