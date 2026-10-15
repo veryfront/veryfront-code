@@ -209,7 +209,7 @@ function parseLegacyModel(value: unknown): VeryfrontCloudCatalogModel | undefine
 /**
  * Read one entry of `deployments`. Its model's first alias is the short ID.
  * `limit` is not part of a deployment; it comes from the deprecated row for
- * the same model while the API still serves one.
+ * the same model while the API still serves one (veryfront-issue-inbox#3396).
  */
 function parseDeployment(
   value: Record<string, unknown>,
@@ -251,7 +251,8 @@ function parseDeployment(
 /**
  * Read `deployments`, which lists every place a model runs in routing order.
  * Each model takes its first enabled deployment, the one the gateway routes
- * to; a model with none enabled is left out.
+ * to. A model with none enabled, or whose first enabled one cannot be read, is
+ * left out, and so is its `is_default`.
  */
 function parseDeployments(
   deployments: readonly unknown[],
@@ -266,17 +267,25 @@ function parseDeployments(
   }
   const models: VeryfrontCloudCatalogModel[] = [];
   const listed = new Set<string>();
+  const unreadable: string[] = [];
   let defaultModelId: string | undefined;
   for (const row of deployments) {
     if (!isRecord(row) || row.enabled !== true) continue;
     const modelId = optionalString(record(row.model).id);
-    if (!modelId) continue;
-    if (row.is_default === true) defaultModelId ??= modelId;
-    if (listed.has(modelId)) continue;
-    const model = parseDeployment(row, limits.get(modelId));
-    if (!model) continue;
+    if (!modelId || listed.has(modelId)) continue;
     listed.add(modelId);
+    const model = parseDeployment(row, limits.get(modelId));
+    if (!model) {
+      unreadable.push(modelId);
+      continue;
+    }
     models.push(model);
+    if (row.is_default === true) defaultModelId ??= modelId;
+  }
+  if (unreadable.length > 0) {
+    logger.warn("Veryfront Cloud model catalog left out models whose deployment it cannot read", {
+      modelIds: unreadable,
+    });
   }
   return Object.freeze({ models: Object.freeze(models), defaultModelId });
 }

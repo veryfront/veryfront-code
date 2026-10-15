@@ -1,8 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { SERVED_MODEL_ROWS, UNSERVED_MODEL_ROWS } from "./catalog-client.test-helpers.ts";
-import { parseVeryfrontCloudCatalog, type VeryfrontCloudCatalogModel } from "./catalog-client.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+  parseVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogModel,
+} from "./catalog-client.ts";
+import {
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudProviderRouting,
+} from "./model-catalog.ts";
 
 type LegacyRow = (typeof SERVED_MODEL_ROWS)[number] | (typeof UNSERVED_MODEL_ROWS)[number];
 
@@ -65,7 +74,16 @@ function routingFacts(model: VeryfrontCloudCatalogModel) {
   };
 }
 
+/** The legacy row with this short ID. */
+function legacyRow(id: string): LegacyRow {
+  const row = LEGACY_ROWS.find((candidate) => candidate.id === id);
+  if (!row) throw new Error(`No legacy row ${id}`);
+  return row;
+}
+
 describe("provider/veryfront-cloud/catalog-client deployments", () => {
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+
   it("reads every model from deployments with the facts the deprecated rows gave", () => {
     const legacy = parseVeryfrontCloudCatalog({
       models: LEGACY_ROWS,
@@ -150,6 +168,59 @@ describe("provider/veryfront-cloud/catalog-client deployments", () => {
       ["mistral/mistral-small-2503", "openai"],
     ]);
     assertEquals(catalog?.defaultModelId, "mistral/mistral-small-2503");
+  });
+
+  it("leaves out a model whose first enabled deployment cannot be read, default included", () => {
+    const mistral = legacyRow("mistral-small-2503");
+    const unreadable = deploymentOf(mistral);
+    const catalog = parseVeryfrontCloudCatalog({
+      deployments: [
+        { ...unreadable, model: { ...unreadable.model, aliases: [] } },
+        deploymentOf(mistral),
+      ],
+    });
+
+    assertEquals(catalog, { models: [], defaultModelId: undefined });
+  });
+
+  it("takes the default only from the first enabled deployment of a listed model", () => {
+    const [gpt, mistral] = ["gpt-5.5", "mistral-small-2503"].map(legacyRow);
+    const catalog = parseVeryfrontCloudCatalog({
+      deployments: [
+        deploymentOf(gpt!, { enabled: false, disabled_by: "project", is_default: true }),
+        deploymentOf(gpt!),
+        deploymentOf(mistral!, { is_default: false }),
+        deploymentOf(mistral!, { is_default: true }),
+      ],
+    });
+
+    assertEquals(catalog?.models.map((model) => model.modelId), [
+      "openai/gpt-5.5",
+      "mistral/mistral-small-2503",
+    ]);
+    assertEquals(catalog?.defaultModelId, undefined);
+  });
+
+  it("routes a Gemini model saved as google-ai-studio/... when deployments serve google/...", () => {
+    const pro = legacyRow("gemini-2.5-pro");
+    const saved = "google-ai-studio/gemini-2.5-pro";
+    const routing = () => ({
+      thinking: resolveVeryfrontCloudModelThinking(saved),
+      provider: resolveVeryfrontCloudProviderRouting("google-ai-studio"),
+    });
+    __setVeryfrontCloudCatalogForTests({ models: [pro] });
+    const legacy = routing();
+
+    const served = deploymentOf(pro);
+    __setVeryfrontCloudCatalogForTests({
+      deployments: [{
+        ...served,
+        model: { ...served.model, id: "google/gemini-2.5-pro", aliases: ["gemini-2.5-pro"] },
+      }],
+    });
+
+    assertEquals(legacy.thinking !== undefined, true);
+    assertEquals(routing(), legacy);
   });
 
   it("keeps a model's token limits from its deprecated row while the API serves both", () => {

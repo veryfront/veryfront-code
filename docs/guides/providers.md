@@ -101,8 +101,9 @@ deployment separates three things:
 
 A model can run with more than one inference provider. Its deployments are
 listed in routing order, and the gateway uses the first one with
-`enabled: true`. A model the key's policy refuses is listed with
-`enabled: false`. The deployment with `is_default: true` is the default model.
+`enabled: true`. A deployment that a policy in force refuses is listed with
+`enabled: false`, and `disabled_by` names that policy: `account`, `project`
+or `api_key`. The deployment with `is_default: true` is the default model.
 
 Install the clients for the examples you want to run:
 
