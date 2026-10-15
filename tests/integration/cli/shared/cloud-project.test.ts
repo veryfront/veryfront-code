@@ -251,3 +251,27 @@ async function withCloudSetup(
     await Deno.remove(directory, { recursive: true });
   }
 }
+
+for (const mode of ["new", "existing"]) {
+  it(`bounds cloud ${mode === "new" ? "reservation" : "listing"} and leaves setup retryable`, async () => {
+    await withCloudSetup(async (directory) => {
+      await withMockFetch((_input, init) => {
+        if (!init?.signal) throw new Error("unbounded onboarding request");
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        });
+      }, async () => {
+        await assertRejects(
+          () =>
+            chooseCloudProject(directory, (question) =>
+              Promise.resolve(
+                question === "Use Veryfront Cloud?" ? "yes" : mode,
+              ), { timeoutMs: 5 }),
+          Error,
+          "timed out",
+        );
+      });
+      assertEquals(await readProjectLink(directory), null);
+    });
+  });
+}

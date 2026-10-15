@@ -1,3 +1,4 @@
+import { withOnboardingDeadline } from "./onboarding-fetch.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 import { getApiUrl } from "./constants.ts";
 import { createApiClient, resolveConfigWithAuthNoModule } from "./config.ts";
@@ -11,6 +12,7 @@ import { select } from "../utils/terminal-select.ts";
 export async function chooseCloudProject(
   projectDir: string,
   prompt: typeof select = select,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   const useCloud = await prompt("Use Veryfront Cloud?", [
     { value: "yes", label: "Yes" },
@@ -29,11 +31,21 @@ export async function chooseCloudProject(
   if (!mode) return;
 
   const env = getEnvironmentConfig();
+  const authOptions = {
+    transport: withOnboardingDeadline(
+      createVeryfrontApiOriginBoundOutboundFetch(getApiUrl(env)),
+      options.timeoutMs,
+    ),
+    throwOnCredentialValidationUnavailable: true,
+  };
   const config = await resolveConfigWithAuthNoModule(projectDir, {
     ...env,
     projectSlug: await inferProjectSlugFromDirectory(projectDir),
-  }, { transport: createVeryfrontApiOriginBoundOutboundFetch(getApiUrl(env)) });
-  const transport = createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl);
+  }, authOptions);
+  const transport = withOnboardingDeadline(
+    createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl),
+    options.timeoutMs,
+  );
   const client = createApiClient(config, transport);
   let project: { id: string; slug: string };
   if (mode === "new") {

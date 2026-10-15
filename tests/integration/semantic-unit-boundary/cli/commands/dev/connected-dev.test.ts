@@ -152,3 +152,28 @@ it("requires a Studio override for an unsupported connected API", () => {
     "Set STUDIO_URL",
   );
 });
+
+for (const path of ["project", "environment"]) {
+  it(`bounds connected ${path} preflight without reporting a missing target`, async () => {
+    await withMockFetch((_input, init) => {
+      if (!init?.signal) throw new Error("unbounded onboarding request");
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      });
+    }, async () => {
+      const controlPlane = createConnectedDevControlPlane({
+        apiUrl: "https://api.example.com",
+        apiToken: "private",
+        projectSlug: "demo",
+      }, { timeoutMs: 5 });
+      await assertRejects(
+        () =>
+          path === "project"
+            ? controlPlane.getProject("demo")
+            : controlPlane.getEnvironment("demo", "preview"),
+        Error,
+        "timed out",
+      );
+    });
+  });
+}

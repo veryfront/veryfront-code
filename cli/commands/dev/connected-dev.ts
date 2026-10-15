@@ -1,3 +1,4 @@
+import { withOnboardingDeadline } from "../../shared/onboarding-fetch.ts";
 import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
 import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
@@ -47,10 +48,19 @@ export async function stopDevServices(cleanups: Array<() => void | Promise<void>
 }
 
 /** Keep connected preflight on the host transport after project config executes. */
-export function createConnectedDevControlPlane(config: ResolvedConfig) {
+export function createConnectedDevControlPlane(
+  config: ResolvedConfig,
+  options: { timeoutMs?: number } = {},
+) {
   return createHttpDeployControlPlane(
     config,
-    createApiClient(config, createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl)),
+    createApiClient(
+      config,
+      withOnboardingDeadline(
+        createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl),
+        options.timeoutMs,
+      ),
+    ),
   );
 }
 
