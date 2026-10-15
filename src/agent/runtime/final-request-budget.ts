@@ -170,8 +170,17 @@ function resolveEffectiveBudget(
   const high = probe(2);
   const responseFormat = low?.responseFormat ?? budget.responseFormat;
   const lowOutput = wireOutputTokens(low?.maxOutputTokens);
-  wireOutputTokens(high?.maxOutputTokens);
-  if (lowOutput !== undefined && lowOutput === high?.maxOutputTokens) {
+  const highOutput = wireOutputTokens(high?.maxOutputTokens);
+  // Native whole-object replacement can remove the neutral output cap. The
+  // provider default is unknown, so reserving the unsent neutral value would
+  // admit a request that can exceed either served ceiling.
+  if (lowOutput === undefined || highOutput === undefined) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "Provider request has no wire output limit; include a positive output cap in the native provider configuration",
+    });
+  }
+  if (lowOutput === highOutput) {
     // A native output limit is the wire value, so it is reserved in full.
     return {
       budget: {
@@ -184,7 +193,7 @@ function resolveEffectiveBudget(
       nativeOutputTokens: lowOutput,
     };
   }
-  const derivedAdditional = lowOutput === undefined ? 0 : Math.max(0, lowOutput - 1);
+  const derivedAdditional = Math.max(0, lowOutput - 1);
   // A fixed explicit request can reach the provider's model output clamp.
   // Measure that actual value rather than extrapolating the small probes.
   // Implicit requests can later be lowered to fit the window, so they still

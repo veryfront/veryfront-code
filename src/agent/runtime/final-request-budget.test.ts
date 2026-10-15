@@ -1454,6 +1454,47 @@ describe("invoke_agent child request budget", () => {
     assertEquals(result.maxOutputTokens, 1_000);
   });
 
+  it("rejects Google replacement configs that remove the wire output cap", () => {
+    const model = { provider: "google", modelId: "gemini-synthetic" };
+    for (
+      const generationConfig of [{}, { temperature: 0.2 }, {
+        thinkingConfig: { thinkingBudget: 128 },
+      }]
+    ) {
+      for (const explicitOutputTokens of [false, true]) {
+        const input = {
+          model,
+          providerOptions: { google: { generationConfig } },
+          system: "Plan",
+          messages: [{ role: "user", content: "Answer" }],
+          limit: { context: 8_192, output: 1_024 },
+          requestedOutputTokens: 32,
+          explicitOutputTokens,
+        };
+        assertEquals(
+          buildModelCallContextRequest(model, {
+            maxOutputTokens: input.requestedOutputTokens,
+            providerOptions: input.providerOptions,
+          })?.maxOutputTokens,
+          undefined,
+        );
+        assertThrows(
+          () => enforceProviderRequestBudget(input),
+          VeryfrontError,
+          "wire output limit",
+        );
+        // Retain replacement-config support when its actual cap is bounded.
+        const capped = enforceProviderRequestBudget({
+          ...input,
+          providerOptions: {
+            google: { generationConfig: { ...generationConfig, maxOutputTokens: 64 } },
+          },
+        });
+        assertEquals(capped.maxOutputTokens, 32);
+      }
+    }
+  });
+
   it("rejects a non-positive or fractional native output limit instead of budgeting it", () => {
     const cases = [
       { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, key: "max_tokens" },
