@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   assert,
   assertEquals,
@@ -360,6 +361,7 @@ describe("hosted HTTP resolver", () => {
   });
 
   it("returns at the deadline even when an operation ignores its abort signal", async () => {
+    using time = new FakeTime();
     let ignore = true;
     let lookups = 0;
     const resolve = createHostedHttpResolver(options({
@@ -370,7 +372,9 @@ describe("hosted HTTP resolver", () => {
         return ignore ? new Promise(() => {}) : Promise.resolve(record());
       },
     }));
-    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    const deadline = assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    await time.tickAsync(20);
+    await deadline;
 
     let dispatches = 0;
     const ingress = createHostedHttpIngress({
@@ -389,7 +393,9 @@ describe("hosted HTTP resolver", () => {
       hostMode: "production" as const,
       proxyTrusted: true,
     };
-    const first = await ingress(new Request("https://app.example/page"), selection);
+    const firstRequest = ingress(new Request("https://app.example/page"), selection);
+    await time.tickAsync(20);
+    const first = await firstRequest;
     assertEquals(first.status, 503);
     await first.body?.cancel();
     ignore = false;
