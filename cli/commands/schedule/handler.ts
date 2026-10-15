@@ -284,6 +284,7 @@ function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRu
   const execution = candidate?.execution as Record<string, unknown> | null | undefined;
   const control = candidate?.control as { waiting?: unknown } | null | undefined;
   const waiting = control?.waiting as { reason?: unknown } | null | undefined;
+  const error = candidate?.error as { message?: unknown } | null | undefined;
   const isOptionalNumber = (value: unknown) =>
     value === undefined || value === null || typeof value === "number";
   // The CLI reports duration_ms as the command duration, so it must be a real duration. An
@@ -302,7 +303,9 @@ function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRu
     !(control === undefined || control === null || typeof control === "object") ||
     !(waiting === undefined || waiting === null || typeof waiting === "object") ||
     !(waiting?.reason === undefined || waiting.reason === null ||
-      typeof waiting.reason === "string")
+      typeof waiting.reason === "string") ||
+    !(error === undefined || error === null || typeof error === "object") ||
+    !(error?.message === undefined || error.message === null || typeof error.message === "string")
   ) {
     throw DEPLOYMENT_ERROR.create({
       detail: `Remote schedule returned an invalid run: ${runId}`,

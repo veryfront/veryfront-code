@@ -636,6 +636,8 @@ describe("remote schedule polling", () => {
       { ...makeRun(), execution: { ...makeRun().execution, duration_ms: "12" } },
       { ...makeRun(), control: "waiting" },
       { ...makeRun(), control: { waiting: { reason: 7 } } },
+      { ...makeRun(), status: "failed", error: "boom" },
+      { ...makeRun(), status: "failed", error: { code: "AGENT_FAILED", message: 42 } },
     ];
     for (const body of malformed) {
       let polls = 0;
