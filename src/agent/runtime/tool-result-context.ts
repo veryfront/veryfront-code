@@ -20,7 +20,7 @@ const MAX_TOTAL_STORED_BYTES = 64 * 1_024 * 1_024;
 const MIN_SECTION_BYTES = 4;
 const TOOL_RESULT_REFERENCE_TYPE = "tool_result_reference";
 const TOOL_RESULT_SECTION_TYPE = "tool_result_section";
-const GET_TOOL_RESULT_TOOL_NAME = "get_tool_result";
+const GET_TOOL_RESULT_TOOL_NAME = "veryfront__get_tool_result";
 const MAX_POINTER_BYTES = 4_096;
 const MAX_POINTER_DEPTH = 32;
 const SLASH = 47;
@@ -796,7 +796,7 @@ export function createToolResultContext(options: ToolResultContextOptions = {}):
 }
 
 /**
- * Tool-limit slots to keep for the framework `get_tool_result` reader, which
+ * Tool-limit slots to keep for the framework `veryfront__get_tool_result` reader, which
  * the runtime appends after tool selection whenever tool-result context is on.
  */
 export function getToolResultReaderReservedToolSlots(toolResultContext: unknown): number {

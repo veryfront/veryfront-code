@@ -100,9 +100,12 @@ function assertConfiguredSkillInfrastructure(
     throw new Error("Expected a concrete agent tool map");
   }
   const toolMap = tools as Record<string, unknown>;
-  assertEquals(typeof toolMap.load_skill, "object");
-  assertEquals(typeof toolMap.load_skill_reference, "object");
-  assertEquals(typeof toolMap.execute_skill_script, "object");
+  assertEquals(toolMap.load_skill, undefined);
+  assertEquals(toolMap.load_skill_reference, undefined);
+  assertEquals(toolMap.execute_skill_script, undefined);
+  assertEquals(typeof toolMap.veryfront__load_skill, "object");
+  assertEquals(typeof toolMap.veryfront__load_skill_reference, "object");
+  assertEquals(typeof toolMap.veryfront__execute_skill_script, "object");
 }
 
 async function writeAgentFile(

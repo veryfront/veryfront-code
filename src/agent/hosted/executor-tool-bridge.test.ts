@@ -232,7 +232,12 @@ describe("executor tool bridge", () => {
       assertEquals(body.skillId, "review");
 
       const sameStep = await readReference("same-step-reference");
-      assertEquals(sameStep.error?.startsWith('Read the load_skill result for "review"'), true);
+      assertEquals(
+        sameStep.error?.startsWith(
+          'Reference files for skill "review" are unavailable until its instructions have been read.',
+        ),
+        true,
+      );
       assertEquals(JSON.stringify(sameStep).includes("Detailed checklist content"), false);
 
       // Only the exact body result the host returned, under its tool call ID, counts.

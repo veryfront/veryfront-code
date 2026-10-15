@@ -3,6 +3,8 @@ import { estimateOverhead } from "../../chat/message-prep.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "../runtime/message-adapter.ts";
 import type { RuntimeStateResolver } from "../types.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { canonicalPlatformHostTools } from "../platform-host-tools.ts";
 import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
@@ -190,12 +192,19 @@ export function startAgentRuntimeForkWithHostTools<
   streamResult: ForkRuntimeStreamResult;
   forkToolNames: string[];
 } {
+  const canonicalTools = canonicalPlatformHostTools(input.forkTools);
   const forkTools = input.traceTools
-    ? traceHostTools(input.forkTools, input.traceTools)
-    : input.forkTools;
+    ? traceHostTools(canonicalTools, input.traceTools)
+    : canonicalTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
   const requestedForkToolNames = input.forkToolNames
-    ? [...input.forkToolNames]
+    ? [
+      ...new Set(input.forkToolNames.map((name) =>
+        !name.includes("__") && hasTrustedHostToolProvenance(input.forkTools[name])
+          ? `veryfront__${name}`
+          : name
+      )),
+    ]
     : getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,

@@ -22,14 +22,12 @@ const RUNTIME_TOOL_INVENTORY_FOOTER =
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.`;
 const RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE =
-  "No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.";
-const RUNTIME_TOOL_SEARCH_GUIDANCE =
-  "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.";
+  "No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or veryfront__tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.";
+const RUNTIME_TOOL_SEARCH_GUIDANCE = "Additional authorized tools may be deferred.";
 
 const RUNTIME_DEFERRED_TOOL_HEADER =
   "Authorized but not loaded. You cannot call these until they are loaded:";
-const RUNTIME_DEFERRED_TOOL_FOOTER =
-  `Load one by calling tool_search with schema: "<exact name>". It becomes callable on the next model step. You must not call a deferred tool directly.`;
+const RUNTIME_DEFERRED_TOOL_FOOTER = "Load a deferred tool before calling it.";
 const MAX_DEFERRED_TOOL_SUMMARIES = 20;
 const MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH = 240;
 
@@ -43,7 +41,7 @@ function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
   if (toolNames.length === 0) {
     return `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE}`;
   }
-  return somePrivateArray(toolNames, (name) => name === "tool_search")
+  return somePrivateArray(toolNames, (name) => name === "veryfront__tool_search")
     ? `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`
     : RUNTIME_TOOL_INVENTORY_FOOTER;
 }
@@ -80,7 +78,7 @@ function createDeferredToolSection(deferredTools: readonly DeferredToolSummary[]
   );
   const omittedCount = deferredTools.length - displayedToolCount;
   const omittedGuidance = omittedCount > 0
-    ? `\n\n${omittedCount} additional authorized deferred tools are omitted from this prompt. Use tool_search search or inventory to find omitted tools.`
+    ? `\n\n${omittedCount} additional authorized deferred tools are omitted from this prompt.`
     : "";
 
   return `\n\n${RUNTIME_DEFERRED_TOOL_HEADER}

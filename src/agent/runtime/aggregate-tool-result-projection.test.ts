@@ -650,3 +650,32 @@ it("rolls back an unamortized reader and frees its slot for a later useful resul
     assertEquals(inspect(projected).fits, includeLarge);
   }
 });
+
+for (
+  const toolName of [
+    "tool_search",
+    "veryfront__tool_search",
+    "get_tool_result",
+    "veryfront__get_tool_result",
+  ]
+) {
+  it(`keeps historical ${toolName} discovery content inline under budget pressure`, () => {
+    const discovery = toolMessage("discovery", toolName, {
+      content: "Required schema ".repeat(2_000),
+    });
+    const source = [discovery, toolMessage("latest", "read_data", "Current data")];
+    const context = createToolResultContext();
+    const projected = projectHistoricalToolResultsForBudget({
+      sourceMessages: source,
+      modelMessages: source,
+      context,
+      inspect: (messages) => ({
+        fits: messages[0] !== discovery,
+        outputExceeded: false,
+        estimatedInputTokens: messages[0] === discovery ? 10_000 : 1_000,
+      }),
+    });
+    assertStrictEquals(projected[0], discovery);
+    assertEquals(context.size, 0);
+  });
+}

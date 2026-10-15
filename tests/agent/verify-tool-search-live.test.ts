@@ -31,7 +31,7 @@ function scriptedFallbackModel(provider = "openai"): ModelRuntime {
           content: [{
             type: "tool-call",
             toolCallId: "search-1",
-            toolName: "tool_search",
+            toolName: "veryfront__tool_search",
             input: JSON.stringify({ query: "release marker" }),
           }],
           finishReason: "tool-calls",
@@ -83,7 +83,7 @@ function completedResponse(
     toolCalls: [
       {
         id: "search-1",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         args: { query: "release marker" },
         status: "completed",
         result: searchResult,
@@ -105,9 +105,9 @@ function extract(searchResult: unknown = validSearchResult()) {
     effectiveProvider: "openai",
     response: completedResponse(searchResult),
     requestCatalogs: [
-      ["tool_search"],
-      ["read_release_marker", "tool_search"],
-      ["read_release_marker", "tool_search"],
+      ["veryfront__tool_search"],
+      ["read_release_marker", "veryfront__tool_search"],
+      ["read_release_marker", "veryfront__tool_search"],
     ],
     targetExecutionCount: 1,
   });
@@ -191,7 +191,7 @@ it("proves deferred catalogs, exact schema-free search output, and one execution
     {
       model: "openai/scripted",
       loadingPath: "framework-fallback",
-      toolCalls: ["tool_search", "read_release_marker"],
+      toolCalls: ["veryfront__tool_search", "read_release_marker"],
       targetExecutionCount: 1,
       searchResultContainsSchema: false,
       completed: true,
@@ -228,7 +228,7 @@ it("extracts a proof only from exact fallback evidence", () => {
   assertEquals(extract(), {
     model: "openai/scripted",
     loadingPath: "framework-fallback",
-    toolCalls: ["tool_search", "read_release_marker"],
+    toolCalls: ["veryfront__tool_search", "read_release_marker"],
     targetExecutionCount: 1,
     searchResultContainsSchema: false,
     completed: true,
@@ -314,7 +314,7 @@ it("extracts the exact hi acceptance measurement from provider usage", () => {
           totalTokens: 25_002,
         },
       },
-      requestCatalogs: [["tool_search"]],
+      requestCatalogs: [["veryfront__tool_search"]],
       baselineRequestCatalogs: [[
         ...Array.from(
           { length: 63 },
@@ -347,7 +347,7 @@ it("extracts the exact hi acceptance measurement from provider usage", () => {
       modelSteps: 1,
       toolCalls: 0,
       authorizedToolCount: 64,
-      initiallyExposedTools: ["tool_search"],
+      initiallyExposedTools: ["veryfront__tool_search"],
       thresholds: {
         maximumEffectiveInputTokens: 10_000,
         minimumReductionPercent: 60,
@@ -381,7 +381,7 @@ it("rejects hi measurements that call tools, take extra steps, or miss token tar
         totalTokens: 25_002,
       },
     },
-    requestCatalogs: [["tool_search"]],
+    requestCatalogs: [["veryfront__tool_search"]],
     baselineRequestCatalogs: [[
       ...Array.from(
         { length: 63 },
@@ -407,7 +407,7 @@ it("rejects hi measurements that call tools, take extra steps, or miss token tar
           ...response,
           toolCalls: [{
             id: "search-1",
-            name: "tool_search",
+            name: "veryfront__tool_search",
             args: { query: "anything" },
             status: "completed",
           }],
@@ -441,10 +441,10 @@ it("rejects hi measurements that call tools, take extra steps, or miss token tar
     () =>
       extractHiMeasurement({
         ...input,
-        requestCatalogs: [["leaked_tool", "tool_search"]],
+        requestCatalogs: [["leaked_tool", "veryfront__tool_search"]],
       }),
     Error,
-    "only tool_search initially",
+    "only veryfront__tool_search initially",
   );
 });
 

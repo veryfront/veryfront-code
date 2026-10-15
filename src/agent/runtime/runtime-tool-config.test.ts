@@ -65,7 +65,7 @@ describe("agent/runtime-tool-config", () => {
     );
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
-        tools: { get_release: true, tool_search: false },
+        tools: { get_release: true, veryfront__tool_search: false },
         toolLoading: "deferred",
       })),
       {
@@ -133,7 +133,7 @@ describe("agent/runtime-tool-config", () => {
       resolveRuntimeToolLoading(runtimeConfig({
         tools: true,
         __vfToolLoadingMode: "deferred",
-        deniedTools: ["tool_search"],
+        deniedTools: ["veryfront__tool_search"],
       })),
       {
         mode: "eager",
@@ -143,7 +143,7 @@ describe("agent/runtime-tool-config", () => {
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
         tools: true,
-        deniedTools: ["tool_search"],
+        deniedTools: ["veryfront__tool_search"],
       })),
       {
         mode: "eager",
@@ -232,10 +232,10 @@ describe("agent/runtime-tool-config", () => {
       assertEquals(
         Array.from(
           getRuntimeToolBootstrapNames(runtimeConfig({
-            __vfToolBootstrapNames: ["tool_search", "veryfront__load_skill"],
+            __vfToolBootstrapNames: ["veryfront__load_skill", "veryfront__tool_search"],
           })) ?? [],
         ),
-        ["tool_search", "veryfront__load_skill"],
+        ["veryfront__load_skill", "veryfront__tool_search"],
       );
       assertEquals(
         Array.from(
@@ -428,7 +428,7 @@ describe("agent/runtime-tool-config", () => {
   });
 });
 
-it("authored bootstrap selection is bounded, copied, and excludes tool_search", () => {
+it("authored bootstrap selection is bounded, copied, and excludes veryfront__tool_search", () => {
   assertEquals(snapshotConfiguredToolBootstrapNames(undefined), []);
   const names = ["get_run"];
   const snapshot = snapshotConfiguredToolBootstrapNames(names);
@@ -439,7 +439,7 @@ it("authored bootstrap selection is bounded, copied, and excludes tool_search", 
     true,
     "get_run",
     [""],
-    ["tool_search"],
+    ["veryfront__tool_search"],
     ["x".repeat(513)],
     ["get_run", 3],
     Array(17).fill("get_run"),

@@ -144,10 +144,11 @@ Break the task down. Use agent_researcher to gather facts, then agent_writer to
 produce the final copy.
 ```
 
-Set `delegates: []` when an agent must not delegate. `invoke_agent` is the
+Set `delegates: []` when an agent must not delegate. `veryfront__invoke_agent` is the
 generic platform tool for dynamic agent selection. Enable it explicitly in a
-direct runtime with `tools: { invoke_agent: true }`; hosted runtimes expose it
-when generic delegation is allowed and `delegates` is absent. Self-delegation
+direct runtime with `tools: { veryfront__invoke_agent: true }`. The legacy
+`invoke_agent: true` selector also publishes `veryfront__invoke_agent` to the model.
+Hosted runtimes expose it when generic delegation is allowed and `delegates` is absent. Self-delegation
 and delegate ids that cannot form a valid provider tool name are rejected with
 explicit diagnostics. Declare direct tools by name when using `delegates`;
 `tools: true` is intentionally rejected because it would hide the agent's

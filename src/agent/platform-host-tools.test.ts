@@ -5,6 +5,7 @@ import {
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import {
+  canonicalPlatformHostTools,
   retainTrustedSkillLoaderAliases,
   withPlatformHostToolAliases,
 } from "./platform-host-tools.ts";
@@ -100,4 +101,18 @@ Deno.test("trusted loader retention preserves exact denials and project collisio
     },
   });
   assertEquals(retainTrustedSkillLoaderAliases({ tools, originalTools }), tools);
+});
+
+Deno.test("published host tools have one canonical identity and preserve project tools", async () => {
+  const platform = markTrustedHostToolProvenance(definition("load_skill"));
+  const project = definition("load_skill");
+  const tools = canonicalPlatformHostTools(withPlatformHostToolAliases({ load_skill: platform }));
+  assertEquals(Object.keys(tools), ["veryfront__load_skill"]);
+  assertEquals(tools.veryfront__load_skill?.id, "veryfront__load_skill");
+  assertEquals(await tools.veryfront__load_skill?.execute?.({}), { ok: true });
+  const collision = canonicalPlatformHostTools(
+    withPlatformHostToolAliases({ load_skill: platform }, { load_skill: project }),
+  );
+  assertEquals(collision.load_skill, project);
+  assertEquals(hasTrustedHostToolProvenance(collision.veryfront__load_skill), true);
 });

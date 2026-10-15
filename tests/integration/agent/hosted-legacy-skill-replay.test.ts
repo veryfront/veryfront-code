@@ -58,7 +58,10 @@ Deno.test("production cloud preparation requires historical ownership for legacy
   ) {
     if (mode === "trusted registry") {
       createEphemeralAgent({ id: "platform-registry-bootstrap", system: "Base", skills: true });
-      assertEquals(hasTrustedHostToolProvenance(toolRegistryInternal.get("load_skill")), true);
+      assertEquals(
+        hasTrustedHostToolProvenance(toolRegistryInternal.get("veryfront__load_skill")),
+        true,
+      );
     }
     const id = mode === "direct collision" ? "load_skill" : "agent-1--load_skill";
     const previous = toolRegistryInternal.getOwn(id);
