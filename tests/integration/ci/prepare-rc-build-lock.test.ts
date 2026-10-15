@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
 import { rewriteWorkspacePackageVersion } from "../../../scripts/lib/workspace-package-version.ts";
