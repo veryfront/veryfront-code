@@ -2,14 +2,14 @@ import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import {
-  createVeryfrontApiOriginBoundOutboundFetch,
-  guardedExactHttpLoopbackOutboundFetch,
-} from "#cli/outbound-fetch";
+import { guardedExactHttpLoopbackOutboundFetch } from "#cli/outbound-fetch";
+import { createCloudOnboardingTransport } from "../shared/cloud-onboarding-transport.ts";
+import { withOnboardingDeadline } from "../shared/onboarding-fetch.ts";
 import { getHostSecret } from "#cli/process-env";
 
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const responseText = Response.prototype.text;
 const NativeURL = URL;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
 
@@ -57,8 +57,8 @@ export async function fetchRemoteProjects(
     }
   }
   const transport: typeof fetch = explicitLoopback
-    ? guardedExactHttpLoopbackOutboundFetch
-    : (input, init) => createVeryfrontApiOriginBoundOutboundFetch(apiUrl)(input, init);
+    ? withOnboardingDeadline(guardedExactHttpLoopbackOutboundFetch)
+    : createCloudOnboardingTransport(apiUrl);
   const user = apiKeyCredential ? null : await validateToken(token, env, { transport });
 
   if (!apiKeyCredential && !user) {
@@ -78,7 +78,9 @@ export async function fetchRemoteProjects(
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => response.statusText);
+      const errorText = await (applyIntrinsic(responseText, response, []) as Promise<string>).catch(
+        () => response.statusText,
+      );
       return {
         user,
         projects: [],

@@ -625,7 +625,16 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Opening browser...")}`);
-            const result = await loginForDevShortcut();
+            const result = await loginForDevShortcut(() =>
+              login(
+                undefined,
+                getEnvironmentConfig(),
+                projectDir,
+                createConnectedDevAuthenticationOptions(
+                  connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                ),
+              )
+            );
             if (!result) return;
 
             identity = result;

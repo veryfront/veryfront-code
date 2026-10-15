@@ -18,7 +18,9 @@ it("dev command authentication protects responses after project configuration ex
   };
   let result: unknown;
   await withMockFetch(() => Promise.resolve(response), async () => {
+    const originalFetch = globalThis.fetch;
     try {
+      globalThis.fetch = poison;
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(
           Response.prototype,
@@ -31,6 +33,7 @@ it("dev command authentication protects responses after project configuration ex
         ...createConnectedDevAuthenticationOptions("https://api.veryfront.com"),
       });
     } finally {
+      globalThis.fetch = originalFetch;
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(Response.prototype, name, descriptor);
       }
@@ -38,4 +41,44 @@ it("dev command authentication protects responses after project configuration ex
   });
   assertEquals(calls, 0);
   assertEquals((result as { email: string }).email, "trusted@example.com");
+});
+
+it("dev preload protects both user and project responses after configuration executes", async () => {
+  const { preloadDevAuth } = await import("../../../../../../cli/commands/dev/command.ts");
+  const responses = [
+    Response.json({ id: "user", email: "trusted@example.com" }),
+    Response.json({ data: [{ id: "project", slug: "demo", name: "Demo" }] }),
+  ];
+  const fields = ["ok", "json", "text", "statusText"];
+  const descriptors = fields.map((name) =>
+    [name, Object.getOwnPropertyDescriptor(Response.prototype, name)!] as const
+  );
+  let calls = 0;
+  const poison = () => {
+    calls++;
+    throw new Error("project received privileged discovery response");
+  };
+  let result: Awaited<ReturnType<typeof preloadDevAuth>> | undefined;
+  await withMockFetch(() => Promise.resolve(responses.shift()!), async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = poison;
+      for (const [name, descriptor] of descriptors) {
+        Object.defineProperty(
+          Response.prototype,
+          name,
+          "get" in descriptor ? { ...descriptor, get: poison } : { ...descriptor, value: poison },
+        );
+      }
+      result = await preloadDevAuth("user-token");
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [name, descriptor] of descriptors) {
+        Object.defineProperty(Response.prototype, name, descriptor);
+      }
+    }
+  });
+  assertEquals(calls, 0);
+  assertEquals(result?.identity?.email, "trusted@example.com");
+  assertEquals(result?.projects[0]?.id, "project");
 });
