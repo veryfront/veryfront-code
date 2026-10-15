@@ -137,6 +137,7 @@ export async function captureResolvedModule(
       moduleServerOrigin: context.moduleServerOrigin,
       dependencyPinningCacheKey: context.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
       dependencyPinningSource: context.dependencyPinningSource,
       preloadedImportMap: importMap,
     },

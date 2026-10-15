@@ -30,6 +30,7 @@ export interface ResolveUnresolvedModuleViaHttpFallbackInput {
   serverExternalPackages?: readonly string[];
   /** Compile mode of the render fetching this module, part of the cache identity. */
   dev?: boolean;
+  runtimeScope?: string;
   fetchViaHttp?: FetchModuleViaHttpFn;
   cacheLocalModule?: CacheLocalModuleFn;
 }
@@ -70,6 +71,7 @@ export async function resolveUnresolvedModuleViaHttpFallback(
       input.moduleServerOrigin,
       input.serverExternalPackages,
       input.dev,
+      ...(input.runtimeScope === undefined ? [] : [input.runtimeScope]),
     );
   }
 

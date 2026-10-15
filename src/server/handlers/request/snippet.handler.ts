@@ -1,3 +1,4 @@
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -10,7 +11,10 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { validatePath, ValidationPresets } from "#veryfront/security";
-import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  isHostProjectCodeExecutionAllowed,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -68,8 +72,13 @@ export class SnippetHandler extends BaseHandler {
 
     return this.withProxyContext(ctx, async () => {
       try {
-        const fs = ctx.adapter.fs;
-        const stableAdapter = { fs } as typeof ctx.adapter;
+        const adapter = ctx.adapter;
+        const fs = adapter.fs;
+        const moduleLoader = getRuntimeModuleLoader(adapter);
+        const stableAdapter = {
+          fs,
+          ...(moduleLoader ? { moduleLoader } : {}),
+        } as typeof ctx.adapter;
         const pathResult = await validatePath(filePath, {
           ...ValidationPresets.internal(ctx.projectDir),
           adapter: stableAdapter,
@@ -101,6 +110,7 @@ export class SnippetHandler extends BaseHandler {
           projectDir: ctx.projectDir,
           adapter: stableAdapter,
           isLocalProject: ctx.isLocalProject,
+          allowHostProjectCodeExecution: isHostProjectCodeExecutionAllowed(ctx),
           projectId: dependencyIdentity.projectId,
           contentSourceId: dependencyIdentity.contentSourceId,
           releaseId: dependencyIdentity.releaseId,

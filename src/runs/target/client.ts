@@ -114,9 +114,9 @@ export interface RunsDeleteAcknowledgement {
   ok: true;
 }
 
-// The acknowledgement postdates the immutable pin; remove the extension when the pin includes it.
-type DeleteAcknowledgement<K extends RunsOperationId> =
-  (typeof RUNS_OPERATIONS)[K]["method"] extends "DELETE" ? RunsDeleteAcknowledgement : never;
+// Older API versions answer DELETE with an empty 204 instead of the pinned 200 body.
+type LegacyDeleteResponse<K extends RunsOperationId> = (typeof RUNS_OPERATIONS)[K]["method"] extends
+  "DELETE" ? undefined : never;
 
 /**
  * Success body of one operation: the JSON body of each success response, `undefined` for a
@@ -124,7 +124,7 @@ type DeleteAcknowledgement<K extends RunsOperationId> =
  * Distributes over a union of operations, so each member keeps its own success body.
  */
 export type RunsOutput<K extends RunsOperationId> = K extends RunsOperationId
-  ? SuccessBody<SuccessResponse<K>> | DeleteAcknowledgement<K>
+  ? SuccessBody<SuccessResponse<K>> | LegacyDeleteResponse<K>
   : never;
 
 /** What an SDK method returns: the parsed body, or the frames of an event stream. */

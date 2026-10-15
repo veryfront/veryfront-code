@@ -7,104 +7,20 @@
  * matched, superseded, batch-starting, or transient-but-preserved without
  * mutating them.
  */
-import { isRecord } from "./part-field-access.ts";
-import {
-  buildToolResultOutput,
-  getFilePart,
-  getRawToolCallPart,
-  getRawToolResultPart,
-  getToolPart,
-  hasSelfContainedRawToolCallResult,
-  isProviderVisibleReasoningPart,
-  isTextPart,
-} from "./message-part-parsing.ts";
+import { getFilePart, isProviderVisibleReasoningPart, isTextPart } from "./message-part-parsing.ts";
 import type { ChatUiMessageRole } from "./types.ts";
 import type { ChatProviderModelInputMessage } from "./provider-input-types.ts";
+import {
+  getReplayToolCallPart,
+  getReplayToolResultPart,
+  type ReplayToolCallPart,
+} from "./tool-replay-parts.ts";
 
-export function isTransientToolState(state: string | undefined): boolean {
-  return state === "pending" || state === "input-available" || state === "input-streaming" ||
-    state === "streaming" || state === "approval-requested" || state === "approval-responded";
-}
-
-type ReplayToolCallPart = {
-  part: object;
-  toolCallId: string;
-  toolName: string;
-  transient: boolean;
-  selfContainedResult: boolean;
-};
+export { isTransientToolState } from "./tool-replay-parts.ts";
 
 type PendingReplayToolCall = Omit<ReplayToolCallPart, "selfContainedResult"> & {
   originMessageIndex: number;
 };
-
-function getReplayToolCallPart(part: unknown, role: ChatUiMessageRole): ReplayToolCallPart | null {
-  if (role !== "assistant") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const toolPart = getToolPart(part);
-  if (toolPart) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-      transient: isTransientToolState(toolPart.state),
-      selfContainedResult: buildToolResultOutput(toolPart) !== null,
-    };
-  }
-
-  const rawToolCall = getRawToolCallPart(part);
-  if (!rawToolCall) {
-    return null;
-  }
-
-  return {
-    part,
-    toolCallId: rawToolCall.toolCallId,
-    toolName: rawToolCall.toolName,
-    transient: isTransientToolState(rawToolCall.state),
-    selfContainedResult: hasSelfContainedRawToolCallResult(rawToolCall),
-  };
-}
-
-function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
-  part: object;
-  toolCallId: string;
-  toolName?: string;
-} | null {
-  if (role !== "assistant" && role !== "tool") {
-    return null;
-  }
-
-  if (!isRecord(part)) {
-    return null;
-  }
-
-  const rawToolResult = getRawToolResultPart(part);
-  if (rawToolResult) {
-    return {
-      part,
-      toolCallId: rawToolResult.toolCallId,
-      ...(rawToolResult.toolName ? { toolName: rawToolResult.toolName } : {}),
-    };
-  }
-
-  const toolPart = getToolPart(part);
-  if (role === "tool" && toolPart && buildToolResultOutput(toolPart)) {
-    return {
-      part,
-      toolCallId: toolPart.toolCallId,
-      toolName: toolPart.toolName,
-    };
-  }
-
-  return null;
-}
 
 function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): boolean {
   if (role === "system") {
@@ -184,7 +100,20 @@ export type ProviderVisibleToolReplayMatches = {
 /** Find adjacent replay call/result occurrences using part object identity. */
 export function findProviderVisibleToolReplayMatches(
   messages: readonly ChatProviderModelInputMessage[],
+  trustedSourceMessageIds: readonly string[] = [],
 ): ProviderVisibleToolReplayMatches {
+  const trustedIds = new Set(trustedSourceMessageIds.filter((id) => id.length > 0));
+  const sourceIdsByCallPart = new WeakMap<object, string>();
+  const closedTrustedCallParts = new WeakSet<object>();
+  const isDistinctClosedOccurrence = (
+    prior: ReplayToolCallPart,
+    current: Pick<ReplayToolCallPart, "part">,
+  ): boolean => {
+    const priorId = sourceIdsByCallPart.get(prior.part);
+    const currentId = sourceIdsByCallPart.get(current.part);
+    return !!priorId && !!currentId && priorId !== currentId && trustedIds.has(currentId) &&
+      closedTrustedCallParts.has(prior.part);
+  };
   const preservedTransientToolParts = new WeakSet<object>();
   const matchedToolCallParts = new WeakSet<object>();
   const matchedToolResultParts = new WeakSet<object>();
@@ -202,6 +131,7 @@ export function findProviderVisibleToolReplayMatches(
     for (const part of message.parts) {
       const call = getReplayToolCallPart(part, message.role);
       if (call) {
+        sourceIdsByCallPart.set(call.part, message.id);
         const callsWithId = toolCallsById.get(call.toolCallId) ?? [];
         callsWithId.push(call);
         toolCallsById.set(call.toolCallId, callsWithId);
@@ -216,8 +146,9 @@ export function findProviderVisibleToolReplayMatches(
         }
         removePendingCallsWithId(pendingCalls, call.toolCallId);
         if (call.selfContainedResult) {
+          if (trustedIds.has(message.id)) closedTrustedCallParts.add(call.part);
           for (const priorCall of callsWithId) {
-            if (priorCall.part === call.part) {
+            if (priorCall.part === call.part || isDistinctClosedOccurrence(priorCall, call)) {
               continue;
             }
 
@@ -249,7 +180,10 @@ export function findProviderVisibleToolReplayMatches(
             preservedTransientToolParts.add(matchedCall.part);
           }
           for (const priorCall of toolCallsById.get(matchedCall.toolCallId) ?? []) {
-            if (priorCall.part === matchedCall.part) {
+            if (
+              priorCall.part === matchedCall.part ||
+              (trustedIds.has(message.id) && isDistinctClosedOccurrence(priorCall, matchedCall))
+            ) {
               continue;
             }
 
@@ -263,6 +197,12 @@ export function findProviderVisibleToolReplayMatches(
           matchedToolResultParts.add(result.part);
           matchedToolResultNames.set(result.part, matchedCall.toolName);
           matchedResultPartByCallPart.set(matchedCall.part, result.part);
+          if (
+            trustedIds.has(message.id) &&
+            trustedIds.has(sourceIdsByCallPart.get(matchedCall.part) ?? "")
+          ) {
+            closedTrustedCallParts.add(matchedCall.part);
+          }
           removePendingCallsThroughMatchedResult(pendingCalls, matchedIndex, result.toolCallId);
         }
         continue;

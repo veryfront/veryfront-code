@@ -1,3 +1,8 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
 import type * as React from "react";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
@@ -63,11 +68,15 @@ export async function tryErrorPageFallback(
   const { statusCode, error, pathname } = options;
 
   try {
+    const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(ctx.adapter)
+      ? captureLocalReactPeers()
+      : undefined;
     const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       dependencyPinningSource,
       requestedDependencySnapshot?.cacheKey,
       requestedDependencySnapshot?.dependencies,
+      requestedDependencySnapshot?.configuredVersions,
     );
     const pagesDir = joinPath(
       ctx.projectDir,
@@ -83,10 +92,13 @@ export async function tryErrorPageFallback(
     }
 
     const reactVersion = await resolveProjectReactVersion({
+      adapter: ctx.adapter,
+      reactPeers,
       projectDir: ctx.projectDir,
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     });
 
@@ -105,6 +117,7 @@ export async function tryErrorPageFallback(
         dependencySnapshot,
         dependencyPinningSource,
         new URL(req.url).origin,
+        reactPeers,
       );
       if (ErrorComponent) {
         logger.debug(`Found pages/${specificPage}.tsx`);
@@ -117,6 +130,7 @@ export async function tryErrorPageFallback(
           error,
           pathname,
           reactVersion,
+          reactPeers,
         );
       }
     }
@@ -129,6 +143,7 @@ export async function tryErrorPageFallback(
       dependencySnapshot,
       dependencyPinningSource,
       new URL(req.url).origin,
+      reactPeers,
     );
     if (!GenericErrorComponent) return null;
 
@@ -142,6 +157,7 @@ export async function tryErrorPageFallback(
       error,
       pathname,
       reactVersion,
+      reactPeers,
     );
   } catch (e) {
     // The user's custom error page failed to compile/load. Surface at warn so
@@ -211,6 +227,7 @@ async function tryLoadErrorPage(
   dependencySnapshot: DependencyPinningSnapshot,
   dependencyPinningSource: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<React.ComponentType<unknown> | null> {
   const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
@@ -226,6 +243,7 @@ async function tryLoadErrorPage(
         dependencySnapshot,
         dependencyPinningSource,
         moduleServerOrigin,
+        reactPeers,
       );
     } catch (_) {
       // expected: cached path no longer valid, clear and re-resolve
@@ -251,6 +269,7 @@ async function tryLoadErrorPage(
         dependencySnapshot,
         dependencyPinningSource,
         moduleServerOrigin,
+        reactPeers,
       );
       if (component) {
         await setCachedPath(cacheKey, fullPath);
@@ -279,6 +298,7 @@ async function tryLoadErrorPage(
         dependencySnapshot,
         dependencyPinningSource,
         moduleServerOrigin,
+        reactPeers,
       );
       if (component) {
         await setCachedPath(cacheKey, filePath);
@@ -300,6 +320,7 @@ async function loadErrorComponent(
   dependencySnapshot: DependencyPinningSnapshot,
   dependencyPinningSource: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<React.ComponentType<unknown> | null> {
   const prepared = getRuntimeModuleLoader(ctx.adapter);
   if (prepared) {
@@ -335,10 +356,12 @@ async function loadErrorComponent(
       dev: isLocal,
       contentSourceId,
       reactVersion,
+      reactPeers,
       serverExternalPackages: ctx.config?.build?.serverExternalPackages,
       moduleServerOrigin,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
       mode: environment,
     },
@@ -356,11 +379,12 @@ async function renderErrorPage(
   error?: Error,
   pathname?: string,
   reactVersion?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<Response> {
   const { getProjectReact, renderToStringAdapter } = await import(
     "#veryfront/react/compat/ssr-adapter/index.ts"
   );
-  const React = await getProjectReact(reactVersion, ctx.adapter);
+  const React = await getProjectReact(reactVersion, ctx.adapter, reactPeers);
 
   const errorProps = { statusCode, err: error, pathname };
 
@@ -376,6 +400,7 @@ async function renderErrorPage(
           nonce: builder.nonce,
           renderContext,
           reactVersion,
+          reactPeers,
         }, ctx.adapter),
       { nonce: builder.nonce },
     );

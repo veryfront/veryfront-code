@@ -194,6 +194,41 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Hosted context compaction
+
+Hosted agents can compact a long active turn by retaining its exact latest user
+request and a recent tail of messages. Retained tool calls and results stay together.
+Compaction changes the model context without deleting the durable conversation history.
+
+The internal `AGENT_RUN_CONTEXT_COMPACTED` event identifies the contiguous tail with
+`firstKeptEntryId`. Its optional `preservedMessageIds` contains at most one identifier:
+the exact prepared active user request of the source run retained before that tail.
+An empty list preserves no additional request. Replay restores that original in source order and
+rejects invalid preservation records. Older events keep their existing replay behavior.
+Hosted services default to protecting two recent turns in the supplied context. If it contains only
+one user turn, compaction can shorten its tool loop while preserving the exact request.
+When two turns are available, their protected suffix remains complete; if that suffix
+cannot fit, compaction raises `ContextCompactionError` before summary generation.
+Successful compaction inside two protected complete turns is not supported by this change.
+
+For verified control-plane replay, completed tool identifiers can be reused in later
+messages when distinct source message identities identify the closed occurrences.
+Preparation preserves these occurrences until budget compaction selects a complete
+recent tail. Pending duplicates and reuse within one message are rejected. Replay
+without trusted source identities retains the existing snapshot supersession behavior.
+The API can omit older turns from its bounded admission snapshot; this release does not
+qualify complete two-turn replay from the full durable history.
+
+The API must support `preservedMessageIds` and apply its private request-capture
+migration before a framework that emits it is deployed. New admissions capture the
+exact prepared active user request separately from caller metadata. Strict replay
+fails when that immutable proof is unavailable. Edited tail messages also require a
+complete matching entry in their immutable admission snapshot; missing or truncated
+entries cannot authorize replay.
+Deploy occurrence-preserving API replay with a framework that validates completed
+tool identifier reuse across messages. A hosted schema requiring globally unique
+tool identifiers rejects that replay.
+
 ## Typed Runs contract SDK
 
 `veryfront/runs/target` publishes the typed SDK for the Runs target contract that

@@ -735,6 +735,58 @@ if (typeof extension.EsbuildBundler !== 'function') {
 }
 `;
 
+const DENO_NOT_FOUND_SCRIPT = `
+const { isNotFoundError, isCanonicalNotFoundError } = await import(
+  './node_modules/veryfront/esm/src/platform/compat/not-found-error.js'
+);
+const missing = new Deno.errors.NotFound('synthetic missing file');
+for (const error of [missing, new Error('wrapped', { cause: missing })]) {
+  if (!isNotFoundError(error) || !isCanonicalNotFoundError(error)) {
+    throw new Error('Packed classifier lost native Deno NotFound identity');
+  }
+}
+if (isCanonicalNotFoundError({ code: 'ENOENT' })) {
+  throw new Error('Packed strict classifier accepted an error-shaped record');
+}
+let hooks = 0;
+const hostile = new Proxy(missing, {
+  get() { hooks++; throw new Error('unexpected get'); },
+  getPrototypeOf() { hooks++; throw new Error('unexpected prototype read'); },
+  getOwnPropertyDescriptor() { hooks++; throw new Error('unexpected descriptor read'); },
+});
+const accessor = new Error('accessor');
+Object.defineProperty(accessor, 'cause', {
+  get() { hooks++; throw new Error('unexpected cause getter'); },
+});
+for (const error of [hostile, accessor]) {
+  if (isNotFoundError(error) || isCanonicalNotFoundError(error)) {
+    throw new Error('Packed classifier accepted hostile error hooks');
+  }
+}
+if (hooks !== 0) throw new Error('Packed classifier invoked project hooks');
+const nativeDeno = Deno;
+for (const mutation of ['namespace accessor', 'namespace proxy', 'version accessor', 'build accessor']) {
+  const owner = mutation.startsWith('namespace') ? globalThis : nativeDeno;
+  const key = mutation.startsWith('namespace') ? 'Deno' : mutation === 'version accessor' ? 'version' : 'build';
+  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  const fail = () => { hooks++; throw new Error('late project hook invoked'); };
+  try {
+    Object.defineProperty(owner, key, mutation === 'namespace proxy'
+      ? { configurable: true, value: new Proxy(nativeDeno, { get: fail, getOwnPropertyDescriptor: fail, getPrototypeOf: fail }) }
+      : { configurable: true, get: fail });
+    const classifier = await import(
+      './node_modules/veryfront/esm/src/platform/compat/not-found-error.js?late-' + encodeURIComponent(mutation)
+    );
+    if (!classifier.isCanonicalNotFoundError(missing) || !classifier.isCanonicalNotFoundError(new Error('wrapped', { cause: missing }))) {
+      throw new Error('Packed late-import classifier lost native identity');
+    }
+  } finally {
+    Object.defineProperty(owner, key, descriptor);
+  }
+}
+if (hooks !== 0) throw new Error('Packed late import invoked project hooks');
+`;
+
 const AUTH_IMPORT_SCRIPT = `
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
   await m.importFirstPartyExtensionModule('ext-auth-jwt', '@veryfront/ext-auth-jwt');
@@ -847,6 +899,14 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
     fail(
       `Deno could not load the packed bundler extension\n${denoLoad.combined}`,
     );
+  }
+  const denoNotFound = await run("deno", [
+    "eval",
+    "--node-modules-dir=auto",
+    DENO_NOT_FOUND_SCRIPT,
+  ], { cwd: workDir, timeoutMs: 120_000 });
+  if (denoNotFound.code !== 0) {
+    fail(`Packed Deno absence classifier failed\n${denoNotFound.combined}`);
   }
 }
 
@@ -1708,6 +1768,50 @@ async function checkWorkflowTimeout(
   }
 }
 
+async function checkBrowserClientBuild(workDir: string): Promise<void> {
+  console.log("== packed browser exports and pages client build (#5165)");
+  const bundles = await runChecked("browser export bundles", "node", [
+    `${ROOT_DIR}/scripts/test/npm-browser-exports-smoke.mjs`,
+  ], { cwd: workDir, timeoutMs: 120_000 });
+
+  console.log(bundles.stdout);
+  const fixture = `${workDir}/browser-client-build`;
+  await writeFixtureTree({
+    [`${fixture}/package.json`]: JSON.stringify({
+      private: true,
+      type: "module",
+    }),
+    [`${fixture}/veryfront.config.ts`]:
+      `import { defineConfig } from "veryfront";
+export default defineConfig({ router: "pages" });
+`,
+    [`${fixture}/components/SaveButton.tsx`]: `'use client';
+import * as client from "veryfront/index.client";
+import { Head } from "veryfront/head";
+// Keep every value export live so adding a server-only export fails this build.
+(globalThis as any).browserExports = client;
+export default function SaveButton() {
+  return <><Head><title>Browser client build</title></Head><button onClick={() =>
+    fetch('/api/save', { method: 'POST', headers: client.csrfMutationHeaders('/api/save') })
+  }>Save</button></>;
+}
+`,
+    [`${fixture}/pages/index.tsx`]:
+      `import SaveButton from '../components/SaveButton';
+export default function Home() { return <main><h1>Hello</h1><SaveButton /></main>; }
+`,
+  });
+  const build = await runChecked("pages client production build", "node", [
+    `${workDir}/node_modules/veryfront/bin/veryfront.js`,
+    "build",
+  ], {
+    cwd: fixture,
+    env: { VERYFRONT_NO_UPDATE_CHECK: "1" },
+    timeoutMs: 300_000,
+  });
+  console.log(build.stdout);
+}
+
 async function checkManagedBroker(workDir: string): Promise<void> {
   console.log("== packed managed broker: process boundary and settlement");
   const fixtureDir = `${workDir}/managed-broker`;
@@ -1773,6 +1877,11 @@ async function runSmoke(workDir: string): Promise<void> {
     });
     await npmInstall(workDir, plan, plan.rootInstallSpecs);
 
+    if (Deno.args.includes("--browser-only")) {
+      await checkBrowserClientBuild(workDir);
+      return;
+    }
+
     if (Deno.args.includes("--managed-broker-only")) {
       await checkManagedBroker(workDir);
       return;
@@ -1787,6 +1896,7 @@ async function runSmoke(workDir: string): Promise<void> {
     await checkRunsSdkExport(workDir);
     await checkInitIntegrations(workDir);
     await checkNodeTypeScriptConfig(workDir);
+    await checkBrowserClientBuild(workDir);
 
     await writeStarterFixtures(workDir);
     const devPort = Deno.env.get("VF_NPM_SSR_SMOKE_PORT") || "43119";

@@ -1,0 +1,98 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { boundChildResultTelemetry } from "./result-telemetry.ts";
+
+describe("child result telemetry budget", () => {
+  it("preserves admitted large JSON and identity", () => {
+    const result = {
+      output: Array.from({ length: 10_001 }, (_, index) => index),
+      toolCalls: [],
+      toolResults: [],
+    };
+    assertStrictEquals(boundChildResultTelemetry(result), result);
+  });
+  it("retains telemetry inside the provenance envelope byte allowance", () => {
+    const input = Object.fromEntries(
+      Array.from({ length: 4 }, (_, index) => [String(index), "x".repeat(1_048_576)]),
+    );
+    const result = {
+      success: true,
+      description: "fixture",
+      summary: { text: "accepted" },
+      steps: 1,
+      durationMs: 1,
+      toolCalls: [{ toolName: "example", toolCallId: "call", input }],
+      toolResults: [],
+    };
+    assertStrictEquals(boundChildResultTelemetry(result), result);
+  });
+  it("does not admit an oversized accepted response by dropping telemetry", () => {
+    const result = { output: "界".repeat(2_000_000), toolCalls: [], toolResults: [] };
+    assertStrictEquals(boundChildResultTelemetry(result), result);
+    assertEquals(snapshotBoundedJsonValue(result).success, false);
+  });
+  it("does not execute trace identity accessors", () => {
+    let reads = 0;
+    const call = {
+      get toolName() {
+        reads += 1;
+        return "example";
+      },
+      toolCallId: "call",
+      input: null,
+    };
+    const result = { output: "accepted", toolCalls: [call], toolResults: [] };
+    assertStrictEquals(boundChildResultTelemetry(result), result);
+    assertEquals(reads, 0);
+  });
+  it("falls back to the admitted base when omission metadata cannot fit", () => {
+    const parts = Array.from({ length: 5 }, () => "x".repeat(900_000));
+    const base = { output: { parts }, toolCalls: [], toolResults: [] };
+    const excess = JSON.stringify(base).length - (PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES - 5);
+    parts[4] = parts[4]!.slice(excess);
+    const result = {
+      ...base,
+      toolCalls: [{ toolName: "example", toolCallId: "call", input: "x".repeat(1_048_577) }],
+    };
+    const bounded = boundChildResultTelemetry(result);
+    assertEquals(
+      snapshotBoundedJsonValue(bounded, 1_048_576, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+        .success,
+      true,
+    );
+    assertStrictEquals(bounded.output, result.output);
+    assertEquals(bounded.toolCalls.length, 0);
+  });
+  it("readmits the accepted base when existing omission metadata no longer fits", () => {
+    const parts = Array.from({ length: 5 }, () => "x".repeat(900_000));
+    const base = { output: { parts }, toolCalls: [], toolResults: [] };
+    const excess = JSON.stringify(base).length - (PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES - 5);
+    parts[4] = parts[4]!.slice(excess);
+    const result = { ...base, toolTelemetryOmitted: { calls: 7, results: 2 } };
+    const bounded = boundChildResultTelemetry(result);
+    assertEquals(
+      snapshotBoundedJsonValue(bounded, 1_048_576, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+        .success,
+      true,
+    );
+    assertStrictEquals(bounded.output, result.output);
+    assertEquals(bounded.toolTelemetryOmitted, undefined);
+    assertEquals(result.toolTelemetryOmitted, { calls: 7, results: 2 });
+  });
+  it("bounds aggregate nodes and reports omitted trace entries", () => {
+    const toolCalls = Array.from({ length: 35_000 }, (_, index) => ({
+      toolName: "example",
+      toolCallId: String(index),
+      input: index,
+    }));
+    const result = { output: { accepted: true }, toolCalls, toolResults: [] };
+    const bounded = boundChildResultTelemetry(result);
+    assertEquals(snapshotBoundedJsonValue(bounded).success, true);
+    assertStrictEquals(bounded.output, result.output);
+    assertEquals(bounded.toolTelemetryOmitted?.calls, toolCalls.length - bounded.toolCalls.length);
+    assertEquals(bounded.toolTelemetryOmitted?.results, 0);
+    assertEquals(result.toolCalls.length, 35_000);
+  });
+});

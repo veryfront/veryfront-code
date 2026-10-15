@@ -13,6 +13,7 @@ import reads from "./resources/read-contracts.schema.json" with { type: "json" }
 import publicPayloads from "./resources/public-payload-schemas.json" with { type: "json" };
 import controls from "./resources/control-payload-schemas.json" with { type: "json" };
 import resources from "./resources/schema-resources.json" with { type: "json" };
+import { hasSourceConstraints, hasSourceContextBudget } from "./source-constraints.ts";
 import { validatePayloadSemantics } from "./resources/payload-semantics.mjs";
 import type {
   CanonicalEventV1,
@@ -99,11 +100,37 @@ const normalizedDefinitions = Object.fromEntries(
 );
 let validatorVersion = -1;
 const compiledValidators = new Map<string, JsonSchemaValidationFunction<unknown>>();
+let sourceValidators = new WeakMap<object, JsonSchemaValidationFunction<unknown>>();
+async function acceptsSourceBranch(
+  value: unknown,
+  branch: Record<string, unknown>,
+  documentId: string,
+): Promise<boolean> {
+  let validate = sourceValidators.get(branch);
+  if (!validate) {
+    const compiler = assertEventSchemaValidator().compileJsonSchema;
+    if (!compiler) throw new TypeError("canonical-v1 needs compileJsonSchema support");
+    const schema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      allOf: [normalize(branch, documentId)],
+      $defs: normalizedDefinitions,
+    } as JsonSchema;
+    validate = compiler(schema, {
+      instanceLimits: {
+        maxSerializedBytes: CANONICAL_V1_MAX_MEMBER_BYTES,
+        maxStringBytes: CANONICAL_V1_MAX_STRING_BYTES,
+      },
+    });
+    sourceValidators.set(branch, validate);
+  }
+  return (await validate(value)).success;
+}
 async function decode<T>(input: unknown, definition: string, documentId = reads.$id): Promise<T> {
   const adapter = assertEventSchemaValidator();
   const version = getEventSchemaValidatorVersion();
   if (validatorVersion !== version) {
     compiledValidators.clear();
+    sourceValidators = new WeakMap();
     validatorVersion = version;
   }
   const canonical = input !== null && typeof input === "object" &&
@@ -180,13 +207,14 @@ function hasProducingSource(event: CanonicalEventV1, live: boolean): boolean {
     return (base === "" || base.slice(1).split("/").every((part) => {
       const decoded = decodeURIComponent(part);
       return decoded !== "" && decoded !== "." && decoded !== ".." &&
-        !decoded.includes("/") && !decoded.includes("\\");
+        !decoded.includes("/") && !decoded.includes("\\") &&
+        encodeURIComponent(decoded) === part;
     })) && (!live || encodeURIComponent(decodeURIComponent(tail)) === tail);
   } catch {
     return false;
   }
 }
-function envelope(event: CanonicalEventV1, view: string, live = false): void {
+async function envelope(event: CanonicalEventV1, view: string, live = false): Promise<void> {
   for (const [key, value] of Object.entries(event)) {
     if (key === "tracestate") continue;
     if (typeof value === "string" && !isCloudEventsString(value)) {
@@ -204,13 +232,24 @@ function envelope(event: CanonicalEventV1, view: string, live = false): void {
   if (!hasProducingSource(event, live)) {
     throw new TypeError("Invalid canonical-v1 producing source");
   }
-  if (validatePayloadSemantics(event).length) {
+  if (
+    !await hasSourceConstraints(
+      event.data,
+      documents[event.dataschema],
+      event.dataschema,
+      documents,
+      acceptsSourceBranch,
+    )
+  ) {
+    throw new TypeError("Invalid canonical-v1 producer string constraints");
+  }
+  if (!hasSourceContextBudget(event.data) || validatePayloadSemantics(event).length) {
     throw new TypeError("Invalid canonical-v1 payload semantics");
   }
 }
-function member(value: RunReadMemberV1 | StreamMemberV1): void {
+async function member(value: RunReadMemberV1 | StreamMemberV1): Promise<void> {
   if (value.kind === "transient") {
-    envelope(value.event, value.view, true);
+    await envelope(value.event, value.view, true);
     return;
   }
   if (!Number.isSafeInteger(value.metadata.event_id)) throw new TypeError("Unsafe event ID");
@@ -227,17 +266,17 @@ function member(value: RunReadMemberV1 | StreamMemberV1): void {
     ) {
       throw new TypeError("canonical-v1 metadata identity mismatch");
     }
-    envelope(event, metadata.view);
+    await envelope(event, metadata.view);
   }
 }
 export async function parseRunReadMemberV1(input: unknown): Promise<RunReadMemberV1> {
   const value = await decode<RunReadMemberV1>(input, "member");
-  member(value);
+  await member(value);
   return value;
 }
 export async function parseStreamMemberV1(input: unknown): Promise<StreamMemberV1> {
   const value = await decode<StreamMemberV1>(input, "streamMember");
-  member(value);
+  await member(value);
   return value;
 }
 function pageParts(input: unknown): { header: unknown; entries: unknown[] } {

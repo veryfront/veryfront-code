@@ -31,6 +31,26 @@
  * const history = await client.dependencies.getHistory({ branch: "main" });
  * console.log(history.entries.length);
  * ```
+ *
+ * @example Read the files an environment serves
+ * ```ts
+ * import { VeryfrontApiClient } from "veryfront/platform";
+ *
+ * const client = new VeryfrontApiClient({
+ *   apiBaseUrl: "https://api.veryfront.com",
+ *   apiToken: "<API_KEY>",
+ *   projectSlug: "<PROJECT_SLUG>",
+ * });
+ *
+ * const files = await client.listAllEnvironmentFiles("production");
+ * console.log(files.map((file) => file.path));
+ *
+ * const page = await client.getEnvironmentFile("production", "app/page.tsx");
+ * console.log(page.release_version);
+ *
+ * const lookup = await client.lookupProjectByDomain("www.example.com");
+ * console.log(lookup?.project_slug, lookup?.environment?.name);
+ * ```
  */
 
 // Adapters

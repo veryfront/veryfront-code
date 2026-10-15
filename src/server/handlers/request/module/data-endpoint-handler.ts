@@ -79,6 +79,7 @@ export function handleDataEndpoint(
           url: applicationUrl,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
           dependencyPinningSource: dependencySource,
           applicationIdentity: ctx.applicationIdentity ?? null,
         });

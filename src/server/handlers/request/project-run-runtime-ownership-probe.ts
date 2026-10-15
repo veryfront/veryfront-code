@@ -264,9 +264,8 @@ function isStagingContext(
   if (ctx.projectId !== undefined && ctx.projectId !== activation.projectId) return false;
   if (ctx.environmentId !== activation.environmentId) return false;
   if (ctx.resolvedEnvironment === "production") return false;
-  if (ctx.environmentName !== undefined && ctx.environmentName.toLowerCase() !== "staging") {
-    return false;
-  }
+  const environmentName = ctx.environmentName?.toLowerCase();
+  if (environmentName !== "staging" && environmentName !== "preview") return false;
   return true;
 }
 

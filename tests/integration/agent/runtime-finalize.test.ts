@@ -1059,7 +1059,7 @@ describe("runtime finalize terminal control", () => {
     );
   });
 
-  it("validates a resumed non-terminal tool only before its provider request", async () => {
+  it("validates a resumed tool before its effect and provider continuation", async () => {
     let validations = 0;
     await fixture(
       [{ text: "resumed" }],
@@ -1072,9 +1072,12 @@ describe("runtime finalize terminal control", () => {
         assert(text.includes('"type":"message-finish"'), text);
         assertEquals(dispatched, [markerCall.name]);
         assertEquals(model.callCount, 1);
-        assertEquals(validations, 1);
+        assertEquals(validations, 2);
       },
-      () => ({ content: [{ type: "text", text: "marked" }] }),
+      () => {
+        assertEquals(validations, 1, "admission must complete before the resumed effect");
+        return { content: [{ type: "text", text: "marked" }] };
+      },
       undefined,
       [async (context, next) => {
         registerTurnProviderRequestValidator(context, async () => {

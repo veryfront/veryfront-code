@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { createFrameworkSpecifierResolver, resolveReactSpecifier } from "./specifier-resolver.ts";
 
@@ -28,6 +29,13 @@ describe("ssr-vf-modules/specifier-resolver", () => {
       reactVersion: "19.2.4",
     });
 
+    if (getLocalReactPath("react", "19.2.4")) {
+      for (const specifier of ["react", "react-dom/client", "react/jsx-runtime"]) {
+        assertEquals(resolveSpecifier(specifier), getLocalReactPath(specifier, "19.2.4"));
+      }
+      assertEquals(resolveSpecifier("lodash"), null);
+      return;
+    }
     assertStringIncludes(
       resolveSpecifier("react") ?? "",
       "https://esm.sh/react@19.2.4?",
@@ -51,6 +59,16 @@ describe("ssr-vf-modules/specifier-resolver", () => {
   });
 
   it("resolves React specifiers through the shared React import map fallback", () => {
+    if (getLocalReactPath("react", "19.2.4")) {
+      for (const specifier of ["react", "react-dom/client", "react/jsx-runtime"]) {
+        assertEquals(
+          resolveReactSpecifier(specifier, "19.2.4"),
+          getLocalReactPath(specifier, "19.2.4"),
+        );
+      }
+      assertEquals(resolveReactSpecifier("lodash", "19.2.4"), null);
+      return;
+    }
     assertEquals(resolveReactSpecifier("react", "19.2.4"), buildReactUrl("react", "19.2.4"));
     assertEquals(
       resolveReactSpecifier("react-dom/client", "19.2.4"),

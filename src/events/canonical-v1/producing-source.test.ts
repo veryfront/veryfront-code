@@ -119,6 +119,8 @@ describe("canonical-v1 physical-store producing sources", () => {
         "https://events.test.invalid/store-unit\\runs/run_test",
         "https://events.test.invalid/store%2Funit/runs/run_test",
         "https://events.test.invalid/store%ZZ/runs/run_test",
+        "https://events.test.invalid/%73tore/runs/run_test",
+        "https://events.test.invalid/store%2dunit/runs/run_test",
       ]
     ) {
       await assertRejects(() => parseRunReadMemberV1(durable(source)), TypeError);

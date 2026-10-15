@@ -1,3 +1,9 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /****
  * Module Loader
  *
@@ -344,6 +350,16 @@ async function transformModuleWithDepsUnmemoized(
   // cache-hit branch therefore replays what the first resolution found.
   unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
+  const captured = config.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  config = {
+    ...config,
+    reactPeers: config.reactPeers ?? captured!.peers,
+    runtimeScope: captured
+      ? (config.runtimeScope === undefined
+        ? await captured.scope
+        : `${config.runtimeScope}\0${await captured.scope}`)
+      : config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
+  };
   const ownsCycleManifest = cycleManifest === undefined;
   let sourceGraph = cycleManifest ? sourceGraphByCycleManifest.get(cycleManifest) : undefined;
   let recoveryNonce: string | undefined;
@@ -359,6 +375,7 @@ async function transformModuleWithDepsUnmemoized(
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
     config.serverExternalPackages,
+    config.runtimeScope,
   );
 
   const cachedPath = await resolveCachedModulePath({
@@ -373,6 +390,7 @@ async function transformModuleWithDepsUnmemoized(
     moduleServerOrigin: config.moduleServerOrigin,
     serverExternalPackages: config.serverExternalPackages,
     dev: config.mode === "development",
+    runtimeScope: config.runtimeScope,
   });
   if (cachedPath) {
     const cycleManifestState = await inspectCycleManifestCache(
@@ -566,6 +584,8 @@ async function transformModuleWithDepsUnmemoized(
   const useCycleArtifact = cycleBound;
   const effectiveProjectId = projectId ?? projectDir;
   let { code: transformedCode } = await transformModuleCodeWithCache({
+    runtimeScope: config.runtimeScope,
+    reactPeers: config.reactPeers,
     fileContent,
     filePath,
     projectDir,
@@ -577,6 +597,7 @@ async function transformModuleWithDepsUnmemoized(
     serverExternalPackages: config.serverExternalPackages,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     dependencyPinningDependencies: config.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: config.dependencyPinningConfiguredVersions,
     dependencyPinningSource: config.dependencyPinningSource,
     onProgress: config.onProgress,
     signal: config.signal,
@@ -610,6 +631,7 @@ async function transformModuleWithDepsUnmemoized(
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     serverExternalPackages: config.serverExternalPackages,
     dev: config.mode === "development",
+    runtimeScope: config.runtimeScope,
     unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
     cycleArtifactPath: useCycleArtifact ? cycleManifest.reserveArtifactPath(filePath) : undefined,
     deferCachePublication: (publication) => {
@@ -704,6 +726,9 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** React peer identity captured for one recursive transformation graph. */
+  runtimeScope?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */
@@ -712,6 +737,7 @@ export interface ModuleLoaderConfig {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Cooperative cancellation for one module-load stage. */
@@ -871,6 +897,16 @@ export async function loadModule(
     markModuleLoadProgress(config, "module:imported", filePath);
     return module;
   }
+  const captured = config.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  config = {
+    ...config,
+    reactPeers: config.reactPeers ?? captured!.peers,
+    runtimeScope: captured
+      ? (config.runtimeScope === undefined
+        ? await captured.scope
+        : `${config.runtimeScope}\0${await captured.scope}`)
+      : config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
+  };
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
   markModuleLoadProgress(config, "module:cache-ready", filePath);
@@ -954,6 +990,7 @@ export async function loadModule(
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
           config.serverExternalPackages,
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
@@ -969,6 +1006,7 @@ export async function loadModule(
           config.moduleServerOrigin,
           config.serverExternalPackages,
           config.mode === "development",
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(config.reactPeers),
         ),
       );
 

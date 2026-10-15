@@ -98,6 +98,7 @@ import type { RuntimeAdapter } from "#veryfront/platform";
 import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import {
   activeSpanLink,
+  markSpanCompleted,
   setActiveSpanErrorStatus,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -1197,6 +1198,7 @@ async function executeDiscoveredTaskRun(
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
   runChild?: ReturnType<typeof createTaskChildRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1236,6 +1238,8 @@ async function executeDiscoveredTaskRun(
       : signal,
     debug: ctx.debug,
   });
+
+  if (result.success && !signal.aborted && !control?.signal.aborted) onCompleted?.();
 
   return {
     success: result.success,
@@ -1909,6 +1913,7 @@ async function executeWorkflowRun(
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1953,6 +1958,7 @@ async function executeWorkflowRun(
         acknowledgePause,
         releaseStop,
         runAgentNode,
+        onCompleted,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1985,6 +1991,7 @@ async function runDiscoveredWorkflow(
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -2253,6 +2260,7 @@ async function runDiscoveredWorkflow(
     }
 
     if (run.status === "completed") {
+      onCompleted?.();
       return {
         success: true,
         result: run.output,
@@ -4884,6 +4892,8 @@ async function executeReleaseAssetBuildRun(input: {
             serverExternalPackages: releaseConfig.build?.serverExternalPackages,
             dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
             dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+            dependencyPinningConfiguredVersions: options.dependencyPinningSnapshot
+              ?.configuredVersions,
             dependencyPinningSource: options.dependencyPinningSource,
           })),
       loadConfig: () => {
@@ -4894,7 +4904,7 @@ async function executeReleaseAssetBuildRun(input: {
         beginReleaseAssetManifestBuild: (version) =>
           runWhileActive(
             input.signal,
-            () => apiClient.beginReleaseAssetManifestBuild(version, undefined, input.signal),
+            () => apiClient.startReleaseAssetManifestBuild(version, undefined, input.signal),
           ),
         listAllReleaseFiles: async (version) => {
           const files = await runWhileActive(
@@ -4915,7 +4925,7 @@ async function executeReleaseAssetBuildRun(input: {
           runWhileActive(
             input.signal,
             () =>
-              apiClient.uploadReleaseAsset(
+              apiClient.writeReleaseAsset(
                 version,
                 hash,
                 contentType,
@@ -4927,13 +4937,13 @@ async function executeReleaseAssetBuildRun(input: {
         putReleaseAssetManifest: (version, manifest) =>
           runWhileActive(
             input.signal,
-            () => apiClient.putReleaseAssetManifest(version, manifest, undefined, input.signal),
+            () => apiClient.writeReleaseAssetManifest(version, manifest, undefined, input.signal),
           ),
         reportReleaseAssetManifestState: (version, state, error) =>
           runWhileActive(
             input.signal,
             () =>
-              apiClient.reportReleaseAssetManifestState(
+              apiClient.updateReleaseAssetManifestState(
                 version,
                 state,
                 error,
@@ -5406,6 +5416,7 @@ async function executeProjectRun(
     operation: () => Promise<ProjectRunExecuteResponse>,
     signal: AbortSignal,
   ) => Promise<ProjectRunExecuteResponse>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(
@@ -5461,6 +5472,7 @@ async function executeProjectRun(
                       sleep: deps.sleep,
                     })(child);
                   },
+                  onCompleted,
                 );
             }
           };
@@ -5502,6 +5514,7 @@ async function executeProjectRun(
         }
         return await runAgentNode(invocation);
       },
+      onCompleted,
     );
   };
   try {
@@ -5742,7 +5755,11 @@ export class ProjectRunExecuteHandler extends BaseHandler {
 
         return await withSpan(
           "project_run.execute",
-          async () => {
+          async (span) => {
+            let completed = false;
+            const onCompleted = () => {
+              completed = true;
+            };
             let executionOwned = false;
             try {
               const execute = async () => {
@@ -5774,6 +5791,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                       });
                     }
                     : undefined,
+                  onCompleted,
                 );
               };
               const limited = enforceRunOutputLimit(
@@ -5786,6 +5804,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
               );
               const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
+              else if (completed && !executionSignal.aborted) markSpanCompleted(span);
               return this.respond(
                 builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
               );

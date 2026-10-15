@@ -21,6 +21,8 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  isVeryfrontCloudCatalogLoadedForScope,
+  readServedVeryfrontCloudCatalogModel,
   registerVeryfrontCloudModelFacts,
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -66,6 +68,10 @@ function wrapVeryfrontCloudModel(
   const wrapped = ObjectCreate(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
+    runtimeCapabilities: {
+      enumerable: true,
+      get: () => ({ ...model.runtimeCapabilities, streamRequiresFinish: true }),
+    },
   });
 
   ObjectDefineProperties(wrapped, {
@@ -262,6 +268,9 @@ function createVeryfrontCloudModelInternal(
   const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
   const catalogScopeKey = veryfrontCloudCatalogScopeKey(catalogScope);
 
+  // The served limit last read from a loaded catalog. An evicted scope reads
+  // no catalog, so it keeps this value rather than dropping the limit.
+  let servedLimit: VeryfrontCloudModelFacts["servedLimit"];
   // The catalog facts a build reads, from this model's own credentials and
   // project. A model built before the catalog loaded is rebuilt at its first
   // async step when these differ.
@@ -280,6 +289,12 @@ function createVeryfrontCloudModelInternal(
         catalogModelId,
       );
       const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      if (isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey)) {
+        servedLimit = readServedVeryfrontCloudCatalogModel(catalogScopeKey, catalogModelId)?.limit;
+      }
+      // The registry-backed compatible builder reads its own option bucket.
+      const usesCompatibleRegistryBuilder = routing.surface === "openai" &&
+        routing.native !== true && !useFirstPartyTransport && registry?.get("openai") !== undefined;
       return Object.freeze({
         catalogScopeKey,
         provider,
@@ -293,6 +308,10 @@ function createVeryfrontCloudModelInternal(
         ...(openAIChatPreserveSystemMessages === undefined
           ? {}
           : { openAIChatPreserveSystemMessages }),
+        ...(usesCompatibleRegistryBuilder
+          ? { openAIChatProviderName: "openai-compatible" as const }
+          : {}),
+        ...(servedLimit === undefined ? {} : { servedLimit }),
       });
     });
   }
@@ -306,6 +325,7 @@ function createVeryfrontCloudModelInternal(
       String(value.openAITransport),
       String(value.openAIChatReasoningWithFunctionTools),
       String(value.openAIChatPreserveSystemMessages),
+      String(value.openAIChatProviderName),
     ].join("\n");
 
   const build = (): ModelRuntime =>
@@ -433,6 +453,10 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
     const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
       `${provider}/${upstreamModelId}`,
     );
+    // The Chat-only wire still rejects reasoning beside function tools for the
+    // models the catalog (or the native OpenAI pattern) marks that way.
+    const openAIChatReasoningWithFunctionTools =
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`${provider}/${upstreamModelId}`);
     const chatCompletionsOnlyReason =
       `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
       "which carries no hosted tools. Use a provider that implements the OpenAI surface " +
@@ -445,6 +469,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           baseURL,
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -461,6 +486,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           providerName: "openai-compatible",
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -473,6 +499,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
         baseURL,
         openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
         openAIChatPreserveSystemMessages,
+        openAIChatReasoningWithFunctionTools,
         openAITransport: "chat-completions",
         fetch,
       }),

@@ -19,9 +19,10 @@ have.
 ## Install the framework
 
 ```bash
-npm install veryfront
+npm install veryfront react@19.2.4 react-dom@19.2.4
 ```
 
+React and React DOM are required peers; install the matching pair shown above.
 The package ships the framework and the `veryfront` CLI, so you can run
 commands with `npx veryfront <command>` without a global install. See
 [Installation](./installation.md) for pnpm, yarn, bun, Deno, and global-CLI

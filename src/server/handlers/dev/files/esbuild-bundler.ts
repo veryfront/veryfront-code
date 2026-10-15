@@ -21,6 +21,7 @@ export function bundleDevFile(
     moduleServerOrigin,
     dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
     dependencyPinningDependencies: dependencySnapshot?.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot?.configuredVersions,
     dependencyPinningSource,
   });
 }

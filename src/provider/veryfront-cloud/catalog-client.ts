@@ -66,6 +66,8 @@ export interface VeryfrontCloudCatalogModel {
   readonly transport?: string;
   /** Thinking budget to send when the caller sets none. */
   readonly reasoningBudgetTokens?: number;
+  /** Served deployment token ceilings. Absent fields mean the catalog has no verified limit. */
+  readonly limit?: Readonly<{ context?: number; output?: number }>;
   /** Whether `chat-completions` accepts reasoning together with function tools. */
   readonly chatCompletionsReasoningWithFunctionTools?: boolean;
   /** Whether `chat-completions` accepts adjacent system messages separately. */
@@ -148,6 +150,17 @@ function optionalPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+function servedLimit(value: unknown): VeryfrontCloudCatalogModel["limit"] {
+  if (!isRecord(value)) return undefined;
+  const context = optionalPositiveInteger(value.context);
+  const output = optionalPositiveInteger(value.output);
+  if (context === undefined && output === undefined) return undefined;
+  return Object.freeze({
+    ...(context === undefined ? {} : { context }),
+    ...(output === undefined ? {} : { output }),
+  });
+}
+
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
@@ -176,6 +189,7 @@ function parseModel(value: unknown): VeryfrontCloudCatalogModel | undefined {
     reasoningMode: optionalString(capabilities.reasoning_mode),
     transport: optionalString(capabilities.transport),
     reasoningBudgetTokens: optionalPositiveInteger(capabilities.reasoning_budget_tokens),
+    limit: servedLimit(capabilities.limit),
     chatCompletionsReasoningWithFunctionTools: optionalBoolean(
       capabilities.chat_completions_reasoning_with_function_tools,
     ),
@@ -536,6 +550,7 @@ export function rememberReceivedVeryfrontCloudCatalog(
           ...(model.supportedProviderTools
             ? { supportedProviderTools: Object.freeze([...model.supportedProviderTools]) }
             : {}),
+          ...(model.limit ? { limit: Object.freeze({ ...model.limit }) } : {}),
         })
       )),
     }),

@@ -437,6 +437,7 @@ describe("LayoutApplicator helpers", () => {
   });
 
   it("loads a hosted-preview App component with the preview environment", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
     const appPath = "/project/components/app.tsx";
     const adapter = {
       fs: {
@@ -601,6 +602,7 @@ describe("LayoutApplicator helpers", () => {
   });
 
   it("preserves reserved component compilation failures as private causes", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
     const failure = new Error("reserved component compilation failed");
     const applicator = new LayoutApplicator(
       {

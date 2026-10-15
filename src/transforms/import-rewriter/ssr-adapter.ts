@@ -1,8 +1,13 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { BUNDLE_ERROR } from "#veryfront/errors";
 import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
-import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import {
+  getLocalReactPath,
+  type LocalReactPeerSnapshot,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { assertContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
@@ -95,6 +100,8 @@ export function resolveSSRImportTargetModulePathCompat(
 }
 
 export interface SSRRewriteOptions {
+  /** Captured physical peers shared with this graph cache identity. */
+  reactPeers?: LocalReactPeerSnapshot;
   /** Project slug for multi-project routing */
   projectSlug?: string | null;
   /** Branch name for branch-aware routing */
@@ -119,6 +126,7 @@ export interface SSRRewriteOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable dependency map captured with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Collect unresolved dependency observations for cache replay. */
@@ -138,6 +146,7 @@ export function replaySSRDependencyResolutionObservations(
       projectId: options.projectId,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       dependencyPinningSource: options.dependencyPinningSource,
       onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     });
@@ -157,19 +166,17 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   return false;
 }
 
-function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  // For Bun: Use local React paths from veryfront's node_modules.
-  // Bun handles CJS/ESM interop correctly with file:// URLs.
-  if (!isDeno && !isNode) {
-    const localPath = getLocalReactPaths()[specifier];
-    if (localPath) return localPath;
-    // If not found in local paths, fall through to esm.sh for subpath imports
-  }
+function resolveReactForRuntime(
+  specifier: string,
+  version?: string,
+  peers?: LocalReactPeerSnapshot,
+): string | null {
+  const localPath = getLocalReactPath(specifier, version, peers);
+  if (localPath) return localPath;
 
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
-  // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
-  // The cached bundles are ESM-compatible and can be imported via file:// URLs.
-  const v = version ?? DEFAULT_REACT_VERSION;
+  const v = version ?? peers?.versions.react ?? resolveInstalledReactRange() ??
+    DEFAULT_REACT_VERSION;
   const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
 
@@ -196,6 +203,7 @@ function resolveBareImportPin(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): string | undefined {
   const parsed = parseBarePackageSpecifier(bareSpecifier);
   if (!parsed || parsed.version) return undefined; // already versioned inline
@@ -205,6 +213,7 @@ function resolveBareImportPin(
     projectId,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     onDependencyResolutionObserved,
   });
@@ -220,6 +229,7 @@ function observeSpecialImportDependency(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): void {
   const parsed = parseBarePackageSpecifier(bareSpecifier);
   if (
@@ -238,6 +248,7 @@ function observeSpecialImportDependency(
     projectId,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     onDependencyResolutionObserved,
   });
@@ -253,6 +264,7 @@ function observeSpecialImportDependencies(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): void {
   const patterns = [
     /\bfrom\s*["']([^"']+)["']/g,
@@ -272,6 +284,7 @@ function observeSpecialImportDependencies(
         dependencyPinningDependencies,
         dependencyPinningSource,
         onDependencyResolutionObserved,
+        dependencyPinningConfiguredVersions,
       );
     }
   }
@@ -289,8 +302,11 @@ function rewriteBareImports(
     observation: DependencyResolutionObservation,
   ) => void,
   serverExternalPackages?: readonly string[],
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): string {
-  const v = version ?? DEFAULT_REACT_VERSION;
+  const v = version ?? reactPeers?.versions.react ?? resolveInstalledReactRange() ??
+    DEFAULT_REACT_VERSION;
 
   observeSpecialImportDependencies(
     code,
@@ -300,6 +316,7 @@ function rewriteBareImports(
     dependencyPinningDependencies,
     dependencyPinningSource,
     onDependencyResolutionObserved,
+    dependencyPinningConfiguredVersions,
   );
 
   return code.replace(/from\s*["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
@@ -314,7 +331,7 @@ function rewriteBareImports(
       return `from "${runtimeSpecifier}"`;
     }
 
-    const reactUrl = resolveReactForRuntime(bareSpecifier, v);
+    const reactUrl = resolveReactForRuntime(bareSpecifier, v, reactPeers);
     if (reactUrl) return `from "${reactUrl}"`;
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
@@ -327,6 +344,7 @@ function rewriteBareImports(
       dependencyPinningDependencies,
       dependencyPinningSource,
       onDependencyResolutionObserved,
+      dependencyPinningConfiguredVersions,
     );
     if (pinVersion) {
       const parsed = parseBarePackageSpecifier(bareSpecifier);
@@ -536,6 +554,8 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
+    options.dependencyPinningConfiguredVersions,
+    options.reactPeers,
   );
   result = rewriteInternalModuleImportsSync(result, options);
   return result;
@@ -583,6 +603,8 @@ export async function rewriteSSRImportsCompatAsync(
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
+    options.dependencyPinningConfiguredVersions,
+    options.reactPeers,
   );
   result = await rewriteInternalModuleImportsAsync(result, options);
   return result;

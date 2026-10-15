@@ -355,7 +355,7 @@ describe(
           getSourceSnapshotVersion: () => number;
         }
       ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
-      const resolvedConfigBase = `${Deno.cwd()}/tools/config`;
+      const resolvedConfigBase = "tools/config";
 
       await ctx.adapter.fs.writeFile(
         "tools/resolution.ts",

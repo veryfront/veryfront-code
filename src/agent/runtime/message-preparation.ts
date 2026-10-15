@@ -21,6 +21,7 @@ const DEFAULT_EMPTY_CONVERSATION_PROMPT =
 
 /** Options accepted by prepare agent runtime messages from UI messages. */
 export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
+  trustedToolReplayMessageIds?: readonly string[];
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
@@ -77,6 +78,7 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
 
   return convertProviderMessagesToAgentRuntimeMessages(
     prepareProviderModelMessagesFromUiMessages(messagesWithFileContent, {
+      trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
       providerOwnedToolNames: options.providerOwnedToolNames,
       preserveProviderOwnedToolSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
       historicalToolInputRetention: options.historicalToolInputRetention,

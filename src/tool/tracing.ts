@@ -1,5 +1,6 @@
 import type { HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext } from "./types.ts";
+import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 
 /** Public API contract for host tool trace runner. */
@@ -55,21 +56,24 @@ export function traceHostTools<
     }
 
     const originalExecute = definition.execute;
-    traced[toolName] = inheritTrustedHostToolProvenance(definition, {
-      ...definition,
-      execute: (input: unknown, context: ToolExecutionContext | undefined) =>
-        options.trace(getSpanName(toolName), () => {
-          const attributes = options.buildAttributes?.({
-            toolName,
-            toolCallId: getToolCallId(context),
-            context,
-          });
-          if (attributes) {
-            options.setAttributes?.(attributes);
-          }
-          return originalExecute(input, context);
-        }),
-    });
+    traced[toolName] = inheritTrustedHostToolProvenance(
+      definition,
+      inheritFrameworkSkillLoader(definition, {
+        ...definition,
+        execute: (input: unknown, context: ToolExecutionContext | undefined) =>
+          options.trace(getSpanName(toolName), () => {
+            const attributes = options.buildAttributes?.({
+              toolName,
+              toolCallId: getToolCallId(context),
+              context,
+            });
+            if (attributes) {
+              options.setAttributes?.(attributes);
+            }
+            return originalExecute(input, context);
+          }),
+      }),
+    );
   }
 
   return traced;

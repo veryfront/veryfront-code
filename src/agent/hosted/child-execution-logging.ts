@@ -65,6 +65,25 @@ export function buildHostedChildExhaustedStepBudgetLog(input: {
   };
 }
 
+/** Builds the log entry for a child run that produced no text and no tool results. */
+export function buildHostedChildEmptyResultLog(input: {
+  description: string;
+  kind: string;
+  stepCount: number;
+  toolCallsLength: number;
+}): HostedChildExecutionLogEntry {
+  return {
+    level: "warn",
+    message: "Child fork completed without a result",
+    context: {
+      description: input.description,
+      kind: input.kind,
+      stepCount: input.stepCount,
+      toolCalls: input.toolCallsLength,
+    },
+  };
+}
+
 /** Builds hosted child completed log. */
 export function buildHostedChildCompletedLog(input: {
   description: string;

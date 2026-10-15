@@ -116,6 +116,22 @@ not additional mandatory quality gates.
   workflow.
 - Issue and pull request metrics inform maintenance and process improvements.
 
+CodeQL can analyze on the public pool with a read-only token while its existing
+hosted `Analyze` check uploads the SARIF results. The pool workflow is pinned to
+`main`; results are transferred only within the same workflow run, using the
+artifact identity from the successful producer attempt even when only the
+upload job is retried.
+Failed analysis, missing artifacts and failed uploads fail the check, subject
+to the existing exception for a provably obsolete merge-queue ref.
+
+Keep `CI_CODEQL_PUBLIC` unset until the workflow change has merged. With
+`CI_RUNNER_PUBLIC=veryfront-public`, run a main-only canary using
+`gh workflow run codeql.yml --ref main -f public_pool=true`. Confirm the scan
+uses the public runner and the hosted upload succeeds, then enable the route
+with `gh variable set CI_CODEQL_PUBLIC --body enabled`. Removing that variable
+restores hosted analysis. Fork and Dependabot runner restrictions remain in
+place, and other pool jobs retain their existing routing.
+
 ## Observed baseline and estimated savings
 
 The successful baseline pull request run

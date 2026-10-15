@@ -33,6 +33,7 @@ import type {
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
+import { createProviderToolResultOutput, isProviderChildToolResult } from "./message-adapter.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 import {
@@ -200,14 +201,18 @@ function getTextGenerationToolResultPart(
     ? part.output
     : null;
 
+  const toolName = getStringPartField(part, "toolName") ??
+    getStringPartField(part, "tool_name") ??
+    toolNamesById.get(toolCallId) ??
+    "unknown";
+
   return {
     type: "tool-result",
     toolCallId,
-    toolName: getStringPartField(part, "toolName") ??
-      getStringPartField(part, "tool_name") ??
-      toolNamesById.get(toolCallId) ??
-      "unknown",
-    output: { type: "json", value },
+    toolName,
+    output: isProviderChildToolResult({ toolCallId, toolName, output: value }, part)
+      ? createProviderToolResultOutput({ toolCallId, toolName, output: value }, part)
+      : { type: "json", value },
   };
 }
 

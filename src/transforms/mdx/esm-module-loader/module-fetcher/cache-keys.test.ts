@@ -1,3 +1,6 @@
+import { getModuleFetcherReactRuntimeIdentity } from "./react-runtime-identity.ts";
+import { getModuleFetcherReactRuntimeScope } from "./index.ts";
+import type { ModuleFetcherContext } from "../types.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -8,7 +11,51 @@ import {
 } from "./cache-keys.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 
+it("captures one runtime scope for concurrent fetches and refreshes a new request context", async () => {
+  let reads = 0;
+  const read = () => Promise.resolve(`scope-${++reads}`);
+  const context = {} as ModuleFetcherContext;
+  const scopes = await Promise.all(
+    Array.from({ length: 20 }, () => getModuleFetcherReactRuntimeScope(context, read)),
+  );
+  assertEquals(new Set(scopes), new Set(["scope-1"]));
+  assertEquals(reads, 1);
+  assertEquals(
+    await getModuleFetcherReactRuntimeScope({} as ModuleFetcherContext, read),
+    "scope-2",
+  );
+});
+
 describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
+  it("separates both transform and path caches by runtime and peer scope", () => {
+    const transformKey = (scope: string) =>
+      getTransformCacheKey(
+        "p",
+        "release",
+        "19.2.4",
+        "module.ts",
+        "hash",
+        undefined,
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+    const pathKey = (scope: string) =>
+      getVersionedPathCacheKey(
+        "module.ts",
+        "19.2.4",
+        undefined,
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+    assertEquals(transformKey("node:peers-a") === transformKey("deno:peers-a"), false);
+    assertEquals(pathKey("node:peers-a") === pathKey("deno:peers-a"), false);
+    assertEquals(transformKey("node:peers-a") === transformKey("node:peers-b"), false);
+    assertEquals(pathKey("node:peers-a") === pathKey("node:peers-b"), false);
+  });
   describe("getTransformCacheKey", () => {
     it("includes cache namespace, projectId, content source, react version, path, hash, and ssr suffix", () => {
       const key = getTransformCacheKey("proj1", "preview-main", "19.1.1", "lib/utils.ts", "abc123");
@@ -337,4 +384,32 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys compile mod
       variant?.slice(0, -":on:compile-dev".length),
     );
   });
+});
+
+it("module fetch graph captures one effective peer version with its scope", async () => {
+  const context = {} as ModuleFetcherContext;
+  let captures = 0;
+  let version = "19.2.4";
+  const capture = () => {
+    captures++;
+    const snapshot = version;
+    return {
+      reactVersion: snapshot,
+      scope: Promise.resolve(`scope:${snapshot}`),
+      peers: { roots: {}, paths: {}, versions: { react: snapshot, "react-dom": snapshot } },
+    };
+  };
+  const first = getModuleFetcherReactRuntimeIdentity(context, capture);
+  version = "19.2.5";
+  for (let index = 0; index < 20; index++) {
+    const identity = getModuleFetcherReactRuntimeIdentity(context, capture);
+    assertEquals(identity.reactVersion, "19.2.4");
+    assertEquals(await identity.scope, "scope:19.2.4");
+  }
+  assertEquals(captures, 1);
+  assertEquals(context.reactVersion, first.reactVersion);
+  const next = getModuleFetcherReactRuntimeIdentity({} as ModuleFetcherContext, capture);
+  assertEquals(next.reactVersion, "19.2.5");
+  assertEquals(await next.scope, "scope:19.2.5");
+  assertEquals(captures, 2);
 });
