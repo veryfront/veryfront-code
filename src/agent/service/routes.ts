@@ -54,6 +54,12 @@ import {
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
 import { buildResponseInit } from "./response-init.ts";
+import {
+  getServiceRuntimeIdentity,
+  RUNTIME_ID_HEADER,
+  RUNTIME_MODE_HEADER,
+  RUNTIME_NAME_HEADER,
+} from "./runtime-identity.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
@@ -335,6 +341,7 @@ function createAgUiSetupErrorResponse(input: {
 export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
+  const runtimeIdentity = getServiceRuntimeIdentity();
   const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
@@ -475,30 +482,27 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     });
   }
 
-  /** Names the replica that accepted a run start; leaves any other response unchanged. */
+  /** Names the service process that accepted work, even without a direct owner URL. */
   async function withRuntimeOwner(response: Response, request: Request): Promise<Response> {
     if (response.status !== 202) {
       return response;
     }
+    const headers = new NativeHeaders(response.headers);
+    headers.set(RUNTIME_ID_HEADER, runtimeIdentity.id);
+    headers.set(RUNTIME_NAME_HEADER, encodeURIComponent(runtimeIdentity.name));
+    headers.set(RUNTIME_MODE_HEADER, runtimeIdentity.mode);
     const resolve = options.resolveRuntimeOwnerInvokeUrl ?? resolveDefaultRuntimeOwnerInvokeUrl;
-    let ownerInvokeUrl: string | null = null;
     try {
-      ownerInvokeUrl = await resolve(request);
+      const ownerInvokeUrl = await resolve(request);
+      if (ownerInvokeUrl) {
+        headers.set(RUNTIME_OWNER_INVOKE_URL_HEADER, ownerInvokeUrl);
+      }
     } catch {
-      // The run is accepted either way; without an address, run control keeps
-      // reaching it through the load-balanced service address.
-      return response;
+      // Direct run control remains optional; the accepting process is still known.
     }
-    if (!ownerInvokeUrl) {
-      return response;
-    }
-    const headers = new Headers(response.headers);
-    headers.set(RUNTIME_OWNER_INVOKE_URL_HEADER, ownerInvokeUrl);
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    const init = buildResponseInit(NativeObjectPrototype, response.status, response.statusText);
+    init.headers = headers;
+    return new NativeResponse(response.body, init);
   }
 
   async function handleRuntimeAgentRunInvocationExecuteRequest(input: {
@@ -542,11 +546,12 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           applicationRequestSource,
         );
 
-        return executeParsedDurableChatRun({
+        const response = await executeParsedDurableChatRun({
           req,
           request: applicationRequest,
           requestOrCtx: input.requestOrCtx,
         });
+        return await withRuntimeOwner(response, input.request);
       } finally {
         // Release the retained branch on every exit; a read branch is already closed.
         cancelUnusedRequestBody(applicationRequestSource);
