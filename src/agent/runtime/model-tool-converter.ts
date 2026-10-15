@@ -25,6 +25,7 @@ import {
 } from "./provider-native-tools.ts";
 import {
   createMoonshotSchemaExpansionBudget,
+  createRootSchemaExpansionBudget,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleTools,
@@ -133,6 +134,7 @@ export function convertToolsToRuntimeTools(
   // but a source advertising hundreds of admissible schemas would otherwise multiply
   // the worst-case `$ref` expansion by the tool count.
   const moonshotExpansionBudget = createMoonshotSchemaExpansionBudget();
+  const rootExpansionBudget = createRootSchemaExpansionBudget();
 
   for (let index = 0; index < compatibleTools.length; index++) {
     const def = compatibleTools[index];
@@ -150,6 +152,7 @@ export function convertToolsToRuntimeTools(
             model: options?.toolSchemaModel ?? options?.model,
             wireSurface: options?.wireSurface,
             moonshotExpansionBudget,
+            rootExpansionBudget,
           }),
         ),
       }),

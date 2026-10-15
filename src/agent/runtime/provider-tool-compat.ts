@@ -1,3 +1,4 @@
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import {
   resolveVeryfrontCloudModelSurface,
   type VeryfrontCloudSurfaceId,
@@ -623,7 +624,7 @@ function sanitizeMoonshotSchemaValue(
   return sanitized;
 }
 
-type AnthropicCompositionKeyword = "allOf" | "anyOf";
+type ObjectCompositionKeyword = "allOf" | "anyOf";
 
 function getSchemaRequiredNames(schema: Record<string, unknown>): string[] {
   return Array.isArray(schema.required)
@@ -633,7 +634,7 @@ function getSchemaRequiredNames(schema: Record<string, unknown>): string[] {
 
 function getMergedRequiredNames(
   schemas: readonly Record<string, unknown>[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): string[] {
   if (schemas.length === 0) return [];
   const requiredBySchema = schemas.map(getSchemaRequiredNames);
@@ -641,27 +642,43 @@ function getMergedRequiredNames(
     return [...new Set(requiredBySchema.flat())];
   }
 
-  return requiredBySchema[0]?.filter((name) =>
-    requiredBySchema.slice(1).every((required) => required.includes(name))
-  ) ?? [];
+  const rest = requiredBySchema.slice(1).map((required) => new Set(required));
+  return requiredBySchema[0]?.filter((name) => rest.every((required) => required.has(name))) ??
+    [];
 }
 
 function getMergedPropertySchema(
   schemas: readonly unknown[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): unknown {
-  if (schemas.length === 1) return schemas[0];
-  const [first, ...rest] = schemas;
-  const serializedFirst = privateJsonStringify(first);
-  if (rest.every((schema) => privateJsonStringify(schema) === serializedFirst)) {
-    return first;
-  }
-  return { [keyword]: schemas };
+  const seen = new Set<string>();
+  const distinct = schemas.filter((schema) => {
+    const serialized = privateJsonStringify(schema);
+    if (seen.has(serialized)) return false;
+    seen.add(serialized);
+    return true;
+  });
+  return distinct.length === 1 ? distinct[0] : { [keyword]: distinct };
 }
 
-function mergeAnthropicObjectSchemas(
+/** Merge definition maps with own data properties, so `__proto__` names survive. */
+function mergeDefinitionMaps(maps: readonly unknown[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const map of maps) {
+    if (!isPlainRecord(map)) continue;
+    for (const [name, schema] of Object.entries(map)) defineDataProperty(merged, name, schema);
+  }
+  return merged;
+}
+
+function admitsUndeclaredProperties(schema: Record<string, unknown>): boolean {
+  return schema.additionalProperties !== false ||
+    (isPlainRecord(schema.patternProperties) && Object.keys(schema.patternProperties).length > 0);
+}
+
+function mergeObjectSchemas(
   schemas: readonly Record<string, unknown>[],
-  keyword: AnthropicCompositionKeyword,
+  keyword: ObjectCompositionKeyword,
 ): Record<string, unknown> {
   const mergedProperties = new Map<string, unknown[]>();
   for (const schema of schemas) {
@@ -670,6 +687,23 @@ function mergeAnthropicObjectSchemas(
       const variants = mergedProperties.get(name) ?? [];
       variants.push(propertySchema);
       mergedProperties.set(name, variants);
+    }
+  }
+
+  if (keyword === "anyOf") {
+    // An alternative that omits a property can still admit it (through
+    // `additionalProperties` or a pattern), so the folded property is left
+    // unconstrained. Counting keeps this linear in the number of declarations.
+    const admitted = schemas.filter(admitsUndeclaredProperties);
+    const admittedDeclarations = new Map<string, number>();
+    for (const schema of admitted) {
+      if (!isPlainRecord(schema.properties)) continue;
+      for (const name of Object.keys(schema.properties)) {
+        admittedDeclarations.set(name, (admittedDeclarations.get(name) ?? 0) + 1);
+      }
+    }
+    for (const name of mergedProperties.keys()) {
+      if ((admittedDeclarations.get(name) ?? 0) < admitted.length) mergedProperties.set(name, [{}]);
     }
   }
 
@@ -684,14 +718,8 @@ function mergeAnthropicObjectSchemas(
       schemas.every((schema) => schema.additionalProperties === false)
     ? false
     : undefined;
-  const defs = Object.assign(
-    {},
-    ...schemas.flatMap((schema) => isPlainRecord(schema.$defs) ? [schema.$defs] : []),
-  );
-  const definitions = Object.assign(
-    {},
-    ...schemas.flatMap((schema) => isPlainRecord(schema.definitions) ? [schema.definitions] : []),
-  );
+  const defs = mergeDefinitionMaps(schemas.map((schema) => schema.$defs));
+  const definitions = mergeDefinitionMaps(schemas.map((schema) => schema.definitions));
 
   return {
     type: "object",
@@ -703,11 +731,103 @@ function mergeAnthropicObjectSchemas(
   };
 }
 
-function sanitizeAnthropicSchemaRoot(
+/** Shared allowance for root composition normalization across one tool set. */
+export interface RootSchemaExpansionBudget {
+  remainingNodes: number;
+  remainingBytes: number;
+}
+
+/** Bound total root normalization work across one conversion pass. */
+export function createRootSchemaExpansionBudget(): RootSchemaExpansionBudget {
+  return { remainingNodes: 200_000, remainingBytes: 8 * 1024 * 1024 };
+}
+
+interface RootNormalizationBudget extends RootSchemaExpansionBudget {
+  shared: RootSchemaExpansionBudget;
+}
+
+function createRootNormalizationBudget(shared: RootSchemaExpansionBudget): RootNormalizationBudget {
+  return { remainingNodes: 20_000, remainingBytes: 512 * 1024, shared };
+}
+
+const MAX_ROOT_NORMALIZATION_DEPTH = 64;
+
+function rootNormalizationBudgetExceeded(): TypeError {
+  return new TypeError("Tool schema root normalization budget exceeded");
+}
+
+/**
+ * Charge a subtree that normalization introduced (a resolved reference copy or
+ * a retained source copy). The accepted input itself is never charged, so an
+ * unchanged schema cannot exhaust the per-schema or shared allowance.
+ */
+function chargeRootNormalizationGrowth(value: unknown, budget: RootNormalizationBudget): void {
+  const pending = [value];
+  while (pending.length) {
+    const current = pending.pop();
+    const bytes = estimateSerializedNodeBytes(current);
+    budget.remainingNodes--;
+    budget.remainingBytes -= bytes;
+    budget.shared.remainingNodes--;
+    budget.shared.remainingBytes -= bytes;
+    if (
+      budget.remainingNodes < 0 || budget.remainingBytes < 0 ||
+      budget.shared.remainingNodes < 0 || budget.shared.remainingBytes < 0
+    ) {
+      throw rootNormalizationBudgetExceeded();
+    }
+    if (current !== null && typeof current === "object") {
+      for (const key of Object.keys(current)) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || !("value" in descriptor)) {
+          throw new TypeError("Tool schema root normalization requires data properties");
+        }
+        pending.push(descriptor.value);
+      }
+    }
+  }
+}
+
+type RootComposition<T> = readonly [readonly T[], ObjectCompositionKeyword];
+
+function getRootCompositions(
+  allOf: unknown,
+  anyOf: unknown,
+  oneOf: unknown,
+): RootComposition<unknown>[] {
+  return ([[allOf, "allOf"], [anyOf, "anyOf"], [oneOf, "anyOf"]] as const).flatMap((
+    [branches, keyword],
+  ) => Array.isArray(branches) && branches.length > 0 ? [[branches, keyword] as const] : []);
+}
+
+function foldObjectCompositions(
+  root: Record<string, unknown>,
+  compositions: readonly RootComposition<Record<string, unknown>>[],
+): Record<string, unknown> {
+  let sanitized: Record<string, unknown> = { ...root, type: "object" };
+  for (const [branches, keyword] of compositions) {
+    const composed = mergeObjectSchemas(branches, keyword);
+    sanitized = { ...sanitized, ...mergeObjectSchemas([sanitized, composed], "allOf") };
+  }
+  return sanitized;
+}
+
+function normalizeObjectSchemaRoot(
   schema: unknown,
   rootSchema: unknown = schema,
   seenRefs: ReadonlySet<string> = new Set(),
+  budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
+  depth = 0,
 ): Record<string, unknown> {
+  if (depth > MAX_ROOT_NORMALIZATION_DEPTH) throw rootNormalizationBudgetExceeded();
+  if (depth === 0 && isPlainRecord(schema)) {
+    // Admit the input once under the same bounded contract as public raw schemas.
+    // The smaller normalization allowance applies only to introduced material.
+    const accepted = snapshotJsonSchemaObject(schema);
+    if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
+    if (rootSchema === schema) rootSchema = accepted;
+    schema = accepted;
+  }
   if (!isPlainRecord(schema)) {
     return createPermissiveToolInputSchema();
   }
@@ -718,11 +838,26 @@ function sanitizeAnthropicSchemaRoot(
       const nextSeenRefs = new Set(seenRefs);
       nextSeenRefs.add(schema.$ref);
       const { $ref: _ref, ...siblings } = schema;
-      return sanitizeAnthropicSchemaRoot(
-        { ...resolved, ...siblings },
+      const target = normalizeObjectSchemaRoot(
+        resolved,
         rootSchema,
         nextSeenRefs,
+        budget,
+        depth + 1,
       );
+      chargeRootNormalizationGrowth(target, budget);
+      const siblingRoot = normalizeObjectSchemaRoot(
+        siblings,
+        rootSchema,
+        seenRefs,
+        budget,
+        depth + 1,
+      );
+      return {
+        ...target,
+        ...siblingRoot,
+        ...mergeObjectSchemas([target, siblingRoot], "allOf"),
+      };
     }
   }
 
@@ -732,27 +867,213 @@ function sanitizeAnthropicSchemaRoot(
     oneOf: rawOneOf,
     ...root
   } = schema;
-  let sanitized: Record<string, unknown> = { ...root, type: "object" };
+  const sanitized = foldObjectCompositions(
+    root,
+    getRootCompositions(rawAllOf, rawAnyOf, rawOneOf).map(([branches, keyword]) => [
+      branches.map((branch) =>
+        normalizeObjectSchemaRoot(branch, rootSchema, seenRefs, budget, depth + 1)
+      ),
+      keyword,
+    ]),
+  );
 
-  for (
-    const [rawBranches, keyword] of [
-      [rawAllOf, "allOf"],
-      [rawAnyOf, "anyOf"],
-      [rawOneOf, "anyOf"],
-    ] as const
-  ) {
-    if (!Array.isArray(rawBranches) || rawBranches.length === 0) continue;
-    const branches = rawBranches.map((branch) =>
-      sanitizeAnthropicSchemaRoot(branch, rootSchema, seenRefs)
-    );
-    const composed = mergeAnthropicObjectSchemas(branches, keyword);
-    sanitized = {
-      ...sanitized,
-      ...mergeAnthropicObjectSchemas([sanitized, composed], "allOf"),
-    };
+  // `#/$defs/<name>` resolves against the document root, never a branch, so a
+  // branch definition reusing a root name must not replace the root binding.
+  for (const key of ["$defs", "definitions"] as const) {
+    if (!isPlainRecord(root[key])) continue;
+    sanitized[key] = { ...(isPlainRecord(sanitized[key]) ? sanitized[key] : {}), ...root[key] };
   }
 
   return sanitized;
+}
+
+const OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS = ["allOf", "anyOf", "oneOf", "not", "enum"] as const;
+// Branch keywords that fold into one object schema without losing a value the
+// branch admits. Any other keyword sends the root to the permissive fallback.
+const SIMPLE_BRANCH_KEYWORDS = new Set([
+  "$comment",
+  "additionalProperties",
+  "description",
+  "properties",
+  "required",
+  "title",
+  "type",
+]);
+// Keywords whose values are instance data, not schemas, so `$ref` keys inside
+// them are literal object keys.
+const LITERAL_SCHEMA_KEYWORDS = new Set(["const", "default", "enum", "examples"]);
+// Keywords whose values map names to schemas, so their keys are never keywords.
+const SCHEMA_MAP_KEYWORDS = new Set([
+  "$defs",
+  "definitions",
+  "dependencies",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+]);
+
+function isSimpleObjectBranch(branch: unknown): branch is Record<string, unknown> {
+  return isPlainRecord(branch) &&
+    Object.keys(branch).every((key) => SIMPLE_BRANCH_KEYWORDS.has(key)) &&
+    (branch.type === undefined || branch.type === "object") &&
+    (branch.properties === undefined || isPlainRecord(branch.properties)) &&
+    (branch.required === undefined || Array.isArray(branch.required)) &&
+    (branch.additionalProperties === undefined ||
+      typeof branch.additionalProperties === "boolean");
+}
+
+// Folding leaves only root definitions where they were authored.
+const STABLE_ROOT_POINTER_TOKENS = new Set(["$defs", "definitions"]);
+
+/** Whether a `#/` pointer may resolve differently, or not at all, after folding. */
+function isUnstableRootPointer(ref: string): boolean {
+  // Classify the decoded pointer: percent-decode the URI fragment first, then
+  // unescape the first JSON Pointer token. A malformed fragment is unstable.
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(ref.slice(1));
+  } catch {
+    return true;
+  }
+  const token = pointer.slice(1).split("/")[0]!.replaceAll("~1", "/").replaceAll("~0", "~");
+  return !STABLE_ROOT_POINTER_TOKENS.has(token);
+}
+
+/** Whether any schema node (outside literal values) satisfies `test`. */
+function someSchemaNode(value: unknown, test: (node: Record<string, unknown>) => boolean): boolean {
+  if (Array.isArray(value)) return value.some((item) => someSchemaNode(item, test));
+  if (!isPlainRecord(value)) return false;
+  if (test(value)) return true;
+  return Object.entries(value).some(([key, item]) => {
+    if (LITERAL_SCHEMA_KEYWORDS.has(key)) return false;
+    if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainRecord(item)) {
+      return Object.values(item).some((schema) => someSchemaNode(schema, test));
+    }
+    return someSchemaNode(item, test);
+  });
+}
+
+/**
+ * A reference stays valid after folding only when it is the bare root or a
+ * plain local pointer into root definitions. Other pointers can target removed
+ * or rewritten root keywords, and anchor, absolute, relative, and dynamic
+ * references can target removed branches.
+ */
+function hasUnsafeReference(value: unknown): boolean {
+  return someSchemaNode(value, (node) =>
+    (typeof node.$ref === "string" && node.$ref !== "#" &&
+      (!node.$ref.startsWith("#/") || isUnstableRootPointer(node.$ref))) ||
+    Object.hasOwn(node, "$dynamicRef") || Object.hasOwn(node, "$recursiveRef"));
+}
+
+const RESOURCE_KEYWORDS = ["$anchor", "$dynamicAnchor", "$id", "$recursiveAnchor"] as const;
+
+/** Whether a schema declares an identifier or anchor that folding could move. */
+function hasResourceMarker(value: unknown): boolean {
+  return someSchemaNode(value, (node) => RESOURCE_KEYWORDS.some((key) => Object.hasOwn(node, key)));
+}
+
+function defineDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  // Define rather than assign, so a `__proto__` name stays an own property.
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * Build an open object root that admits every value the authored schema
+ * admits. Root constraints are kept when they are self-contained, and every
+ * property a branch names is admitted without constraint.
+ */
+function createPermissiveOpenAIRoot(
+  own: Record<string, unknown>,
+  branches: readonly unknown[],
+  keepOwnConstraints: boolean,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = keepOwnConstraints ? { ...own } : {};
+  if (!keepOwnConstraints) {
+    for (const key of ["$comment", "description", "title"]) {
+      if (Object.hasOwn(own, key)) defineDataProperty(base, key, own[key]);
+    }
+  }
+  const properties: Record<string, unknown> = {};
+  const declarations = [
+    own.properties,
+    ...branches.map((branch) => isPlainRecord(branch) ? branch.properties : undefined),
+  ];
+  for (const declared of declarations) {
+    if (!isPlainRecord(declared)) continue;
+    for (const name of Object.keys(declared)) {
+      if (!Object.hasOwn(properties, name)) defineDataProperty(properties, name, {});
+    }
+  }
+  if (keepOwnConstraints && isPlainRecord(own.properties)) {
+    for (const [name, schema] of Object.entries(own.properties)) {
+      defineDataProperty(properties, name, schema);
+    }
+  }
+  const required = getSchemaRequiredNames(own);
+  delete base.properties;
+  delete base.required;
+  return {
+    ...base,
+    type: "object",
+    ...(Object.keys(properties).length > 0 ? { properties } : {}),
+    ...(required.length > 0 ? { required } : {}),
+  };
+}
+
+/**
+ * OpenAI rejects function parameters whose root carries `oneOf`, `anyOf`,
+ * `allOf`, `not`, or `enum` (`invalid_function_parameters`). The replacement
+ * root must admit every value the authored schema admits; runtime validation
+ * still enforces the authored schema. Root compositions are folded only when
+ * every branch is a simple object shape, no identifier or anchor is declared,
+ * and every reference is the bare root or a plain local pointer into root
+ * definitions. Otherwise the root falls back to an open object that keeps the
+ * self-contained root constraints and admits every named property. Nested
+ * schemas are left as they are, and a schema without these root keywords is
+ * returned by identity.
+ */
+function sanitizeOpenAISchemaRoot(schema: JsonSchema): JsonSchema {
+  if (
+    !isPlainRecord(schema) ||
+    !OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS.some((key) => Object.hasOwn(schema, key))
+  ) {
+    return schema;
+  }
+  // Admit the complete schema under the bounded JSON contract before reading it.
+  const accepted = snapshotJsonSchemaObject(schema);
+  if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
+  // `unevaluatedProperties` sees annotations from the removed branches, so
+  // keeping it without them would reject properties the branches admit.
+  const {
+    allOf,
+    anyOf,
+    oneOf,
+    not: _not,
+    enum: _enum,
+    unevaluatedProperties: _unevaluated,
+    ...own
+  } = accepted;
+  const compositions = getRootCompositions(allOf, anyOf, oneOf);
+  const branches = compositions.flatMap(([items]) => items);
+  const keepOwnConstraints = !hasUnsafeReference(own);
+  const foldable = keepOwnConstraints &&
+    !hasResourceMarker(own) &&
+    branches.every((branch) =>
+      isSimpleObjectBranch(branch) && !hasUnsafeReference(branch) && !hasResourceMarker(branch)
+    );
+  if (!foldable) {
+    return createPermissiveOpenAIRoot(own, branches, keepOwnConstraints) as JsonSchema;
+  }
+  return foldObjectCompositions(
+    own,
+    compositions as readonly RootComposition<Record<string, unknown>>[],
+  ) as JsonSchema;
 }
 
 /**
@@ -784,6 +1105,8 @@ export interface SanitizeProviderToolSchemaOptions
    * is bounded for the collection, not merely per schema.
    */
   moonshotExpansionBudget?: MoonshotSchemaExpansionBudget;
+  /** Shared root composition allowance for the complete tool set. */
+  rootExpansionBudget?: RootSchemaExpansionBudget;
 }
 
 /** Zod schema for sanitize provider tool. */
@@ -792,6 +1115,10 @@ export function sanitizeProviderToolSchema(
   options: SanitizeProviderToolSchemaOptions = {},
 ): JsonSchema {
   const profile = getProviderToolProfile(options.model, options.wireSurface);
+  // OpenAI keeps its property keys as authored; only the root shape is fixed.
+  if (profile.provider === "openai") {
+    return sanitizeOpenAISchemaRoot(schema);
+  }
   if (!profile.sanitizeSchema) return schema;
 
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
@@ -814,7 +1141,14 @@ export function sanitizeProviderToolSchema(
   }
 
   if (profile.provider === "anthropic") {
-    return sanitizeAnthropicSchemaRoot(propertyKeySafeSchema) as JsonSchema;
+    return normalizeObjectSchemaRoot(
+      propertyKeySafeSchema,
+      propertyKeySafeSchema,
+      new Set(),
+      createRootNormalizationBudget(
+        options.rootExpansionBudget ?? createRootSchemaExpansionBudget(),
+      ),
+    ) as JsonSchema;
   }
 
   return propertyKeySafeSchema as JsonSchema;
