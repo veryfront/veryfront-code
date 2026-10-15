@@ -18,11 +18,12 @@ export function hasSourceContextBudget(payload: unknown): boolean {
 
 const refinementPresence = new WeakMap<object, boolean>();
 function needsRefinements(
-  schema: object,
+  schema: unknown,
   documentId: string,
   documents: Record<string, Record<string, unknown>>,
   seen = new Set<object>(),
 ): boolean {
+  if (!schema || typeof schema !== "object") return false;
   const cached = refinementPresence.get(schema);
   if (cached !== undefined) return cached;
   if (seen.has(schema)) return false;
