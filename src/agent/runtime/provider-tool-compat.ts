@@ -953,12 +953,33 @@ function someSchemaNode(value: unknown, test: (node: Record<string, unknown>) =>
   });
 }
 
+// These constraints can reject an instance when a referenced schema widens.
+// Unevaluated constraints also depend on annotations that folding can remove.
+const NON_MONOTONE_SCHEMA_KEYWORDS = [
+  "not",
+  "oneOf",
+  "if",
+  "maxContains",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+] as const;
+
 /**
- * A reference stays valid after folding only when it is the bare root or a
- * plain local pointer into root definitions. Other pointers can target removed
- * or rewritten root keywords, and anchor, absolute, relative, and dynamic
- * references can target removed branches.
+ * Plain local pointers into root definitions retain their targets. A bare root
+ * reference instead points at the widened root, which is safe only without
+ * constraints that can reverse that widening. Inspect the whole schema because
+ * a root reference in a definition may be used negatively elsewhere.
+ * Other pointers can target removed or rewritten root keywords, and anchor,
+ * absolute, relative, and dynamic references can target removed branches.
  */
+function hasUnsafeRootRecursion(value: unknown): boolean {
+  return someSchemaNode(value, (node) => node.$ref === "#") &&
+    someSchemaNode(
+      value,
+      (node) => NON_MONOTONE_SCHEMA_KEYWORDS.some((key) => Object.hasOwn(node, key)),
+    );
+}
+
 function hasUnsafeReference(value: unknown): boolean {
   return someSchemaNode(value, (node) =>
     (typeof node.$ref === "string" && node.$ref !== "#" &&
@@ -1032,8 +1053,9 @@ function createPermissiveOpenAIRoot(
  * root must admit every value the authored schema admits; runtime validation
  * still enforces the authored schema. Root compositions are folded only when
  * every branch is a simple object shape, no identifier or anchor is declared,
- * and every reference is the bare root or a plain local pointer into root
- * definitions. Otherwise the root falls back to an open object that keeps the
+ * and every reference points into stable root definitions or to the root
+ * without constraints that can reverse widening. Otherwise the root falls back
+ * to an open object that keeps the
  * self-contained root constraints and admits every named property. Nested
  * schemas are left as they are, and a schema without these root keywords is
  * returned by identity.
@@ -1061,7 +1083,11 @@ function sanitizeOpenAISchemaRoot(schema: JsonSchema): JsonSchema {
   } = accepted;
   const compositions = getRootCompositions(allOf, anyOf, oneOf);
   const branches = compositions.flatMap(([items]) => items);
-  const keepOwnConstraints = !hasUnsafeReference(own);
+  // Definitions and their consumers can live in different branches. Inspect
+  // them together, excluding the root keywords already removed above, before
+  // deciding whether any retained constraint can safely refer to the new root.
+  const keepOwnConstraints = !hasUnsafeReference(own) &&
+    !hasUnsafeRootRecursion([own, ...branches]);
   const foldable = keepOwnConstraints &&
     !hasResourceMarker(own) &&
     branches.every((branch) =>
