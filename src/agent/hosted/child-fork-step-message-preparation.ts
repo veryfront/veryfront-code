@@ -162,7 +162,7 @@ function getStartupCalls(messages: readonly AgentMessage[], toolCallId: string) 
     message.role !== "assistant" ? [] : message.parts.flatMap((part) => {
       if (isToolResultPart(part)) return [];
       const call = getAgentRuntimeToolCallPart(part);
-      return call && call.toolCallId === toolCallId ? [call] : [];
+      return call?.toolCallId === toolCallId ? [call] : [];
     })
   );
 }
