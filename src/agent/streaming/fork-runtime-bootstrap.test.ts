@@ -556,3 +556,53 @@ Deno.test("later preparation cannot remove or replace the original authenticated
     });
   }
 });
+
+Deno.test("startup skill budget includes the loaded root before the first inference", async () => {
+  const skillId = "child--budget";
+  let loads = 0;
+  const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+    context: { authToken: "fixture-token", availableSkillIds: [skillId] },
+    skillsDir: "/skills",
+    builtinSkillIds: [skillId],
+    projectSkillLoader: {
+      loadProjectSkill: async () => null,
+      listProjectSkillReferences: async () => [],
+      loadProjectSkillReference: async () => null,
+    },
+    builtinStore: {
+      readSkill: async () => {
+        loads++;
+        return "# Canonical root\n" + "r".repeat(12_000);
+      },
+      listReferences: async () => [],
+      readReferenceFile: async () => null,
+    },
+  }));
+  const model = scriptedModel([{ text: "Must not infer" }], { only: "stream" });
+  const streamResult = startAgentRuntimeForkWithHostTools({
+    apiUrl: "https://api.example.com",
+    authToken: "fixture-token",
+    projectId: "fixture",
+    provider: model.provider ?? "test",
+    forkModel: model.modelId ?? "test/budget",
+    bootstrapSkill: skillId,
+    createModelRuntimeResolver: () => () => model,
+    maxSteps: 1,
+    prompt: "Process fixture",
+    buildInstructions: () => "s".repeat(672_000),
+    forkTools: { veryfront__load_skill: loader },
+    prepareStep: (step) =>
+      prepareHostedChildForkRuntimeStepMessages({ ...step, bootstrapSkill: skillId }),
+  }).streamResult;
+  Promise.resolve(streamResult.steps).catch(() => {});
+  Promise.resolve(streamResult.totalUsage).catch(() => {});
+  let failure: unknown;
+  try {
+    for await (const _part of streamResult.fullStream) { /* Drain. */ }
+  } catch (error) {
+    failure = error;
+  }
+  assertEquals(loads, 1);
+  assertEquals(failure instanceof Error, true);
+  assertEquals(model.callCount, 0);
+});

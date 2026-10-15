@@ -1685,6 +1685,19 @@ export function ensureToolCallInputs(messages: ProviderModelMessage[]): Provider
   return mutated ? result : messages;
 }
 
+/** Reject provider messages that exceed the shared prepared context budget. */
+export function assertPreparedMessageBudget(
+  messages: readonly ProviderModelMessage[],
+  overhead: number,
+): void {
+  if (
+    messages.reduce((total, message) => total + estimateTokens(message.content), overhead) >
+      DEFAULT_TOKEN_BUDGET
+  ) {
+    throw new RangeError("Prepared messages exceed the context budget");
+  }
+}
+
 /** Compact for step. */
 export function compactForStep(
   messages: ProviderModelMessage[],
@@ -1713,13 +1726,7 @@ export function compactForStep(
   const trimmed = end < compacted.length ? compacted.slice(0, end) : compacted;
 
   const prepared = ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
-  if (
-    options.requireBudgetFit &&
-    prepared.reduce((total, message) => total + estimateTokens(message.content), overhead) >
-      DEFAULT_TOKEN_BUDGET
-  ) {
-    throw new RangeError("Prepared messages exceed the context budget");
-  }
+  if (options.requireBudgetFit) assertPreparedMessageBudget(prepared, overhead);
   return prepared;
 }
 

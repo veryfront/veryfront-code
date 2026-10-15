@@ -1,3 +1,6 @@
+import { assertPreparedMessageBudget, estimateOverhead } from "../../chat/message-prep.ts";
+import { convertAgentRuntimeMessagesToProviderMessages } from "../runtime/message-adapter.ts";
+import type { RuntimeStateResolver } from "../types.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   createHostedChildInferenceModelResolver,
@@ -366,6 +369,16 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   let stream: ReadableStream<Uint8Array>;
   try {
     input.abortSignal?.addEventListener("abort", abortHandler, { once: true });
+    const validateStartupBudget: RuntimeStateResolver = ({ messages, system }) => {
+      type ConvertibleMessage = Parameters<
+        typeof convertAgentRuntimeMessagesToProviderMessages
+      >[0][number];
+      assertPreparedMessageBudget(
+        convertAgentRuntimeMessagesToProviderMessages(messages as readonly ConvertibleMessage[]),
+        estimateOverhead(system, input.forkToolNames.length),
+      );
+      return undefined;
+    };
     const runtimeConfig = {
       model: input.model,
       ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
@@ -373,7 +386,11 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         ? {}
         : { parallelToolCalls: input.parallelToolCalls }),
       system: input.system,
-      ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
+      ...(input.bootstrapSkill === undefined ? {} : {
+        bootstrapSkill: input.bootstrapSkill,
+        // Runtime state is resolved again after startup loading and before inference.
+        resolveRuntimeState: validateStartupBudget,
+      }),
       tools: input.runtimeTools,
       providerTools: input.providerToolNames ?? [],
       maxSteps: 1,
