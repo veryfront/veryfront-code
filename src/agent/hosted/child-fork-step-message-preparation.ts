@@ -157,6 +157,83 @@ export function convertCompactedProviderMessagesToChildForkRuntimeMessages(
   }));
 }
 
+function getStartupCalls(messages: readonly AgentMessage[], toolCallId: string) {
+  return messages.flatMap((message) =>
+    message.role !== "assistant" ? [] : message.parts.flatMap((part) => {
+      if (isToolResultPart(part)) return [];
+      const call = getAgentRuntimeToolCallPart(part);
+      return call && call.toolCallId === toolCallId ? [call] : [];
+    })
+  );
+}
+
+/** Snapshot only the original authenticated, bounded startup call/result. */
+function snapshotHostedChildStartupHistory(
+  messages: readonly AgentMessage[],
+  bootstrapSkill?: string,
+) {
+  const trustedLoads = snapshotTrustedSkillLoadResults(messages);
+  const bootstrap = bootstrapSkill === undefined
+    ? undefined
+    : trustedLoads.find((result) => extractSkillId(result.result) === bootstrapSkill);
+  if (bootstrap && bootstrapSkill !== undefined) {
+    validateRuntimeSkillBootstrapResult(getSkillActivationResult(bootstrap.result), bootstrapSkill);
+  }
+  const originalCalls = bootstrap ? getStartupCalls(messages, bootstrap.toolCallId) : [];
+  if (
+    bootstrap && (originalCalls.length !== 1 || originalCalls[0]?.toolName !== bootstrap.toolName)
+  ) {
+    throw AGENT_ERROR.create({ detail: "Startup skill requires its unique original load call" });
+  }
+  return {
+    trustedLoads,
+    bootstrap,
+    originalCalls,
+    preservedId: bootstrap ? `startup:${bootstrap.toolCallId}` : undefined,
+  };
+}
+
+/** Preserve provenance only on matching clones and reject a damaged startup pair. */
+function retainHostedChildSkillHistory(
+  startup: ReturnType<typeof snapshotHostedChildStartupHistory>,
+  sourceMessages: readonly AgentMessage[],
+  messages: AgentMessage[],
+): void {
+  const { bootstrap } = startup;
+  const trustedResultIds = new Set(
+    startup.trustedLoads.map((result) => result.toolCallId),
+  );
+  const sources = new Map(
+    sourceMessages.flatMap((message) =>
+      message.parts.flatMap((part) =>
+        isToolResultPart(part) && trustedResultIds.has(part.toolCallId)
+          ? [[part.toolCallId, part] as const]
+          : []
+      )
+    ),
+  );
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!isToolResultPart(part)) continue;
+      const source = sources.get(part.toolCallId);
+      if (source) inheritTrustedPlatformPolicyToolResultPart(source, part);
+    }
+  }
+  if (
+    bootstrap &&
+    (privateJsonStringify(getStartupCalls(messages, bootstrap.toolCallId)) !==
+        privateJsonStringify(startup.originalCalls) ||
+      !messages.some((message) =>
+        message.parts.some((part) =>
+          isToolResultPart(part) && part.toolCallId === bootstrap.toolCallId &&
+          hasTrustedPlatformPolicyToolResultPart(part)
+        )
+      ))
+  ) {
+    throw AGENT_ERROR.create({ detail: "Startup skill exceeds the prepared context budget" });
+  }
+}
+
 /** Prepare hosted child fork runtime step messages. */
 export function prepareHostedChildForkRuntimeStepMessages(
   input: PrepareHostedChildForkRuntimeStepMessagesInput,
@@ -174,31 +251,8 @@ export function prepareHostedChildForkRuntimeStepMessages(
   type ConvertibleMessage = Parameters<
     typeof convertAgentRuntimeMessagesToProviderMessages
   >[0][number];
-  const trustedLoads = snapshotTrustedSkillLoadResults(input.messages);
-  const bootstrap = input.bootstrapSkill === undefined
-    ? undefined
-    : trustedLoads.find((result) => extractSkillId(result.result) === input.bootstrapSkill);
-  if (bootstrap && input.bootstrapSkill !== undefined) {
-    validateRuntimeSkillBootstrapResult(
-      getSkillActivationResult(bootstrap.result),
-      input.bootstrapSkill,
-    );
-  }
-  const startupCalls = (messages: readonly AgentMessage[]) =>
-    messages.flatMap((message) =>
-      message.role !== "assistant" ? [] : message.parts.flatMap((part) => {
-        if (isToolResultPart(part)) return [];
-        const call = getAgentRuntimeToolCallPart(part);
-        return call && call.toolCallId === bootstrap?.toolCallId ? [call] : [];
-      })
-    );
-  const originalCalls = bootstrap ? startupCalls(input.messages) : [];
-  if (
-    bootstrap && (originalCalls.length !== 1 || originalCalls[0]?.toolName !== bootstrap.toolName)
-  ) {
-    throw AGENT_ERROR.create({ detail: "Startup skill requires its unique original load call" });
-  }
-  const preservedId = bootstrap ? `startup:${bootstrap.toolCallId}` : undefined;
+  const startup = snapshotHostedChildStartupHistory(input.messages, input.bootstrapSkill);
+  const { bootstrap, preservedId } = startup;
   const providerMessages = convertAgentRuntimeMessagesToProviderMessages(
     input.messages as readonly ConvertibleMessage[],
   ).map((message) =>
@@ -254,37 +308,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
     : undefined;
 
   const messages = convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages);
-  const trustedResultIds = new Set(
-    trustedLoads.map((result) => result.toolCallId),
-  );
-  const sources = new Map(
-    input.messages.flatMap((message) =>
-      message.parts.flatMap((part) =>
-        isToolResultPart(part) && trustedResultIds.has(part.toolCallId)
-          ? [[part.toolCallId, part] as const]
-          : []
-      )
-    ),
-  );
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (!isToolResultPart(part)) continue;
-      const source = sources.get(part.toolCallId);
-      if (source) inheritTrustedPlatformPolicyToolResultPart(source, part);
-    }
-  }
-  if (
-    bootstrap &&
-    (privateJsonStringify(startupCalls(messages)) !== privateJsonStringify(originalCalls) ||
-      !messages.some((message) =>
-        message.parts.some((part) =>
-          isToolResultPart(part) && part.toolCallId === bootstrap.toolCallId &&
-          hasTrustedPlatformPolicyToolResultPart(part)
-        )
-      ))
-  ) {
-    throw AGENT_ERROR.create({ detail: "Startup skill exceeds the prepared context budget" });
-  }
+  retainHostedChildSkillHistory(startup, input.messages, messages);
   return {
     messages,
     system: finalSystem,
