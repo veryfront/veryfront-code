@@ -4,6 +4,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
+import { rewriteWorkspacePackageVersion } from "../../../scripts/lib/workspace-package-version.ts";
+import { bumpDenoJsonVersion } from "../../../scripts/release-version.ts";
 
 it("keeps a versioned workspace frozen after RC preparation under pinned Deno", async () => {
   const root = await Deno.makeTempDir();
@@ -99,6 +101,24 @@ it("keeps a versioned workspace frozen after RC preparation under pinned Deno", 
     await prepareRcBuildVersion({ rootDir: root, version: "0.1.1230-rc.456" });
     const fixed = await check(true);
     assertEquals(fixed.success, true, new TextDecoder().decode(fixed.stderr));
+    // The stable release writer uses the same lock rewrite before committing.
+    const manifestPath = `${root}/deno.json`;
+    const lockPath = `${root}/scripts/deno.lock`;
+    const stableLock = rewriteWorkspacePackageVersion(
+      await Deno.readTextFile(lockPath),
+      "jsr:veryfront@0.1.1230-rc.456",
+      "jsr:veryfront@0.1.1230",
+    );
+    await Deno.writeTextFile(
+      manifestPath,
+      bumpDenoJsonVersion(
+        await Deno.readTextFile(manifestPath),
+        "0.1.1230",
+      ),
+    );
+    await Deno.writeTextFile(lockPath, stableLock);
+    const stable = await check(true);
+    assertEquals(stable.success, true, new TextDecoder().decode(stable.stderr));
   } finally {
     await Deno.remove(root, { recursive: true });
   }
