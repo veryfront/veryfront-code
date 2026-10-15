@@ -77,7 +77,7 @@ describe("managed broker project state", () => {
     });
   }
 
-  it("uses the canonical hosted skill loader in refreshed bounded discovery guidance", async () => {
+  it("reports refreshed bounded skill inventory without loader recipes", async () => {
     const state = createManagedBrokerProjectState({
       apiUrl: "https://api.example.test",
       authToken: "broker-token",
@@ -98,11 +98,13 @@ describe("managed broker project state", () => {
     });
     const refreshed = await state.refreshProjectSteering(
       new AbortController().signal,
-      ["tool_search", "veryfront__load_skill"],
+      ["veryfront__load_skill", "veryfront__tool_search"],
     );
     const text = JSON.stringify(refreshed);
-    assertStringIncludes(text, "Call veryfront__load_skill({ inventory:");
-    assertEquals(text.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(text, "additional authorized skill IDs");
+    assertStringIncludes(text, "available through the skill inventory");
+    assertEquals(text.includes("Call veryfront__load_skill("), false);
+    assertEquals(text.includes("Call load_skill("), false);
   });
 
   it("joins the original catalog lookup before propagating an instruction failure", async () => {

@@ -395,17 +395,17 @@ describe("ComponentRegistry logic", () => {
       for (let index = 0; index < 32; index++) {
         const dependencies = { lodash: `${index}.0.0` };
         const cacheKey = cacheKeyForDependencies(dependencies);
-        snapshotKeys.push(cacheKey);
-        await registry.prepareDependencySnapshot(
-          cacheKey,
-          dependencies,
+        snapshotKeys.push(
+          await registry.prepareDependencySnapshot(
+            cacheKey,
+            dependencies,
+          ),
         );
       }
       assertEquals(registry.has("Button", snapshotKeys[0]), true);
       const dependencies32 = { lodash: "32.0.0" };
-      const snapshot32Key = cacheKeyForDependencies(dependencies32);
-      await registry.prepareDependencySnapshot(
-        snapshot32Key,
+      const snapshot32Key = await registry.prepareDependencySnapshot(
+        cacheKeyForDependencies(dependencies32),
         dependencies32,
       );
 

@@ -102,6 +102,7 @@ interface HttpCacheIdentityReference {
   url: string;
   reactVersion?: string;
   serverExternalPackages?: readonly string[];
+  localReact?: boolean;
   importMapFingerprint: string;
 }
 
@@ -127,6 +128,7 @@ function parseIdentityMetadata(
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.url !== "string") return null;
     if (parsed.reactVersion !== undefined && typeof parsed.reactVersion !== "string") return null;
+    if (parsed.localReact !== undefined && typeof parsed.localReact !== "boolean") return null;
     const serverExternalPackages = parseServerExternalPackages(parsed.serverExternalPackages);
     if (serverExternalPackages === null) return null;
 
@@ -137,6 +139,7 @@ function parseIdentityMetadata(
         ? {
           url: parsed.url,
           reactVersion: parsed.reactVersion as string | undefined,
+          ...(parsed.localReact === true ? { localReact: true } : {}),
           ...(serverExternalPackages ? { serverExternalPackages } : {}),
           importMap,
         }
@@ -147,6 +150,7 @@ function parseIdentityMetadata(
     return {
       url: parsed.url,
       reactVersion: parsed.reactVersion as string | undefined,
+      ...(parsed.localReact === true ? { localReact: true } : {}),
       ...(serverExternalPackages ? { serverExternalPackages } : {}),
       importMapFingerprint: parsed.importMapFingerprint,
     };
@@ -544,6 +548,7 @@ class HttpBundleCache {
               url: identityMetadata.url,
               reactVersion: identityMetadata.reactVersion,
               serverExternalPackages: identityMetadata.serverExternalPackages,
+              localReact: identityMetadata.localReact,
               importMapFingerprint,
             }),
             ttl,

@@ -1,3 +1,6 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -250,12 +253,15 @@ function getCdnImportMap(
 }
 
 interface BuildImportMapOptions {
+  reactPeers?: LocalReactPeerSnapshot;
+  adapter?: RuntimeAdapter;
   projectDir?: string;
   config?: VeryfrontConfig;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   customImports?: Record<string, string>;
   pretty?: boolean;
@@ -265,10 +271,13 @@ interface BuildImportMapOptions {
 async function resolveVersions(
   options: Pick<
     BuildImportMapOptions,
+    | "reactPeers"
+    | "adapter"
     | "projectDir"
     | "config"
     | "dependencyPinningCacheKey"
     | "dependencyPinningDependencies"
+    | "dependencyPinningConfiguredVersions"
     | "dependencyPinningSource"
   >,
 ): Promise<DetectedVersions> {
@@ -412,11 +421,15 @@ function applyDependencyPinningKeys(
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
-  return !("projectDir" in options) &&
+  return (!("reactPeers" in options) || typeof options.reactPeers === "string") &&
+    (!("adapter" in options) || typeof options.adapter === "string") &&
+    !("projectDir" in options) &&
     !("config" in options) &&
     !("moduleServerOrigin" in options) &&
     !("dependencyPinningCacheKey" in options) &&
     !("dependencyPinningDependencies" in options) &&
+    (!("dependencyPinningConfiguredVersions" in options) ||
+      typeof options.dependencyPinningConfiguredVersions === "string") &&
     !("dependencyPinningSource" in options) &&
     !("customImports" in options) &&
     !("releaseAssetManifest" in options) &&
@@ -434,27 +447,30 @@ export async function buildImportMap(
   }
 
   const {
+    reactPeers,
+    adapter,
     projectDir,
     config,
     moduleServerOrigin,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     customImports,
     pretty = true,
     releaseAssetManifest,
   } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
-  const versions = projectDir || config || dependencyPinningCacheKey ||
-      dependencyPinningDependencies || dependencyPinningSource
-    ? await resolveVersions({
-      projectDir,
-      config,
-      dependencyPinningCacheKey,
-      dependencyPinningDependencies,
-      dependencyPinningSource,
-    })
-    : DEFAULT_VERSIONS;
+  const versions = await resolveVersions({
+    reactPeers,
+    adapter,
+    projectDir,
+    config,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
+    dependencyPinningSource,
+  });
 
   if (mode === "bundled") {
     let imports: Record<string, string> = { ...esmShReactImports(versions.react) };

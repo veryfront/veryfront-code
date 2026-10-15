@@ -181,7 +181,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
       { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
     ]);
-    assertEquals(input.taskContext.availableToolNames, ["load_skill", "tool_search"]);
+    assertEquals(input.taskContext.availableToolNames, ["load_skill", "veryfront__tool_search"]);
     assertEquals(
       system.includes("Fresh instructions:build:Editor context"),
       true,
@@ -263,7 +263,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         remoteToolNames: [],
         providerToolNames: [],
         availableToolNames: ["load_skill", "sleep", "veryfront__load_skill"],
-        modelVisibleToolNames: ["tool_search", "veryfront__load_skill"],
+        modelVisibleToolNames: ["veryfront__load_skill", "veryfront__tool_search"],
         toolLoadingMode: "deferred",
         compatibleRemoteToolNames: [],
         systemInstructions: "",
@@ -272,8 +272,11 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     await refresh(input);
 
-    assertEquals(input.taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
-    assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
+    assertEquals(input.taskContext.availableToolNames, [
+      "veryfront__load_skill",
+      "veryfront__tool_search",
+    ]);
+    assertEquals(visibleToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
     assertEquals(visibleSkillIds, ["build"]);
   });
 
@@ -319,7 +322,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     const system = systemText(await refresh(input));
 
-    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__tool_search"]);
     assertEquals(system.includes("confluence__search_content"), false);
     assertEquals(system.includes("gmail__list_emails"), false);
     assertEquals(input.toolAssembly.compatibleRemoteToolNames, [
@@ -575,7 +578,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     const system = systemText(await refresh(input));
 
-    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__tool_search"]);
     assertEquals(system.includes("Fresh instructions:build"), false);
     assertEquals(system.includes("Fresh instructions:"), true);
   });
@@ -703,7 +706,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     const system = systemText(await refresh(input));
 
-    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__tool_search"]);
     assertEquals(system.includes("web_fetch"), false);
     assertEquals(system.includes("web_search"), false);
   });

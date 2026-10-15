@@ -452,13 +452,13 @@ export const API_ENDPOINTS = {
   },
   listEnvironmentFiles: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/environments/{environmentName}/files",
+    path: "/projects/{project_reference}/environments/{environment_name}/files",
     description: "List files from an environment (deployed release)",
   },
   getEnvironmentFile: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/environments/{environmentName}/files/{pathOrId}",
-    description: "Get file from an environment by path or UUID",
+    path: "/projects/{project_reference}/environments/{environment_name}/files/{file_path}",
+    description: "Get file from an environment by path (URL-encoded) or UUID",
   },
   listReleaseFiles: {
     method: "GET" as const,
@@ -472,8 +472,8 @@ export const API_ENDPOINTS = {
   },
   lookupDomain: {
     method: "GET" as const,
-    path: "/projects/{domain}",
-    description: "Look up project by custom domain (resolved via project_reference)",
+    path: "/projects/{project_reference}",
+    description: "Look up project by custom domain, passed as project_reference",
   },
   getStyleArtifact: STYLE_ARTIFACT_ENDPOINT,
   updateStyleArtifact: {

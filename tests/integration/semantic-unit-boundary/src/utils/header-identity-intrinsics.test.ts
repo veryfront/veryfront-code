@@ -1,3 +1,4 @@
+import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
@@ -33,4 +34,28 @@ it("keeps identity encoding and decoding stable after project intrinsic replacem
   }
   assertEquals(encoded, "vf-utf8:%E6%97%A5%E6%9C%AC%E8%AA%9E%0Ablue");
   assertEquals(decoded, "日本語\nblue");
+});
+
+it("preserves trusted source labels after project trim replacement", () => {
+  const req = new Request("http://localhost/", {
+    headers: {
+      "x-project-slug": " safe-project ",
+      "x-branch-name": "vf-utf8:%20feature%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20",
+      "x-default-branch-name": "vf-utf8:%20trunk%20",
+      "x-environment-name": "vf-utf8:%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20",
+    },
+  });
+  const url = new URL(req.url);
+  const trim = String.prototype.trim;
+  let result: ReturnType<typeof extractRequestHeaders> | undefined;
+  try {
+    String.prototype.trim = () => "forged-environment";
+    result = extractRequestHeaders(req, url, false, true);
+  } finally {
+    String.prototype.trim = trim;
+  }
+  assertEquals(result?.projectSlug, "safe-project");
+  assertEquals(result?.branchName, "feature/日本語");
+  assertEquals(result?.defaultBranchName, "trunk");
+  assertEquals(result?.environmentName, "日本語");
 });

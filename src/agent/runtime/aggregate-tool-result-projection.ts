@@ -13,7 +13,9 @@ const hasOwn = Object.hasOwn;
 /** Results that carry discovery or instructions the model must keep verbatim. */
 const PROTECTED_TOOL_NAMES = new Set([
   "tool_search",
+  "veryfront__tool_search",
   "get_tool_result",
+  "veryfront__get_tool_result",
   "load_skill",
   "veryfront__load_skill",
 ]);

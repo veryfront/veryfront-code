@@ -192,7 +192,7 @@ describe("createHttpDeployControlPlane", () => {
               id: "environment-2",
               name: "production",
               protected: true,
-              project: { id: "project-1" },
+              project_id: "project-1",
             }],
             page_info: {},
           });
@@ -213,6 +213,31 @@ describe("createHttpDeployControlPlane", () => {
         params: { limit: "100", cursor: "cursor-2" },
       },
     ]);
+  });
+
+  it("reads the environment's project only from project_id", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () =>
+          Promise.resolve({
+            data: [{
+              id: "environment-1",
+              name: "production",
+              protected: true,
+              projectId: "legacy-camel-case",
+              project: { id: "legacy-reference" },
+            }],
+            page_info: {},
+          }),
+      }),
+    );
+
+    assertEquals(await controlPlane.getEnvironment("project-1", "production"), {
+      id: "environment-1",
+      name: "production",
+      protected: true,
+    });
   });
 
   it("streams release files from every page with legacy version data decoded", async () => {

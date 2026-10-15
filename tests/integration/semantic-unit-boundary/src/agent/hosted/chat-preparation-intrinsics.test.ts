@@ -57,7 +57,9 @@ for (const denySkillLoader of [false, true]) {
         projectId: "project-1",
         authToken: "token-1",
         hostToolPolicy: {
-          allow: denySkillLoader ? ["get_agent"] : ["veryfront__load_skill", "tool_search"],
+          allow: denySkillLoader
+            ? ["get_agent"]
+            : ["veryfront__load_skill", "veryfront__tool_search"],
         },
         resolveModelId: (modelId) => modelId,
         fetchSteering: () =>

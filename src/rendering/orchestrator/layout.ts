@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import * as React from "react";
 import type { EntityInfo, LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -82,7 +84,6 @@ interface LayoutPreloadSummary {
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
   private _preloadedImportMap: ImportMapConfig | null = null;
-  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
@@ -95,24 +96,30 @@ export class LayoutOrchestrator {
   private getReactVersion(
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        reactPeers,
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions,
       });
     }
 
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    return resolveProjectReactVersion({
+      reactPeers,
+      adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
     });
-    return this.reactVersionPromise;
   }
 
   getPreloadedImportMap(): ImportMapConfig | null {
@@ -150,6 +157,8 @@ export class LayoutOrchestrator {
     moduleServerOrigin?: string,
     signal?: AbortSignal,
     environment: RenderEnvironment = this.config.environment,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
@@ -179,6 +188,8 @@ export class LayoutOrchestrator {
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
         );
 
         logger.debug("Preloading layout modules", {
@@ -244,6 +255,8 @@ export class LayoutOrchestrator {
                   moduleServerOrigin,
                   this.config.config.build?.serverExternalPackages,
                   signal,
+                  dependencyPinningConfiguredVersions,
+                  reactPeers,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -281,6 +294,7 @@ export class LayoutOrchestrator {
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
+                  dependencyPinningConfiguredVersions,
                   dependencyPinningSource,
                   moduleServerOrigin,
                   config: this.config.config,
@@ -375,6 +389,8 @@ export class LayoutOrchestrator {
      * instrumentation into the next.
      */
     environment?: RenderEnvironment,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
@@ -384,6 +400,8 @@ export class LayoutOrchestrator {
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
         );
         const registryComponents = isSnapshotAwareComponentRegistry(
             this.config.componentRegistry,
@@ -396,6 +414,8 @@ export class LayoutOrchestrator {
               requestUrl?.origin,
               this.config.config.build?.serverExternalPackages,
               renderEnvironment,
+              dependencyPinningConfiguredVersions,
+              reactPeers,
             ),
           )
           : this.config.componentRegistry;
@@ -425,6 +445,8 @@ export class LayoutOrchestrator {
           reactVersion,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
           dependencyPinningSource,
           isLocalProject: this.config.isLocalProject === true,
           signal,

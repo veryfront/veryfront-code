@@ -84,9 +84,9 @@ export function resolveTrustedSkillLoaderToolName(
 ): RuntimeSkillLoaderToolName | undefined {
   if (tools === true) {
     return hasTrustedHostToolProvenance(
-        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["load_skill"]),
+        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["veryfront__load_skill"]),
       )
-      ? "load_skill"
+      ? "veryfront__load_skill"
       : undefined;
   }
   if (!tools) return undefined;

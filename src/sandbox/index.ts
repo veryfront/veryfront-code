@@ -26,6 +26,7 @@ export {
   type SandboxAccessScope,
   type SandboxAttachment,
   type SandboxCapabilities,
+  type SandboxCapabilitiesOptions,
   type SandboxClientOptions,
   type SandboxDetails,
   type SandboxEnvironment,

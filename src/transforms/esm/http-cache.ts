@@ -778,7 +778,9 @@ export function cacheHttpImportsToLocal(
   let requestOptions: CacheOptions;
   try {
     options.abortSignal?.throwIfAborted();
-    requestOptions = prepareHttpCacheRequestOptions(options);
+    requestOptions = prepareHttpCacheRequestOptions(
+      sourceCapture ? { ...options, localReact: false } : options,
+    );
   } catch (error) {
     sourceCapture?.invalidate();
     throw error;

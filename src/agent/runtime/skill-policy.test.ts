@@ -356,7 +356,7 @@ describe("src/agent/runtime skill policy helpers", () => {
         {
           allowed: false,
           error:
-            'Tool "load_skill_reference" is unavailable because no skill is loaded. Call load_skill first.',
+            'Tool "load_skill_reference" is unavailable because no skill is loaded. Call veryfront__load_skill first.',
         },
         "no-skill-loaded denial must point the model at load_skill",
       );

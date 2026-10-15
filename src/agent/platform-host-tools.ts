@@ -24,8 +24,8 @@ function ownKeys(value: HostToolSet | HostToolDefinition): string[] {
 }
 
 function hasOwn(
-  value: HostToolSet | HostToolDefinition | PropertyDescriptor,
-  key: string,
+  value: HostToolSet | PropertyDescriptor | readonly string[],
+  key: PropertyKey,
 ): boolean {
   return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
 }
@@ -160,6 +160,35 @@ export function retainTrustedSkillLoaderAliases(input: {
       siblingName,
       markTrustedHostToolProvenance(
         cloneHostToolDefinitionWithId(selected, siblingName),
+      ),
+    );
+  }
+  return tools;
+}
+
+/** Publish one canonical identity for each authorized platform host operation. */
+export function canonicalPlatformHostTools(input: HostToolSet): HostToolSet {
+  const tools = objectCreate(null) as HostToolSet;
+  const names = ownKeys(input);
+  for (let index = 0; index < names.length; index++) {
+    if (!hasOwn(names, index)) continue;
+    const name = names[index]!;
+    const definition = ownDataValue(input, name);
+    if (definition === undefined) continue;
+    if (!hasTrustedHostToolProvenance(definition)) {
+      defineData(tools, name, definition);
+      continue;
+    }
+    const canonicalName = hasPlatformNamespace(name) ? name : `veryfront__${name}`;
+    const explicit = ownDataValue(input, canonicalName);
+    const selected = explicit !== undefined && hasTrustedHostToolProvenance(explicit)
+      ? explicit
+      : definition;
+    defineData(
+      tools,
+      canonicalName,
+      markTrustedHostToolProvenance(
+        cloneHostToolDefinitionWithId(selected, canonicalName),
       ),
     );
   }

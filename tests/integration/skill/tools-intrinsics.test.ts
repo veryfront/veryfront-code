@@ -47,7 +47,7 @@ describe("skill tool intrinsic isolation", () => {
             },
           }),
         Error,
-        "advertised by load_skill",
+        "advertised by the active skill",
       );
     } finally {
       Array.prototype.includes = originalIncludes;

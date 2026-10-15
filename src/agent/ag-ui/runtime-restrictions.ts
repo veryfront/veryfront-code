@@ -193,6 +193,21 @@ function hasExplicitSkillInfrastructureDenial(
   return hasExplicitToolDenial(tools, toolName);
 }
 
+function isSkillInfrastructureToolAllowed(
+  allowedTools: ToolNameLookup,
+  toolName: string,
+): boolean {
+  if (allowedTools[toolName] === true) return true;
+  for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS.length; index++) {
+    const pair = SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS[index];
+    if (pair === undefined) continue;
+    const [legacyName, canonicalName] = pair;
+    if (toolName === legacyName) return allowedTools[canonicalName] === true;
+    if (toolName === canonicalName) return allowedTools[legacyName] === true;
+  }
+  return false;
+}
+
 /**
  * Ceiling a trusted server caller applies to one AG-UI run.
  *
@@ -401,15 +416,17 @@ export function applyAgUiRuntimeRestrictionsForModel(
     visibleLocalTools,
     sourceAgentId,
   );
-  const frameworkKnowledgeTool = allowedTools.search_knowledge === true
+  const frameworkKnowledgeTool = allowedTools.veryfront__search_knowledge === true
     ? createAgentKnowledgeTool(config)
     : undefined;
   if (frameworkKnowledgeTool !== undefined) {
     const tools = restricted.tools === undefined || restricted.tools === true
       ? {}
       : { ...restricted.tools };
-    if (tools.search_knowledge === undefined || tools.search_knowledge === true) {
-      tools.search_knowledge = frameworkKnowledgeTool;
+    if (
+      tools.veryfront__search_knowledge === undefined || tools.veryfront__search_knowledge === true
+    ) {
+      tools.veryfront__search_knowledge = frameworkKnowledgeTool;
     }
     restricted.tools = tools;
   }
@@ -417,7 +434,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
     // Replacing the authored `tools: true` selector with an explicit map would
     // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
     // allowlisted schema on the first provider call instead of exposing
-    // `tool_search`. Pin the source configuration's resolved mode so the
+    // `veryfront__tool_search`. Pin the source configuration's resolved mode so the
     // intersection only narrows which tools exist, never how they load.
     (restricted as RuntimeToolFilterConfig).__vfToolLoadingMode =
       resolveRuntimeToolLoading(config).mode;
@@ -507,18 +524,15 @@ export function applyAgUiRuntimeRestrictionsForModel(
     const tools = restricted.tools === undefined || restricted.tools === true
       ? {}
       : { ...restricted.tools };
-    let stampedExplicitDenial = false;
     for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
       const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
-      if (
-        toolName !== undefined &&
-        hasExplicitSkillInfrastructureDenial(config.tools, toolName)
-      ) {
+      if (toolName === undefined) continue;
+      delete tools[toolName];
+      if (hasExplicitSkillInfrastructureDenial(config.tools, toolName)) {
         tools[toolName] = false;
-        stampedExplicitDenial = true;
       }
     }
-    if (stampedExplicitDenial) restricted.tools = tools;
+    restricted.tools = tools;
   } else {
     // With skills enabled, the factory injects the whole skill infrastructure
     // family into the rebuilt agent's tool map unless an entry is explicitly
@@ -533,7 +547,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
       if (toolName === undefined) continue;
       if (hasExplicitSkillInfrastructureDenial(config.tools, toolName)) {
         tools[toolName] = false;
-      } else if (allowedTools[toolName] === true) {
+      } else if (isSkillInfrastructureToolAllowed(allowedTools, toolName)) {
         tools[toolName] ??= true;
       } else {
         tools[toolName] = false;

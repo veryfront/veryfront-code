@@ -1,3 +1,5 @@
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   createSearchKnowledgeTool,
   normalizedProjectKnowledgeScopeGrantsAnyPath,
@@ -14,13 +16,13 @@ const agentKnowledgeTools = createPrivateWeakStore<object, true>();
 /** @internal Mark a source as the framework-owned scoped knowledge capability. */
 function markAgentKnowledgeSource(source: RemoteToolSource): RemoteToolSource {
   agentKnowledgeSources.set(source, true);
-  return source;
+  return markTrustedPlatformSource(source);
 }
 
 /** @internal Mark a tool as the framework-owned scoped knowledge capability. */
 function markAgentKnowledgeTool(tool: Tool): Tool {
   agentKnowledgeTools.set(tool, true);
-  return tool;
+  return markTrustedHostToolProvenance(tool);
 }
 
 /** @internal Check framework knowledge ownership without trusting a source id. */
@@ -53,7 +55,9 @@ export function isKnowledgeEnabled(selector: AgentConfig["knowledge"]): boolean 
 /** Build a run-scoped capability without registering it in a shared catalog. */
 export function createAgentKnowledgeTool(config: AgentConfig) {
   if (!isKnowledgeEnabled(config.knowledge)) return undefined;
-  return markAgentKnowledgeTool(createSearchKnowledgeTool({ scope: config.knowledge }));
+  return markAgentKnowledgeTool(
+    createSearchKnowledgeTool({ id: "veryfront__search_knowledge", scope: config.knowledge }),
+  );
 }
 
 /** Preserve tools:true discovery while adding the agent's own knowledge capability. */

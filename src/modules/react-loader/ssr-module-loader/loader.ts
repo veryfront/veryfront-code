@@ -1,3 +1,7 @@
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * SSR Module Loader Class
  *
@@ -222,18 +226,51 @@ function wasRetainedInProgressTransformLeader(
   return retainedInProgressTransformLeaders.has(leader);
 }
 
-function getMdxEsmCacheVariant(
+async function getMdxEsmCacheVariant(
   options: Pick<
     SSRModuleLoaderOptions,
     "dependencyPinningCacheKey" | "moduleServerOrigin" | "serverExternalPackages" | "dev"
   >,
-): string | undefined {
+  runtimeScope?: string,
+): Promise<string | undefined> {
   return getMdxModuleCacheVariant(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,
     options.serverExternalPackages,
     options.dev,
+    runtimeScope ?? await getSSRReactRuntimeCacheScope(),
   );
+}
+
+const reactScopesByGraph = new WeakMap<DependencyHashCache, Promise<string>>();
+const reactIdentitiesByGraph = new WeakMap<
+  DependencyHashCache,
+  ReturnType<typeof captureSSRReactRuntimeIdentity>
+>();
+
+function getGraphReactRuntimeIdentity(
+  graph: DependencyHashCache,
+): ReturnType<typeof captureSSRReactRuntimeIdentity> {
+  let identity = reactIdentitiesByGraph.get(graph);
+  if (!identity) {
+    identity = captureSSRReactRuntimeIdentity();
+    reactIdentitiesByGraph.set(graph, identity);
+  }
+  return identity;
+}
+
+function getGraphReactRuntimeScope(
+  graph: DependencyHashCache,
+  readScope?: () => Promise<string>,
+): Promise<string> {
+  if (!readScope) return getGraphReactRuntimeIdentity(graph).scope;
+  // Preserve the narrow scope-provider seam used by singleflight tests.
+  let scope = reactScopesByGraph.get(graph);
+  if (!scope) {
+    scope = readScope();
+    reactScopesByGraph.set(graph, scope);
+  }
+  return scope;
 }
 
 type SettledOperation<T> =
@@ -288,6 +325,7 @@ async function runTransformAndDependencies<T, D>(
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   getMdxEsmCacheVariant,
+  getGraphReactRuntimeScope,
   inProgressTransformObserverCount,
   publishTransformCacheIfCurrent,
   registerInProgressTransformObservers,
@@ -461,6 +499,7 @@ export class SSRModuleLoader {
     filePath: string,
     fileName: string,
     cacheEntry: ModuleCacheEntry,
+    runtimeScope?: string,
   ): Promise<Record<string, unknown>> {
     // Verify the cache file exists before attempting dynamic import
     let fileExists: boolean;
@@ -475,7 +514,7 @@ export class SSRModuleLoader {
       // the original operational error, but remove both indexes so a repaired
       // filesystem does not keep routing requests back to stale metadata.
       try {
-        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
+        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry, runtimeScope);
       } catch (invalidationError) {
         logger.warn("Failed to invalidate unreadable MDX cache entry", {
           file: logPath(filePath),
@@ -498,7 +537,7 @@ export class SSRModuleLoader {
         tempPath: cacheEntry.tempPath,
         contentHash: cacheEntry.contentHash,
       });
-      await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
+      await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry, runtimeScope);
       this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
       throw toError(
         createError({
@@ -597,7 +636,7 @@ export class SSRModuleLoader {
             error: classifiedError.message.slice(0, 200),
           },
         );
-        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
+        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry, runtimeScope);
         this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
       }
 
@@ -608,6 +647,7 @@ export class SSRModuleLoader {
   private async invalidateMdxEsmCacheEntry(
     filePath: string,
     cacheEntry: ModuleCacheEntry,
+    runtimeScope?: string,
   ): Promise<void> {
     const { contentSourceId, projectId } = this.options;
     const mdxCacheDirs = projectId && contentSourceId
@@ -620,7 +660,7 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
-      getMdxEsmCacheVariant(this.options),
+      await getMdxEsmCacheVariant(this.options, runtimeScope),
     );
   }
 
@@ -651,13 +691,21 @@ export class SSRModuleLoader {
     return withSpan(
       SpanNames.SSR_LOAD_MODULE,
       async () => {
-        const circuitKey = this.cache.getCacheKey(filePath);
+        const dependencyHashCache = createDependencyHashCache();
+        if (this.options.reactPeers) {
+          reactIdentitiesByGraph.set(dependencyHashCache, {
+            peers: this.options.reactPeers,
+            reactVersion: this.options.reactPeers.versions.react,
+            scope: getSSRReactRuntimeCacheScope(this.options.reactPeers),
+          });
+        }
+        const runtimeScope = await getGraphReactRuntimeScope(dependencyHashCache);
+        const circuitKey = this.cache.getCacheKey(filePath, runtimeScope);
         this.circuitBreaker.check(circuitKey, filePath);
 
         this.depValidator.reset();
 
         try {
-          const dependencyHashCache = createDependencyHashCache();
           const cacheEntry = await this.transformWithDependencies(
             filePath,
             source,
@@ -668,7 +716,12 @@ export class SSRModuleLoader {
           this.throwMissingDependencies(filePath);
 
           try {
-            const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
+            const mod = await this.importModuleFromCacheEntry(
+              filePath,
+              fileName,
+              cacheEntry,
+              runtimeScope,
+            );
 
             this.circuitBreaker.recordSuccess(circuitKey);
             return mod;
@@ -683,6 +736,10 @@ export class SSRModuleLoader {
             });
 
             const retryDependencyHashCache = createDependencyHashCache();
+            reactIdentitiesByGraph.set(
+              retryDependencyHashCache,
+              getGraphReactRuntimeIdentity(dependencyHashCache),
+            );
             const retryCacheEntry = await this.transformWithDependencies(
               filePath,
               source,
@@ -692,7 +749,12 @@ export class SSRModuleLoader {
               { skipDistributedCache: true, skipMdxPathCache: true },
             );
             this.throwMissingDependencies(filePath);
-            const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
+            const mod = await this.importModuleFromCacheEntry(
+              filePath,
+              fileName,
+              retryCacheEntry,
+              runtimeScope,
+            );
 
             this.circuitBreaker.recordSuccess(circuitKey);
             return mod;
@@ -798,9 +860,11 @@ export class SSRModuleLoader {
       code = injectNodePositions(code, { filePath: relativeFilePath });
     }
 
+    const reactRuntimeIdentity = getGraphReactRuntimeIdentity(dependencyHashCache);
+    const runtimeScope = await reactRuntimeIdentity.scope;
     const contentHash = await this.cache.hashContentAsync(code);
-    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`);
-    const filePathCacheKey = this.cache.getCacheKey(filePath);
+    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`, runtimeScope);
+    const filePathCacheKey = this.cache.getCacheKey(filePath, runtimeScope);
     const inProgressKey = contentCacheKey;
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
@@ -884,7 +948,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
-        getMdxEsmCacheVariant(this.options),
+        await getMdxEsmCacheVariant(this.options, runtimeScope),
       );
 
       if (mdxCacheResult.status === "hit") {
@@ -1031,10 +1095,12 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
           moduleServerOrigin: this.options.moduleServerOrigin,
           reactVersion: this.options.reactVersion,
+          reactPeers: reactRuntimeIdentity.peers,
           serverExternalPackages: this.options.serverExternalPackages,
           dependencyHashCache,
           dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: this.options.dependencyPinningConfiguredVersions,
           dependencyPinningSource: this.options.dependencyPinningSource,
         };
         const localFs = createFileSystem();
@@ -1099,9 +1165,11 @@ export class SSRModuleLoader {
             projectDir: this.options.projectDir,
             dev: this.options.dev,
             reactVersion: this.options.reactVersion,
+            reactRuntimeIdentity,
             moduleServerOrigin: this.options.moduleServerOrigin,
             dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
             dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: this.options.dependencyPinningConfiguredVersions,
             dependencyPinningSource: this.options.dependencyPinningSource,
           });
 

@@ -51,6 +51,7 @@ function createRecoveryCacheOptions(
     importMap: identity?.importMap ?? EMPTY_IMPORT_MAP,
     reactVersion: identity?.reactVersion,
     serverExternalPackages: identity?.serverExternalPackages,
+    localReact: identity?.localReact,
   };
 }
 
@@ -80,6 +81,21 @@ interface ResolvedRecoveryIdentity {
   originalUrl: string | null;
   options?: HttpCacheIdentityOptions;
   metadata: HttpCacheIdentityMetadata | null;
+}
+
+async function matchesLocalReactScope(
+  hash: string,
+  url: string | null | undefined,
+  identity?: HttpCacheIdentityOptions,
+): Promise<boolean> {
+  if (!identity?.localReact) return true;
+  try {
+    return typeof url === "string" &&
+      await hashHttpCacheIdentity(await cacheIdentityForRecovery(url, identity)) === hash;
+  } catch (error) {
+    logger.warn("Refusing local React bundle with invalid runtime scope", { hash, error });
+    return false;
+  }
 }
 
 async function resolveRecoveryIdentity(
@@ -114,6 +130,9 @@ export async function recoverHttpBundleByHash(
 
   try {
     const recoveryIdentity = await resolveRecoveryIdentity(hash, fallbackIdentity);
+    if (
+      !await matchesLocalReactScope(hash, recoveryIdentity.originalUrl, recoveryIdentity.options)
+    ) return false;
     const result = await httpBundleCache.getCodeByHash(hash);
 
     if (result.code) {
@@ -483,6 +502,18 @@ async function fetchMissingBundles(
       }
 
       const code = unbrand(localCode);
+      const identity = identities.get(hash);
+      if (
+        !await matchesLocalReactScope(
+          hash,
+          identity?.originalUrl,
+          identity?.metadata ?? fallbackIdentity,
+        )
+      ) {
+        context.onFailed(hash);
+        claims?.release(hash);
+        return;
+      }
 
       if (
         !isHttpBundleCodeWithinLimit(code) ||
@@ -514,7 +545,6 @@ async function fetchMissingBundles(
         await fs.writeTextFile(canonicalPath, code);
         logger.debug("Wrote bundle to disk", { hash, path: canonicalPath });
 
-        const identity = identities.get(hash);
         if (identity?.originalUrl) {
           await rememberRecoveredPath(
             hash,

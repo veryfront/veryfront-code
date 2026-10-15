@@ -5,6 +5,7 @@ import {
   filterVeryfrontApiToolDefinitionsByAccessProfile,
   filterVeryfrontApiToolDefinitionsWithAccessProfile,
   parseVeryfrontApiToolAccessProfile,
+  resolveVeryfrontApiToolAccessProfileToolName,
 } from "./veryfront-api-tool-access.ts";
 
 function remoteTool(name: string): ToolDefinition {
@@ -277,5 +278,30 @@ Deno.test("filterVeryfrontApiToolDefinitionsWithAccessProfile fails closed for m
       ],
     })).map((tool) => tool.name),
     ["update_file"],
+  );
+});
+
+Deno.test("resolveVeryfrontApiToolAccessProfileToolName prefers the operation's published spelling", () => {
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([
+      remoteTool("veryfront__update_file"),
+      remoteTool("get_tool_access_profile"),
+    ]),
+    "get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([
+      remoteTool("get_tool_access_profile"),
+      remoteTool("veryfront__get_tool_access_profile"),
+    ]),
+    "veryfront__get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([remoteTool("veryfront__update_file")]),
+    "veryfront__get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([remoteTool("update_file")]),
+    "get_tool_access_profile",
   );
 });

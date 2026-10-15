@@ -328,7 +328,8 @@ function normalizeToolResultPayload(result: unknown): unknown {
   return parsed;
 }
 
-function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
+/** @internal Normalize a validated skill activation without granting result provenance. */
+export function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
   const normalized = normalizeToolResultPayload(result);
   if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return undefined;
   const skillId = readToolResultOwnDataProperty(normalized, "skillId");
@@ -1202,7 +1203,7 @@ export function enforceSkillPolicy(
 
   if (!isSkillToolAvailable(toolName, options.skillToolAvailability)) {
     // The two cases need different remedies and the model acts on this text: with
-    // no skill loaded it should call load_skill, while a loaded skill that
+    // no skill loaded it should call the canonical loader, while a loaded skill that
     // advertises no matching file cannot be fixed by retrying.
     const hasActiveSkill =
       readToolResultOwnDataProperty(options.skillToolAvailability, "hasActiveSkill") === true;
@@ -1210,7 +1211,7 @@ export function enforceSkillPolicy(
       allowed: false,
       error: hasActiveSkill
         ? `Tool "${toolName}" is unavailable because the active skill advertises no matching file.`
-        : `Tool "${toolName}" is unavailable because no skill is loaded. Call load_skill first.`,
+        : `Tool "${toolName}" is unavailable because no skill is loaded. Call veryfront__load_skill first.`,
     };
   }
 

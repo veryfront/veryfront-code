@@ -18,6 +18,10 @@ describe("prepared script pages", () => {
     Object.defineProperty(adapter, "moduleLoader", {
       value: {
         importModule: async (reference: RuntimeModuleReference) => {
+          if (reference.kind === "package") {
+            assertEquals(["react", "react-dom/server"].includes(reference.specifier), true);
+            return { default: { version: "19.2.0" } };
+          }
           assertEquals(reference, { kind: "source", path: "/project/page.ts" });
           return {
             default: () => "<main>prepared script</main>",
@@ -38,6 +42,8 @@ describe("prepared script pages", () => {
     );
     assertStringIncludes(rendered.html, "<main>prepared script</main>");
     assertEquals(rendered.frontmatter?.title, "Prepared metadata");
+    const imports = extractInlineJson(rendered.html, "importmap").imports as Record<string, string>;
+    assertStringIncludes(imports.react ?? "", "react@19.2.0");
   });
 });
 
