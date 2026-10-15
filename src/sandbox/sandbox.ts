@@ -191,7 +191,7 @@ export class Sandbox {
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl, false);
   }
 
-  /** Get caller capabilities, optionally for the selected billing project. Creation rechecks capacity. */
+  /** Get platform features or selected-project creation eligibility. Creation rechecks capacity. */
   static async capabilities(
     options: SandboxCapabilitiesOptions = {},
   ): Promise<SandboxCapabilities> {

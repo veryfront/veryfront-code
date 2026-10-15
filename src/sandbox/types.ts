@@ -22,7 +22,7 @@ export interface SandboxClientOptions {
 
 /** Options for discovering caller creation capabilities in a billing project. */
 export interface SandboxCapabilitiesOptions extends SandboxClientOptions {
-  /** Project UUID or slug. Omit to check personal-account always-on eligibility. */
+  /** Project UUID or slug for caller creation eligibility. Omit for legacy platform feature discovery. */
   projectReference?: string;
 }
 
@@ -181,7 +181,7 @@ export interface SandboxEnvironment {
   env: Record<string, string>;
 }
 
-/** Sandbox creation capabilities, limits and defaults for the current caller. */
+/** Sandbox creation options, limits and defaults. A project selector opts into caller eligibility. */
 export interface SandboxCapabilities {
   /** Private sandboxes are enabled. */
   privateCreation: boolean;
