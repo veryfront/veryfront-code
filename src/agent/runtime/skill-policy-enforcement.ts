@@ -328,7 +328,8 @@ function normalizeToolResultPayload(result: unknown): unknown {
   return parsed;
 }
 
-function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
+/** @internal Normalize a validated skill activation without granting result provenance. */
+export function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
   const normalized = normalizeToolResultPayload(result);
   if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return undefined;
   const skillId = readToolResultOwnDataProperty(normalized, "skillId");

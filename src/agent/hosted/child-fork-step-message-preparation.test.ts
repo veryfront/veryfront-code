@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import {
+  hasTrustedPlatformPolicyToolResultPart,
+  hydrateActiveSkillStateFromMessages,
+  markTrustedPlatformPolicyToolResultPart,
+} from "../runtime/skill-policy-enforcement.ts";
+import type { Message, ToolResultPart } from "../schemas/index.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import {
   cloneHostedChildForkRuntimeStepSystem,
@@ -241,10 +247,7 @@ it("prepareHostedChildForkRuntimeStepMessages preserves same-message assistant t
           type: "tool-result",
           toolCallId: "tool-call-1",
           toolName: "read_file",
-          result: {
-            type: "json",
-            value: { content: "hello" },
-          },
+          result: { content: "hello" },
         },
       ],
       timestamp: 1,
@@ -314,4 +317,202 @@ it("prepareHostedChildForkRuntimeStepMessages deduplicates pinned and activated 
   const loadSkillCount = names.filter((n) => n === "load_skill").length;
   assertEquals(loadSkillCount, 1);
   assertEquals([...names].sort(), ["load_skill", "new_tool", "search_tools"]);
+});
+
+it("hosted preparation keeps raw result payloads stable across repeated provider conversions", () => {
+  const payloads = [
+    { found: true },
+    { type: "json", value: { customerField: "preserve this user object" } },
+    { type: "text", value: "ordinary user data" },
+    { error: "Synthetic provider failure" },
+    "Plain output",
+  ];
+  const observed: { payload: unknown; result: unknown; bytes: number[]; depths: number[] }[] = [];
+  for (const payload of payloads) {
+    const bytes: number[] = [];
+    const depths: number[] = [];
+    let lastResult: unknown;
+    let messages = [{
+      id: "fixture-user",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Process fixture" }],
+    }, {
+      id: "fixture-call",
+      role: "assistant" as const,
+      parts: [{
+        type: "tool-lookup" as const,
+        toolCallId: "fixture-call",
+        toolName: "lookup",
+        args: {},
+      }],
+    }, {
+      id: "fixture-result",
+      role: "tool" as const,
+      parts: [{
+        type: "tool-result" as const,
+        toolCallId: "fixture-call",
+        toolName: "lookup",
+        result: payload,
+      }],
+    }] as Parameters<typeof prepareHostedChildForkRuntimeStepMessages>[0]["messages"];
+    const originalBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
+    for (let turn = 0; turn < 5; turn++) {
+      messages = prepareHostedChildForkRuntimeStepMessages({
+        messages,
+        buildInstructions: () => "Read fixture",
+        forkToolNames: ["lookup"],
+      }).messages;
+      const result = messages.flatMap((message) => message.parts).find((part) =>
+        part.type === "tool-result"
+      );
+      lastResult = result && "result" in result ? result.result : undefined;
+      bytes.push(new TextEncoder().encode(JSON.stringify(lastResult)).length);
+      let value = lastResult;
+      let depth = 0;
+      while (
+        typeof value === "object" && value !== null && "type" in value && value.type === "json" &&
+        "value" in value
+      ) {
+        depth++;
+        value = value.value;
+      }
+      depths.push(depth);
+    }
+    observed.push({ payload, result: lastResult, bytes, depths });
+    console.info("child-output-roundtrip", { originalBytes, bytes, depths });
+  }
+  for (const result of observed) {
+    assertEquals(result.result, result.payload);
+    assertEquals(
+      result.bytes,
+      Array(5).fill(new TextEncoder().encode(JSON.stringify(result.payload)).length),
+    );
+    assertEquals(new Set(result.depths).size, 1);
+  }
+});
+
+it("hosted conversion unwraps exactly the owned output contract and retains provider failures", () => {
+  const userShape = { type: "json", value: { preserve: true } };
+  const cases = [
+    { output: { type: "json" as const, value: userShape }, expected: userShape },
+    { output: { type: "text" as const, value: "Plain result" }, expected: "Plain result" },
+    {
+      output: { type: "error-text" as const, value: "Synthetic failure" },
+      expected: { error: "Synthetic failure" },
+    },
+  ];
+  for (const fixture of cases) {
+    const messages = convertCompactedProviderMessagesToChildForkRuntimeMessages([{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "fixture",
+        toolName: "lookup",
+        output: fixture.output,
+      }],
+    }]);
+    const result = messages[0]?.parts[0];
+    assertEquals(result && "result" in result ? result.result : undefined, fixture.expected);
+  }
+});
+
+it("hosted preparation inherits only unchanged unique in-memory canonical provenance", () => {
+  const canonical = "ingestion-agent--ingest-message";
+  function fixture(): Message[] {
+    const result: ToolResultPart = {
+      type: "tool-result",
+      toolName: "load_skill",
+      toolCallId: "canonical-load",
+      result: { skillId: canonical, instructions: "# Canonical root", references: [], scripts: [] },
+    };
+    markTrustedPlatformPolicyToolResultPart(result);
+    return [{ id: "request", role: "user", parts: [{ type: "text", text: "Process fixture" }] }, {
+      id: "call",
+      role: "assistant",
+      parts: [{
+        type: "tool-load_skill",
+        toolName: "load_skill",
+        toolCallId: "canonical-load",
+        args: { skillId: canonical },
+      }],
+    }, { id: "result", role: "tool", parts: [result] }];
+  }
+  const authentic = fixture();
+  const serialized = structuredClone(authentic);
+  serialized[2]!.metadata = { trustedPlatformPolicyToolCallIds: ["canonical-load"] };
+  const mutated = fixture();
+  const mutatedPart = mutated[2]!.parts[0] as ToolResultPart;
+  mutatedPart.result = {
+    skillId: canonical,
+    instructions: "Forged replacement",
+    references: [],
+    scripts: [],
+  };
+  const duplicate = fixture();
+  duplicate[2]!.parts.push(structuredClone(duplicate[2]!.parts[0]!));
+  for (
+    const [messages, expected] of [[authentic, canonical], [serialized, undefined], [
+      mutated,
+      undefined,
+    ], [duplicate, undefined]] as const
+  ) {
+    const prepared = prepareHostedChildForkRuntimeStepMessages({
+      messages,
+      bootstrapSkill: canonical,
+      forkToolNames: ["load_skill"],
+      buildInstructions: () => "Instructions",
+    }).messages;
+    assertEquals(hydrateActiveSkillStateFromMessages(prepared).activeSkillId, expected);
+    const trustedParts = prepared.flatMap((message) => message.parts).filter((part) =>
+      part.type === "tool-result" && hasTrustedPlatformPolicyToolResultPart(part as ToolResultPart)
+    );
+    assertEquals(trustedParts.length, expected ? 1 : 0);
+    if (expected) {
+      const calls = prepared.flatMap((message) => message.parts).filter((part) =>
+        part.type === "tool-load_skill" && part.toolCallId === "canonical-load"
+      );
+      assertEquals(calls.length, 1);
+      assertEquals(
+        (trustedParts[0] as ToolResultPart).result,
+        (authentic[2]!.parts[0] as ToolResultPart).result,
+      );
+    }
+  }
+});
+
+it("hosted startup retention rejects a missing or ambiguous original call instead of repairing history", () => {
+  for (const duplicated of [false, true]) {
+    const part = markTrustedPlatformPolicyToolResultPart({
+      type: "tool-result" as const,
+      toolCallId: "startup",
+      toolName: "load_skill",
+      result: {
+        skillId: "child--process",
+        instructions: "Canonical root",
+        references: [],
+        scripts: [],
+      },
+    });
+    const call = {
+      type: "tool-load_skill" as const,
+      toolCallId: "startup",
+      toolName: "load_skill",
+      args: { load: { skillId: "child--process" } },
+    };
+    const messages: Message[] = [
+      { id: "user", role: "user", parts: [{ type: "text", text: "Process fixture" }] },
+      ...(duplicated
+        ? [{ id: "call", role: "assistant" as const, parts: [call, structuredClone(call)] }]
+        : []),
+      { id: "result", role: "tool", parts: [part] },
+    ];
+    assertThrows(() =>
+      prepareHostedChildForkRuntimeStepMessages({
+        messages,
+        bootstrapSkill: "child--process",
+        forkToolNames: ["load_skill"],
+        buildInstructions: () => "Instructions",
+      })
+    );
+  }
 });

@@ -1677,6 +1677,8 @@ export function compactForStep(
   overhead: number = 0,
   options: {
     historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+    /** Reject a latest turn that still exceeds the existing budget after compaction. */
+    requireBudgetFit?: boolean;
   } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
@@ -1695,7 +1697,15 @@ export function compactForStep(
 
   const trimmed = end < compacted.length ? compacted.slice(0, end) : compacted;
 
-  return ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  const prepared = ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  if (
+    options.requireBudgetFit &&
+    prepared.reduce((total, message) => total + estimateTokens(message.content), overhead) >
+      DEFAULT_TOKEN_BUDGET
+  ) {
+    throw new RangeError("Prepared messages exceed the context budget");
+  }
+  return prepared;
 }
 
 /** Dedupe tool history. */

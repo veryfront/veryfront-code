@@ -485,6 +485,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
             messages,
             buildInstructions: prepareBuildInstructions,
             forkToolNames,
+            ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
             providerOptionKey: input.provider,
             resolveSystem: input.resolveSystem ?? defaultResolveSystem,
           }),

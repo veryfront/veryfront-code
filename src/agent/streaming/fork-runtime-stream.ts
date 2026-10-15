@@ -455,6 +455,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     forkToolNames: input.forkToolNames,
     ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
+    ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
     ...(input.sourceIntegrationPolicy
       ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
       : {}),

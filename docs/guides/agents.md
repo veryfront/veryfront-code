@@ -424,7 +424,11 @@ skill. Use an exact skill ID or the agent's own short name, not a selector patte
 Hosted children load only the target agent's own configured startup skill.
 The parent's startup skill is not inherited. Loading runs once before the child's
 first model call; its instructions remain in history across tool steps and
-continuations. In Markdown agent definitions, use `bootstrap-skill`.
+continuations. Hosted preparation retains the original trusted load and its full
+root, without loading it again. If that root cannot survive the existing context
+budget, preparation fails before inference. A fresh fork authorizes its own load;
+serialized history does not grant skill activation. In Markdown agent definitions,
+use `bootstrap-skill`.
 
 ```ts
 import { agent } from "veryfront/agent";

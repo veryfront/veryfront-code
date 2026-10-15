@@ -1,12 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import type { HostToolSet, ToolExecutionContext } from "#veryfront/tool";
+import {
+  createToolsFromHostDefinitions,
+  type HostToolSet,
+  type ToolExecutionContext,
+} from "#veryfront/tool";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { prepareHostedChildForkRuntimeStepMessages } from "../hosted/child-fork-step-message-preparation.ts";
 import { createRuntimeLoadSkillTool } from "../runtime/load-skill-tool.ts";
 import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
-import { startAgentRuntimeForkWithHostTools } from "./fork-runtime-stream.ts";
+import { getMessageSchema } from "../schemas/index.ts";
+import { runFrameworkForkStep, startAgentRuntimeForkWithHostTools } from "./fork-runtime-stream.ts";
 
-Deno.test("a hosted child loads its configured canonical skill before the first model call", async () => {
+Deno.test("a hosted child loads its configured canonical skill before the first model call", async (t) => {
   const skillId = "ingestion-agent--ingest-message";
   let loads = 0;
   const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
@@ -54,6 +60,112 @@ Deno.test("a hosted child loads its configured canonical skill before the first 
   assertEquals(loads, 1);
   assertEquals(model.callCount, 1);
   assertEquals(steps[0]?.toolCalls[0]?.input, { load: { skillId } });
+  await t.step("a prepared context without room for startup fails before inference", async () => {
+    for (const resolveSystem of [undefined, () => "Context overhead. ".repeat(50_000)]) {
+      const blockedModel = scriptedModel([{ text: "Must not infer" }], { only: "stream" });
+      const blocked = startAgentRuntimeForkWithHostTools({
+        ...input,
+        createModelRuntimeResolver: () => () => blockedModel,
+        buildInstructions: resolveSystem
+          ? input.buildInstructions
+          : () => "Context overhead. ".repeat(50_000),
+        prepareStep: (step) =>
+          prepareHostedChildForkRuntimeStepMessages({
+            ...step,
+            bootstrapSkill: skillId,
+            ...(resolveSystem ? { resolveSystem } : {}),
+          }),
+      }).streamResult;
+      Promise.resolve(blocked.steps).catch(() => {});
+      Promise.resolve(blocked.totalUsage).catch(() => {});
+      let failure: unknown;
+      try {
+        for await (const _part of blocked.fullStream) { /* Drain. */ }
+      } catch (error) {
+        failure = error;
+      }
+      assertEquals(failure instanceof Error, true);
+      assertEquals(blockedModel.callCount, 0);
+      assertEquals(loads, 1);
+    }
+  });
+  await t.step("the compatibility wrapper applies startup or fails before inference", async () => {
+    for (const enabled of [true, false]) {
+      let prompt = "";
+      const wrapperModel = scriptedModel([(options) => {
+        prompt = JSON.stringify(options.prompt);
+        return { text: "Done" };
+      }], { only: "stream" });
+      const result = await runFrameworkForkStep({
+        apiUrl: input.apiUrl,
+        authToken: input.authToken,
+        projectId: input.projectId,
+        model: wrapperModel.modelId ?? "test/child-bootstrap",
+        resolveModelRuntime: () => wrapperModel,
+        bootstrapSkill: skillId,
+        messages: [{
+          id: "fixture-user",
+          role: "user",
+          parts: [{ type: "text", text: "Process email" }],
+        }],
+        system: "Follow the child skill.",
+        forkToolNames: enabled ? ["veryfront__load_skill"] : [],
+        frameworkTools: createToolsFromHostDefinitions(
+          enabled ? { veryfront__load_skill: loader } : {},
+        ),
+      });
+      result.responsePromise.catch(() => {});
+      let failure: unknown;
+      let streamText = "";
+      try {
+        await result.stream.pipeTo(
+          new WritableStream({
+            write(chunk) {
+              streamText += new TextDecoder().decode(chunk);
+            },
+          }),
+        );
+        if (enabled) await result.responsePromise;
+      } catch (error) {
+        failure = error;
+      }
+      if (enabled) {
+        assertEquals(failure, undefined);
+        assertStringIncludes(prompt, "Canonical child ingestion instructions");
+        assertEquals(wrapperModel.callCount, 1);
+      } else {
+        assertStringIncludes(streamText, '"type":"error"');
+        assertEquals(wrapperModel.callCount, 0);
+      }
+    }
+  });
+  await t.step(
+    "a fresh fork reauthorizes serialized history with its own trusted load",
+    async () => {
+      const previousLoads = loads;
+      let prompt = "";
+      const freshModel = scriptedModel([(options) => {
+        prompt = JSON.stringify(options.prompt);
+        return { text: "Fresh result" };
+      }], { only: "stream" });
+      const fresh = startAgentRuntimeForkWithHostTools({
+        ...input,
+        initialMessages: structuredClone(steps[0]?.messages ?? []).map((message) =>
+          getMessageSchema().parse(message)
+        ),
+        createModelRuntimeResolver: () => () => freshModel,
+        prepareStep: (step) =>
+          prepareHostedChildForkRuntimeStepMessages({ ...step, bootstrapSkill: skillId }),
+      }).streamResult;
+      Promise.resolve(fresh.steps).catch(() => {});
+      Promise.resolve(fresh.totalUsage).catch(() => {});
+      for await (const _part of fresh.fullStream) { /* Drain. */ }
+      await fresh.steps;
+      assertEquals(loads, previousLoads + 1);
+      assertEquals(freshModel.callCount, 1);
+      assertStringIncludes(prompt, "Canonical child ingestion instructions");
+    },
+  );
 });
 
 Deno.test("a child keeps actual bootstrap instructions across tool steps and continuation without loading again", async () => {
@@ -71,7 +183,8 @@ Deno.test("a child keeps actual bootstrap instructions across tool steps and con
     builtinStore: {
       readSkill: async () => {
         loads++;
-        return "# Canonical child instructions remain active";
+        return "# Canonical child instructions remain active\n" +
+          "Workflow requirement. ".repeat(300);
       },
       listReferences: async () => [],
       readReferenceFile: async () => null,
@@ -112,6 +225,16 @@ Deno.test("a child keeps actual bootstrap instructions across tool steps and con
     createModelRuntimeResolver: () => () => model,
     maxSteps: 3,
     maxContinuationSteps: 2,
+    prepareStep: ({ messages, forkToolNames }: {
+      messages: import("../schemas/index.ts").Message[];
+      forkToolNames: readonly string[];
+    }) =>
+      prepareHostedChildForkRuntimeStepMessages({
+        messages,
+        forkToolNames,
+        bootstrapSkill: skillId,
+        buildInstructions: () => "Follow the child skill.",
+      }),
     prompt: "Process one email.",
     buildInstructions: () => "Follow the child skill.",
     onBeforeStop: () => {
