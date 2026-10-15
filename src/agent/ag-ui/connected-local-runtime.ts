@@ -1,3 +1,4 @@
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
 import { buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { normalizeText } from "#veryfront/utils/logger/core.ts";
@@ -64,7 +65,10 @@ export interface ConnectedLocalRun {
   finish(status: TerminalStatus): Promise<void>;
 }
 
-const hostFetch = globalThis.fetch;
+const responseJson = Response.prototype.json;
+const apply = Reflect.apply;
+const timeoutSignal = AbortSignal.timeout.bind(AbortSignal);
+const anySignal = AbortSignal.any.bind(AbortSignal);
 
 let installed: ReturnType<typeof createConnectedLocalRuntime> | undefined;
 
@@ -101,13 +105,12 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     }
   >;
 } = {}) {
+  const hostFetch = createVeryfrontApiOriginBoundOutboundFetch(options.apiBaseUrl);
   const transport: typeof fetch = dependencies.fetch ?? ((input, init) => {
     const signal = (init as RequestInit | undefined)?.signal;
     return hostFetch(input, {
       ...init,
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
-        : AbortSignal.timeout(15_000),
+      signal: signal ? anySignal([signal, timeoutSignal(15_000)]) : timeoutSignal(15_000),
     });
   });
   const client = dependencies.client ??
@@ -135,10 +138,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         ...headers,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
+      signal: timeoutSignal(15_000),
     });
     if (!response.ok) {
-      const problem = await response.json().catch(() => ({}));
+      const problem = await (apply(responseJson, response, []) as Promise<Record<string, unknown>>)
+        .catch(() => ({}));
       const detail = typeof problem.detail === "string" ? problem.detail : "";
       const message = response.status === 401
         ? "Veryfront login expired. Run veryfront login, then npm run dev again."
@@ -155,7 +159,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         message,
       );
     }
-    return await response.json();
+    return await apply(responseJson, response, []) as { id: string };
   }
   async function admit(
     input: {

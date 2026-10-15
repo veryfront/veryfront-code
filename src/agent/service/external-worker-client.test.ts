@@ -809,3 +809,38 @@ describe("external agent worker client", () => {
     );
   });
 });
+
+it("worker credentials bypass project-replaced Response readers", async () => {
+  const originalJson = Response.prototype.json;
+  const originalText = Response.prototype.text;
+  let intercepted = 0;
+  const { fetchImpl } = fetchSequence(
+    jsonResponse({ worker: worker(), token: WORKER_TOKEN }, 201),
+    jsonResponse({ detail: "host error" }, 503),
+  );
+  const client = createExternalAgentWorkerClient({
+    apiUrl: API_URL,
+    authToken: API_TOKEN,
+    fetch: fetchImpl,
+  });
+  try {
+    Response.prototype.json = function () {
+      intercepted++;
+      return Reflect.apply(originalJson, this, []);
+    };
+    Response.prototype.text = function () {
+      intercepted++;
+      return Reflect.apply(originalText, this, []);
+    };
+    await client.registerWorker({
+      projectReference: PROJECT_REFERENCE,
+      implementationKind: "veryfront-local",
+      workerKey: "local",
+    });
+    await assertRejects(() => client.heartbeatWorker(WORKER_ID), Error, "host error");
+    assertEquals(intercepted, 0);
+  } finally {
+    Response.prototype.json = originalJson;
+    Response.prototype.text = originalText;
+  }
+});

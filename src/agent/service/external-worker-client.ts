@@ -216,6 +216,8 @@ const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
+const responseJson = Response.prototype.json;
+const responseText = Response.prototype.text;
 const stringIncludes = String.prototype.includes;
 function errorMessageIncludes(error: unknown, expected: string): boolean {
   if (error === null || typeof error !== "object") return false;
@@ -372,13 +374,13 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
+      const body = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
       throw NETWORK_ERROR.create({
         detail: body || `Veryfront API returned HTTP ${response.status}`,
       });
     }
 
-    return schema.parse(await response.json());
+    return schema.parse(await apply(responseJson, response, []));
   }
 
   async registerWorker(

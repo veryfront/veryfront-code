@@ -1,6 +1,12 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { connectedDevApiBaseUrl, prepareConnectedDev } from "./connected-dev.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { stub } from "#std/testing/mock";
+import {
+  connectedDevApiBaseUrl,
+  createConnectedDevControlPlane,
+  prepareConnectedDev,
+} from "./connected-dev.ts";
 
 describe("connected local development", () => {
   it("leaves unlinked projects standalone without authentication", async () => {
@@ -90,4 +96,31 @@ it("stops MCP and dev servers even when connected runtime disposal rejects", asy
   assertEquals(stopped, ["mcp", "dev"]);
   assertEquals(caught instanceof AggregateError, true);
   assertEquals((caught as AggregateError).errors, [failure]);
+});
+
+it("connected preflight ignores a project-replaced global fetch", async () => {
+  let hostRequests = 0;
+  let projectRequests = 0;
+  await withMockFetch(() => {
+    hostRequests++;
+    throw new Error("host transport reached");
+  }, async () => {
+    // Fault injection models project config replacing the global, not a network stub.
+    const poisoned = stub(globalThis, "fetch", () => {
+      projectRequests++;
+      throw new Error("project transport reached");
+    });
+    try {
+      const controlPlane = createConnectedDevControlPlane({
+        apiUrl: "https://api.example.com",
+        apiToken: "fake-private-token",
+        projectSlug: "demo",
+      });
+      await assertRejects(() => controlPlane.getProject("demo"), Error, "host transport reached");
+      assertEquals(hostRequests, 1);
+      assertEquals(projectRequests, 0);
+    } finally {
+      poisoned.restore();
+    }
+  });
 });

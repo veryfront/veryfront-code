@@ -1,3 +1,6 @@
+import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
+import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 import { DEFAULT_API_URL } from "../../shared/constants.ts";
 /** Admission preflight for a directory that explicitly names a Cloud project. */
 export interface ConnectedDevTarget {
@@ -41,4 +44,12 @@ export async function stopDevServices(cleanups: Array<() => void | Promise<void>
   if (errors.length) {
     throw new AggregateError(errors, "Some local development services could not stop cleanly.");
   }
+}
+
+/** Keep connected preflight on the host transport after project config executes. */
+export function createConnectedDevControlPlane(config: ResolvedConfig) {
+  return createHttpDeployControlPlane(
+    config,
+    createApiClient(config, createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl)),
+  );
 }

@@ -39,8 +39,12 @@ import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/
 import { captureDevDisplayOptions } from "./display-options.ts";
 import { captureLocalWorkerName } from "./worker-name.ts";
 import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
-import { connectedDevApiBaseUrl, prepareConnectedDev, stopDevServices } from "./connected-dev.ts";
-import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
+import {
+  connectedDevApiBaseUrl,
+  createConnectedDevControlPlane,
+  prepareConnectedDev,
+  stopDevServices,
+} from "./connected-dev.ts";
 import {
   readProjectLinkForControlPlane,
   saveSharedProjectAssociation,
@@ -326,7 +330,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               );
             }
             await readProjectLinkForControlPlane(projectDir, runtimeAuth.apiBaseUrl);
-            const controlPlane = createHttpDeployControlPlane({
+            const controlPlane = createConnectedDevControlPlane({
               apiUrl: runtimeAuth.apiBaseUrl,
               apiToken: runtimeAuth.apiToken,
               apiTokenSource: runtimeAuth.apiTokenSource,
