@@ -753,6 +753,29 @@ describe("Runs target SDK", () => {
     }
   });
 
+  it("rejects a run artifact body that yields non-byte chunks", async () => {
+    const body = new ReadableStream<unknown>({
+      start(controller) {
+        controller.enqueue("abcdefgh");
+        controller.close();
+      },
+    }) as ReadableStream<Uint8Array>;
+    const sdk = createRunsSdk({
+      transport: {
+        request: async (_path, init) =>
+          await init!.onResponse!(
+            new Response(body),
+            { ...init, maxResponseBytes: 4 },
+            "https://api.example.test/runs/r/artifacts/a",
+          ),
+      },
+    });
+    const error = await rejection(() =>
+      sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "a" } })
+    );
+    assertEquals(error.status, 502);
+  });
+
   it("rejects a run artifact call that is missing artifact_id before sending it", async () => {
     const { sdk, requests } = sdkWith([]);
     await assertRejects(

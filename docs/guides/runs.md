@@ -317,8 +317,8 @@ RFC 9457 problem body.
 
 ### Error codes
 
-Runs Problems carry an uppercase `RUN_*` code. Each maps to one shared error
-kind, and REST, GraphQL and MCP report the same code for the same failure:
+The Runs service normalizes its failures to uppercase `RUN_*` codes. Each maps
+to one shared error kind, and REST, GraphQL and MCP report the same code for the same failure:
 
 | Run code                      | Error kind        | Meaning                                                                       |
 | ----------------------------- | ----------------- | ----------------------------------------------------------------------------- |
@@ -335,10 +335,14 @@ kind, and REST, GraphQL and MCP report the same code for the same failure:
 
 HTTP 413 and 429 responses map to `limit_exceeded` as well.
 
-Match on the `RUN_*` code from `runsProblemOf(error)?.code`. When an error
-response has no Problem body (empty, HTML, truncated or malformed JSON), the
-target SDK builds one from the HTTP status with the code `UNEXPECTED_RESPONSE`.
-Treat it by its `status`, not as a Runs Problem.
+Read the code from `runsProblemOf(error)?.code`. The table lists the
+normalized `RUN_*` codes. A valid Problem may also carry another server code,
+such as `IDEMPOTENCY_KEY_REUSED` or `FORBIDDEN`, which the SDK passes through
+unchanged. Match the codes you handle and fall back to the Problem `status` for
+any other code. When an error response has no Problem body (empty, HTML,
+truncated or malformed JSON), the target SDK builds one from the HTTP status
+with the code `UNEXPECTED_RESPONSE`. Treat it by its `status`, not as a Runs
+Problem.
 
 A `RUN_CONFLICT` may include an optional `cause`:
 `schedule_concurrency_forbidden` means the schedule forbids a new run while an

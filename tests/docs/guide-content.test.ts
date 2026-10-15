@@ -1313,6 +1313,9 @@ describe("guide content contracts", () => {
     assertEquals(guide.includes("stores the terminal execution shape directly"), false);
     // A non-Problem error body surfaces the SDK fallback code, not a RUN_* code.
     assertStringIncludes(guide, "with the code `UNEXPECTED_RESPONSE`");
+    // Valid Problems may carry non-RUN_* server codes; the guide must not say match only RUN_*.
+    assertStringIncludes(guide, "fall back to the Problem `status` for any other code");
+    assertEquals(guide.includes("Match on the `RUN_*` code"), false);
     for (
       const [code, kind] of [
         ["RUN_INVALID_INPUT", "invalid_input"],

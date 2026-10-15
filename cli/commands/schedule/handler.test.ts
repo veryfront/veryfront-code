@@ -96,6 +96,12 @@ function withTimeout(timeoutSeconds: number | undefined): Partial<RemoteSchedule
   };
 }
 
+/** A run in `status` with no `output` key at all. */
+function withoutOutput(status: RemoteScheduleRun["status"]): unknown {
+  const { output: _output, ...run } = makeRun({ status });
+  return run;
+}
+
 function makeAcceptedScheduleRun(timeoutSeconds = 5): CreateScheduleRunFromSourceResult {
   return {
     scheduleRun: {
@@ -636,6 +642,8 @@ describe("remote schedule polling", () => {
       { ...makeRun(), execution: { ...makeRun().execution, duration_ms: "12" } },
       { ...makeRun(), control: "waiting" },
       { ...makeRun(), control: { waiting: { reason: 7 } } },
+      withoutOutput("completed"),
+      withoutOutput("waiting"),
       { ...makeRun(), status: "failed", error: "boom" },
       { ...makeRun(), status: "failed", error: { code: "AGENT_FAILED", message: 42 } },
     ];

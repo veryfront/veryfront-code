@@ -305,7 +305,12 @@ function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRu
     !(waiting?.reason === undefined || waiting.reason === null ||
       typeof waiting.reason === "string") ||
     !(error === undefined || error === null || typeof error === "object") ||
-    !(error?.message === undefined || error.message === null || typeof error.message === "string")
+    !(error?.message === undefined || error.message === null ||
+      typeof error.message === "string") ||
+    // The CLI returns completed and waiting runs; their contract-required output (any JSON
+    // value, including null) becomes the command result.
+    ((candidate.status === "completed" || candidate.status === "waiting") &&
+      !Object.hasOwn(candidate, "output"))
   ) {
     throw DEPLOYMENT_ERROR.create({
       detail: `Remote schedule returned an invalid run: ${runId}`,

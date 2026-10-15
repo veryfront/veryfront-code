@@ -407,6 +407,13 @@ async function readBlob(
       const { done, value } = await reader.read();
       signal?.throwIfAborted();
       if (done) break;
+      // A host stream may yield non-byte chunks; they would bypass the byte count.
+      if (!(value instanceof Uint8Array)) {
+        throw successfulResponseProtocolError(
+          "readRunArtifact received a non-byte body chunk",
+          url,
+        );
+      }
       size += value.byteLength;
       if (size > limit) throw tooLarge();
       chunks.push(value);
