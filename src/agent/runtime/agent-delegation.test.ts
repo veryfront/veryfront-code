@@ -138,6 +138,7 @@ describe("invoke_agent", () => {
       resolveAgent: (id) => id === "writer" ? writer : undefined,
     });
 
+    assertEquals(invokeAgent.id, "veryfront__invoke_agent");
     const result = await invokeAgent.execute({
       agent_id: "writer",
       description: "Draft support reply",

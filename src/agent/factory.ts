@@ -68,6 +68,7 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import {
   buildAgentDelegateTools,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
   createInvokeAgentTool,
   INVOKE_AGENT_TOOL_ID,
 } from "./runtime/agent-delegation.ts";
@@ -379,8 +380,19 @@ function resolveToolsConfiguration(input: {
     const configuredTools = { ...(config.tools ?? {}) };
     if (delegates !== undefined) {
       delete configuredTools[INVOKE_AGENT_TOOL_ID];
-    } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
-      configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+      delete configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+    } else {
+      const legacyTool = configuredTools[INVOKE_AGENT_TOOL_ID];
+      const canonicalTool = configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+      if (legacyTool === true) delete configuredTools[INVOKE_AGENT_TOOL_ID];
+      if (canonicalTool === true) delete configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+      if (
+        (legacyTool === true || canonicalTool === true) &&
+        legacyTool !== false && canonicalTool !== false &&
+        (canonicalTool === undefined || canonicalTool === true)
+      ) {
+        configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+      }
     }
     for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
       const registration = SKILL_TOOL_REGISTRATIONS[index]!;

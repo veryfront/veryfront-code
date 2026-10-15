@@ -1,3 +1,4 @@
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { Tool, ToolExecutionContext } from "../../tool/types.ts";
 import type { Agent } from "../types.ts";
@@ -10,6 +11,7 @@ import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+export const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const NativeWeakSet = WeakSet;
@@ -91,39 +93,41 @@ function buildInvokeAgentPrompt(
  */
 export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): Tool {
   const resolveAgent = input.resolveAgent ?? getAgent;
-  const tool = markSkillDelegationOverridesUnsupported(markRuntimeLocalTool({
-    id: INVOKE_AGENT_TOOL_ID,
-    type: "function",
-    description:
-      "Invoke a registered project agent for a self-contained task. Select the target with agent_id and provide complete standalone instructions.",
-    inputSchema: getInvokeAgentInputSchema(),
-    execute(toolInput, context) {
-      const agentId = toolInput.agent_id.trim();
-      if (agentId === input.selfId) {
-        return Promise.resolve({
-          text: `Agent "${agentId}" cannot invoke itself.`,
-          toolCalls: 0,
-          status: "error",
-        });
-      }
+  const tool = markSkillDelegationOverridesUnsupported(
+    markRuntimeLocalTool(markTrustedHostToolProvenance({
+      id: CANONICAL_INVOKE_AGENT_TOOL_ID,
+      type: "function",
+      description:
+        "Invoke a registered project agent for a self-contained task. Select the target with agent_id and provide complete standalone instructions.",
+      inputSchema: getInvokeAgentInputSchema(),
+      execute(toolInput, context) {
+        const agentId = toolInput.agent_id.trim();
+        if (agentId === input.selfId) {
+          return Promise.resolve({
+            text: `Agent "${agentId}" cannot invoke itself.`,
+            toolCalls: 0,
+            status: "error",
+          });
+        }
 
-      const target = resolveAgent(agentId);
-      if (!target) {
-        return Promise.resolve({
-          text: `Agent "${agentId}" is not available.`,
-          toolCalls: 0,
-          status: "error",
-        });
-      }
+        const target = resolveAgent(agentId);
+        if (!target) {
+          return Promise.resolve({
+            text: `Agent "${agentId}" is not available.`,
+            toolCalls: 0,
+            status: "error",
+          });
+        }
 
-      return agentAsTool(target, toolInput.description, {
-        toolName: INVOKE_AGENT_TOOL_ID,
-        toolInput,
-      }).execute({
-        input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
-      }, context);
-    },
-  }));
+        return agentAsTool(target, toolInput.description, {
+          toolName: CANONICAL_INVOKE_AGENT_TOOL_ID,
+          toolInput,
+        }).execute({
+          input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
+        }, context);
+      },
+    })),
+  );
   markFrameworkTool(frameworkInvokeAgentTools, tool);
   return tool;
 }

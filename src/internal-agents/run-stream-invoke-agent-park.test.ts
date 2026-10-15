@@ -14,7 +14,10 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { agent as createAgent } from "#veryfront/agent";
-import { isFrameworkInvokeAgentTool } from "#veryfront/agent/runtime/agent-delegation.ts";
+import {
+  createInvokeAgentTool,
+  isFrameworkInvokeAgentTool,
+} from "#veryfront/agent/runtime/agent-delegation.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
@@ -48,26 +51,39 @@ const controlPlaneInvokeAgent = {
 };
 
 describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
-  it("replaces the framework invoke_agent with the control-plane tool", () => {
-    const runtimeAgent = createAgent({
-      id: "intake-orchestrator",
-      model: "hosted/invoke-merge-model",
-      system: "Delegate classification.",
-      tools: { invoke_agent: true },
-      skills: false,
-    });
-    const configured = (runtimeAgent.config.tools as Record<string, unknown>).invoke_agent;
-    assert(isFrameworkInvokeAgentTool(configured));
+  for (const forwardedName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const configuredTool of [true, createInvokeAgentTool()]) {
+      it(`replaces framework delegation with the ${forwardedName} control-plane tool`, () => {
+        const runtimeAgent = createAgent({
+          id: "intake-orchestrator",
+          model: "hosted/invoke-merge-model",
+          system: "Delegate classification.",
+          tools: { invoke_agent: configuredTool },
+          skills: false,
+        });
+        const configured =
+          (runtimeAgent.config.tools as Record<string, unknown>).veryfront__invoke_agent ??
+            (runtimeAgent.config.tools as Record<string, unknown>).invoke_agent;
+        assert(isFrameworkInvokeAgentTool(configured));
 
-    const merged = buildMergedTools(
-      runtimeAgent,
-      runInput("run_invoke_merge_framework", [controlPlaneInvokeAgent]),
-      new AgentRunSessionManager(),
-    ) as Record<string, unknown>;
+        const merged = buildMergedTools(
+          runtimeAgent,
+          runInput("run_invoke_merge_framework", [{
+            ...controlPlaneInvokeAgent,
+            name: forwardedName,
+          }]),
+          new AgentRunSessionManager(),
+        ) as Record<string, unknown>;
 
-    assert(merged.invoke_agent !== configured, "the control-plane tool must replace the local one");
-    assertEquals(isFrameworkInvokeAgentTool(merged.invoke_agent), false);
-  });
+        assert(
+          merged.veryfront__invoke_agent !== configured,
+          "the control-plane tool must replace the local one",
+        );
+        assertEquals(isFrameworkInvokeAgentTool(merged.veryfront__invoke_agent), false);
+        assertEquals(merged.invoke_agent, undefined);
+      });
+    }
+  }
 
   it("keeps a custom inline tool named invoke_agent", () => {
     const customInvokeAgent = tool({
@@ -98,7 +114,7 @@ describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
       {
         toolCalls: [{
           id: "toolu_invoke_1",
-          name: "invoke_agent",
+          name: "veryfront__invoke_agent",
           input: { agent_id: "classifier", prompt: "Classify the message." },
         }],
       },

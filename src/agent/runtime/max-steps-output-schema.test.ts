@@ -342,7 +342,7 @@ describe("agent max steps output schema", () => {
     };
     const model = createMaxStepsModel(
       '{"city":"Berlin","tempC":12}',
-      "invoke_agent",
+      "veryfront__invoke_agent",
       invokeInput,
       invokeInput,
     );
@@ -350,7 +350,7 @@ describe("agent max steps output schema", () => {
       id: "max-steps-final-child-delegation",
       system: "Delegate then report weather.",
       tools: {
-        invoke_agent: createInvokeAgentTool({
+        veryfront__invoke_agent: createInvokeAgentTool({
           resolveAgent: (agentId) => agentId === child.id ? child : undefined,
         }),
       },
@@ -364,7 +364,7 @@ describe("agent max steps output schema", () => {
       async (input) => {
         childDelegations += 1;
         assertEquals(input.agentId, "max-steps-child");
-        assertEquals(input.toolName, "invoke_agent");
+        assertEquals(input.toolName, "veryfront__invoke_agent");
         assertEquals(input.toolInput, invokeInput);
         const result = await input.execute();
         childCompleted = true;

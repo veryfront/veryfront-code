@@ -1433,20 +1433,54 @@ description: Excluded skill
     assertEquals(observedToolNames, ["web_fetch"]);
   });
 
-  it("materializes explicitly requested invoke_agent for direct runtimes", async () => {
+  for (const selector of ["invoke_agent", "veryfront__invoke_agent"]) {
+    it(`materializes ${selector} under its canonical model name`, async () => {
+      const assistant = agent({
+        id: "generic-orchestrator",
+        system: "Invoke registered specialist agents.",
+        skills: [],
+        tools: { [selector]: true },
+      });
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+      assertEquals(definitions.map((definition) => definition.name), ["veryfront__invoke_agent"]);
+    });
+  }
+
+  it("honors either generic delegation deny when the sibling selector is enabled", async () => {
+    for (
+      const tools of [
+        { invoke_agent: false, veryfront__invoke_agent: true },
+        { invoke_agent: true, veryfront__invoke_agent: false },
+      ]
+    ) {
+      const assistant = agent({ id: "denied-generic", skills: [], tools });
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+      assertEquals(definitions, []);
+    }
+  });
+
+  it("preserves concrete project delegation tool identities", () => {
+    const projectTool = tool({
+      id: "invoke_agent",
+      description: "Project operation",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => "project result",
+    });
     const assistant = agent({
-      id: "generic-orchestrator",
-      system: "Invoke registered specialist agents.",
+      id: "project-delegation-name",
       skills: [],
-      tools: { invoke_agent: true },
+      tools: { invoke_agent: projectTool, veryfront__invoke_agent: true },
     });
-
-    const definitions = await getAvailableTools(assistant.config.tools, {
-      callerAgentId: assistant.id,
-      includeIntegrationTools: false,
-    });
-
-    assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertStrictEquals(tools.invoke_agent, projectTool);
+    assertEquals(hasTrustedHostToolProvenance(projectTool), false);
+    assertEquals(typeof tools.veryfront__invoke_agent, "object");
   });
 
   it("suppresses generic invoke_agent when delegates are explicitly scoped", async () => {
@@ -1461,7 +1495,7 @@ description: Excluded skill
         system: "Delegate only within the explicit scope.",
         skills: [],
         delegates: [...delegates],
-        tools: { invoke_agent: true },
+        tools: { invoke_agent: true, veryfront__invoke_agent: true },
       });
 
       const definitions = await getAvailableTools(assistant.config.tools, {

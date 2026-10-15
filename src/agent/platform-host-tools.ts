@@ -23,7 +23,10 @@ function ownKeys(value: HostToolSet | HostToolDefinition): string[] {
   return reflectApply(objectKeys, Object, [value]) as string[];
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(
+  value: HostToolSet | PropertyDescriptor | readonly string[],
+  key: PropertyKey,
+): boolean {
   return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
 }
 
