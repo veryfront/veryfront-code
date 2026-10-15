@@ -14,11 +14,12 @@ it("persists only association while preserving existing configuration", async ()
   try {
     await Deno.writeTextFile(
       `${directory}/veryfront.json`,
-      JSON.stringify({ projects: ["other"] }),
+      JSON.stringify({ projects: ["other"], apiToken: "legacy-secret" }),
     );
     await saveSharedProjectAssociation(directory, "demo");
     assertEquals(JSON.parse(await Deno.readTextFile(`${directory}/veryfront.json`)), {
       projects: ["other"],
+      apiToken: "legacy-secret",
       projectSlug: "demo",
     });
   } finally {

@@ -356,6 +356,10 @@ describe("guide content contracts", () => {
     ) {
       assertStringIncludes(quickstart, step);
     }
+    assertStringIncludes(quickstart, "Never commit credentials");
+    assertStringIncludes(quickstart, "remove any existing `apiToken`");
+    assertStringIncludes(quickstart, "`veryfront login`");
+    assertStringIncludes(quickstart, "private login store");
     assertStringIncludes(quickstart, "Veryfront Cloud AI Gateway");
     assertStringIncludes(quickstart, "browser sign-in prompt when needed");
     assertStringIncludes(quickstart, "new or existing cloud project");

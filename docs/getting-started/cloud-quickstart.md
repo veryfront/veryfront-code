@@ -33,9 +33,12 @@ new or existing cloud project by selecting **Create a new cloud project** or
 Answer **No** to continue with the local project. You can link a cloud project
 when you run `npm run dev`.
 
-The link to the cloud project is saved in `veryfront.json` without credentials.
-Commit that file so teammates can reuse the cloud project after cloning. Each
-teammate signs in with their own account.
+The cloud project link is saved in `veryfront.json`; linking adds no credentials
+and preserves existing configuration. Never commit credentials: before committing
+that file, remove any existing `apiToken` or other secrets. Use `veryfront login`
+(the private login store) or environment variables for authentication instead.
+Commit the credential-free file so teammates can reuse the cloud project after
+cloning. Each teammate signs in with their own account.
 
 A local project pulled from Studio is already linked to its cloud project:
 

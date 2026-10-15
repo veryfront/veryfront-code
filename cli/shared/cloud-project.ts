@@ -5,7 +5,7 @@ import { saveSharedProjectAssociation } from "./project-link.ts";
 import { reserveProjectSlug } from "./reserve-slug.ts";
 import { select } from "../utils/terminal-select.ts";
 
-/** Associate source without publishing it; credentials remain in the login store. */
+/** Associate source without publishing it; new login credentials stay in the private login store. */
 export async function chooseCloudProject(
   projectDir: string,
   prompt: typeof select = select,
