@@ -429,18 +429,26 @@ function withoutDeniedForkTools(
   };
 }
 
+/**
+ * Drops callable tools that merely share a name with a provider-only binding.
+ * A tool whose own (qualified) name the agent explicitly selected is kept: the
+ * collision is only with its short name, not with the selection.
+ */
 function withoutProviderOnlyForkTools(
   toolSources: DefaultHostedChildForkToolAssemblySourceResult,
   providerOnlyToolNames: readonly string[] | undefined,
+  selectedToolNames?: readonly string[],
 ): DefaultHostedChildForkToolAssemblySourceResult {
   if (!toolSources.ok || !providerOnlyToolNames?.length) return toolSources;
   const providerOnly = new Set(providerOnlyToolNames);
+  const selected = new Set(selectedToolNames ?? []);
   return {
     ...toolSources,
     forkTools: Object.fromEntries(
       Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
         !providerOnly.has(toolName) &&
-        (tool.shortName === undefined || !providerOnly.has(tool.shortName))
+        (tool.shortName === undefined || !providerOnly.has(tool.shortName) ||
+          selected.has(toolName))
       ),
     ),
   };
@@ -536,6 +544,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
       input.childConfig?.toolNames,
     ),
     input.childConfig?.providerOnlyToolNames,
+    input.childConfig?.toolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
     requestedTools: input.requestedTools,

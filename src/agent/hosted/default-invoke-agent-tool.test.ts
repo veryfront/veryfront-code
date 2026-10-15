@@ -1447,6 +1447,20 @@ it("provider-only bindings never select a same-name host or MCP tool", () => {
   assertEquals(Object.keys(filtered.forkTools), ["other"]);
 });
 
+it("provider-only bindings keep an explicitly selected qualified tool with the same short name", () => {
+  const mcpTool = { description: "MCP web_fetch", shortName: "web_fetch" };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutProviderOnlyForkTools(
+    {
+      ok: true,
+      forkTools: { web_fetch: { description: "Host" }, mcp__crm__web_fetch: mcpTool, other: {} },
+    } as never,
+    ["web_fetch"],
+    ["web_fetch", "mcp__crm__web_fetch"],
+  );
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["mcp__crm__web_fetch", "other"]);
+});
+
 it("child denials preserve an explicitly selected platform loader alias", () => {
   const platform = markTrustedHostToolProvenance({ description: "Platform" });
   const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
