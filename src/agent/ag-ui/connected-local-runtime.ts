@@ -514,7 +514,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     runtimeId: workerKey,
     admit,
     async dispose() {
-      await Promise.all([...active].map((run) => run.finish("cancelled")));
+      const results = await Promise.allSettled([...active].map((run) => run.finish("cancelled")));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
     },
   };
 }

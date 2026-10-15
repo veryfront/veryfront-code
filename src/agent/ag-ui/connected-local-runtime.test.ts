@@ -567,8 +567,7 @@ describe("connected local execution", () => {
     let disposalSettled = false;
     const disposal = f.runtime.dispose().finally(() => disposalSettled = true);
     void disposal.catch(() => {});
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assertEquals(disposalSettled, false);
     assertEquals(delayedFinished, false);
 

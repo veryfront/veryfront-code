@@ -223,7 +223,7 @@ function prepareAgUiStreamInput(options: {
 
   return {
     effectiveRunId,
-    messages: applyBeforeStreamResult(options.messages, options.beforeStreamResult),
+    messages: options.messages,
     context: {
       // beforeStream may return a fresh context, dropping the generated-run marker.
       ...(options.beforeStreamResult?.context ?? options.context),
@@ -569,13 +569,14 @@ async function createAgUiDirectStreamResponse(
     lastUserText: extractLastUserText(messages),
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
 
   const connectedRuntime = getConnectedLocalRuntime();
   const localRun = await connectedRuntime?.admit({
     agentId: agent.id,
     agentName: agent.config.name ?? agent.id,
     threadId,
-    messages: request.messages,
+    messages,
     signal: rawRequest.signal,
   });
   const privateRuntime = localRun ? undefined : await getRequiredPrivateApplicationInferenceRuntime(
@@ -704,6 +705,7 @@ async function createAgUiInjectedToolsStreamResponse(
     lastUserText: extractLastUserText(messages),
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
 
   const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
     agent.id,
