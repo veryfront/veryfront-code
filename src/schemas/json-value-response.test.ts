@@ -1,8 +1,45 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { snapshotBoundedJsonValue, snapshotBoundedParsedJsonValue } from "./json-value.ts";
+import {
+  boundedJsonByteLength,
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "./json-value.ts";
 
 describe("byte-bounded parsed JSON snapshots", () => {
+  it("matches TextEncoder byte counts across UTF-16 boundaries and surrogate combinations", () => {
+    const encoder = new TextEncoder();
+    const verify = (value: string) => {
+      assertEquals(boundedJsonByteLength(value), encoder.encode(JSON.stringify(value)).byteLength);
+      const decodedBytes = encoder.encode(value).byteLength + 2;
+      assertEquals(snapshotBoundedParsedJsonValue(value, decodedBytes).success, true);
+      assertEquals(snapshotBoundedParsedJsonValue(value, decodedBytes - 1).success, false);
+    };
+    for (let code = 0; code <= 0xffff; code++) verify(String.fromCharCode(code));
+    let state = 0x12345678;
+    for (let sample = 0; sample < 2000; sample++) {
+      let value = "";
+      for (let index = 0; index < 12; index++) {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        value += String.fromCharCode(state >>> 16);
+      }
+      verify(value);
+    }
+    for (const value of ["😀", "\ud800\ud800\udc00", "\udc00\ud800", "é中😀", "\udbff\udfff"]) {
+      verify(value);
+    }
+  });
+  it("keeps UTF-8 counts independent of later string intrinsic replacement", () => {
+    const original = String.prototype.charCodeAt;
+    try {
+      String.prototype.charCodeAt = () => {
+        throw new Error("caller replacement");
+      };
+      assertEquals(boundedJsonByteLength("é中😀"), 11);
+    } finally {
+      String.prototype.charCodeAt = original;
+    }
+  });
   it("keeps authored string and aggregate defaults unchanged", () => {
     const large = "a".repeat(1400000);
     assertEquals(snapshotBoundedJsonValue({ data: large }).success, false);
