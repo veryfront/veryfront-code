@@ -428,6 +428,21 @@ async function readFileWithFallback(
   }
 }
 
+async function findSourceTypeScriptConfig(path: string): Promise<string | undefined> {
+  // Native bundling ignores package tsconfigs; published dependencies must keep
+  // their JavaScript/default TypeScript semantics, including incomplete dev configs.
+  if (/(?:^|[\\/])node_modules(?:[\\/]|$)/.test(path)) return undefined;
+  const fs = createFileSystem();
+  let folder = dirname(path);
+  while (true) {
+    const candidate = join(folder, "tsconfig.json");
+    if (await fs.exists(candidate) && (await fs.stat(candidate)).isFile) return candidate;
+    const parent = dirname(folder);
+    if (parent === folder) return undefined;
+    folder = parent;
+  }
+}
+
 async function transpileWithEsbuild(
   source: string,
   modulePath: string,
@@ -451,19 +466,43 @@ async function transpileWithEsbuild(
       getSourceModuleRuntimeUrl(),
       reactPeers,
     );
-    const transformed = await transform(contents, {
-      loader: getEsbuildLoader(path),
-      jsx: "preserve",
+    // Explicit config keeps native inheritance and compiler semantics during
+    // this non-bundling pass, before TypeScript syntax is erased.
+    const tsconfig = await findSourceTypeScriptConfig(path);
+    const transformOptions = {
+      jsx: "preserve" as const,
       target: "es2022",
       define: {
         "import.meta": meta.name,
         __dirname: JSON.stringify(dirname(path)),
         __filename: JSON.stringify(path),
       },
-    });
+    };
+    let transformed: string;
+    if (tsconfig) {
+      const preliminary = await build({
+        ...transformOptions,
+        tsconfig,
+        bundle: false,
+        write: false,
+        platform: reactPeers ? "node" : "neutral",
+        stdin: {
+          contents,
+          loader: getEsbuildLoader(path),
+          resolveDir: dirname(path),
+          sourcefile: path,
+        },
+      });
+      const output = preliminary.outputFiles?.[0]?.text;
+      if (output === undefined) throw new TypeError("Script preprocessing produced no output");
+      transformed = output;
+    } else {
+      transformed =
+        (await transform(contents, { ...transformOptions, loader: getEsbuildLoader(path) })).code;
+    }
     const bound = reactPeers
       ? await bindScriptModuleImports(
-        transformed.code,
+        transformed,
         path,
         reactPeers,
         getSourceModuleRuntimeUrl(),
@@ -471,7 +510,7 @@ async function transpileWithEsbuild(
           if (inputs) inputs.reusable = false;
         },
       )
-      : transformed.code;
+      : transformed;
     const code = bound.includes(meta.name)
       ? `${meta.banner}
 ${bound}`

@@ -73,6 +73,48 @@ describe("react-paths", () => {
     assertEquals(rendered.html.includes("virtual script"), true);
   });
 
+  it("preserves per-file TypeScript decorator and class-field configuration", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const directory = mkdtempSync(join(tmpdir(), "script-typescript-config-"));
+    const page = join(directory, "page.js");
+    fs.mkdirSync(join(directory, "lib"));
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    fs.writeFileSync(
+      join(directory, "base.tsconfig.json"),
+      '{"compilerOptions":{"experimentalDecorators":true,"useDefineForClassFields":false}}',
+    );
+    fs.writeFileSync(
+      join(directory, "lib", "tsconfig.json"),
+      '{"extends":"../base.tsconfig.json"}',
+    );
+    fs.writeFileSync(
+      join(directory, "lib", "value.ts"),
+      'function legacy(target: object, key: string, descriptor: PropertyDescriptor) { if (typeof key !== "string") throw new Error("lost legacy decorator arguments"); descriptor.value = () => "decorated"; } class Base { assigned?: number; set value(value: number) { this.assigned = value; } } class Derived extends Base { value = 4; @legacy method() { return "original"; } } export function value() { const instance = new Derived(); return instance.assigned + "|" + instance.method(); }',
+    );
+    fs.writeFileSync(
+      page,
+      'import { value } from "./lib/value.ts"; export default () => "<main>" + value() + "</main>";',
+    );
+    try {
+      const result = await handleScriptPage(
+        { entity: { path: page, frontmatter: {} } } as never,
+        "page",
+        {
+          mode: "production",
+          config: {},
+          projectDir: directory,
+          adapter: createMockAdapter(),
+          reactPeers: captureLocalReactPeers(),
+        },
+      );
+      assertEquals(result.html.includes("<main>4|decorated</main>"), true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps Bun metadata APIs on captured peers", async () => {
     if (!isBun) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
@@ -241,7 +283,7 @@ describe("react-paths", () => {
       const original = bundler.bundle;
       let builds = 0;
       bundler.bundle = (options) => {
-        builds++;
+        if (options.bundle !== false) builds++;
         return original.call(bundler, options);
       };
       const directory = mkdtempSync(join(tmpdir(), "script-compilation-"));
