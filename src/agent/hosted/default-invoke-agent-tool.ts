@@ -46,6 +46,11 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
 import {
+  HostedChildAgentResolutionError,
+  hostedChildAgentResolutionErrorCodes,
+  isHostedChildModelAllowed,
+} from "./project-agent-definition-resolver.ts";
+import {
   runHostedChildExecutionLifecycle,
   shouldSkipHostedChildTerminalPersistence,
 } from "./child-lifecycle.ts";
@@ -143,6 +148,26 @@ export type DefaultHostedChildAgentExecutionConfig = {
   loadedSkillResponses?: RuntimeLoadSkillToolContext["loadedSkillResponses"];
   loadedSkillReferenceResponses?: RuntimeLoadSkillToolContext["loadedSkillReferenceResponses"];
   delegateIds?: string[];
+  /**
+   * Whether the child may receive this deployment's locally discovered host
+   * tools. Set only for an agent this deployment discovered itself. Absent
+   * means no local tools: an agent read from the API (another project, or one
+   * this deployment does not ship) never runs the calling project's code or
+   * credentials.
+   */
+  localHostTools?: boolean;
+  /**
+   * Models an `invoke_agent.model` override may select. An override outside a
+   * non-empty list fails the child with `CHILD_AGENT_MODEL_NOT_ALLOWED`.
+   */
+  allowedModels?: string[];
+  /**
+   * Provider-native tool bindings that are not also callable tool grants. They
+   * stay in `toolNames` so the provider can bind them, but a host, MCP or
+   * project tool with the same name is never selected for the child (for
+   * example when the child model does not support the provider tool).
+   */
+  providerOnlyToolNames?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -215,6 +240,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     resolveChildAgentExecutionConfig?: (
       childAgentId: string,
       projectId: string,
+      lookup?: { abortSignal?: AbortSignal },
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
@@ -406,6 +432,31 @@ function withoutDeniedForkTools(
   };
 }
 
+/**
+ * Drops callable tools that merely share a name with a provider-only binding.
+ * A tool whose own (qualified) name the agent explicitly selected is kept: the
+ * collision is only with its short name, not with the selection.
+ */
+function withoutProviderOnlyForkTools(
+  toolSources: DefaultHostedChildForkToolAssemblySourceResult,
+  providerOnlyToolNames: readonly string[] | undefined,
+  selectedToolNames?: readonly string[],
+): DefaultHostedChildForkToolAssemblySourceResult {
+  if (!toolSources.ok || !providerOnlyToolNames?.length) return toolSources;
+  const providerOnly = new Set(providerOnlyToolNames);
+  const selected = new Set(selectedToolNames ?? []);
+  return {
+    ...toolSources,
+    forkTools: Object.fromEntries(
+      Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
+        !providerOnly.has(toolName) &&
+        (tool.shortName === undefined || !providerOnly.has(tool.shortName) ||
+          selected.has(toolName))
+      ),
+    ),
+  };
+}
+
 function getUnavailableOptionalStudioToolNames(
   config: DefaultHostedInvokeAgentConfig,
   clientProfile: RuntimeClientProfile | null | undefined,
@@ -487,16 +538,20 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     durableChildRun?: HostedChildRunIdentifiers;
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
-  const toolSources = withoutDeniedForkTools(
-    await prepareForkToolSources(
-      options,
-      config,
-      input.childAgentId,
-      input.childConfig,
-      input.abortSignal,
-      input.durableChildRun,
+  const toolSources = withoutProviderOnlyForkTools(
+    withoutDeniedForkTools(
+      await prepareForkToolSources(
+        options,
+        config,
+        input.childAgentId,
+        input.childConfig,
+        input.abortSignal,
+        input.durableChildRun,
+      ),
+      input.childConfig?.deniedToolNames,
+      input.childConfig?.toolNames,
     ),
-    input.childConfig?.deniedToolNames,
+    input.childConfig?.providerOnlyToolNames,
     input.childConfig?.toolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
@@ -768,6 +823,7 @@ function applyChildAgentExecutionConfig(
 /** Test-only helpers for fixed-target hosted delegation behavior. */
 export const defaultHostedInvokeAgentToolInternals = {
   applyChildAgentExecutionConfig,
+  withoutProviderOnlyForkTools,
   withoutUnavailableOptionalStudioRequestedTools,
   withoutDeniedForkTools,
 };
@@ -826,13 +882,46 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         project_reference: undefined,
       };
     }
-    const childConfig = await options.resolveChildAgentExecutionConfig?.(
-      childAgentId,
-      targetProjectId,
-    );
+    let childConfig: DefaultHostedChildAgentExecutionConfig | undefined;
+    let forkInput = resolvedInput;
+    // The saved agent definition is mutable: resolve it only when this call
+    // will actually run the child. A durable retry replays its terminal
+    // receipt first, so a since-deleted agent or narrowed model allowlist
+    // cannot turn a finished child into a new failure.
+    const resolveChildExecution = async (): Promise<
+      { terminalErrorCode: string; terminalErrorMessage: string } | null
+    > => {
+      try {
+        childConfig = await options.resolveChildAgentExecutionConfig?.(
+          childAgentId,
+          targetProjectId,
+          { abortSignal },
+        );
+      } catch (error) {
+        // A missing or unreadable target agent is reported to the parent as a
+        // terminal child failure; the child never runs without its definition.
+        if (!(error instanceof HostedChildAgentResolutionError)) throw error;
+        return { terminalErrorCode: error.code, terminalErrorMessage: error.message };
+      }
+      if (
+        resolvedInput.model !== undefined &&
+        !isHostedChildModelAllowed(
+          childConfig?.allowedModels,
+          resolvedInput.model,
+          options.resolveModelId,
+        )
+      ) {
+        return {
+          terminalErrorCode: hostedChildAgentResolutionErrorCodes.modelNotAllowed,
+          terminalErrorMessage:
+            `Agent "${childAgentId}" does not allow model "${resolvedInput.model}". ` +
+            `Allowed models: ${childConfig?.allowedModels?.join(", ")}. No child agent was run.`,
+        };
+      }
+      forkInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
+      return null;
+    };
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-    const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
-    const forkInput = configuredInput;
     const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
       traceBase: {
         conversationId: options.context.conversationId,
@@ -875,6 +964,8 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
     durableInvokeRecorder.annotate();
 
     if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
+      const resolutionFailure = await resolveChildExecution();
+      if (resolutionFailure) return buildHostedDurableChildInvokeFailureResult(resolutionFailure);
       return executeHostedLocalChildInvoke({
         forkInput,
         abortSignal,
@@ -921,6 +1012,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
           "invoke_agent requires durable conversation context when durable child runs are enabled.",
         setupFailedCode: DURABLE_INVOKE_SETUP_FAILED,
         executionFailedCode: "INVOKE_AGENT_FAILED",
+        prepareAdmittedExecution: async () => (await resolveChildExecution()) ?? { forkInput },
         executeLocal: executeLocalInvoke,
         getExecutionSnapshot: () => executionSnapshot,
         buildContextUnavailableResult: (message) => {

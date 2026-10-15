@@ -425,12 +425,12 @@ export const API_ENDPOINTS = {
   listProjects: {
     method: "GET" as const,
     path: "/projects",
-    description: "List all accessible projects",
+    description: "List the first page of accessible projects (listProjects)",
   },
   getProject: {
     method: "GET" as const,
     path: "/projects/{projectRef}",
-    description: "Get project by UUID or slug",
+    description: "Get a project by UUID or slug (getProject)",
   },
   getDependencyHistory: DEPENDENCY_HISTORY_ENDPOINT,
   /** @deprecated Use `getDependencyHistory`. */

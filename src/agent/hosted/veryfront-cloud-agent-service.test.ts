@@ -36,6 +36,8 @@ import {
 } from "#veryfront/skill/tools.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { API_AGENT_SOURCE_DOCUMENTS } from "./fixtures/api-agent-source-documents.fixture.ts";
+import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -163,6 +165,9 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
         switchedTaskContext = taskContext;
         return Promise.resolve();
       },
+    }], ["child-agent", {
+      getProjectInstructions: () => Promise.resolve(""),
+      getSkillsConfig: () => Promise.resolve([]),
     }]]),
     trace: (_name: string, operation: () => unknown) => operation(),
   } as never;
@@ -259,11 +264,26 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     agentId: "orchestrator",
     clientProfile,
   });
-  await invokeAgent.execute({
-    agent_id: "child-agent",
-    description: "Verify child MCP composition.",
-    prompt: "Inspect the available tools.",
-  }, { toolCallId: "tool-call-1" });
+  // A saved project agent the service did not discover is read from the API.
+  const agentLookups: string[] = [];
+  await withMockFetch(
+    (request) => {
+      const url = new URL(request instanceof Request ? request.url : String(request));
+      agentLookups.push(url.pathname);
+      return Promise.resolve(
+        url.pathname === "/projects/project-2/agents/child-agent"
+          ? Response.json({ ...API_AGENT_SOURCE_DOCUMENTS.all_tools_typescript, id: "child-agent" })
+          : new Response(null, { status: 404 }),
+      );
+    },
+    () =>
+      invokeAgent.execute({
+        agent_id: "child-agent",
+        description: "Verify child MCP composition.",
+        prompt: "Inspect the available tools.",
+      }, { toolCallId: "tool-call-1" }),
+  );
+  assertEquals(agentLookups[0], "/projects/project-2/agents/child-agent");
   assertEquals(
     await Promise.all(createdConfigs.map(async ({ id, endpoint }) => ({
       id,
@@ -274,6 +294,24 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
       { id: "studio-mcp-live-tools", endpoint: "https://studio.example/mcp" },
     ],
   );
+
+  // An agent ID the project does not have is reported to the parent and never
+  // runs as a generic fork with the parent's tools.
+  createdConfigs.length = 0;
+  const missing = await withMockFetch(
+    () => Promise.resolve(new Response(null, { status: 404 })),
+    () =>
+      invokeAgent.execute({
+        agent_id: "chlid-agent",
+        description: "Typo'd agent id.",
+        prompt: "Inspect the available tools.",
+      }, { toolCallId: "tool-call-2" }),
+  );
+  assertEquals(
+    (missing as { terminalErrorCode?: string }).terminalErrorCode,
+    "CHILD_AGENT_NOT_FOUND",
+  );
+  assertEquals(createdConfigs, []);
 
   assertStrictEquals(
     getRemoteToolSourceFactory({ options: {} } as never),
@@ -1952,10 +1990,12 @@ Deno.test("hosted child execution config resolves steering against the target pr
       trace: (_name: string, operation: () => unknown) => operation(),
     } as never,
     {
+      // The deployment's own project after the parent switched away and back.
       authToken: "token-1",
-      projectId: "source-project",
-      branchId: "source-branch",
+      projectId: "target-project",
+      branchId: null,
       agentId: "orchestrator",
+      deploymentProjectId: "target-project",
     },
     "extraction-agent",
     "target-project",
@@ -1977,6 +2017,322 @@ Deno.test("hosted child execution config resolves steering against the target pr
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
   ]);
+});
+
+function resolveSavedChildAgentConfig(
+  document: unknown,
+  options: {
+    lookups?: string[];
+    abortSignal?: AbortSignal;
+    taskContext?: Record<string, unknown>;
+    targetProjectId?: string;
+    getProjectInstructions?: () => Promise<string>;
+  } = {},
+) {
+  const agentId = (document as { id: string }).id;
+  return withMockFetch(
+    (request) => {
+      const url = new URL(request instanceof Request ? request.url : String(request));
+      options.lookups?.push(`${url.pathname}${url.search}`);
+      return Promise.resolve(Response.json(document));
+    },
+    () =>
+      veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
+        {
+          options: { mcpServers: [] },
+          infrastructure: { getConfig: () => ({ VERYFRONT_API_URL: "https://api.example.com" }) },
+          discoveryResult: { agents: new Map() },
+          agentConfigs: new Map(),
+          projectSteeringByAgentId: new Map([[agentId, {
+            getProjectInstructions: options.getProjectInstructions ?? (() => Promise.resolve("")),
+            getSkillsConfig: () =>
+              Promise.resolve([{
+                id: "navigation-notes",
+                name: "navigation-notes",
+                description: "Navigation notes",
+                instructions: "Notes.",
+                allowedTools: [],
+              }]),
+          }]]),
+          trace: (_name: string, operation: () => unknown) => operation(),
+        } as never,
+        {
+          authToken: "token-1",
+          projectId: "source-project",
+          branchId: null,
+          agentId: "veryfront",
+          ...options.taskContext,
+        },
+        agentId,
+        options.targetProjectId ?? "target-project",
+        options.abortSignal,
+      ),
+  );
+}
+
+Deno.test("hosted child execution config keeps a saved tools: false agent closed (API document)", async () => {
+  const lookups: string[] = [];
+  // skill_selection "omitted" with a visible project skill: the loader must
+  // still be denied.
+  const config = await resolveSavedChildAgentConfig(
+    API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown,
+    { lookups },
+  );
+
+  assertEquals(lookups, ["/projects/target-project/agents/lifecycle-eval-triage"]);
+  assertEquals(config?.toolNames, [], "tools: false must not grant the child any callable tool");
+  assertEquals(config?.deniedToolNames, ["load_skill", "veryfront__load_skill"]);
+  assertEquals(config?.availableSkillIds, []);
+  assertEquals(config?.temperature, 0.2);
+  assert(systemIncludes(config?.system, "You are Lifecycle Eval Triage. Do not use tools."));
+  assert(!systemIncludes(config?.system, "navigation-notes"));
+});
+
+Deno.test("hosted child execution config keeps provider-native tools under tools: false", async () => {
+  const config = await resolveSavedChildAgentConfig(
+    API_AGENT_SOURCE_DOCUMENTS.tools_false_provider_tools_typescript,
+  );
+
+  assertEquals(config?.toolNames, ["web_search"]);
+  assertEquals(config?.availableSkillIds, []);
+});
+
+Deno.test("hosted child execution config keeps the skill loader for an empty selector", async () => {
+  // `tools: []` is not deny-all: it keeps the runtime skill loader.
+  const config = await resolveSavedChildAgentConfig(
+    API_AGENT_SOURCE_DOCUMENTS.omitted_tools_markdown,
+  );
+
+  assertEquals(config?.toolNames, ["load_skill"]);
+  assertEquals(config?.availableSkillIds, ["navigation-notes"]);
+});
+
+Deno.test("hosted child execution config keeps only a saved agent's selected tool_ids", async () => {
+  const config = await resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tool_ids_typescript);
+
+  assertEquals(config?.toolNames, ["get_file"]);
+});
+
+Deno.test("hosted child execution config fails closed for a source_only saved agent", async () => {
+  let error: unknown;
+  try {
+    await resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.source_only_typescript);
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof HostedChildAgentResolutionError);
+  assertEquals(error.code, "CHILD_AGENT_SOURCE_UNSUPPORTED");
+  assert(error.message.includes("cannot run as a child agent"));
+});
+
+Deno.test("hosted child execution config never grants local host tools to an API-resolved child", async () => {
+  const localTool = tool({
+    id: "project_secret_tool",
+    description: "Uses the calling project's credentials",
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: () => ({ ok: true }),
+  });
+  toolRegistryInternal.register("project_secret_tool", localTool);
+  try {
+    // A cross-project saved agent with `tools: true` (no ceiling).
+    const config = await resolveSavedChildAgentConfig({
+      ...API_AGENT_SOURCE_DOCUMENTS.all_tools_typescript,
+      id: "cross-project-agent",
+    });
+    assert(config);
+    assertEquals(config.localHostTools, undefined);
+    const loader = { createLoadSkillTool: () => localTool };
+    const context = {
+      projectSteeringByAgentId: new Map([["cross-project-agent", loader], [
+        "local-agent",
+        loader,
+      ]]),
+    } as never;
+    const childToolContext = { agentId: "cross-project-agent" } as never;
+    const apiResolvedTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      { childAgentId: "cross-project-agent", childConfig: config, childToolContext },
+    );
+    assertEquals("project_secret_tool" in apiResolvedTools, false);
+
+    // A same-name tool in a concrete selector does not resolve to the local tool either.
+    const selected = await resolveSavedChildAgentConfig({
+      ...API_AGENT_SOURCE_DOCUMENTS.tool_ids_typescript,
+      id: "cross-project-agent",
+      tool_ids: ["project_secret_tool"],
+    }, { targetProjectId: "source-project" });
+    assert(selected);
+    assertEquals(selected.localHostTools, undefined);
+    assertEquals(
+      "project_secret_tool" in veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+        context,
+        { childAgentId: "cross-project-agent", childConfig: selected, childToolContext },
+      ),
+      false,
+    );
+
+    // Only an agent this deployment discovered itself receives local tools.
+    const localTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      {
+        childAgentId: "local-agent",
+        childConfig: { ...config, localHostTools: true },
+        childToolContext: { agentId: "local-agent" } as never,
+      },
+    );
+    assertEquals("project_secret_tool" in localTools, true);
+  } finally {
+    toolRegistryInternal.delete("project_secret_tool");
+  }
+});
+
+Deno.test("hosted child execution config reads a same-ID agent in another project from the API", async () => {
+  const lookups: string[] = [];
+  const localAgent = {
+    id: "lifecycle-eval-triage",
+    name: "Local triage",
+    description: "This deployment's own agent",
+    instructions: "LOCAL DEPLOYMENT INSTRUCTIONS",
+    system: "LOCAL DEPLOYMENT INSTRUCTIONS",
+    tools: true,
+  };
+  const config = await withMockFetch(
+    (request) => {
+      const url = new URL(request instanceof Request ? request.url : String(request));
+      lookups.push(url.pathname);
+      return Promise.resolve(Response.json(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown));
+    },
+    () =>
+      veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
+        {
+          options: { mcpServers: [] },
+          infrastructure: { getConfig: () => ({ VERYFRONT_API_URL: "https://api.example.com" }) },
+          discoveryResult: { agents: new Map([["lifecycle-eval-triage", null]]) },
+          agentConfigs: new Map([["lifecycle-eval-triage", localAgent]]),
+          projectSteeringByAgentId: new Map([["lifecycle-eval-triage", {
+            getProjectInstructions: () => Promise.resolve(""),
+            getSkillsConfig: () => Promise.resolve([]),
+          }]]),
+          trace: (_name: string, operation: () => unknown) => operation(),
+        } as never,
+        {
+          // project_reference already switched the parent context to the target.
+          authToken: "token-1",
+          projectId: "target-project",
+          branchId: null,
+          agentId: "veryfront",
+          deploymentProjectId: "deployment-project",
+        },
+        "lifecycle-eval-triage",
+        "target-project",
+      ),
+  );
+
+  assertEquals(lookups, ["/projects/target-project/agents/lifecycle-eval-triage"]);
+  assert(config);
+  assertEquals(config.localHostTools, undefined);
+  assertEquals(config.toolNames, []);
+  assert(!systemIncludes(config.system, "LOCAL DEPLOYMENT INSTRUCTIONS"));
+});
+
+Deno.test("hosted invoke_agent pins the deployment project before a project switch", () => {
+  const context = {
+    options: {},
+    infrastructure: { getConfig: () => ({ VERYFRONT_API_URL: "https://api.example.com" }) },
+  } as never;
+  const taskContext: Parameters<typeof createInvokeAgentTool>[1] = {
+    authToken: "token-1",
+    projectId: "deployment-project",
+    branchId: null,
+    agentId: "veryfront",
+  };
+  createInvokeAgentTool(context, taskContext);
+  taskContext.projectId = "target-project";
+  createInvokeAgentTool(context, taskContext);
+  assertEquals(taskContext.deploymentProjectId, "deployment-project");
+
+  const childContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    taskContext,
+    "child-agent",
+    undefined,
+  );
+  assertEquals(childContext.projectId, "target-project");
+  assertEquals(childContext.deploymentProjectId, "deployment-project");
+
+  const configured: Parameters<typeof createInvokeAgentTool>[1] = {
+    authToken: "token-1",
+    projectId: "request-project",
+    branchId: null,
+    agentId: "veryfront",
+  };
+  createInvokeAgentTool({
+    options: {},
+    infrastructure: {
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.com",
+        VERYFRONT_PROJECT_ID: "configured-project",
+      }),
+    },
+  } as never, configured);
+  assertEquals(configured.deploymentProjectId, "configured-project");
+});
+
+Deno.test("hosted child execution config fails closed for an environment-target lookup", async () => {
+  const lookups: string[] = [];
+  let error: unknown;
+  try {
+    await resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown, {
+      lookups,
+      targetProjectId: "source-project",
+      taskContext: { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: "env-1" },
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof HostedChildAgentResolutionError);
+  assertEquals(error.code, "CHILD_AGENT_ENVIRONMENT_TARGET_UNSUPPORTED");
+  assertEquals(lookups, []);
+});
+
+Deno.test("hosted child execution config carries a saved agent's allowed models", async () => {
+  const config = await resolveSavedChildAgentConfig({
+    ...API_AGENT_SOURCE_DOCUMENTS.tool_ids_typescript,
+    allowed_models: ["anthropic/claude-sonnet-4-6"],
+  });
+  assertEquals(config?.allowedModels, ["anthropic/claude-sonnet-4-6"]);
+});
+
+Deno.test("hosted child execution config keeps provider bindings out of callable selection", async () => {
+  const config = await resolveSavedChildAgentConfig(
+    API_AGENT_SOURCE_DOCUMENTS.tools_false_provider_tools_typescript,
+  );
+  assertEquals(config?.toolNames, ["web_search"]);
+  assertEquals(config?.providerOnlyToolNames, ["web_search"]);
+});
+
+Deno.test("hosted child execution config stops waiting on steering when the parent aborts", async () => {
+  const parent = new AbortController();
+  const pending = resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown, {
+    abortSignal: parent.signal,
+    getProjectInstructions: () => {
+      parent.abort(new DOMException("Parent run cancelled", "AbortError"));
+      return new Promise<string>(() => {});
+    },
+  });
+  await assertRejects(() => pending, DOMException, "Parent run cancelled");
+});
+
+Deno.test("hosted child execution config forwards the parent abort to the agent lookup", async () => {
+  const parent = new AbortController();
+  parent.abort(new DOMException("Parent run cancelled", "AbortError"));
+  await assertRejects(
+    () =>
+      resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown, {
+        abortSignal: parent.signal,
+      }),
+    DOMException,
+    "Parent run cancelled",
+  );
 });
 
 Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {

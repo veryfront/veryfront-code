@@ -123,6 +123,11 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfRetainedBootstrapToolNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
+  /**
+   * Output allowance a trusted host grants when the caller requested none. It
+   * caps the implicit default and stays implicit in the request budget.
+   */
+  __vfMaxOutputTokensCeiling?: number;
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */
