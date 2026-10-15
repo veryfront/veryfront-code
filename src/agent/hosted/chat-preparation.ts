@@ -108,6 +108,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
     | "historicalToolInputRetention"
+    | "trustedToolReplayMessageIds"
     | "onUnresolvableAttachment"
   >
   & {
@@ -173,6 +174,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     deniedTools?: string[];
     skills?: import("#veryfront/skill/selector.ts").SkillSelector;
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   };
@@ -604,6 +607,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.agentConfig.toolLoading !== undefined
         ? { toolLoading: input.agentConfig.toolLoading }
         : {}),
+      ...(input.agentConfig.bootstrapTools !== undefined
+        ? { bootstrapTools: input.agentConfig.bootstrapTools }
+        : {}),
+      ...(input.agentConfig.bootstrapSkill !== undefined
+        ? { bootstrapSkill: input.agentConfig.bootstrapSkill }
+        : {}),
       ...(input.agentConfig.toolResultContext !== undefined
         ? { toolResultContext: input.agentConfig.toolResultContext }
         : {}),
@@ -702,6 +711,8 @@ export async function prepareHostedChatExecution<
     tools?: true | string[];
     deniedTools?: string[];
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   },
@@ -797,6 +808,9 @@ export async function prepareHostedChatExecution<
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
       trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
+      trustedToolReplayMessageIds: input.request.serverEnvelopeVerified === true
+        ? normalized.effectiveMessages.map((message) => message.id)
+        : undefined,
       legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
@@ -933,6 +947,7 @@ export async function prepareHostedChatRuntimeMessages(
 ): Promise<AgentRuntimeMessage[]> {
   if (!options.authToken || !options.apiUrl) {
     const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+      trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
@@ -964,6 +979,7 @@ export async function prepareHostedChatRuntimeMessages(
   const apiUrl = options.apiUrl;
 
   const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+    trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,

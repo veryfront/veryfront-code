@@ -26,6 +26,18 @@ function requireStepId(value: unknown): string {
 }
 
 describe("agent/conversation-run-events", () => {
+  it("keeps a transport-only manual pause out of durable events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "msg-1" });
+    assertEquals(encoder.encode({ type: "data-veryfront.manual_pause", data: {} }), []);
+    assertEquals(encoder.encode({ type: "text-start", id: "text-1" }), [{
+      type: "TEXT_MESSAGE_START",
+      messageId: "msg-1",
+      contentId: "text-1",
+      role: "assistant",
+    }]);
+  });
+
   it("stores a textual rendering for tool output JSON cannot encode", () => {
     // `JSON.stringify` returns `undefined` rather than throwing for a top-level
     // function or symbol, so an unguarded encode would store no content at all.

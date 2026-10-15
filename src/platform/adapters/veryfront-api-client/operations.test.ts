@@ -1555,7 +1555,7 @@ describe("VeryfrontAPIOperations", () => {
         return { id: "b1", manifest_version: 1, state: "building" };
       });
 
-      const res = await createOps().beginReleaseAssetManifestBuild("project-slug", "rel-1");
+      const res = await createOps().startReleaseAssetManifestBuild("project-slug", "rel-1");
 
       assertEquals(method, "POST");
       assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest/builds");
@@ -1582,7 +1582,7 @@ describe("VeryfrontAPIOperations", () => {
       );
 
       const bytes = new TextEncoder().encode("export const x = 1;");
-      const res = await createOps().uploadReleaseAsset(
+      const res = await createOps().writeReleaseAsset(
         "project-slug",
         "rel-1",
         "a".repeat(64),
@@ -1605,7 +1605,7 @@ describe("VeryfrontAPIOperations", () => {
         return { state: "ready", manifest_version: 1 };
       });
 
-      const res = await createOps().putReleaseAssetManifest("project-slug", "rel-1", {
+      const res = await createOps().writeReleaseAssetManifest("project-slug", "rel-1", {
         schemaVersion: 1,
       });
 
@@ -1621,7 +1621,7 @@ describe("VeryfrontAPIOperations", () => {
         return { state: "failed" };
       });
 
-      await createOps().reportReleaseAssetManifestState(
+      await createOps().updateReleaseAssetManifestState(
         "project-slug",
         "rel-1",
         "failed",
@@ -1630,6 +1630,70 @@ describe("VeryfrontAPIOperations", () => {
 
       assertEquals((body as { state: string }).state, "failed");
       assertEquals((body as { error: string }).error, "boom");
+    });
+
+    it("keeps the previous release asset method names as aliases with identical requests", async () => {
+      const requests: Array<{ method: string; url: string; headers: unknown; body: unknown }> = [];
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          const headers = new Headers(init?.headers);
+          requests.push({
+            method: init?.method ?? "GET",
+            url: String(input),
+            headers: {
+              contentType: headers.get("Content-Type"),
+              contentHash: headers.get("x-vf-content-hash"),
+            },
+            body: init?.body instanceof Uint8Array ? Array.from(init.body) : init?.body,
+          });
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "b1",
+                manifest_version: 1,
+                state: "building",
+                stored: true,
+                existed: false,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch,
+      );
+      const ops = createOps();
+      const bytes = new TextEncoder().encode("export const x = 1;");
+      const hash = "a".repeat(64);
+      const pairs: Array<[string, () => Promise<unknown>, () => Promise<unknown>]> = [
+        [
+          "start",
+          () => ops.startReleaseAssetManifestBuild("project-slug", "rel-1"),
+          () => ops.beginReleaseAssetManifestBuild("project-slug", "rel-1"),
+        ],
+        [
+          "write asset",
+          () => ops.writeReleaseAsset("project-slug", "rel-1", hash, "text/javascript", bytes),
+          () => ops.uploadReleaseAsset("project-slug", "rel-1", hash, "text/javascript", bytes),
+        ],
+        [
+          "write manifest",
+          () => ops.writeReleaseAssetManifest("project-slug", "rel-1", { schemaVersion: 1 }),
+          () => ops.putReleaseAssetManifest("project-slug", "rel-1", { schemaVersion: 1 }),
+        ],
+        [
+          "update state",
+          () => ops.updateReleaseAssetManifestState("project-slug", "rel-1", "failed", "boom"),
+          () => ops.reportReleaseAssetManifestState("project-slug", "rel-1", "failed", "boom"),
+        ],
+      ];
+
+      for (const [label, canonical, legacy] of pairs) {
+        requests.length = 0;
+        const canonicalResult = await canonical();
+        const legacyResult = await legacy();
+        assertEquals(requests.length, 2, label);
+        assertEquals(requests[1], requests[0], label);
+        assertEquals(legacyResult, canonicalResult, label);
+      }
     });
 
     it("fetches the manifest via GET", async () => {

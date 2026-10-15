@@ -445,6 +445,42 @@ describe("project-run runtime ownership probe", () => {
     );
   });
 
+  it("activates the host probe for the exact managed preview context", () => {
+    const probe = createProjectRunRuntimeOwnershipProbe(activation);
+    assertExists(probe.createSession({
+      ...baseSessionInput(new RecordingClient()),
+      ctx: stagingCtx({ environmentName: "preview", resolvedEnvironment: "preview" }),
+    }));
+  });
+
+  it("rejects production and unknown preview environment contexts", () => {
+    const probe = createProjectRunRuntimeOwnershipProbe(activation);
+    for (const environmentName of ["production", "development", "", undefined]) {
+      assertEquals(
+        probe.createSession({
+          ...baseSessionInput(new RecordingClient()),
+          ctx: stagingCtx({ environmentName, resolvedEnvironment: "preview" }),
+        }),
+        undefined,
+      );
+    }
+    for (
+      const overrides of [
+        { environmentName: "preview", resolvedEnvironment: "production" as const },
+        { environmentName: "preview", environmentId: "other-env" },
+        { environmentName: "preview", projectId: "other-project" },
+      ]
+    ) {
+      assertEquals(
+        probe.createSession({
+          ...baseSessionInput(new RecordingClient()),
+          ctx: stagingCtx(overrides),
+        }),
+        undefined,
+      );
+    }
+  });
+
   it("skips phases when retained event-writer authority names a different canonical run", async () => {
     const receipts: RuntimeOwnershipProbeReceipt[] = [];
     const session = createProjectRunRuntimeOwnershipProbe(

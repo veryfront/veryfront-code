@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRuntimeSourceAuthorizer } from "./source-api-authorizer.ts";
@@ -84,6 +85,7 @@ describe("runtime source API authorization", () => {
     }
   });
   it("retains bounded ownership while response cancellation ignores the deadline", async () => {
+    using time = new FakeTime(1_000_000);
     const cancellation = Promise.withResolvers<void>();
     let calls = 0, cancelled = 0;
     const authorize = createRuntimeSourceAuthorizer({
@@ -105,7 +107,9 @@ describe("runtime source API authorization", () => {
       },
     });
     try {
-      await assertRejects(() => authorize(authority, signal()));
+      const rejected = assertRejects(() => authorize(authority, signal()));
+      await time.tickAsync(5);
+      await rejected;
       assertEquals(cancelled, 1);
       assertEquals(authorize.pending, 1);
       await assertRejects(() => authorize(authority, signal()));
@@ -125,6 +129,7 @@ describe("runtime source API authorization", () => {
     }
   });
   it("holds finite credential admission until cancelled raw reads retire", async () => {
+    using time = new FakeTime(1_000_000);
     const reader = Promise.withResolvers<string>();
     let calls = 0;
     const authorize = createRuntimeSourceAuthorizer({
@@ -135,7 +140,9 @@ describe("runtime source API authorization", () => {
       readProjectToken: () => ++calls === 1 ? reader.promise : Promise.resolve("host-reader"),
     });
     try {
-      await assertRejects(() => authorize(authority, signal()));
+      const rejected = assertRejects(() => authorize(authority, signal()));
+      await time.tickAsync(5);
+      await rejected;
       await assertRejects(() => authorize(authority, signal()));
       assertEquals(calls, 1);
       assertEquals(authorize.pending, 1);
@@ -160,6 +167,7 @@ describe("runtime source API authorization", () => {
     }
   });
   it("enforces the credential deadline while retaining raw reader settlement", async () => {
+    using time = new FakeTime(1_000_000);
     const reader = Promise.withResolvers<string>();
     const authorize = createRuntimeSourceAuthorizer({
       baseUrl: "https://api.example",
@@ -168,15 +176,10 @@ describe("runtime source API authorization", () => {
       readProjectToken: () => reader.promise,
     });
     const attempt = authorize(authority, signal());
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const rejected = assertRejects(() => attempt);
     try {
-      const result = await Promise.race([
-        attempt.then(() => "allowed", () => "denied"),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve("stuck"), 50);
-        }),
-      ]);
-      assertEquals(result, "denied");
+      await time.tickAsync(5);
+      await rejected;
       assertEquals(authorize.pending, 1);
       let settled = false;
       const owned = authorize.settled.then(() => {
@@ -188,7 +191,6 @@ describe("runtime source API authorization", () => {
       await owned;
       assertEquals(authorize.pending, 0);
     } finally {
-      clearTimeout(timer);
       reader.resolve("host-reader");
       await attempt.catch(() => {});
     }
@@ -327,8 +329,8 @@ describe("runtime source API authorization", () => {
     );
   });
   it("owns one finite deadline and sanitizes credential-bearing transport errors", async () => {
+    using time = new FakeTime(1_000_000);
     const caller = new AbortController();
-    const fallback = setTimeout(() => caller.abort(), 1000);
     const authorize = createRuntimeSourceAuthorizer({
       baseUrl: "https://api.example",
       readProjectToken,
@@ -340,15 +342,17 @@ describe("runtime source API authorization", () => {
         }),
     });
     try {
-      const error = await assertRejects(
+      const rejected = assertRejects(
         () => authorize(authority, caller.signal),
         Error,
         "Runtime source authorization failed",
       );
+      await time.tickAsync(5);
+      const error = await rejected;
       assertEquals(String(error).includes(authority.sourceToken), false);
       assertEquals(caller.signal.aborted, false);
     } finally {
-      clearTimeout(fallback);
+      await authorize.settled;
     }
   });
   it("refuses a denied or malformed host project credential without exposing either credential", async () => {

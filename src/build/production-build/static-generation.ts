@@ -1,3 +1,10 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Static Site Generation (SSG) for Build
  * Handles rendering pages to static HTML
@@ -49,6 +56,7 @@ export interface SSGStats {
 }
 
 export interface SSGOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   outputDir: string;
@@ -66,6 +74,7 @@ export interface SSGOptions {
   releaseAssetManifest?: ReleaseAssetManifest | null;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -255,6 +264,10 @@ export async function buildPagesRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   const clientStyles = loadClientStyles();
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
+
   for (const route of routes) {
     try {
       const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
@@ -262,11 +275,13 @@ export async function buildPagesRoutes(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
+            reactPeers,
             contentSourceId,
             ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
             dependencyPinningCacheKey: options.dependencyPinningCacheKey,
             dependencyPinningDependencies: options.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
           }),
       );
 
@@ -286,12 +301,15 @@ export async function buildPagesRoutes(
 
       if (!hasImportMapScript(enhancedHtml)) {
         const importMap = await buildImportMap({
+          reactPeers,
+          adapter: options.adapter,
           projectDir: options.projectDir,
           config: options.config,
           moduleServerOrigin: getConfiguredModuleServerOrigin(baseUrl),
           releaseAssetManifest: options.releaseAssetManifest,
           dependencyPinningCacheKey: options.dependencyPinningCacheKey,
           dependencyPinningDependencies: options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
         });
         enhancedHtml = enhancedHtml.replace(
           "</head>",
@@ -393,6 +411,10 @@ export async function buildAppRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   if (appRoutes.length === 0) return stats;
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
+
   logger.debug("Building App Router static pages...");
   const stylesheetHref = await traceStep(
     "app:styles",
@@ -407,6 +429,7 @@ export async function buildAppRoutes(
           projectDir,
           routePath: route.path,
           pageFile: route.pageFile,
+          reactPeers,
           contentSourceId,
           moduleServerOrigin: getConfiguredModuleServerOrigin(options.baseUrl),
           reactVersion,
@@ -416,6 +439,7 @@ export async function buildAppRoutes(
           includePreviewStylesheet: false,
           dependencyPinningCacheKey: options.dependencyPinningCacheKey,
           dependencyPinningDependencies: options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

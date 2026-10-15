@@ -235,7 +235,7 @@ describe("render mode threading", () => {
         projectSlug: "project",
         contentSourceId: "release-1",
         adapter: sourceAdapter(),
-        config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+        config: validateVeryfrontConfig({ react: { version: React.version } }),
         mode: HOSTED_PRODUCTION.compileMode,
         environment: HOSTED_PRODUCTION.environment,
         layoutCollector: {} as LayoutCollector,

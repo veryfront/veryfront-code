@@ -47,7 +47,8 @@ import {
 } from "./integration-transport.ts";
 import { readIntegrationFailureCondition as readRemoteFailureCondition } from "./integration-condition.ts";
 
-import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolDiscoveryMetadata, ToolExecutionContext } from "#veryfront/tool";
+import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -73,6 +74,7 @@ interface RemoteToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  discovery?: ToolDiscoveryMetadata;
 }
 
 /**
@@ -401,10 +403,12 @@ function parseRemoteToolDefinition(value: unknown): RemoteToolDefinition | undef
     return undefined;
   }
 
+  const discovery = readToolDiscoveryMetadata(value);
   return {
     name: value.name,
     description: value.description,
     inputSchema: schemaSnapshot.value,
+    ...(discovery ? { discovery } : {}),
   };
 }
 
@@ -778,6 +782,7 @@ export async function getRemoteIntegrationToolDiscovery(
         parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
           ? def.inputSchema
           : { type: "object", properties: {} },
+        ...(def.discovery ? { discovery: def.discovery } : {}),
       })),
     };
   } catch (err) {

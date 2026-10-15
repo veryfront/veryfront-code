@@ -1,4 +1,5 @@
-import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
+import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
+import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -226,11 +227,13 @@ export function tool<TInput = unknown, TOutput = unknown>(
     ? [...config.delegatedIntegrationTools]
     : undefined;
   const mcp = snapshotMcpConfig(config.mcp, id);
+  const discovery = readToolDiscoveryMetadata(config);
 
   const createdTool: Tool<TInput, TOutput> = {
     id,
     type: "function" as const,
     description: config.description,
+    ...(discovery ? { discovery } : {}),
     ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
@@ -263,6 +266,8 @@ export function tool<TInput = unknown, TOutput = unknown>(
 export interface DynamicToolConfig {
   id?: string;
   description: string;
+  /** Catalog navigation hints for `tool_search`, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
   inputSchema: unknown;
   inputSchemaJson?: JsonSchema;
   execute: (input: unknown, context?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -292,11 +297,13 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     schemaError(id, "inputSchemaJson must be a bounded JSON Schema object");
   }
   const mcp = snapshotMcpConfig(config.mcp, id);
+  const discovery = readToolDiscoveryMetadata(config);
 
   const createdTool: Tool<unknown, unknown> = {
     id,
     type: "dynamic" as const,
     description: config.description,
+    ...(discovery ? { discovery } : {}),
     inputSchema: inputSchema as Schema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {

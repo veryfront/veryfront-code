@@ -107,6 +107,7 @@ const PUBLIC_POOL_RUNNER =
   "${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}";
 const PUBLIC_POOL_JOBS = [
   "ci",
+  "codeql",
   "coverage-integration-client",
   "coverage-node-executor",
   "coverage-shards",
@@ -188,7 +189,7 @@ describe("public runner pool workflow", () => {
     assertEquals(Object.keys(jobs).sort(), [...PUBLIC_POOL_JOBS, "unknown-job"].sort());
     for (const name of PUBLIC_POOL_JOBS) {
       const job = jobs[name]!;
-      assertEquals(job["runs-on"], PUBLIC_POOL_RUNNER, `${name} runner`);
+      if (name !== "codeql") assertEquals(job["runs-on"], PUBLIC_POOL_RUNNER, `${name} runner`);
       assertEquals(
         job.if,
         `\${{ inputs.job == '${name}' && ${FORK_GUARD} }}`,
@@ -280,11 +281,26 @@ describe("public runner pool workflow", () => {
     }
   });
 
-  it("never names the pool in caller YAML and calls the workflow only from main", async () => {
+  it("keeps runner selection in the trusted workflow and calls it only from main", async () => {
     for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
       if (!entry.isFile || entry.name === POOL_WORKFLOW) continue;
       const text = await Deno.readTextFile(new URL(entry.name, WORKFLOWS_DIR));
-      assertEquals(text.includes(PUBLIC_POOL), false, `${entry.name} must not name the pool`);
+      const workflow = asRecord(parse(text), entry.name);
+      const jobs = asRecord(workflow.jobs, `${entry.name} jobs`);
+      if (entry.name === "codeql.yml") {
+        const scan = asRecord(jobs["public-analysis"], "public-analysis");
+        assertEquals(scan.uses, POOL_WORKFLOW_REF);
+        // This main-pinned call may inspect eligibility to retain the hosted
+        // timeout for excluded cohorts. It never selects a runner itself.
+        delete scan.if;
+      }
+      const callerConfiguration = JSON.stringify(workflow);
+      assertEquals(
+        callerConfiguration.includes(PUBLIC_POOL) ||
+          callerConfiguration.includes("CI_RUNNER_PUBLIC"),
+        false,
+        `${entry.name} must select the pool only through the trusted workflow`,
+      );
       for (const line of text.split("\n")) {
         if (!line.includes(POOL_WORKFLOW)) continue;
         assertEquals(

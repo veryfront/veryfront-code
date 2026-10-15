@@ -188,6 +188,46 @@ describe("SnippetHandler host-execution capability", () => {
     assertNotEquals(readPath, undefined, "the granted path must reach the source read");
   });
 
+  it("preserves the admitted prepared loader when source reads replace the adapter capability", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/components/button.snippet.mdx", "# Button");
+    const originalLoader = {
+      importModule: () => Promise.resolve({ graph: "admitted" }),
+    };
+    Object.assign(adapter, { moduleLoader: originalLoader });
+    const read = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.readFile = async (path) => {
+      const source = await read(path);
+      Object.assign(adapter, {
+        moduleLoader: {
+          importModule: () => Promise.reject(new Error("Replacement graph must not execute")),
+        },
+      });
+      return source;
+    };
+    let graph: unknown;
+    const handler = new SnippetHandler({
+      renderSnippet: async (_content, options) => {
+        const { getRuntimeModuleLoader } = await import(
+          "#veryfront/platform/adapters/module-loader.ts"
+        );
+        const loader = getRuntimeModuleLoader(options.adapter);
+        if (!loader) throw new Error("Missing admitted prepared loader");
+        graph = (await loader.importModule({ kind: "package", specifier: "react" })).graph;
+        return { html: "<main>prepared</main>", frontmatter: {} };
+      },
+    });
+    const result = await handler.handle(new Request("http://localhost/@components/button"), {
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      isLocalProject: true,
+      adapter,
+    } as unknown as HandlerContext);
+    assertEquals(result.response?.status, 200);
+    assertEquals(graph, "admitted");
+  });
+
   it("passes the canonical enriched release identity to snippet rendering", async () => {
     let renderedReleaseId: string | undefined;
     const handler = new SnippetHandler({

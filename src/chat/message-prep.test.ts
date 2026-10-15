@@ -336,6 +336,31 @@ Deno.test("dedupeToolHistory scopes reused checkpoint call ids to transcript seg
   assertEquals(dedupeToolHistory(messages), messages);
 });
 
+Deno.test("dedupeToolHistory preserves completed reuse only with distinct trusted source identities", () => {
+  const call = { type: "tool-call" as const, toolCallId: "reused", toolName: "lookup", input: {} };
+  const result = {
+    type: "tool-result" as const,
+    toolCallId: "reused",
+    toolName: "lookup",
+    output: { type: "json" as const, value: [] },
+  };
+  const messages = [
+    withProviderModelMessageSourceId({ role: "assistant", content: [call] }, "call-1"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "result-1"),
+    withProviderModelMessageSourceId({ role: "assistant", content: [call] }, "call-2"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "result-2"),
+  ];
+  assertEquals(dedupeToolHistory(messages, ["call-1", "result-1", "call-2", "result-2"]), messages);
+  assertEquals(dedupeToolHistory(messages).length, 2);
+  assertEquals(dedupeToolHistory(messages, ["call-1", "call-2", "result-2"]).length, 2);
+  const sameSource = [
+    ...messages.slice(0, 2),
+    withProviderModelMessageSourceId({ role: "assistant", content: [call] }, "call-1"),
+    messages[3]!,
+  ];
+  assertEquals(dedupeToolHistory(sameSource, ["call-1", "result-1", "result-2"]).length, 2);
+});
+
 Deno.test("repairToolPairs leaves a provider-executed call whose result is already inline", () => {
   const messages = [
     {

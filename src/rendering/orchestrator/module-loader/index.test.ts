@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -43,7 +44,10 @@ import {
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
 } from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
 import { withModuleTransformPermit } from "./transform-permit.ts";
-import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
+import {
+  buildModuleTransformCacheVariant as buildUnscopedModuleTransformCacheVariant,
+  getModuleCacheKey as getUnscopedModuleCacheKey,
+} from "./module-cache-lookup.ts";
 import { CYCLE_MANIFEST_SIDECAR_SUFFIX, inspectCycleManifestCache } from "./cycle-manifest.ts";
 import {
   isBuildFailure,
@@ -150,6 +154,18 @@ function assertTransformedImportPath(code: string, expectedPathPart: string): st
   const importPath = match[1]!;
   assertStringIncludes(importPath, expectedPathPart);
   return importPath;
+}
+
+const TEST_REACT_RUNTIME_SCOPE = await getSSRReactRuntimeCacheScope();
+function getModuleCacheKey(...args: Parameters<typeof getUnscopedModuleCacheKey>): string {
+  args[9] ??= TEST_REACT_RUNTIME_SCOPE;
+  return getUnscopedModuleCacheKey(...args);
+}
+function buildModuleTransformCacheVariant(
+  ...args: Parameters<typeof buildUnscopedModuleTransformCacheVariant>
+): string | undefined {
+  args[4] ??= TEST_REACT_RUNTIME_SCOPE;
+  return buildUnscopedModuleTransformCacheVariant(...args);
 }
 
 describe("module-loader/transformModuleWithDeps", () => {
@@ -446,11 +462,12 @@ describe("module-loader/transformModuleWithDeps", () => {
           const developmentKey = buildMdxEsmPathCacheKey(
             "_vf_modules/app/page.js",
             diskConfig.reactVersion,
-            MDX_MODULE_DEV_COMPILE_VARIANT,
+            `${MDX_MODULE_DEV_COMPILE_VARIANT}:on:react-runtime-${TEST_REACT_RUNTIME_SCOPE}`,
           );
           const productionKey = buildMdxEsmPathCacheKey(
             "_vf_modules/app/page.js",
             diskConfig.reactVersion,
+            `on:react-runtime-${TEST_REACT_RUNTIME_SCOPE}`,
           );
 
           // A production render resolves productionKey. The development render
@@ -502,12 +519,16 @@ describe("module-loader/transformModuleWithDeps", () => {
             buildMdxEsmPathCacheKey(
               "_vf_modules/app/page.js",
               diskConfig.reactVersion,
-              MDX_MODULE_DEV_COMPILE_VARIANT,
+              `${MDX_MODULE_DEV_COMPILE_VARIANT}:on:react-runtime-${TEST_REACT_RUNTIME_SCOPE}`,
             ),
             developmentArtifact,
           );
           pathCache.set(
-            buildMdxEsmPathCacheKey("_vf_modules/app/page.js", diskConfig.reactVersion),
+            buildMdxEsmPathCacheKey(
+              "_vf_modules/app/page.js",
+              diskConfig.reactVersion,
+              `on:react-runtime-${TEST_REACT_RUNTIME_SCOPE}`,
+            ),
             productionArtifact,
           );
 

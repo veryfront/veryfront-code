@@ -263,6 +263,10 @@ export const getExecutorModelCatalogSchema = defineSchema((v) => {
         transport: name().optional(),
         reasoningBudgetTokens: v.number().int().positive().max(Number.MAX_SAFE_INTEGER)
           .optional(),
+        limit: v.object({
+          context: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+          output: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+        }).strict().optional(),
         chatCompletionsReasoningWithFunctionTools: v.boolean().optional(),
         chatCompletionsConsecutiveSystemMessages: v.boolean().optional(),
       }).strict(),

@@ -660,7 +660,9 @@ function parseProviderErrorInner(
     }
     if (
       normalizedMessage.includes("prompt is too long") ||
-      normalizedMessage.includes("too many tokens")
+      normalizedMessage.includes("too many tokens") ||
+      normalizedMessage.includes("context size has been exceeded") ||
+      normalizedMessage.includes("context length exceeded")
     ) {
       return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
     }

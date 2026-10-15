@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { ContextAwareCacheCoordinator } from "./shared/context-aware-cache.ts";
 import {
   assertEquals,
   assertRejects,
@@ -7,7 +8,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import {
   DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
@@ -1369,7 +1370,12 @@ describe("Renderer release asset cache isolation", () => {
       signal: requestAbort.signal,
     });
     const requestCacheKey = "/data?filter=recent";
-    const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
+    const cacheKey = (await new ContextAwareCacheCoordinator({ store }).checkCache(
+      "/data",
+      ctx,
+      undefined,
+      requestCacheKey,
+    )).cacheKey;
     store.data.set(cacheKey, {
       result: {
         html: "<html>stale data render</html>",

@@ -4,7 +4,8 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import { toolRegistry, toolRegistryInternal, toolToProviderDefinition } from "./registry.ts";
-import type { Tool } from "./types.ts";
+import type { RemoteToolSource, Tool } from "./types.ts";
+import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
@@ -30,6 +31,26 @@ describe("tool registry", () => {
         required: ["query"],
       },
     });
+  });
+
+  it("carries normalized discovery metadata from remote definitions to provider definitions", () => {
+    const source: RemoteToolSource = {
+      id: "catalog",
+      listTools: () => Promise.resolve([]),
+      executeTool: () => Promise.resolve(null),
+    };
+    const discovery = { version: 1 as const, type: "platform" as const, domain: "agents" };
+    const tools = createToolsFromRemoteDefinitions(source, [
+      { name: "list_agents", description: "List agents", parameters: {}, discovery },
+      {
+        name: "list_files",
+        description: "List files",
+        parameters: {},
+        discovery: { version: 2, type: "platform" } as unknown as typeof discovery,
+      },
+    ]);
+    assertEquals(toolToProviderDefinition(tools.list_agents!).discovery, discovery);
+    assertEquals(Object.hasOwn(toolToProviderDefinition(tools.list_files!), "discovery"), false);
   });
 
   it("should convert schemas at runtime when a tool has no cached JSON schema", () => {

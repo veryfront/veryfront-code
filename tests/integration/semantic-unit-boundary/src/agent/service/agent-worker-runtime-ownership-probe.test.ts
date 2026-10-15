@@ -2475,7 +2475,9 @@ it("does not send mutation requests after the probe deadline expires", async () 
     embedder: managedTestEmbedder(),
   });
 
-  assertEquals(methods, ["GET"]);
+  // Expiry before the first dispatch may suppress even the initial read.
+  assertEquals(methods.length <= 1, true);
+  assertEquals(methods.every((method) => method === "GET"), true);
   assertEquals(receipts[0]?.status, "error");
   assertEquals(receipts[0]?.reason, "operation-deadline-exceeded");
 });

@@ -1,9 +1,11 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import {
   concatPrivateArrays,
   everyPrivateArray,
   filterPrivateArray,
   flatMapPrivateArray,
   joinPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import {
   privateTextIndexOf,
@@ -25,8 +27,10 @@ import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.t
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
+  getRuntimeRetainedBootstrapToolNames,
   getRuntimeToolBootstrapNames,
   resolveRuntimeToolLoading,
+  snapshotConfiguredToolBootstrapNames,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
 } from "./runtime-tool-config.ts";
 import {
@@ -42,7 +46,9 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
@@ -108,6 +114,15 @@ export interface PrepareAgentRuntimeStepInput {
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
   effectiveModel?: string;
+  /** The authenticated gateway model's resolved wire surface, when available. */
+  wireSurface?: VeryfrontCloudSurfaceId;
+  /** Model ID whose provider tool limit applies, when it differs from `effectiveModel`. */
+  toolSchemaModel?: string;
+  /**
+   * Schemas the runtime appends after planning (such as the tool-result
+   * reader). The plan leaves this many slots under the provider tool limit.
+   */
+  reservedToolSlots?: number;
   modelRuntime?: ModelRuntime;
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
@@ -115,10 +130,13 @@ export interface PrepareAgentRuntimeStepInput {
   unavailableOptionalRemoteToolNames?: string[];
   unavailableOptionalRemoteToolPrefixes?: string[];
   supportsToolCalling: boolean;
+  /** Load the authorized catalog for a pending startup skill even when the model cannot call tools. */
+  includeStartupAuthorizedTools?: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
   providerOptionKey?: string;
   providerToolNames?: readonly string[];
+  authorizedProviderToolNames?: readonly string[];
   remoteToolSources: RemoteToolSource[] | undefined;
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
@@ -139,6 +157,10 @@ export interface PreparedAgentRuntimeStep {
   toolContext: ToolExecutionContext;
   tools: ToolDefinition[];
   toolExposurePlan: ToolExposurePlan;
+  /** Authorized catalog before per-step skill restrictions, for host-controlled startup loads. */
+  startupAuthorizedTools: ToolDefinition[];
+  /** Authored startup tools that provider schema capping must retain. */
+  configuredBootstrapToolNames: readonly string[];
 }
 
 const INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER = "Integration tool discovery status:";
@@ -237,6 +259,16 @@ function getTrustedAllowedSkillIds(
 }
 
 /** Resolve per-step runtime state and the tools visible for that step. */
+function reserveToolSlots(
+  maxTools: number | undefined,
+  reservedToolSlots: number | undefined,
+): number | undefined {
+  if (maxTools === undefined || reservedToolSlots === undefined || reservedToolSlots <= 0) {
+    return maxTools;
+  }
+  return Math.max(0, maxTools - reservedToolSlots);
+}
+
 export async function prepareAgentRuntimeStep(
   input: PrepareAgentRuntimeStepInput,
 ): Promise<PreparedAgentRuntimeStep> {
@@ -269,7 +301,13 @@ export async function prepareAgentRuntimeStep(
   }
 
   let integrationToolDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
-  let tools = input.supportsToolCalling
+  // Host-controlled startup loads need the authorized catalog even when the
+  // model itself cannot call tools; the model still sees no tool schemas.
+  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.config.bootstrapTools,
+  );
+  const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools ||
+      configuredBootstrapNames.length > 0
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
       includeSkillTools: shouldIncludeSkillTools(input.config, input.agentId),
@@ -280,7 +318,7 @@ export async function prepareAgentRuntimeStep(
       unavailableOptionalRemoteToolNames: input.unavailableOptionalRemoteToolNames,
       unavailableOptionalRemoteToolPrefixes: input.unavailableOptionalRemoteToolPrefixes,
       onIntegrationToolDiscovery: (result) => {
-        integrationToolDiscovery = result;
+        if (input.supportsToolCalling) integrationToolDiscovery = result;
       },
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
@@ -288,6 +326,10 @@ export async function prepareAgentRuntimeStep(
       includeProviderSchemaHiddenTools: true,
     })
     : [];
+  let tools = input.supportsToolCalling ? authorizedCatalog : [];
+
+  // Validate authored startup choices against the executable catalog before per-step restrictions.
+  const startupAuthorizedTools = authorizedCatalog;
 
   if (input.activeSkillToolAvailability) {
     tools = filterToolsForSkill(tools, input.activeSkillToolAvailability);
@@ -363,13 +405,59 @@ export async function prepareAgentRuntimeStep(
     }
     bootstrapToolNames = provenanceBootstrapToolNames;
   }
+
+  if (configuredBootstrapNames.length > 0) {
+    const mergedBootstrap = new IntrinsicSet<string>(bootstrapToolNames);
+    const authorizedNativeTools = createProviderNativeToolExposureDefinitions({
+      model: input.effectiveModel ?? input.config.model,
+      toolNames: input.authorizedProviderToolNames ?? input.providerToolNames ?? [],
+    });
+    const executableCatalog = concatPrivateArrays(startupAuthorizedTools, authorizedNativeTools);
+    for (let index = 0; index < configuredBootstrapNames.length; index++) {
+      const name = configuredBootstrapNames[index]!;
+      if (
+        !somePrivateArray(
+          executableCatalog,
+          (tool) => tool.name === name && !isRuntimeProviderSchemaHiddenTool(tool),
+        )
+      ) {
+        throw CONFIG_INVALID.create({
+          detail: "bootstrapTools contains a tool outside the authorized executable catalog",
+        });
+      }
+      // A tool hidden by the active step's restrictions stays hidden.
+      if (setHas(existingToolNames, name)) {
+        IntrinsicReflectApply(IntrinsicSetAdd, mergedBootstrap, [name]);
+      }
+    }
+    bootstrapToolNames = mergedBootstrap;
+  }
+  const maxVisibleTools = reserveToolSlots(
+    getProviderToolProfile(
+      input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
+      input.wireSurface,
+    ).maxTools,
+    input.reservedToolSlots,
+  );
+  const toolLoadingMode = resolveRuntimeToolLoading(input.config).mode;
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
-    mode: resolveRuntimeToolLoading(input.config).mode,
+    mode: toolLoadingMode,
     state: toolExposureState,
     bootstrapToolNames,
-    maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
+    maxVisibleTools,
   });
+  // An eager catalog is capped later by provider compatibility selection, which
+  // retains the authored startup tools; only a deferred startup set can overflow.
+  if (
+    toolLoadingMode === "deferred" &&
+    configuredBootstrapNames.length > 0 && maxVisibleTools !== undefined &&
+    toolExposurePlan.visible.length > maxVisibleTools
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools exceeds the model's visible tool schema limit",
+    });
+  }
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
   const instructionsWithToolInventory = hasRuntimeToolInventory(baseSystemPrompt)
     ? withRuntimeToolInventory(
@@ -397,5 +485,10 @@ export async function prepareAgentRuntimeStep(
     toolContext,
     tools: toolExposurePlan.visible,
     toolExposurePlan,
+    startupAuthorizedTools,
+    configuredBootstrapToolNames: concatPrivateArrays(
+      configuredBootstrapNames,
+      getRuntimeRetainedBootstrapToolNames(input.config),
+    ),
   };
 }

@@ -120,6 +120,16 @@ export interface VeryfrontApiStyleArtifacts {
  * manage the compiled-CSS record that the Veryfront runtime uses;
  * `resolveStyleArtifact()`, `upsertStyleArtifact()` and `ensureStyleArtifactBuild()`
  * are their deprecated aliases.
+ * `listReleaseFiles()`, `listAllReleaseFiles()` and `getReleaseFile()` read the files a
+ * release pins; the release is an ID, a version or `latest`, and the results keep their
+ * snake_case fields. `startReleaseAssetManifestBuild()`, `writeReleaseAsset()`,
+ * `writeReleaseAssetManifest()` and `updateReleaseAssetManifestState()` build a release's
+ * asset manifest; `beginReleaseAssetManifestBuild()`, `uploadReleaseAsset()`,
+ * `putReleaseAssetManifest()` and `reportReleaseAssetManifestState()` are their deprecated
+ * aliases. `listEnvironmentFiles()`, `listAllEnvironmentFiles()` and
+ * `getEnvironmentFile()` read the files an environment serves, addressed by environment
+ * name; `lookupProjectByDomain()` finds the project and environment behind a custom
+ * domain. See https://veryfront.com/docs/cloud/apis/environments.
  */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
@@ -389,10 +399,18 @@ export class VeryfrontApiClient {
   // Project Operations
   // =============================================================================
 
+  /**
+   * Lists the projects the credential can read (`listProjects`, `GET /projects`).
+   * Returns the first page only; the response's page cursor is not followed.
+   */
   listProjects() {
     return this.operations.listProjects();
   }
 
+  /**
+   * Reads one project by UUID or slug (`getProject`, `GET /projects/{project_reference}`).
+   * Defaults to the client's configured project slug.
+   */
   getProject(projectRef?: string, signal?: AbortSignal) {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
@@ -547,6 +565,11 @@ export class VeryfrontApiClient {
   // Environment-specific Operations
   // =============================================================================
 
+  /**
+   * List one page of the files an environment serves (its deployed release).
+   * Calls `GET /projects/{project_reference}/environments/{environment_name}/files`
+   * for the client's project; the environment is addressed by name.
+   */
   listEnvironmentFiles(environmentName = "production", options: ListFilesOptions = {}) {
     return this.operations.listEnvironmentFiles(
       this.requireProjectSlug(),
@@ -555,6 +578,7 @@ export class VeryfrontApiClient {
     );
   }
 
+  /** List every file an environment serves, following `page_info` cursors. */
   listAllEnvironmentFiles(
     environmentName = "production",
     options: Omit<ListFilesOptions, "cursor"> = {},
@@ -566,6 +590,10 @@ export class VeryfrontApiClient {
     );
   }
 
+  /**
+   * Read one file an environment serves, by path or file ID. Calls
+   * `GET /projects/{project_reference}/environments/{environment_name}/files/{file_path}`.
+   */
   getEnvironmentFile(environmentName: string, pathOrId: string) {
     return this.operations.getEnvironmentFile(this.requireProjectSlug(), environmentName, pathOrId);
   }
@@ -594,6 +622,11 @@ export class VeryfrontApiClient {
   // Domain Lookup
   // =============================================================================
 
+  /**
+   * Find the project and environment a custom domain serves. Passes the domain
+   * (without a port) as `project_reference` to `GET /projects/{project_reference}`
+   * and resolves `null` when the API answers 404.
+   */
   lookupProjectByDomain(domain: string, options: { signal?: AbortSignal } = {}) {
     return this.operations.lookupProjectByDomain(domain, options);
   }
@@ -716,15 +749,15 @@ export class VeryfrontApiClient {
   // Release Asset Manifest Operations
   // =============================================================================
 
-  beginReleaseAssetManifestBuild(
+  startReleaseAssetManifestBuild(
     version: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.beginReleaseAssetManifestBuild(projectRef, version, signal);
+    return this.operations.startReleaseAssetManifestBuild(projectRef, version, signal);
   }
 
-  uploadReleaseAsset(
+  writeReleaseAsset(
     version: string,
     contentHash: string,
     contentType: string,
@@ -732,7 +765,7 @@ export class VeryfrontApiClient {
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.uploadReleaseAsset(
+    return this.operations.writeReleaseAsset(
       projectRef,
       version,
       contentHash,
@@ -742,29 +775,71 @@ export class VeryfrontApiClient {
     );
   }
 
-  putReleaseAssetManifest(
+  writeReleaseAssetManifest(
     version: string,
     manifest: unknown,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.putReleaseAssetManifest(projectRef, version, manifest, signal);
+    return this.operations.writeReleaseAssetManifest(projectRef, version, manifest, signal);
   }
 
-  reportReleaseAssetManifestState(
+  updateReleaseAssetManifestState(
     version: string,
     state: "partial" | "failed",
     error?: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
   ) {
-    return this.operations.reportReleaseAssetManifestState(
+    return this.operations.updateReleaseAssetManifestState(
       projectRef,
       version,
       state,
       error,
       signal,
     );
+  }
+
+  /** @deprecated Use `client.startReleaseAssetManifestBuild(...)`. */
+  beginReleaseAssetManifestBuild(
+    version: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["startReleaseAssetManifestBuild"]> {
+    return this.startReleaseAssetManifestBuild(version, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.writeReleaseAsset(...)`. */
+  uploadReleaseAsset(
+    version: string,
+    contentHash: string,
+    contentType: string,
+    bytes: Uint8Array,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeReleaseAsset"]> {
+    return this.writeReleaseAsset(version, contentHash, contentType, bytes, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.writeReleaseAssetManifest(...)`. */
+  putReleaseAssetManifest(
+    version: string,
+    manifest: unknown,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeReleaseAssetManifest"]> {
+    return this.writeReleaseAssetManifest(version, manifest, projectRef, signal);
+  }
+
+  /** @deprecated Use `client.updateReleaseAssetManifestState(...)`. */
+  reportReleaseAssetManifestState(
+    version: string,
+    state: "partial" | "failed",
+    error?: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["updateReleaseAssetManifestState"]> {
+    return this.updateReleaseAssetManifestState(version, state, error, projectRef, signal);
   }
 
   getReleaseAssetManifest(

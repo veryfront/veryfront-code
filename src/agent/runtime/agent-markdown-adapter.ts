@@ -70,6 +70,12 @@ export function createRuntimeAgentFromMarkdownDefinition(
       ? { tools: selectedTools }
       : {}),
     ...(definition.toolLoading === undefined ? {} : { toolLoading: definition.toolLoading }),
+    ...(definition.bootstrapTools === undefined
+      ? {}
+      : { bootstrapTools: definition.bootstrapTools }),
+    ...(definition.bootstrapSkill === undefined
+      ? {}
+      : { bootstrapSkill: definition.bootstrapSkill }),
     ...(definition.toolResultContext === undefined
       ? {}
       : { toolResultContext: definition.toolResultContext }),

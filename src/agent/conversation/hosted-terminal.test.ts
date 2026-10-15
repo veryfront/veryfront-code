@@ -16,6 +16,8 @@ import {
   toConversationHostedTerminalState,
 } from "./hosted-terminal.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 type RecordedCall = {
   input: string | URL | Request;
@@ -370,6 +372,27 @@ describe("agent/conversation-hosted-terminal", () => {
       terminalErrorCode: "STREAM_ERROR",
       terminalErrorMessage: "raw",
     });
+  });
+
+  it("keeps an allowlisted context-window failure typed after the hosted stream boundary", () => {
+    assertEquals(
+      resolveConversationHostedStreamErrorState(
+        new ExecutorAgentError("AGENT_CONTEXT_WINDOW_EXCEEDED"),
+      ),
+      {
+        status: "failed",
+        terminalErrorCode: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+        terminalErrorMessage: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
+      },
+    );
+    assertEquals(
+      resolveConversationHostedStreamErrorState(new Error("AGENT_CONTEXT_WINDOW_EXCEEDED")),
+      {
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+      },
+    );
   });
 
   it("preserves structured insufficient-credit stream errors", () => {

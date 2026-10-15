@@ -119,8 +119,6 @@ interface WireEnvironment {
   name: string;
   protected: boolean;
   project_id?: string;
-  project?: string | { id: string };
-  projectId?: string;
   deployment?: WireEnvironmentDeployment | null;
   domains?: string[];
 }
@@ -175,8 +173,7 @@ function normalizeProject(project: ProjectTarget): DeployProjectRecord {
 }
 
 function normalizeEnvironment(environment: WireEnvironment): DeployEnvironment {
-  const projectId = environment.project_id ?? environment.projectId ??
-    referenceId(environment.project);
+  const projectId = environment.project_id;
   return {
     id: environment.id,
     name: environment.name,

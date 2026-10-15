@@ -288,7 +288,8 @@ export function createDefaultHostedProjectSteeringRefresh(
       ]),
     ].sort(compareStrings);
     const toolNames = selectProviderCompatibleToolNames(allToolNames, {
-      model: input.taskContext.model,
+      ...(input.toolAssembly.toolSchemaTarget ?? { model: input.taskContext.model }),
+      reservedToolSlots: input.toolAssembly.reservedToolSlots,
       requiredToolNames: providerVisibleLocalToolNames,
     });
     const bootstrapToolNames = (input.toolAssembly.modelVisibleToolNames ?? toolNames).filter(

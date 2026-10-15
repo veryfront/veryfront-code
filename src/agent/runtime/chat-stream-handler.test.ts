@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 import {
   assert,
   assertEquals,
@@ -1134,6 +1135,161 @@ describe("chat-stream-handler", () => {
 
       assertEquals(state.finishReason, null);
       assertEquals(events, []);
+      const expected = {
+        message: "Provider did not produce semantic progress",
+        code: "FIRST_PROGRESS_TIMEOUT",
+      };
+      assertEquals(resolveRelayableExecutionFailure(error), expected);
+      assertEquals(resolveRuntimeExecutionErrorEvent(error), {
+        type: "error",
+        error: expected.message,
+        code: expected.code,
+      });
+    });
+
+    it("applies host-owned lifecycle budgets to the legacy idle watchdog", async () => {
+      const { controller, encoder } = createSSECollector();
+      const firstProgressState = createStreamState();
+      await assertRejects(
+        () =>
+          processStream(
+            { fullStream: pendingAsyncIterable(), textStream: emptyAsyncIterable() },
+            firstProgressState,
+            controller,
+            encoder,
+            "t",
+            { streamLifecyclePolicy: { firstProgressTimeoutMs: 10 } },
+          ),
+        Error,
+        "Provider stream failed",
+      );
+
+      const semanticIdleState = createStreamState();
+      await processStream(
+        {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "text-delta", text: "Ready." };
+              await new Promise(() => {});
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        semanticIdleState,
+        controller,
+        encoder,
+        "t",
+        { streamLifecyclePolicy: { semanticIdleTimeoutMs: 10 } },
+      );
+      assertEquals(semanticIdleState.accumulatedText, "Ready.");
+      assertEquals(semanticIdleState.finishReason, "stop");
+    });
+
+    for (const phase of ["input", "commit"] as const) {
+      it(`keeps the legacy local-tool ${phase} deadline across metadata`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        let now = 0;
+        let metadataRead = 0;
+        await processStream(
+          {
+            fullStream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+                if (phase === "commit") yield { type: "tool-input-end", id: "local" };
+                for (let i = 0; i < 3; i++) {
+                  now += 6;
+                  metadataRead++;
+                  yield { type: "data-heartbeat", data: i };
+                }
+                yield { type: "finish", finishReason: "stop", totalUsage: null };
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          {
+            streamLifecycleMode: "legacy",
+            localToolInputIdleTimeoutMs: 10,
+            localToolCommitGraceMs: 10,
+            streamLifecyclePolicy: {
+              clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+            },
+          },
+        );
+        assertEquals(metadataRead, 2, "metadata must not renew the local-tool deadline");
+        assertEquals(state.finishReason, "tool-calls");
+        assertEquals(state.toolCalls.get("local")?.inputAvailable, phase === "commit");
+      });
+    }
+
+    it("renews the legacy local-tool input deadline for changed arguments", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let now = 0;
+      await processStream(
+        {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+              now = 6;
+              yield { type: "tool-input-delta", id: "local", delta: '{"query":"ok"}' };
+              now = 12;
+              yield { type: "data-heartbeat", data: 1 };
+              yield { type: "tool-input-end", id: "local" };
+              yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        state,
+        controller,
+        encoder,
+        "t",
+        {
+          streamLifecycleMode: "legacy",
+          localToolInputIdleTimeoutMs: 10,
+          localToolCommitGraceMs: 10,
+          streamLifecyclePolicy: {
+            clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+          },
+        },
+      );
+      assertEquals(state.toolCalls.get("local")?.inputAvailable, true);
+      assertEquals(state.toolCalls.get("local")?.arguments, '{"query":"ok"}');
+      assertEquals(state.finishReason, "tool-calls");
+    });
+
+    it("applies the semantic-idle budget after reasoning-only progress", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        processStream(
+          {
+            fullStream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "reasoning-delta", id: "r1", delta: "Thinking." };
+                await new Promise(() => {});
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          { streamLifecyclePolicy: { firstProgressTimeoutMs: 5_000, semanticIdleTimeoutMs: 10 } },
+        ).then(() => "completed"),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("waited for the first-progress budget"), 1_000);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      assertEquals(outcome, "completed");
+      assertEquals(state.finishReason, "stop");
     });
 
     for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
@@ -2775,6 +2931,26 @@ describe("chat-stream-handler", () => {
         const event = resolveRuntimeStreamErrorEvent(providerError);
         assertEquals(event, testCase.expected);
         assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
+    it("keeps fixed codes for active lifecycle progress deadlines", () => {
+      for (
+        const [code, publicMessage] of [
+          ["FIRST_PROGRESS_TIMEOUT", "Provider did not produce semantic progress"],
+          ["SEMANTIC_IDLE_TIMEOUT", "Provider stopped producing semantic progress"],
+        ] as const
+      ) {
+        const event = resolveRuntimeStreamErrorEvent(
+          new StreamLifecycleFailure({
+            code,
+            phase: "streaming",
+            source: "provider",
+            retryable: true,
+            publicMessage,
+          }),
+        );
+        assertEquals(event, { type: "error", error: publicMessage, code });
       }
     });
 
@@ -4641,6 +4817,32 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
 // error can contain a database URL or an internal path, which AGENTS.md forbids
 // in user-facing output.
 describe("resolveRelayableExecutionFailure", () => {
+  it("preserves only the registered final-request budget failure across public boundaries", () => {
+    const budget = AGENT_CONTEXT_WINDOW_EXCEEDED.create({
+      detail: "Private request details must not cross the public stream boundary",
+    });
+    const expected = {
+      type: "error" as const,
+      error: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
+      code: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+    };
+    assertEquals(resolveRuntimeExecutionErrorEvent(budget), expected);
+    assertEquals(resolveRuntimeStreamErrorEvent(budget), expected);
+    assertEquals(resolveRelayableExecutionFailure(budget), {
+      message: expected.error,
+      code: expected.code,
+    });
+    assertStrictEquals(resolveRelayableExecutionFailure(new Error(budget.message)), undefined);
+    assertStrictEquals(
+      resolveRelayableExecutionFailure({
+        slug: AGENT_CONTEXT_WINDOW_EXCEEDED.slug,
+        code: expected.code,
+        message: budget.message,
+      }),
+      undefined,
+    );
+  });
+
   it("withholds a non-provider failure's message from the relay", () => {
     const persistenceFailure = new Error(
       "finalize failed: postgres://user:pw@db.internal:5432/veryfront timed out",

@@ -140,7 +140,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     assertEquals(content.includes("30 additional authorized deferred tools are omitted"), true);
     assertEquals(
       content.includes(
-        "Use tool_search with exact names or capability phrases to load omitted tools.",
+        "Use tool_search search or inventory to find omitted tools.",
       ),
       true,
     );
@@ -304,7 +304,7 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
 Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.
-When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.`,
+When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.`,
       },
     ]);
   });

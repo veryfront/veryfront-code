@@ -1,11 +1,12 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
 import { rewriteWorkspacePackageVersion } from "../../../scripts/lib/workspace-package-version.ts";
 import { bumpDenoJsonVersion } from "../../../scripts/release-version.ts";
 
 it("keeps a versioned workspace frozen after RC preparation under pinned Deno", async () => {
-  const root = await Deno.makeTempDir();
+  const root = await makeTempDir();
   try {
     await Deno.mkdir(`${root}/scripts`);
     await Deno.mkdir(`${root}/member`);

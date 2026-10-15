@@ -7,6 +7,7 @@ import {
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
@@ -87,6 +88,13 @@ export function resolveConversationHostedStreamErrorState(
       status: "failed",
       terminalErrorCode: EMPTY_RESPONSE_TERMINAL_ERROR_CODE,
       terminalErrorMessage: EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE,
+    };
+  }
+  if (error instanceof ExecutorAgentError && error.code === "AGENT_CONTEXT_WINDOW_EXCEEDED") {
+    return {
+      status: "failed",
+      terminalErrorCode: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+      terminalErrorMessage: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
     };
   }
   const knownProviderError = resolveKnownProviderTerminalError(error);
