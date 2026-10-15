@@ -1,3 +1,4 @@
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
 import { createAgentRuntime } from "#veryfront/agent/hosted/cloud-agent-chat-execution.ts";
@@ -2116,9 +2117,28 @@ describe("agent/agent-service-auth", () => {
 
 describe("hosted platform dependency source policy", () => {
   it("keeps hosted hidden grants separate from model allow lists while preserving source denial", async () => {
-    for (const mode of ["disabled", "allowed", "denied", "service-denied"] as const) {
+    for (
+      const mode of [
+        "disabled",
+        "allowed",
+        "denied",
+        "service-denied",
+        "canonical-denied",
+        "legacy-denied",
+        "child-denied",
+        "child-allowed",
+        "child-local-canonical-denied",
+        "child-local-legacy-denied",
+      ] as const
+    ) {
       using _catalog = useServedCatalogForTests();
-      const harness = await createHostedDependencyHarness({ deferSource: true });
+      const remoteChildMode = mode === "child-denied" || mode === "child-allowed";
+      const childMode = remoteChildMode || mode === "child-local-canonical-denied" ||
+        mode === "child-local-legacy-denied";
+      const harness = await createHostedDependencyHarness({
+        deferSource: true,
+        ...(remoteChildMode ? { childProjectId: "22222222-2222-4222-8222-222222222222" } : {}),
+      });
       const createdSources: string[] = [];
       const context = {
         options: {
@@ -2153,15 +2173,21 @@ describe("hosted platform dependency source policy", () => {
           setActiveSpanAttributes() {},
         },
         discoveryResult: {
-          agents: new Map(),
+          agents: new Map([[harness.childScope.agentId, { id: harness.childScope.agentId }]]),
           tools: new Map(),
           sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
         },
         defaultAgentId: harness.scope.agentId,
-        agentConfigs: new Map([[harness.scope.agentId, {
-          id: harness.scope.agentId,
+        agentConfigs: new Map([harness.scope.agentId, harness.childScope.agentId].map((id) => [id, {
+          id,
+          ...(id === harness.childScope.agentId && mode === "child-local-canonical-denied"
+            ? { deniedTools: ["veryfront__create_file"] }
+            : {}),
+          ...(id === harness.childScope.agentId && mode === "child-local-legacy-denied"
+            ? { deniedTools: ["create_file"] }
+            : {}),
           mcpServers: [{ kind: "veryfront-api" }],
-        }]]),
+        }])),
         projectSteeringByAgentId: new Map(),
         trace: (_name: string, operation: () => unknown) => operation(),
       } as never;
@@ -2182,6 +2208,8 @@ describe("hosted platform dependency source policy", () => {
               name: "Root",
               instructions: "Use selected tools",
               tools: [],
+              ...(mode === "canonical-denied" ? { deniedTools: ["veryfront__create_file"] } : {}),
+              ...(mode === "legacy-denied" ? { deniedTools: ["create_file"] } : {}),
               mcpServers: mode === "disabled" ? [] : [{
                 kind: "veryfront-api",
                 toolPolicy: {
@@ -2198,9 +2226,32 @@ describe("hosted platform dependency source policy", () => {
       );
       try {
         assertEquals(createdSources.length > 0, mode !== "disabled");
+        let owner: HostedPlatformDependencyOwner = harness.parsed;
+        let scope = harness.scope;
+        if (childMode) {
+          owner = await withMockFetch((url, init) => {
+            assertEquals(remoteChildMode, true);
+            assertEquals(
+              String(url),
+              `https://93.184.216.34/projects/${harness.childScope.projectId}/agents/${harness.childScope.agentId}`,
+            );
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              "Bearer child-invocation-fixture",
+            );
+            return Promise.resolve(Response.json({
+              id: harness.childScope.agentId,
+              system_prompt: "Child policy",
+              tools: mode === "child-denied" ? { veryfront__create_file: false } : {},
+              tool_ids: [],
+            }));
+          }, () => harness.admitChild());
+          scope = harness.childScope;
+        }
+        const toolId = childMode ? "persist_attachment" : "intake";
         const tools = createToolsFromHostDefinitions({
-          intake: dynamicTool({
-            id: "intake",
+          [toolId]: dynamicTool({
+            id: toolId,
             description: "Persist",
             inputSchema: {},
             inputSchemaJson: { type: "object", properties: {} },
@@ -2211,19 +2262,20 @@ describe("hosted platform dependency source policy", () => {
         });
         const execute = () =>
           runWithHostedPlatformDependencies(
-            harness.parsed,
+            owner,
             () =>
               executeConfiguredTool(
-                "intake",
+                toolId,
                 {},
                 tools,
-                { ...harness.scope, toolCallId: "root-call" },
+                { ...scope, toolCallId: "root-call" },
                 [],
                 [],
               ),
           );
-        if (mode === "allowed") assertEquals(await execute(), { persisted: true });
-        else await assertRejects(execute);
+        if (mode === "allowed" || mode === "child-allowed") {
+          assertEquals(await execute(), { persisted: true });
+        } else await assertRejects(execute);
       } finally {
         await runtime.cleanup?.();
       }

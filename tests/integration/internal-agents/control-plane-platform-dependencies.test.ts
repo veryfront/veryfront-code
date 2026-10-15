@@ -23,8 +23,8 @@ if (data.inheritedDependencies) {
 }
 
 const claims = await verifyControlPlaneRequest(new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", { method: "POST", headers: { "x-veryfront-control-plane-jws": data.jws } }), createCtx(data.publicKeyPem), data.body);
-const scope = { projectId: "proj-1", runId: "run-1", agentId: "intake-agent" };
-console.log(JSON.stringify({ accepted: getVerifiedControlPlanePlatformDependencies(claims, scope) ?? null, clone: getVerifiedControlPlanePlatformDependencies({...claims}, scope) ?? null, otherRun: getVerifiedControlPlanePlatformDependencies(claims, {...scope, runId:"run-child"}) ?? null, otherAgent: getVerifiedControlPlanePlatformDependencies(claims, {...scope, agentId:"foreign"}) ?? null, otherProject: getVerifiedControlPlanePlatformDependencies(claims, {...scope, projectId:"foreign"}) ?? null }));
+const scope = { projectId: data.executionProjectId ?? "proj-1", runId: "run-1", agentId: "intake-agent" };
+console.log(JSON.stringify({ accepted: getVerifiedControlPlanePlatformDependencies(claims, scope) ?? null, clone: getVerifiedControlPlanePlatformDependencies({...claims}, scope) ?? null, otherRun: getVerifiedControlPlanePlatformDependencies(claims, {...scope, runId:"run-child"}) ?? null, otherAgent: getVerifiedControlPlanePlatformDependencies(claims, {...scope, agentId:"foreign"}) ?? null, otherProject: getVerifiedControlPlanePlatformDependencies(claims, {...scope, projectId:data.executionProjectId ? "proj-1" : "foreign"}) ?? null }));
 `;
 
 describe("pinned operator platform-dependency authority", () => {
@@ -90,6 +90,77 @@ describe("pinned operator platform-dependency authority", () => {
         otherAgent: null,
         otherProject: null,
       }, control);
+    }
+  });
+  it("binds shared grants to the consuming project and rejects inconsistent signed project scopes", async () => {
+    const dependencies = [{ toolId: "intake", platformTools: ["outlook__upload_attachment"] }];
+    for (
+      const control of [
+        "shared",
+        "wrong-source",
+        "wrong-execution",
+        "missing-source",
+        "missing-execution",
+        "ordinary-wrong-project",
+      ] as const
+    ) {
+      const body = JSON.stringify({
+        run: {
+          runId: "run-1",
+          agentId: "intake-agent",
+          project: { projectId: "consumer-project" },
+        },
+        ...(control === "missing-source" || control === "ordinary-wrong-project" ? {} : {
+          sourceProject: { projectId: control === "wrong-source" ? "foreign-source" : "proj-1" },
+        }),
+        ...(control === "missing-execution" || control === "ordinary-wrong-project" ? {} : {
+          executionProject: {
+            projectId: control === "wrong-execution" ? "foreign-consumer" : "consumer-project",
+          },
+        }),
+        platformToolDependencies: dependencies,
+      });
+      const signed = await createControlPlaneSignature(body);
+      const env: Record<string, string> = {
+        DENO_TESTING: "0",
+        NODE_ENV: "production",
+        CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: signed.publicKeyPem,
+      };
+      if (Deno.env.get("HOME")) env.HOME = Deno.env.get("HOME")!;
+      if (Deno.env.get("DENO_DIR")) env.DENO_DIR = Deno.env.get("DENO_DIR")!;
+      const child = new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config", "deno.json", program],
+        clearEnv: true,
+        env,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const writer = child.stdin.getWriter();
+      await writer.write(
+        new TextEncoder().encode(
+          JSON.stringify({ body, ...signed, executionProjectId: "consumer-project" }),
+        ),
+      );
+      await writer.close();
+      const output = await child.output();
+      assertEquals(
+        output.code === 0,
+        control === "shared",
+        control + ": " + new TextDecoder().decode(output.stderr),
+      );
+      if (control === "shared") {
+        const result = JSON.parse(
+          new TextDecoder().decode(output.stdout).trim().split("\n").at(-1)!,
+        );
+        assertEquals(result, {
+          accepted: dependencies,
+          clone: null,
+          otherRun: null,
+          otherAgent: null,
+          otherProject: null,
+        });
+      }
     }
   });
 });

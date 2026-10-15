@@ -206,10 +206,36 @@ export async function verifyControlPlaneRequest(
           const runId = readOwnDataProperty(run, "runId", "Platform dependency scope");
           const agentId = readOwnDataProperty(run, "agentId", "Platform dependency scope");
           const projectId = readOwnDataProperty(project, "projectId", "Platform dependency scope");
+          let authenticatedProjectId = projectId;
+          if (ObjectHasOwn(body, "sourceProject") || ObjectHasOwn(body, "executionProject")) {
+            const sourceProject = readOwnDataProperty(
+              body,
+              "sourceProject",
+              "Platform dependency scope",
+            );
+            const executionProject = readOwnDataProperty(
+              body,
+              "executionProject",
+              "Platform dependency scope",
+            );
+            authenticatedProjectId = readOwnDataProperty(
+              sourceProject,
+              "projectId",
+              "Platform dependency scope",
+            );
+            const executionProjectId = readOwnDataProperty(
+              executionProject,
+              "projectId",
+              "Platform dependency scope",
+            );
+            if (executionProjectId !== projectId) {
+              throw new Error("Platform dependency scope is invalid");
+            }
+          }
           if (
             typeof runId !== "string" || runId !== claims.sub ||
             typeof agentId !== "string" || typeof projectId !== "string" ||
-            projectId !== claims.project_id
+            authenticatedProjectId !== claims.project_id
           ) throw new Error("Platform dependency scope is invalid");
           verifiedPlatformGrants.set(
             verifiedClaims,

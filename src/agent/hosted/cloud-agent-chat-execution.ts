@@ -1,3 +1,4 @@
+import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
 import { configureHostedPlatformDependencySource } from "./platform-dependency-credential.ts";
 import { createHostedProjectRemoteToolSources } from "./project-remote-tool-source.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
@@ -231,7 +232,19 @@ export async function createAgentRuntime(
       async (scope, authToken, owner) => {
         const agentConfig = owner === terminalRequest
           ? options.liveProjectSteering?.agent
-          : await resolveAgentConfig(context, scope.agentId);
+          : scope.projectId === (config.VERYFRONT_PROJECT_ID ?? options.projectId) &&
+              getProjectAgentRuntime(context).agents.has(scope.agentId)
+          ? await resolveAgentConfig(context, scope.agentId)
+          : await fetchHostedProjectAgentDefinition({
+            apiUrl: config.VERYFRONT_API_URL,
+            authToken,
+            projectId: scope.projectId,
+            agentId: scope.agentId,
+            branchId: scope.projectId === options.projectId ? options.branchId : null,
+            runtimeTargetKind: scope.projectId === options.projectId
+              ? options.runtimeTargetKind
+              : null,
+          });
         if (!agentConfig) return undefined;
         // The private runner enforces the signed wrapper grant. Model inventory
         // allow lists do not restrict it; service ceilings and explicit denials do.
@@ -241,6 +254,12 @@ export async function createAgentRuntime(
             ...server,
             toolPolicy: {
               ...server.toolPolicy,
+              deny: [
+                ...new Set([
+                  ...(server.toolPolicy?.deny ?? []),
+                  ...(agentConfig.deniedTools ?? []),
+                ]),
+              ],
               allow: context.options.mcpServers?.find((host) =>
                 host.kind === server.kind && host.id === server.id
               )?.toolPolicy?.allow,

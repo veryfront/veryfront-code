@@ -597,7 +597,9 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const requestedToolNames = implicitlyRequestedToolNames.concat(
     veryfrontApiMcpPolicy.requestedToolNames,
   );
-  const programmaticNames = input.programmaticPlatformRunId &&
+  const platformServerEnabled = input.agent.config.mcpServers === undefined ||
+    input.agent.config.mcpServers.some((server) => server.kind === "veryfront-api");
+  const programmaticNames = platformServerEnabled && input.programmaticPlatformRunId &&
       input.captureProgrammaticPlatformSource
     ? [...new Set(input.programmaticPlatformToolNames ?? [])]
     : [];
@@ -693,7 +695,18 @@ export async function withVeryfrontPlatformRemoteTools(input: {
     // terminal control symbols while pinning the source's credential owner.
     input.captureProgrammaticPlatformSource?.(markTrustedPlatformSource({
       id: source.id,
-      listTools: () => source.listTools({ projectId, runId, authToken, agentId }),
+      listTools: async (context) => {
+        context?.abortSignal?.throwIfAborted();
+        const tools = await source.listTools({
+          projectId,
+          runId,
+          authToken,
+          agentId,
+          abortSignal: context?.abortSignal,
+        });
+        context?.abortSignal?.throwIfAborted();
+        return tools;
+      },
       executeTool: async (name, args, context) => {
         if (isTerminalRunToolName(name) && context?.runId !== runId) {
           throw PERMISSION_DENIED.create({

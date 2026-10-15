@@ -57,7 +57,7 @@ describe("programmatic platform source availability", () => {
       let captured: RemoteToolSource | undefined;
       const agent = createAgentWithConfig("ingestion", {
         tools: { ingest_email: true },
-        mcpServers: [],
+        mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: [] } }],
       });
       const configured = await withVeryfrontPlatformRemoteTools({
         agent,
@@ -93,6 +93,57 @@ describe("programmatic platform source availability", () => {
       assertEquals(calls.length, 1);
     });
   });
+  it("honors explicit platform server opt-outs before capturing hidden dependencies", async () => {
+    await withPlatformTransport(async (calls) => {
+      for (
+        const mcpServers of [[], [{
+          kind: "generic" as const,
+          endpoint: "https://example.test/mcp",
+        }]]
+      ) {
+        let captures = 0;
+        await withVeryfrontPlatformRemoteTools({
+          agent: createAgentWithConfig("ingestion", { mcpServers }),
+          token: "test-user",
+          projectId: "project-1",
+          programmaticPlatformRunId: "run-1",
+          programmaticPlatformToolNames: ["veryfront__create_file"],
+          captureProgrammaticPlatformSource: () => {
+            captures++;
+          },
+        });
+        assertEquals(captures, 0);
+      }
+      assertEquals(calls.length, 0);
+    });
+  });
+
+  it("propagates cancellation through private catalog discovery", async () => {
+    await withPlatformTransport(async () => {
+      let captured: RemoteToolSource | undefined;
+      await withVeryfrontPlatformRemoteTools({
+        agent: createAgentWithConfig("ingestion", {
+          mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: [] } }],
+        }),
+        token: "test-user",
+        projectId: "project-1",
+        programmaticPlatformRunId: "run-1",
+        programmaticPlatformToolNames: ["veryfront__create_file"],
+        captureProgrammaticPlatformSource: (source) => {
+          captured = source;
+        },
+      });
+      assertExists(captured);
+      const controller = new AbortController();
+      controller.abort(new Error("catalog cancelled"));
+      await assertRejects(
+        () => captured!.listTools({ abortSignal: controller.signal }),
+        Error,
+        "catalog cancelled",
+      );
+    });
+  });
+
   it("applies explicit denials without expanding ordinary model selection", async () => {
     await withPlatformTransport(async (calls) => {
       let captured: RemoteToolSource | undefined;
@@ -150,7 +201,9 @@ describe("programmatic platform source availability", () => {
       ) {
         let captures = 0;
         await withVeryfrontPlatformRemoteTools({
-          agent: createAgentWithConfig("ingestion", { mcpServers: [] }),
+          agent: createAgentWithConfig("ingestion", {
+            mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: [] } }],
+          }),
           token: "test-user",
           projectId: "project-1",
           ...options,
@@ -170,7 +223,9 @@ describe("programmatic platform source availability", () => {
     await withPlatformTransport(async (calls) => {
       let captured: RemoteToolSource | undefined;
       await withVeryfrontPlatformRemoteTools({
-        agent: createAgentWithConfig("ingestion", { mcpServers: [] }),
+        agent: createAgentWithConfig("ingestion", {
+          mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: [] } }],
+        }),
         token: "test-user",
         projectId: "project-1",
         terminalAuthority: { token: "test-terminal", runId: "run-1" },
