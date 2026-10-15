@@ -1735,6 +1735,7 @@ describe("chat-stream-handler", () => {
           requireProviderFinish: true,
           streamIdleTimeoutMs: 25,
           localToolInputIdleTimeoutMs: 25,
+          streamLifecyclePolicy: { clock: new ManualMonotonicClock() },
           setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
             const id = nextTimerId++;
             pendingTimers.set(id, { callback, timeoutMs: timeoutMs ?? 0 });
