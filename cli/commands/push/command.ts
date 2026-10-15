@@ -1511,14 +1511,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       const resolutionClient: ProjectResolutionClient = {
         getProject: (reference) => getProjectTarget(client, reference),
-        reserveSlug: async (slug, options) => {
+        reserveSlug: async (slug, reservationOptions) => {
           spinner.update("Creating project...");
           const reserved = await reserveProjectSlug(
             slug,
             config.apiToken,
             undefined,
             config.apiUrl,
-            options,
+            { ...reservationOptions, transport: options.transport },
           );
           return { slug: reserved.slug, projectId: reserved.projectId };
         },
