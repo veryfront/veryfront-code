@@ -853,6 +853,7 @@ describe("canonical descendant pagination profile", () => {
             include_descendants: true,
             cursor: descendantToken("child_task", 42),
           }), CanonicalEventsV1Error);
+        if (!(error instanceof CanonicalEventsV1Error)) throw error;
         assertEquals(error.problem.code, "INVALID_EVENT_REQUEST");
       },
     );

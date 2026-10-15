@@ -47,7 +47,7 @@ const matchesSync = (value: unknown, schema: Record<string, unknown>) => {
   // The frozen source schema is the validated external schema input.
   const validate = adapter.compileJsonSchema(normalized as JsonSchema);
   const result = validate(value);
-  if (result instanceof Promise) throw new Error("Expected synchronous real adapter validation");
+  if (!("success" in result)) throw new Error("Expected synchronous real adapter validation");
   return result.success;
 };
 const matches = (value: unknown, schema: Record<string, unknown>) =>
@@ -244,8 +244,10 @@ describe("canonical source annotations", () => {
       ],
     };
     const value = { kind: "long", text: "😀😀😀" };
-    assertEquals(matchesSync(value, schema.oneOf[0]), false);
-    assertEquals(matchesSync(value, schema.oneOf[1]), true);
+    const [shortBranch, longBranch] = schema.oneOf;
+    if (!shortBranch || !longBranch) throw new Error("Missing union branches");
+    assertEquals(matchesSync(value, shortBranch), false);
+    assertEquals(matchesSync(value, longBranch), true);
     await validateSourceSemantics(value, schema, controls.$id, documents, matches);
     validateSourceSemanticsSync(value, schema, controls.$id, documents, matchesSync);
   });
