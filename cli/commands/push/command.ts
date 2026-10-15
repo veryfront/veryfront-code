@@ -154,6 +154,8 @@ export function parsePushArgs(
  * Push command options
  */
 export interface PushOptions {
+  /** Internal host transport supplied by an embedding command after project configuration. */
+  transport?: typeof fetch;
   /** Project slug to push to (overrides config) */
   projectSlug?: string;
   /** Project directory (defaults to cwd) */
@@ -1462,7 +1464,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let projectReferenceSource: ProjectReferenceSource;
       try {
         // Use interactive auth - prompts for login if not authenticated
-        const resolved = await resolveConfigWithAuthDetails(projectDir);
+        const resolved = await resolveConfigWithAuthDetails(projectDir, undefined, {
+          transport: options.transport,
+        });
         config = resolved.config;
         projectReferenceSource = resolved.projectReferenceSource;
       } catch (error) {
@@ -1491,7 +1495,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       };
 
       spinner.update("Fetching remote files...");
-      const client = createApiClient(config);
+      const client = createApiClient(config, options.transport);
       const branchName = branch;
       const isMainBranch = branchName === "main";
 

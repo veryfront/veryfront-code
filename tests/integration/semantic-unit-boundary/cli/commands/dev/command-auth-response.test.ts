@@ -83,7 +83,7 @@ it("dev preload protects both user and project responses after configuration exe
   assertEquals(result?.projects[0]?.id, "project");
 });
 
-it("default management API client ignores project fetch and refuses cross-origin token redirects", async () => {
+it("embedded management API client ignores project fetch and refuses cross-origin token redirects", async () => {
   const { createApiClient } = await import("../../../../../../cli/shared/config.ts");
   const response = Response.json({ secret: "trusted" });
   let ambientCalls = 0;
@@ -98,7 +98,7 @@ it("default management API client ignores project fetch and refuses cross-origin
         apiUrl: "https://api.veryfront.com",
         apiToken: "private",
         projectSlug: "demo",
-      });
+      }, createConnectedDevAuthenticationOptions("https://api.veryfront.com").transport);
       assertEquals(await client.get("/projects"), { secret: "trusted" });
     } finally {
       globalThis.fetch = originalFetch;
@@ -119,7 +119,7 @@ it("default management API client ignores project fetch and refuses cross-origin
       apiUrl: "https://api.veryfront.com",
       apiToken: "private",
       projectSlug: "demo",
-    });
+    }, createConnectedDevAuthenticationOptions("https://api.veryfront.com").transport);
     let failed = false;
     try {
       await client.get("/projects");

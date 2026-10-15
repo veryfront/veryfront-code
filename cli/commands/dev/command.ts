@@ -655,7 +655,15 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log(`  ${dim("Pulling...")}`);
             await runSyncAction(
               () =>
-                pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+                pullCommand({
+                  projectSlug: project.slug,
+                  projectDir,
+                  force: true,
+                  quiet: true,
+                  transport: createCloudOnboardingTransport(
+                    connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                  ),
+                }),
               "Pulled",
             );
           },
@@ -669,7 +677,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log(`  ${dim("Pushing...")}`);
             const pushOptions = createSelectedProjectPushOptions(projectDir, project);
             await runSyncAction(
-              () => pushCommand(pushOptions),
+              () =>
+                pushCommand({
+                  ...pushOptions,
+                  transport: createCloudOnboardingTransport(
+                    connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                  ),
+                }),
               `Pushed to ${pushOptions.branch} ${dim("- merge in Studio")}`,
             );
           },
