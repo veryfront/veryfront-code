@@ -1,4 +1,10 @@
-import { buildResponseInit } from "#veryfront/agent/service/response-init.ts";
+import {
+  copyNativeResponse,
+  readResponseValue,
+  ResponseBodyGet,
+  ResponseHeadersGet,
+  ResponseStatusGet,
+} from "./native-response.ts";
 import {
   getServiceRuntimeIdentity,
   RUNTIME_ID_HEADER,
@@ -196,44 +202,13 @@ const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
 const IntrinsicReflectApply = Reflect.apply;
 const EncodeURIComponent = encodeURIComponent;
-const NativeResponse = Response;
-const NativeObjectPrototype = Object.prototype;
-const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
-const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!
-  .get!;
-const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
-const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
-  NativeResponse.prototype,
-  "statusText",
-)!.get!;
 const HeadersForEach = Headers.prototype.forEach;
-const HeadersAppend = Headers.prototype.append;
 const HeadersSet = Headers.prototype.set;
 const HeadersGet = Headers.prototype.get;
 const HeadersHas = Headers.prototype.has;
 const RegExpExec = RegExp.prototype.exec;
 const SseContentType = /^\s*text\/event-stream\s*(?:;|$)/i;
 
-function readResponseValue<T>(response: Response, getter: () => T): T {
-  return IntrinsicReflectApply(getter, response, []) as T;
-}
-
-function copyNativeResponse(target: Response): Response {
-  const init = buildResponseInit(
-    NativeObjectPrototype,
-    readResponseValue<number>(target, ResponseStatusGet),
-    readResponseValue<string>(target, ResponseStatusTextGet),
-  );
-  const result = new NativeResponse(
-    readResponseValue<ReadableStream<Uint8Array> | null>(target, ResponseBodyGet),
-    init,
-  );
-  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
-  IntrinsicReflectApply(HeadersForEach, readResponseValue<Headers>(target, ResponseHeadersGet), [
-    (value: string, name: string) => IntrinsicReflectApply(HeadersAppend, headers, [name, value]),
-  ]);
-  return result;
-}
 const JsonParse = JSON.parse;
 const TrustedInternalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
 const TrustedInternalAgentStreamRequestParse = TrustedInternalAgentStreamRequestSchema.parse;
@@ -1159,12 +1134,16 @@ function applyBuilderHeaders(target: Response, source: Headers): Response {
   return result;
 }
 
-function setResponseHeader(target: Response, key: string, value: string): Response {
+function setResponseHeaders(
+  target: Response,
+  entries: readonly (readonly [string, string])[],
+): Response {
   const result = copyNativeResponse(target);
-  IntrinsicReflectApply(HeadersSet, readResponseValue<Headers>(result, ResponseHeadersGet), [
-    key,
-    value,
-  ]);
+  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    IntrinsicReflectApply(HeadersSet, headers, [entry[0], entry[1]]);
+  }
   return result;
 }
 
@@ -1603,21 +1582,11 @@ export class AgentStreamHandler extends BaseHandler {
                               ) ?? "",
                             ]) !== null
                         ) {
-                          response = setResponseHeader(
-                            response,
-                            RUNTIME_ID_HEADER,
-                            runtimeIdentity.id,
-                          );
-                          response = setResponseHeader(
-                            response,
-                            RUNTIME_NAME_HEADER,
-                            runtimeNameHeader,
-                          );
-                          response = setResponseHeader(
-                            response,
-                            RUNTIME_MODE_HEADER,
-                            runtimeIdentity.mode,
-                          );
+                          response = setResponseHeaders(response, [
+                            [RUNTIME_ID_HEADER, runtimeIdentity.id],
+                            [RUNTIME_NAME_HEADER, runtimeNameHeader],
+                            [RUNTIME_MODE_HEADER, runtimeIdentity.mode],
+                          ]);
                         }
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,
@@ -1630,11 +1599,10 @@ export class AgentStreamHandler extends BaseHandler {
                           await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
                             null;
                         const responseWithOwner = runtimeOwnerInvokeUrl
-                          ? setResponseHeader(
-                            response,
+                          ? setResponseHeaders(response, [[
                             RUNTIME_OWNER_INVOKE_URL_HEADER,
                             runtimeOwnerInvokeUrl,
-                          )
+                          ]])
                           : response;
                         return this.respond(
                           applyBuilderHeaders(responseWithOwner, builder.headers),

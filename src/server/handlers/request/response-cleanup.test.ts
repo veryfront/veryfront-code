@@ -14,37 +14,6 @@ describe("withResponseCleanup", () => {
     assertEquals(cleaned, 1);
   });
 
-  it("preserves response metadata and cleanup after project response intrinsic replacement", async () => {
-    const input = new Response("hello", { status: 200, headers: { "x-runtime": "trusted" } });
-    const responseFields = ["status", "statusText", "headers", "body"] as const;
-    const descriptors = responseFields.map((field) =>
-      [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
-    );
-    const iterator = Object.getOwnPropertyDescriptor(Headers.prototype, Symbol.iterator)!;
-    const poison = () => {
-      throw new Error("project intrinsic invoked");
-    };
-    let cleaned = 0;
-    let response: Response;
-    try {
-      for (const [field, descriptor] of descriptors) {
-        Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
-      }
-      Object.defineProperty(Headers.prototype, Symbol.iterator, { ...iterator, value: poison });
-      response = withResponseCleanup(input, () => cleaned++, new AbortController().signal);
-    } finally {
-      for (const [field, descriptor] of descriptors) {
-        Object.defineProperty(Response.prototype, field, descriptor);
-      }
-      Object.defineProperty(Headers.prototype, Symbol.iterator, iterator);
-    }
-    assertEquals(response.status, 200);
-    assertEquals(response.headers.get("x-runtime"), "trusted");
-    assertEquals(cleaned, 0);
-    assertEquals(await response.text(), "hello");
-    assertEquals(cleaned, 1);
-  });
-
   it("cleans cancellation and forwards its reason", async () => {
     let cleaned = 0;
     let reason: unknown;

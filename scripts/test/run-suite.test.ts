@@ -286,6 +286,10 @@ describe("suite planning parity", () => {
         plan.files.includes(fixture),
         `${suite} must retain service attribution intrinsic coverage`,
       );
+      assert(
+        plan.files.includes("tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts"),
+        `${suite} must retain response cleanup intrinsic coverage`,
+      );
     }
   });
 
@@ -992,6 +996,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
@@ -1026,6 +1031,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",

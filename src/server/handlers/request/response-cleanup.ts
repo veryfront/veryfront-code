@@ -1,23 +1,6 @@
-import { buildResponseInit } from "#veryfront/agent/service/response-init.ts";
+import { copyNativeResponse, readResponseValue, ResponseBodyGet } from "./native-response.ts";
 
-const IntrinsicReflectApply = Reflect.apply;
-const NativeResponse = Response;
 const NativeReadableStream = ReadableStream;
-const NativeObjectPrototype = Object.prototype;
-const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
-const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!
-  .get!;
-const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
-const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
-  NativeResponse.prototype,
-  "statusText",
-)!.get!;
-const HeadersForEach = Headers.prototype.forEach;
-const HeadersAppend = Headers.prototype.append;
-
-function readResponseValue<T>(response: Response, getter: () => T): T {
-  return IntrinsicReflectApply(getter, response, []) as T;
-}
 
 /** Keep invocation resources alive until its response finishes or is cancelled. */
 export function withResponseCleanup(
@@ -55,7 +38,8 @@ export function withResponseCleanup(
   };
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
-  const result = new NativeResponse(
+  return copyNativeResponse(
+    response,
     new NativeReadableStream<Uint8Array>({
       async pull(controller) {
         try {
@@ -77,15 +61,5 @@ export function withResponseCleanup(
       },
       cancel,
     }, { highWaterMark: 0 }),
-    buildResponseInit(
-      NativeObjectPrototype,
-      readResponseValue<number>(response, ResponseStatusGet),
-      readResponseValue<string>(response, ResponseStatusTextGet),
-    ),
   );
-  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
-  IntrinsicReflectApply(HeadersForEach, readResponseValue<Headers>(response, ResponseHeadersGet), [
-    (value: string, name: string) => IntrinsicReflectApply(HeadersAppend, headers, [name, value]),
-  ]);
-  return result;
 }

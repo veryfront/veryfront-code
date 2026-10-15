@@ -210,6 +210,10 @@ describe("cicd coverage workflow", () => {
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
     assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), fixture);
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), fixture);
+    const cleanupFixture =
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), cleanupFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), cleanupFixture);
   });
 
   it("keeps every Deno unit coverage path loopback-only", async () => {
