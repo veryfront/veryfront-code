@@ -1,3 +1,4 @@
+import { setEnv } from "#veryfront/platform/compat/process.ts";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
 import { createAgentRuntime } from "#veryfront/agent/hosted/cloud-agent-chat-execution.ts";
 import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
@@ -22,6 +23,8 @@ import apiRunEventWriterContract from "../../../../fixtures/contracts/api-run-ev
 import {
   capturePlatformDependencySource,
   createHostedServiceAuth,
+  createVerifiedPlatformToolDependencyRunner,
+  getActivePlatformDependencySources,
   getActivePlatformToolDependencies,
   getHostedServiceTokenFromRequest,
   getVerifiedPlatformToolDependencies,
@@ -215,6 +218,11 @@ function getOnlyFetchCall(calls: FetchCall[]): FetchCall {
   return call;
 }
 
+function pinHostedWriterFixture(fixture: JwtFixture): void {
+  setEnv("OAUTH_PUBLIC_KEY", fixture.publicKeyPem);
+  setEnv("SERVICE_ACCOUNT_VERYFRONT_SERVER_ID", apiRunEventWriterContract.payload.serviceAccountId);
+}
+
 async function createHostedDependencyHarness(
   options: { parentHasNoDependencies?: boolean; childProjectId?: string } = {},
 ) {
@@ -229,6 +237,7 @@ async function createHostedDependencyHarness(
     agentId: scope.agentId,
     ...(options.parentHasNoDependencies ? {} : { platformToolDependencies: dependencies }),
   });
+  pinHostedWriterFixture(fixture);
   const auth = createHostedServiceAuth({
     authProvider: webCryptoAuthProvider,
     getConfig: () => ({
@@ -730,6 +739,182 @@ describe("agent/agent-service-auth", () => {
     );
   });
 
+  it("denies tenant-configured public auth helpers access to genuine hosted platform transport", async () => {
+    const harness = await createHostedDependencyHarness();
+    const child = await harness.admitChild();
+    const genuineSources = await runWithHostedPlatformDependencies(
+      child,
+      async () => getActivePlatformDependencySources(harness.childScope),
+    );
+    assertEquals(genuineSources.length, 1);
+    const tenant = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      ...harness.childScope,
+      platformToolDependencies: harness.childDependencies,
+    });
+    const tenantAuth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: tenant.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const verification = await tenantAuth.verifyRunEventAppendToken({
+      token: tenant.token,
+      ...harness.childScope,
+    });
+    assertEquals(verification.verified, true);
+    await assertRejects(async () => {
+      const runner = createVerifiedPlatformToolDependencyRunner(verification, harness.childScope);
+      runner.captureSource(genuineSources[0]!);
+      await runner.run(async () => {
+        await executeConfiguredTool(
+          "persist_attachment",
+          {},
+          harness.tools,
+          { ...harness.childScope, toolCallId: "tenant-forged-wrapper" },
+          [],
+          [],
+          undefined,
+          { strictConfiguredToolsOnly: true },
+        );
+      });
+    });
+    assertEquals(getVerifiedPlatformToolDependencies(verification, harness.childScope), undefined);
+    assertEquals(harness.effects, []);
+    const rewritingAuth = createHostedServiceAuth({
+      authProvider: {
+        verifyWithPublicKey: async () => ({
+          ...apiRunEventWriterContract.payload,
+          sub: apiRunEventWriterContract.payload.serviceAccountId,
+          ...harness.childScope,
+          platformToolDependencies: [{
+            toolId: "persist_attachment",
+            platformTools: ["veryfront__delete_file"],
+          }],
+        }),
+      },
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: harness.fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const rewritten = await rewritingAuth.verifyRunEventAppendToken({
+      token: harness.childFixture.token,
+      ...harness.childScope,
+    });
+    assertEquals(
+      getVerifiedPlatformToolDependencies(rewritten, harness.childScope),
+      harness.childDependencies,
+    );
+  });
+
+  it("pins hosted dependency proof to boot operator keys outside test overlays", async () => {
+    const scope = {
+      projectId: apiRunEventWriterContract.payload.projectId,
+      runId: apiRunEventWriterContract.payload.runId,
+      agentId: "ingestion-agent",
+    };
+    const dependencies = [{ toolId: "intake", platformTools: ["veryfront__create_file"] }];
+    const operator = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      ...scope,
+      platformToolDependencies: dependencies,
+    });
+    const tenant = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      ...scope,
+      platformToolDependencies: dependencies,
+    });
+    const noAgent = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      ...scope,
+      agentId: undefined,
+      platformToolDependencies: dependencies,
+    }, operator.keyPair);
+    const noMap = await createRs256JwtFixture(
+      { ...apiRunEventWriterContract.payload, ...scope },
+      operator.keyPair,
+    );
+    const program = `
+      import { createHostedServiceAuth, getVerifiedPlatformToolDependencies } from "#veryfront/agent/service/auth.ts";
+      const data = JSON.parse(await new Response(Deno.stdin.readable).text());
+      Deno.env.set("OAUTH_PUBLIC_KEY", data.tenantKey);
+      const auth = createHostedServiceAuth({
+        getConfig: () => ({ OAUTH_PUBLIC_KEY: data.tenantKey, SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: data.serviceAccountId, NODE_ENV: "production" }),
+      });
+      const result = await auth.verifyRunEventAppendToken({ token: data.tenantToken, ...data.scope });
+      const forged = createHostedServiceAuth({
+        authProvider: { verifyWithPublicKey: async () => data.payload },
+        getConfig: () => ({ OAUTH_PUBLIC_KEY: data.tenantKey, SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: data.serviceAccountId, NODE_ENV: "production" }),
+      });
+      const forgedResult = await forged.verifyRunEventAppendToken({ token: data.tenantToken, ...data.scope });
+      const genuine = createHostedServiceAuth({ getConfig: () => ({ OAUTH_PUBLIC_KEY: data.operatorKey, SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: data.serviceAccountId, NODE_ENV: "production" }) });
+      const genuineResult = await genuine.verifyRunEventAppendToken({ token: data.operatorToken, ...data.scope });
+      Object.defineProperty(Object.prototype, "agentId", { value: data.scope.agentId, configurable: true });
+      Object.defineProperty(Object.prototype, "platformToolDependencies", { value: data.dependencies, configurable: true });
+      let inheritedAgent, inheritedMap;
+      try {
+        inheritedAgent = getVerifiedPlatformToolDependencies(await forged.verifyRunEventAppendToken({ token: data.noAgentToken, ...data.scope }), data.scope) ?? null;
+        inheritedMap = getVerifiedPlatformToolDependencies(await forged.verifyRunEventAppendToken({ token: data.noMapToken, ...data.scope }), data.scope) ?? null;
+      } finally {
+        delete Object.prototype.agentId;
+        delete Object.prototype.platformToolDependencies;
+      }
+      console.log(JSON.stringify({ compatibility: result.verified, tenant: getVerifiedPlatformToolDependencies(result, data.scope) ?? null, forged: getVerifiedPlatformToolDependencies(forgedResult, data.scope) ?? null, genuine: getVerifiedPlatformToolDependencies(genuineResult, data.scope) ?? null, inheritedAgent, inheritedMap }));
+    `;
+    const env: Record<string, string> = {
+      DENO_TESTING: "0",
+      NODE_ENV: "production",
+      OAUTH_PUBLIC_KEY: operator.publicKeyPem,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+    };
+    for (const name of ["HOME", "DENO_DIR"]) {
+      const value = Deno.env.get(name);
+      if (value) env[name] = value;
+    }
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config", "deno.json", program],
+      clearEnv: true,
+      env,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(JSON.stringify({
+      tenantKey: tenant.publicKeyPem,
+      tenantToken: tenant.token,
+      operatorKey: operator.publicKeyPem,
+      operatorToken: operator.token,
+      noAgentToken: noAgent.token,
+      noMapToken: noMap.token,
+      dependencies,
+      serviceAccountId: apiRunEventWriterContract.payload.serviceAccountId,
+      scope,
+      payload: {
+        ...apiRunEventWriterContract.payload,
+        ...scope,
+        platformToolDependencies: dependencies,
+      },
+    })));
+    await writer.close();
+    const result = await child.output();
+    assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+    assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
+      compatibility: true,
+      tenant: null,
+      forged: null,
+      genuine: dependencies,
+      inheritedAgent: null,
+      inheritedMap: null,
+    });
+  });
+
   it("uses the exact root source snapshot for hidden dependency transport", async () => {
     using _catalog = useServedCatalogForTests();
     const harness = await createHostedDependencyHarness();
@@ -1137,6 +1322,7 @@ describe("agent/agent-service-auth", () => {
       agentId: "ingestion-agent",
       platformToolDependencies,
     });
+    pinHostedWriterFixture(fixture);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
@@ -1211,6 +1397,7 @@ describe("agent/agent-service-auth", () => {
       agentId: "ingestion-agent",
       platformToolDependencies,
     });
+    pinHostedWriterFixture(fixture);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
@@ -1309,6 +1496,7 @@ describe("agent/agent-service-auth", () => {
       agentId: "ingestion-agent",
       platformToolDependencies,
     });
+    pinHostedWriterFixture(fixture);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({

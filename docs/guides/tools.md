@@ -113,8 +113,10 @@ This contract applies to API-dispatched project agent runs and their
 control-plane-dispatched children, including default hosted forks admitted with
 their own authenticated child writer credential. Generic local `agentAsTool`
 execution does not establish this capability. Child runs receive their own
-source declarations; they do not inherit the parent's map. The declaration and
-callback never contain authentication tokens.
+source declarations; they do not inherit the parent's map. Hosted dependency
+authority requires the operator writer key and service identity captured at
+process startup; a custom authentication verifier cannot grant this authority.
+The declaration and callback never contain authentication tokens.
 
 ## Try a tool directly
 

@@ -1,3 +1,4 @@
+import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { RuntimeRunAgentInput } from "#veryfront/internal-agents/schema.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
@@ -486,6 +487,37 @@ async function getDefaultAuthProvider(): Promise<HostedServiceJwtVerifier> {
   return await defaultAuthProviderPromise;
 }
 
+/** Independently verify dependency authority against operator values captured before tenant loading. */
+async function readOperatorWriterDependencies(input: HostedServiceRunEventAppendTokenInput) {
+  const publicKey = getHostBootEnv("OAUTH_PUBLIC_KEY");
+  const serviceAccountId = getHostBootEnv("SERVICE_ACCOUNT_VERYFRONT_SERVER_ID");
+  if (!publicKey || !serviceAccountId || !input.agentId) return undefined;
+  try {
+    const verifier = await getDefaultAuthProvider();
+    const payload = await verifier.verifyWithPublicKey(input.token, publicKey, {
+      algorithms: ["RS256"],
+    });
+    const read = (key: string) =>
+      readOwnDataProperty(payload, key, "Operator writer claims", false);
+    const scope = read("scope");
+    const scopes = read("scopes");
+    const exactScopes =
+      (scopes === undefined && hasExactCancellationScopes(scope, RUN_EVENT_WRITER_V1_SCOPES)) ||
+      (scope === undefined && hasExactCancellationScopes(scopes, RUN_EVENT_WRITER_V2_SCOPES));
+    if (
+      read("actorType") !== "service_account" || read("tokenUse") !== RUN_EVENT_WRITER_TOKEN_USE ||
+      read("serviceAccountId") !== serviceAccountId || read("userId") !== serviceAccountId ||
+      read("projectId") !== input.projectId || read("runId") !== input.runId ||
+      read("agentId") !== input.agentId || !exactScopes ||
+      read("runEventWriterTokenPurpose") !== undefined
+    ) return undefined;
+    const claim = read("platformToolDependencies");
+    return { dependencies: claim === undefined ? undefined : readPlatformToolDependencies(claim) };
+  } catch {
+    return undefined;
+  }
+}
+
 async function getAuthProvider(
   options: HostedServiceAuthOptions,
 ): Promise<HostedServiceJwtVerifier | undefined> {
@@ -933,7 +965,8 @@ export function createHostedServiceAuth(
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         };
-        if (input.agentId && payload.agentId === input.agentId) {
+        const operatorWriter = await readOperatorWriterDependencies(input);
+        if (operatorWriter && input.agentId) {
           verifiedHostedWriterScopes.set(
             result,
             ObjectFreeze({
@@ -943,14 +976,14 @@ export function createHostedServiceAuth(
             }),
           );
         }
-        if (dependencies !== undefined && input.agentId) {
+        if (operatorWriter?.dependencies !== undefined && input.agentId) {
           verifiedPlatformDependencies.set(
             result,
             ObjectFreeze({
               projectId: input.projectId,
               runId: input.runId,
               agentId: input.agentId,
-              dependencies,
+              dependencies: operatorWriter.dependencies,
             }),
           );
         }

@@ -340,8 +340,10 @@ function readHostProcessEnv(key: string): string | undefined {
 }
 
 // Captured while this module loads, before a project env file is loaded or
-// project code runs, so neither can redirect credentials sent to these origins.
+// project code runs, so neither can replace operator identity or credential routing.
 const HOST_BOOT_ENV_KEYS = [
+  "OAUTH_PUBLIC_KEY",
+  "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
   "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY",
   "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_API_URL",
@@ -354,7 +356,7 @@ for (const bootKey of HOST_BOOT_ENV_KEYS) {
 }
 
 /**
- * Read a host API routing variable as the host process started with it.
+ * Read host identity or API routing as the host process started with it.
  * Later process-environment writes and project env files are ignored; only a
  * test run (captured host DENO_TESTING=1) may override it through the overlay.
  */
