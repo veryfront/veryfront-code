@@ -1,3 +1,13 @@
+import {
+  assertPreparedMessageBudget,
+  DEFAULT_TOKEN_BUDGET,
+  estimateTokens,
+} from "./message-prep-budget.ts";
+export {
+  assertPreparedMessageBudget,
+  estimateOverhead,
+  estimateTokens,
+} from "./message-prep-budget.ts";
 import { inheritToolResultSource } from "./tool-result-source.ts";
 import { cleanContent, hasValidContent } from "./provider-message-content.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
@@ -61,13 +71,6 @@ export type {
   MessageTokenBreakdown,
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
-
-const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Estimate tokens. */
-export function estimateTokens(value: unknown): number {
-  return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
-}
 
 function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
   return {
@@ -348,11 +351,6 @@ export function enforceTokenBudgetWithTurnCompression(
     ? result
     : result.filter((_, index) => !droppedIndices.has(index));
 }
-
-const BUDGET_RATIO = 0.85;
-const DEFAULT_CONTEXT_WINDOW = 200_000;
-const DEFAULT_TOKEN_BUDGET = Math.floor(DEFAULT_CONTEXT_WINDOW * BUDGET_RATIO);
-const TOKENS_PER_TOOL = 250;
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
@@ -1648,12 +1646,6 @@ export function compactHistoricalUiMessageToolInputs(
   return mutated ? result : messages;
 }
 
-/** Estimate overhead. */
-export function estimateOverhead(instructions: unknown, toolCount: number): number {
-  const instructionTokens = estimateTokens(instructions);
-  return instructionTokens + toolCount * TOKENS_PER_TOOL;
-}
-
 /** Ensure tool call inputs helper. */
 export function ensureToolCallInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let mutated = false;
@@ -1683,19 +1675,6 @@ export function ensureToolCallInputs(messages: ProviderModelMessage[]): Provider
   });
 
   return mutated ? result : messages;
-}
-
-/** Reject provider messages that exceed the shared prepared context budget. */
-export function assertPreparedMessageBudget(
-  messages: readonly ProviderModelMessage[],
-  overhead: number,
-): void {
-  if (
-    messages.reduce((total, message) => total + estimateTokens(message.content), overhead) >
-      DEFAULT_TOKEN_BUDGET
-  ) {
-    throw new RangeError("Prepared messages exceed the context budget");
-  }
 }
 
 /** Compact for step. */
