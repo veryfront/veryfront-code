@@ -525,6 +525,12 @@ const DENY_ALL_RESERVED_HOST_TOOL_PREFIXES: readonly string[] = [
   AGENT_DELEGATE_TOOL_PREFIX,
 ];
 
+/** Runtime override keys that supply remote tool sources; deny-all drops them. */
+const DENY_ALL_DISCARDED_RUNTIME_OVERRIDE_KEYS: readonly string[] = [
+  "integrationToolDefinitions",
+  "serverResolvedIntegrationTools",
+];
+
 // Validators for values the deny-all mapping replaces or discards, captured
 // before project code can mutate the materialized schema instances.
 const trustedDenyAllAgentConfigSchema = getRuntimeAgentMarkdownDefinitionSchema();
@@ -669,8 +675,9 @@ type DenyAllNormalization = { value: unknown; denyAll: boolean };
  * runtime-essential tools (`load_skill`, `tool_search`, `invoke_agent`,
  * `form_input`), so a deny-all agent exposes no callable host tools.
  *
- * Caller-injected top-level `tools` are cleared: the agent-stream path keeps
- * any merged tool whose name is in `toolAllowlist`, so an injected tool named
+ * Caller-injected top-level `tools`, the agent's `mcpServers`, and forwarded
+ * integration tool definitions are cleared: the agent-stream path keeps any
+ * merged or remote tool whose name is in `toolAllowlist`, so such a tool named
  * like a provider tool would otherwise stay callable under deny-all.
  *
  * Fails closed: every value the mapping replaces or discards (the agent
@@ -719,6 +726,10 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   ]);
   defineOwnData(normalizedAgentConfig, "tools", []);
   defineOwnData(normalizedAgentConfig, "skills", []);
+  // Remote tool sources are callable tools too. An explicit empty server list
+  // stops MCP and inherited first-party sources from materializing a tool
+  // whose name collides with an allowlisted provider-native tool.
+  defineOwnData(normalizedAgentConfig, "mcpServers", []);
   defineOwnData(normalized, "agentConfig", normalizedAgentConfig);
 
   // Deny-all exposes no caller-injected tools either. A malformed value is
@@ -750,9 +761,11 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     // A non-record override fails the deny-all override validation below.
     return { value: normalized, denyAll: true };
   }
+  // Forwarded integration tools are remote tool sources as well; deny-all
+  // drops them so none can claim an allowlisted provider-native name.
   const runtimeOverridesRecord = runtimeOverrides === undefined
     ? {}
-    : copyOwnDataRecord(runtimeOverrides);
+    : copyOwnDataRecord(runtimeOverrides, DENY_ALL_DISCARDED_RUNTIME_OVERRIDE_KEYS);
   defineOwnData(forwardedRecord, "runtimeOverrides", runtimeOverridesRecord);
   // A present but malformed caller restriction is left in place so the
   // deny-all schema rejects it; it never reads as "no restriction". The

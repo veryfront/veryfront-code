@@ -867,6 +867,26 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("clears remote tool sources from a deny-all invocation", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["get_file"],
+        mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_file"] } }],
+      }),
+      forwardedProps: {
+        runtimeOverrides: {
+          integrationToolDefinitions: [{ name: "get_file", description: "Integration tool" }],
+          serverResolvedIntegrationTools: [{ name: "get_file" }],
+        },
+      },
+    }));
+
+    assertEquals(parsed.agentConfig?.mcpServers, []);
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["get_file"], toolAllowlist: ["get_file"] },
+    });
+  });
+
   it("rejects malformed caller-injected tools on a deny-all invocation instead of clearing them", () => {
     for (const tools of ["web_search", [{ description: "missing name" }]]) {
       const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
