@@ -8,7 +8,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import {
   DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,

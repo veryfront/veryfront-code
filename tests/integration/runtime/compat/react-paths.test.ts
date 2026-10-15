@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import Module from "node:module";
 import fs, { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import {
   resolveProjectPackageVersions,
