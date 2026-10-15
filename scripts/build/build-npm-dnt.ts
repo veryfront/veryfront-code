@@ -12,10 +12,12 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { normalizeBrowserPackage } from "./browser-package.ts";
 import { finalizeNpmWorkerEntrypoints, NPM_WORKER_ENTRYPOINT } from "./npm-worker-entrypoints.ts";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
+	BROWSER_MODULE_REPLACEMENTS,
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
@@ -67,6 +69,12 @@ await emptyDir("./npm");
 // Convert deno.json exports to dnt entry points
 const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
 	.map(([name, path]) => ({ name, path }));
+
+// Emit private browser implementations even when the native server graph does
+// not import them. Their temporary export entries are removed in postBuild.
+for (const path of Object.values(BROWSER_MODULE_REPLACEMENTS)) {
+	entryPoints.push({ name: `./_browser/${path}`, path: `./${path}` });
+}
 
 // Auto-derive esm.sh URL mappings from deno.json imports so versions stay in sync.
 // dnt ignores mappings it doesn't encounter, so including all is safe.
@@ -329,6 +337,12 @@ await build({
 			);
 		}
 
+		await normalizeBrowserPackage(
+			new URL("../../", import.meta.url),
+			new URL("../../npm/", import.meta.url),
+			denoJson.exports,
+		);
+
 		// Templates are embedded in a compressed generated module bundled by dnt.
 		// No need to copy template files separately
 
@@ -366,6 +380,9 @@ await build({
 
 		// Update package.json with bin entry and type
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		for (const path of Object.values(BROWSER_MODULE_REPLACEMENTS)) {
+			delete pkg.exports[`./_browser/${path}`];
+		}
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };

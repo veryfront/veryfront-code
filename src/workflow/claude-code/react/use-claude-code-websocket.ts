@@ -18,7 +18,7 @@ import {
   isClaudeCodeCoreEvent,
   reduceClaudeCodeEventState,
 } from "./event-state-reducer.ts";
-import { NETWORK_ERROR, REQUEST_ERROR } from "#veryfront/errors";
+import { NETWORK_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
 
 /** Default delay before reconnecting after disconnect */
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;

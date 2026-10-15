@@ -1,3 +1,5 @@
+import { normalizeBrowserModule } from "./browser-package.ts";
+import { assertThrows } from "#std/assert";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
   assertEquals,
@@ -497,7 +499,11 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
 // The framework and ext-dev-ui-react both consume the application's React
 // generation. The root-bundled schema adapter also owns Zod. These remain
 // root dependencies when another extension uses them.
-const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom", "zod"]);
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set([
+  "react",
+  "react-dom",
+  "zod",
+]);
 
 it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
@@ -801,8 +807,14 @@ describe("npm supply-chain policy", () => {
     assertEquals(exports["./chat/ag-ui"], "./src/chat/ag-ui.ts");
     assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
     assertEquals(exports["./events/ag-ui"], "./src/events/ag-ui/public.ts");
-    assertEquals(imports["veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
-    assertEquals(imports["#veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(
+      imports["veryfront/events/ag-ui"],
+      "./src/events/ag-ui/public.ts",
+    );
+    assertEquals(
+      imports["#veryfront/events/ag-ui"],
+      "./src/events/ag-ui/public.ts",
+    );
   });
 
   it("exports agent-service evals without legacy agent testing", async () => {
@@ -820,6 +832,13 @@ describe("npm supply-chain policy", () => {
     );
     assertEquals(exports["./agent/testing"], undefined);
     assertEquals(imports["veryfront/agent/testing"], undefined);
+  });
+
+  it("keeps the browser async-context replacement scoped to browser resolution", () => {
+    assertEquals(normalizeNpmPackageMetadata({}).browser, {
+      "./esm/src/platform/compat/async-context.js":
+        "./esm/src/platform/polyfills/node-async-hooks.js",
+    });
   });
 
   it("keeps browser-safe export patches aligned to public exports", async () => {
@@ -1167,4 +1186,32 @@ describe("npm generated integration artifacts", () => {
       'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
     );
   });
+});
+
+Deno.test("browser modules use native globals without importing dnt's server runtime", () => {
+  assertEquals(
+    normalizeBrowserModule(`import "../../_dnt.polyfills.js";
+import * as dntShim from "../../_dnt.shims.js";
+const owner = dntShim.dntGlobalThis;
+const token = dntShim.crypto.randomUUID();
+const runtime = dntShim.Deno;
+const timer = dntShim.setTimeout(() => {}, 1);
+`),
+    `const owner = globalThis;
+const token = globalThis.crypto.randomUUID();
+const runtime = globalThis.Deno;
+const timer = globalThis.setTimeout(() => {}, 1);
+`,
+  );
+});
+
+Deno.test("browser normalization rejects an unsupported server shim", () => {
+  assertThrows(
+    () =>
+      normalizeBrowserModule(
+        'import * as dntShim from "../_dnt.shims.js";\ndntShim.process.cwd();',
+      ),
+    Error,
+    "Unsupported dnt shim",
+  );
 });
