@@ -50,7 +50,7 @@ Attach to an existing sandbox. Closing detaches; use delete() to remove it.
 
 ### `Sandbox.capabilities()`
 
-Get sandbox capabilities, limits and defaults for the current caller.
+Get caller capabilities, optionally for the selected billing project. Creation rechecks capacity.
 
 **Returns:** <code>Promise&lt;SandboxCapabilities&gt;</code>
 
@@ -264,6 +264,7 @@ Streaming event emitted during command execution.
 | `SandboxAccessScope`                         | Sandbox access, storage and lifetime policies.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxAttachment`                          | Known sandbox connection details used to attach without a lookup round-trip.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxCapabilities`                        | Sandbox creation capabilities, limits and defaults for the current caller.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxCapabilitiesOptions`                 | Options for discovering caller creation capabilities in a billing project.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxClientOptions`                       |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxDetails`                             | A sandbox summary returned by list.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxEnvironment`                         | Snapshot of environment variable names with redacted values.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
