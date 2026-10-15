@@ -2055,12 +2055,10 @@ describe("authenticated binary API downloads", () => {
 });
 
 Deno.test("API management client keeps credentials on the supplied host transport", async () => {
-  const original = globalThis.fetch;
   let requests = 0;
-  try {
-    globalThis.fetch = (() => {
-      throw new Error("project fetch must not receive credentials");
-    }) as typeof fetch;
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
     const transport = ((_input, init) => {
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
       requests++;
@@ -2072,7 +2070,5 @@ Deno.test("API management client keeps credentials on the supplied host transpor
       projectSlug: "demo",
     }, transport).get("/projects");
     assertEquals(requests, 1);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });

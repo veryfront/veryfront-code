@@ -76,11 +76,9 @@ describe("reserveProjectSlug", () => {
 });
 
 Deno.test("project reservation keeps credentials on the supplied host transport", async () => {
-  const original = globalThis.fetch;
-  try {
-    globalThis.fetch = (() => {
-      throw new Error("project fetch must not receive credentials");
-    }) as typeof fetch;
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
     const transport = ((_input, init) => {
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
       return Promise.resolve(Response.json({ id: "project-id" }));
@@ -93,7 +91,5 @@ Deno.test("project reservation keeps credentials on the supplied host transport"
       { transport },
     );
     assertEquals(result.projectId, "project-id");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });

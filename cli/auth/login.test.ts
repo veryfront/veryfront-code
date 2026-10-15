@@ -3552,11 +3552,9 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 });
 
 Deno.test("authentication preflight does not use project-mutated fetch when given host transport", async () => {
-  const original = globalThis.fetch;
-  try {
-    globalThis.fetch = (() => {
-      throw new Error("project fetch must not receive credentials");
-    }) as typeof fetch;
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
     const { ensureAuthenticated, login } = await import("./login.ts");
     const credential = await ensureAuthenticated(
       {
@@ -3591,7 +3589,5 @@ Deno.test("authentication preflight does not use project-mutated fetch when give
       },
     );
     assertEquals(loggedIn, { authenticated: true, type: "apiKey" });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
