@@ -1,3 +1,4 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
 import { buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
@@ -122,7 +123,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
   const conversations = new Map<string, string>();
-  const pendingAdmissions = new Map<string, string>();
+  const pendingAdmissions = new Map<
+    string,
+    { key: string; messageMayHaveCommitted: boolean; ambiguous: boolean }
+  >();
   const active = new Set<ConnectedLocalRun>();
   let worker: Promise<{ id: string }> | undefined;
   let admissionTail: Promise<unknown> = Promise.resolve();
@@ -189,20 +193,47 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       input.signal.throwIfAborted();
       // A failed response does not tell us whether admission committed. Keep the
       // write identity until its run receipt arrives, including across cloned retries.
-      const requestIdentity = JSON.stringify([
+      // Retain only the digest, never the serialized conversation history.
+      const requestIdentity = await computeHash(JSON.stringify([
         input.threadId,
         input.agentId,
         input.agentName,
         input.messages,
-      ]);
-      let admissionKey = pendingAdmissions.get(requestIdentity);
-      if (!admissionKey) {
-        admissionKey = `local:${crypto.randomUUID()}`;
-        pendingAdmissions.set(requestIdentity, admissionKey);
+      ]));
+      input.signal.throwIfAborted();
+      let pending = pendingAdmissions.get(requestIdentity);
+      if (!pending) {
+        pending = {
+          key: `local:${crypto.randomUUID()}`,
+          messageMayHaveCommitted: false,
+          ambiguous: false,
+        };
+        pendingAdmissions.set(requestIdentity, pending);
       }
+      const admissionKey = pending.key;
+      const write = async (path: string, body: unknown, headers?: Record<string, string>) => {
+        try {
+          const result = await api(path, body, headers);
+          pending.ambiguous = false;
+          if (path.endsWith("/messages")) pending.messageMayHaveCommitted = true;
+          return result;
+        } catch (error) {
+          if (
+            error instanceof ConnectedLocalAdmissionError && error.status >= 400 &&
+            error.status < 500
+          ) {
+            // The cached conversation can be reused, but a prior user message
+            // must retain its key even when the later run admission is rejected.
+            if (!pending.messageMayHaveCommitted && !pending.ambiguous) {
+              pendingAdmissions.delete(requestIdentity);
+            }
+          } else pending.ambiguous = true;
+          throw error;
+        }
+      };
       let conversationId = conversations.get(input.threadId);
       if (!conversationId) {
-        conversationId = (await api("/conversations", {
+        conversationId = (await write("/conversations", {
           project_reference: options.projectId,
           idempotency_key: `${admissionKey}:conversation`,
           title: `Local ${input.agentId}`,
@@ -212,14 +243,14 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       }
       const lastUser = input.messages.findLast((message) => message.role === "user");
       if (lastUser) {
-        await api(`/conversations/${conversationId}/messages`, {
+        await write(`/conversations/${conversationId}/messages`, {
           role: "user",
           parts: lastUser.parts,
           idempotency_key: `${admissionKey}:message`,
         });
       }
       input.signal.throwIfAborted();
-      const accepted = await api("/runs", {
+      const accepted = await write("/runs", {
         project_id: options.projectId,
         conversation_id: conversationId,
         target: { type: "agent", id: input.agentId },

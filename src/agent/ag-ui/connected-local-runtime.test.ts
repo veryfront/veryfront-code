@@ -116,6 +116,15 @@ function fixture(
       const path = new URL(String(_url)).pathname;
       const body = JSON.parse(String(init?.body ?? "{}"));
       requests.push({ path, body, headers: new Headers(init?.headers) });
+      if (path === options.apiFailure?.path) {
+        return Promise.resolve(
+          options.apiFailure.invalidJson
+            ? new Response("not-json", { status: options.apiFailure.status })
+            : Response.json({ detail: options.apiFailure.detail }, {
+              status: options.apiFailure.status,
+            }),
+        );
+      }
       if (path.endsWith("/messages") || path === "/runs") {
         const key = path === "/runs"
           ? new Headers(init?.headers).get("Idempotency-Key")
@@ -128,15 +137,6 @@ function fixture(
           responseLost = true;
           return Promise.reject(new Error("accepted response lost"));
         }
-      }
-      if (path === options.apiFailure?.path) {
-        return Promise.resolve(
-          options.apiFailure.invalidJson
-            ? new Response("not-json", { status: options.apiFailure.status })
-            : Response.json({ detail: options.apiFailure.detail }, {
-              status: options.apiFailure.status,
-            }),
-        );
       }
       if (path === options.abortOnPath) options.controller?.abort();
       if (path === "/conversations") {
@@ -759,6 +759,82 @@ describe("connected local execution", () => {
       await f.runtime.dispose();
     });
   }
+
+  for (const path of ["/conversations", "/conversations/conversation-1/messages", "/runs"]) {
+    it(`discards a definitively rejected ${path} key when no user message may have committed`, async () => {
+      const options: { apiFailure?: { path: string; status: number } } = {
+        apiFailure: { path, status: 403 },
+      };
+      const f = fixture(options);
+      const input = {
+        agentId: "assistant",
+        threadId: "thread",
+        signal: new AbortController().signal,
+        messages: path === "/runs"
+          ? []
+          : [{ role: "user", parts: [{ type: "text", text: "private" }] }],
+      };
+      await assertRejects(() => f.runtime.admit(input), Error, "access");
+      const keyOf = (request: typeof f.requests[number]) =>
+        request.headers.get("Idempotency-Key") ?? request.body.idempotency_key;
+      const firstKey = keyOf(f.requests.find((request) => request.path === path)!);
+      options.apiFailure = undefined;
+      const run = await f.runtime.admit(input);
+      try {
+        const retryKey = keyOf(f.requests.filter((request) => request.path === path)[1]!);
+        assertEquals(firstKey === retryKey, false);
+      } finally {
+        await run.finish("completed");
+      }
+    });
+  }
+
+  it("keeps an ambiguous message key across a later definitive rejection", async () => {
+    const path = "/conversations/conversation-1/messages";
+    const options: { lostResponseOnce: string; apiFailure?: { path: string; status: number } } = {
+      lostResponseOnce: path,
+    };
+    const f = fixture(options);
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      signal: new AbortController().signal,
+      messages: [{ role: "user", parts: [{ type: "text", text: "private" }] }],
+    };
+    await assertRejects(() => f.runtime.admit(input), Error, "accepted response lost");
+    options.apiFailure = { path, status: 403 };
+    await assertRejects(() => f.runtime.admit(input), Error, "access");
+    options.apiFailure = undefined;
+    const run = await f.runtime.admit(input);
+    try {
+      assertEquals(f.createdMessages.length, 1);
+      assertEquals(f.createdRuns.length, 1);
+    } finally {
+      await run.finish("completed");
+    }
+  });
+
+  it("keeps earlier message idempotency after a definitive run rejection", async () => {
+    const options: { apiFailure?: { path: string; status: number } } = {
+      apiFailure: { path: "/runs", status: 403 },
+    };
+    const f = fixture(options);
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      signal: new AbortController().signal,
+      messages: [{ role: "user", parts: [{ type: "text", text: "private" }] }],
+    };
+    await assertRejects(() => f.runtime.admit(input), Error, "access");
+    options.apiFailure = undefined;
+    const run = await f.runtime.admit(input);
+    try {
+      assertEquals(f.createdMessages.length, 1);
+      assertEquals(f.createdRuns.length, 1);
+    } finally {
+      await run.finish("completed");
+    }
+  });
 
   it("retains an already ambiguous write key if a retry fails before admission", async () => {
     const options = { lostResponseOnce: "/runs", heartbeatFailure: false };
