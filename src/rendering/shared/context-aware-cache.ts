@@ -1,3 +1,4 @@
+import { hashString } from "#veryfront/cache/hash.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -23,6 +24,7 @@ const DEFAULT_CACHE_STALE_MS = 30 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 500;
 
 export interface ContextAwareCacheOptions {
+  /** Runtime/pinning-scoped entries need deleteByPrefix for shared invalidation. */
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
@@ -41,28 +43,42 @@ function hasResponseMetadata(result: RenderResult): boolean {
   return Object.keys(result.headers ?? {}).length > 0 || (result.cookies?.length ?? 0) > 0;
 }
 
+function isScopedOverride(key?: string): boolean {
+  return Boolean(key && /(?:^|:)(?:react-runtime:|pins:|render-identity:hash-)/.test(key));
+}
+
+function isSlugOwnedOverride(key: string, slug: string): boolean {
+  const contentKey = key.startsWith("page:") ? key.slice(5) : key;
+  return contentKey === slug || contentKey.startsWith(`${slug}:`) ||
+    contentKey.startsWith(`${slug}?`);
+}
+
+function scopedSlugPrefix(slug: string): string {
+  const digest = `${hashString(`render-slug:a:${slug}`)}-${hashString(`render-slug:b:${slug}`)}`;
+  return `render-variants:v1:${digest}:`;
+}
+
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
   private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
-  private readonly maxTrackedVariants: number;
-  // Exact keys are needed when a store cannot enumerate runtime/pinning variants.
-  // Bound bookkeeping with the same least-recently-used order as cache reads.
-  private readonly variants = new Map<string, {
-    slugKey: string;
-    expiresAt?: number;
-    settled: boolean;
-    write: Promise<void>;
-  }>();
-
-  private readonly pendingWrites = new Set<Promise<void>>();
-  private readonly keyWrites = new Map<string, Promise<void>>();
+  // Track only writes in flight, not cached entries: eviction belongs to the store.
+  private readonly writes = new Map<string, { slugKey: string; write: Promise<void> }>();
+  private invalidationBarrier: Promise<void> = Promise.resolve();
+  private destroyed = false;
+  private readonly legacyKeys = new Map<string, string>();
+  private readonly maxLegacyKeys: number;
+  private legacyWriteBarrier: Promise<void> = Promise.resolve();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
-    this.maxTrackedVariants = options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    const legacyLimit = options.memory?.maxEntries;
+    this.maxLegacyKeys =
+      typeof legacyLimit === "number" && Number.isSafeInteger(legacyLimit) && legacyLimit > 0
+        ? legacyLimit
+        : DEFAULT_MAX_ENTRIES;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -79,17 +95,15 @@ export class ContextAwareCacheCoordinator {
     nonce?: string,
   ): Promise<ContextAwareCacheLookupResult> {
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
+    if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) {
+      return Promise.resolve({ cacheKey, hit: false, status: "miss", lookupDurationMs: 0 });
+    }
 
     return withSpan(
       SpanNames.CACHE_CHECK_SPECULATIVE,
       async () => {
         const lookupStart = performance.now();
         const cached = (await this.store.get(cacheKey)) as CachePayload | undefined;
-        const tracked = this.variants.get(cacheKey);
-        if (tracked?.settled) {
-          this.variants.delete(cacheKey);
-          if (cached) this.variants.set(cacheKey, tracked);
-        }
 
         if (!cached) {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -102,6 +116,14 @@ export class ContextAwareCacheCoordinator {
             lookupDurationMs,
           });
           return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+        }
+
+        const trackedSlug = this.legacyKeys.get(cacheKey);
+        if (trackedSlug !== undefined) {
+          this.legacyKeys.delete(cacheKey);
+          if (!this.isExpired(cached) || this.isStaleUsable(cached, ctx)) {
+            this.legacyKeys.set(cacheKey, trackedSlug);
+          }
         }
 
         if (hasResponseMetadata(cached.result)) {
@@ -217,7 +239,10 @@ export class ContextAwareCacheCoordinator {
     cacheKeyOverride?: string,
     nonce?: string,
   ): Promise<void> {
-    if (!result || result.stream) return;
+    if (!result || result.stream || this.destroyed) return;
+    // Scoped entries require store-level prefix deletion, including across
+    // coordinators/restarts. An unsupported store remains usable for legacy keys.
+    if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) return;
 
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
     const now = Date.now();
@@ -225,34 +250,25 @@ export class ContextAwareCacheCoordinator {
     const cachedResult = this.cloneResult(result);
     const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
     cachedResult.html = sealedHtml.html;
-    for (const [key, variant] of this.variants) {
-      if (variant.settled && variant.expiresAt !== undefined && variant.expiresAt < now) {
-        this.variants.delete(key);
+    const previous = this.writes.get(cacheKey)?.write;
+    const barrier = this.invalidationBarrier;
+    const legacyWrite = !this.store.deleteByPrefix ? this.legacyWriteBarrier : undefined;
+    const write = (async () => {
+      // Prior operations report their errors to their own callers. Settlement
+      // establishes ordering without making a failed write poison later writes.
+      await Promise.allSettled([
+        barrier,
+        ...(previous ? [previous] : []),
+        ...(legacyWrite ? [legacyWrite] : []),
+      ]);
+      if (!this.store.deleteByPrefix && !this.legacyKeys.has(cacheKey)) {
+        while (this.legacyKeys.size >= this.maxLegacyKeys) {
+          const oldest = this.legacyKeys.keys().next().value;
+          if (oldest === undefined) break;
+          await this.store.delete(oldest);
+          this.legacyKeys.delete(oldest);
+        }
       }
-    }
-    const previous = this.variants.get(cacheKey);
-    const previousWrite = this.keyWrites.get(cacheKey);
-    let evicted: [string, typeof previous] | undefined;
-    if (!previous && this.variants.size >= this.maxTrackedVariants) {
-      const oldest = this.variants.entries().next().value;
-      if (oldest) {
-        evicted = oldest;
-        this.variants.delete(oldest[0]);
-      }
-    }
-    let eviction: Promise<void> | undefined;
-    if (evicted) {
-      const [key, variant] = evicted;
-      const preceding = this.keyWrites.get(key) ?? variant?.write;
-      eviction = Promise.resolve().then(async () => {
-        if (preceding) await Promise.allSettled([preceding]);
-        await this.store.delete(key);
-      });
-      this.trackKeyWrite(key, eviction);
-    }
-    const write = Promise.resolve().then(async () => {
-      if (previousWrite) await Promise.allSettled([previousWrite]);
-      if (eviction) await eviction;
       await this.store.set(cacheKey, {
         result: cachedResult,
         ...(sealedHtml.placeholder === undefined
@@ -265,30 +281,17 @@ export class ContextAwareCacheCoordinator {
           ? now + this.ttlMs + this.staleMs
           : undefined,
       });
-    });
-    const variant = {
-      slugKey: createCacheKey(ctx, `page:${slug}`),
-      expiresAt: this.ttlMs
-        ? now + this.ttlMs + (this.shouldServeStale(ctx) ? this.staleMs : 0)
-        : undefined,
-      settled: false,
-      write,
-    };
-    this.variants.delete(cacheKey);
-    this.variants.set(cacheKey, variant);
-    this.pendingWrites.add(write);
-    this.trackKeyWrite(cacheKey, write);
+      if (!this.store.deleteByPrefix) {
+        this.legacyKeys.set(cacheKey, createCacheKey(ctx, `page:${slug}`));
+      }
+    })();
+    if (!this.store.deleteByPrefix) this.legacyWriteBarrier = write.then(() => {}, () => {});
+    const entry = { slugKey: createCacheKey(ctx, `page:${slug}`), write };
+    this.writes.set(cacheKey, entry);
     try {
       await write;
-      variant.settled = true;
-    } catch (error) {
-      if (this.variants.get(cacheKey) === variant) {
-        if (previous?.settled) this.variants.set(cacheKey, previous);
-        else this.variants.delete(cacheKey);
-      }
-      throw error;
     } finally {
-      this.pendingWrites.delete(write);
+      if (this.writes.get(cacheKey) === entry) this.writes.delete(cacheKey);
     }
 
     logger.debug("Cached result", {
@@ -299,116 +302,101 @@ export class ContextAwareCacheCoordinator {
     });
   }
 
-  async clearForContext(ctx: RenderContext): Promise<void> {
-    const startTime = Date.now();
-    await this.clearTrackedVariants((key) => key.startsWith(`${ctx.cachePrefix}:`));
-
-    if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", {
-        projectId: ctx.projectId,
-        cachePrefix: ctx.cachePrefix,
-      });
-      return;
-    }
-
-    logger.debug("Clearing cache for context", {
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-      cachePrefix: ctx.cachePrefix,
-    });
-
-    const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
-
-    logger.debug("✓ Cleared cache for context", {
-      projectId: ctx.projectId,
-      entriesDeleted: deleted,
-      durationMs: Date.now() - startTime,
+  clearForContext(ctx: RenderContext): Promise<void> {
+    const prefix = `${ctx.cachePrefix}:`;
+    return this.invalidate((key) => key.startsWith(prefix), async () => {
+      if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
+      else await this.deleteLegacyKeys((key) => key.startsWith(prefix));
     });
   }
 
-  async clearForProject(projectId: string): Promise<void> {
-    const startTime = Date.now();
+  clearForProject(projectId: string): Promise<void> {
     const prefix = `${projectId}:`;
-    await this.clearTrackedVariants((key) => key.startsWith(prefix));
-
-    if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", { projectId });
-      return;
-    }
-
-    logger.debug("Clearing cache for project", { projectId, prefix });
-
-    const deleted = await this.store.deleteByPrefix(prefix);
-
-    logger.debug("✓ Cleared cache for project", {
-      projectId,
-      entriesDeleted: deleted,
-      durationMs: Date.now() - startTime,
+    return this.invalidate((key) => key.startsWith(prefix), async () => {
+      if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
+      else await this.deleteLegacyKeys((key) => key.startsWith(prefix));
     });
   }
 
-  async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
+  clearSlug(slug: string, ctx: RenderContext): Promise<void> {
     const slugKey = createCacheKey(ctx, `page:${slug}`);
-    await this.clearTrackedVariants((_key, trackedSlug) => trackedSlug === slugKey);
-    if (this.store.deleteByPrefix) {
-      const prefix = slugKey;
-      await this.store.deleteByPrefix(prefix);
-      logger.debug("Cleared slug from cache by prefix", {
-        slug,
-        projectId: ctx.projectId,
-        prefix,
-      });
-      return;
-    }
-
-    const keys = [
-      createCacheKey(ctx, `page:${slug}`),
-      createCacheKey(ctx, `page:${slug}:theme-light`),
-      createCacheKey(ctx, `page:${slug}:theme-dark`),
-    ];
-
-    await Promise.all(keys.map((key) => this.store.delete(key)));
-
-    logger.debug("Cleared slug from cache (all variants)", {
-      slug,
-      projectId: ctx.projectId,
-      keys,
+    return this.invalidate((_key, trackedSlug) => trackedSlug === slugKey, async () => {
+      const deletions = [slugKey, `${slugKey}:theme-light`, `${slugKey}:theme-dark`]
+        .map((key) => Promise.resolve().then(() => this.store.delete(key)));
+      if (this.store.deleteByPrefix) {
+        deletions.push(
+          Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}:`)).then(() => {}),
+        );
+        deletions.push(
+          Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}?`)).then(() => {}),
+        );
+        deletions.push(
+          Promise.resolve().then(() =>
+            this.store.deleteByPrefix!(createCacheKey(ctx, scopedSlugPrefix(slug)))
+          ).then(() => {}),
+        );
+      }
+      if (!this.store.deleteByPrefix) {
+        deletions.push(this.deleteLegacyKeys((_key, trackedSlug) => trackedSlug === slugKey));
+      }
+      const settled = await Promise.allSettled(deletions);
+      const errors = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : []
+      );
+      if (errors.length) throw new AggregateError(errors, "Cache slug invalidation failed");
     });
   }
 
-  private trackKeyWrite(key: string, write: Promise<void>): void {
-    this.keyWrites.set(key, write);
-    const retire = () => {
-      if (this.keyWrites.get(key) === write) this.keyWrites.delete(key);
-    };
-    // Callers retain each operation's rejection; this continuation only retires ordering state.
-    void write.then(retire, retire);
-  }
-
-  private async clearTrackedVariants(
+  private async deleteLegacyKeys(
     matches: (key: string, slugKey: string) => boolean,
   ): Promise<void> {
-    await Promise.allSettled([...this.pendingWrites]);
-    const variants = [...this.variants].filter(([key, variant]) => matches(key, variant.slugKey));
-    // Each caller owns its write failure; settlement here only orders invalidation.
-    await Promise.allSettled(variants.map(([, variant]) => variant.write));
-    for (const [key, variant] of variants) {
+    const entries = [...this.legacyKeys].filter(([key, slugKey]) => matches(key, slugKey));
+    const settled = await Promise.allSettled(entries.map(async ([key, slugKey]) => {
       await this.store.delete(key);
-      if (this.variants.get(key) === variant) this.variants.delete(key);
-    }
+      if (this.legacyKeys.get(key) === slugKey) this.legacyKeys.delete(key);
+    }));
+    const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Legacy cache invalidation failed");
   }
 
-  async clearAll(): Promise<void> {
-    await Promise.allSettled([...this.pendingWrites]);
-    await this.store.clear();
-    this.variants.clear();
-    logger.debug("Cleared all cached data");
+  private invalidate(
+    matches: (key: string, slugKey: string) => boolean,
+    clear: () => Promise<void>,
+  ): Promise<void> {
+    const writes = [...this.writes].filter(([key, entry]) => matches(key, entry.slugKey))
+      .map(([, entry]) => entry.write);
+    const previous = this.invalidationBarrier;
+    const operation = (async () => {
+      await previous;
+      const settled = await Promise.allSettled(writes);
+      const errors = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : []
+      );
+      try {
+        await clear();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+    })();
+    // Future writes wait for deletion, but receive only their own storage errors.
+    this.invalidationBarrier = operation.then(() => {}, () => {});
+    return operation;
   }
 
-  async destroy(): Promise<void> {
-    await Promise.allSettled([...this.pendingWrites]);
-    await this.store.destroy();
-    this.variants.clear();
+  clearAll(): Promise<void> {
+    return this.invalidate(() => true, async () => {
+      await this.store.clear();
+      this.legacyKeys.clear();
+    });
+  }
+
+  destroy(): Promise<void> {
+    this.destroyed = true;
+    return this.invalidate(() => true, async () => {
+      await this.store.destroy();
+      this.legacyKeys.clear();
+    });
   }
 
   getStats(): { size: number } {
@@ -426,6 +414,17 @@ export class ContextAwareCacheCoordinator {
   ): string {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
+    if (
+      isScopedOverride(cacheKeyOverride) ||
+      (cacheKeyOverride && this.store.deleteByPrefix &&
+        !isSlugOwnedOverride(cacheKeyOverride, slug))
+    ) {
+      const identity = `${cacheKeyOverride}:${colorScheme ?? "default"}`;
+      const digest = `${hashString(`render-variant:a:${identity}`)}-${
+        hashString(`render-variant:b:${identity}`)
+      }`;
+      return createCacheKey(ctx, `${scopedSlugPrefix(slug)}${digest}${themeKey}`);
+    }
     const baseKey = cacheKeyOverride && cacheKeyOverride.length > 0 ? cacheKeyOverride : slug;
     const contentKey = baseKey.startsWith("page:") ? baseKey : `page:${baseKey}`;
     const themedKey = themeKey && !/:theme-(light|dark)$/.test(contentKey)

@@ -1,3 +1,7 @@
+import {
+  buildSourceModuleMetaBinding,
+  getSourceModuleRuntimeUrl,
+} from "#veryfront/transforms/shared/source-module-location.ts";
 import { bindDynamicScriptRequires } from "./script-module-imports.ts";
 import { isBuiltin } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -45,7 +49,7 @@ import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-load
 
 const logger = rendererLogger.component("script");
 const SCRIPT_MODULE_CACHE_LIMIT = 256;
-const scriptModules = new Map<string, Promise<ScriptPageModule>>();
+const scriptModules = new Map<string, { load: Promise<ScriptPageModule> }>();
 
 type ScriptModuleOutput =
   | string
@@ -207,6 +211,7 @@ export async function handleScriptPage(
           options.dependencyPinningConfiguredVersions,
         ])
         : undefined,
+      options.config.build?.serverExternalPackages,
     );
     const ctx = buildPageContext(pageInfo, slug, options.params, options.url);
 
@@ -396,25 +401,37 @@ async function transpileWithEsbuild(
   modulePath: string,
   resolveDir: string,
   reactPeers?: LocalReactPeerSnapshot,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const { build, transform } = await import("veryfront/extensions/bundler");
   const loader = getEsbuildLoader(modulePath);
+  const runtime = reactPeers ? await import(getSourceModuleRuntimeUrl()) : undefined;
+  const sourceUrl = pathToFileURL(modulePath).href;
+  if (runtime) await runtime.prepareSourceModuleMeta(sourceUrl, reactPeers);
+  const conditions = runtime?.getSourceModuleConditions(sourceUrl);
   const preserveSourceUrl = async (contents: string, path: string) => {
+    const sourceUrl = pathToFileURL(path).href;
+    const meta = await buildSourceModuleMetaBinding(
+      contents,
+      sourceUrl,
+      getSourceModuleRuntimeUrl(),
+      reactPeers,
+    );
     const transformed = await transform(contents, {
       loader: getEsbuildLoader(path),
       jsx: "preserve",
       target: "es2022",
       define: {
-        "import.meta.url": JSON.stringify(pathToFileURL(path).href),
-        "import.meta.dirname": JSON.stringify(dirname(path)),
-        "import.meta.filename": JSON.stringify(path),
+        "import.meta": meta.name,
         __dirname: JSON.stringify(dirname(path)),
         __filename: JSON.stringify(path),
       },
     });
-    return reactPeers
-      ? bindDynamicScriptRequires(transformed.code, path, reactPeers)
+    const code = transformed.code.includes(meta.name)
+      ? `${meta.banner}
+${transformed.code}`
       : transformed.code;
+    return reactPeers ? bindDynamicScriptRequires(code, path, reactPeers) : code;
   };
 
   const result = await build({
@@ -428,13 +445,16 @@ async function transpileWithEsbuild(
     jsxImportSource: "react",
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
     external: reactPeers ? ["node:*"] : ESBUILD_EXTERNALS,
-    conditions: reactPeers ? ["node", ...(isBun ? ["bun"] : [])] : undefined,
+    conditions: reactPeers ? conditions ?? ["node", ...(isBun ? ["bun"] : [])] : undefined,
     plugins: reactPeers
       ? [{
         name: "captured-react-peers",
         setup(pluginBuild) {
           const externalResolution = Object.freeze({});
-          pluginBuild.onResolve({ filter: /.*/ }, (args) => {
+          pluginBuild.onResolve({ filter: /.*/ }, async (args) => {
+            if (args.path === getSourceModuleRuntimeUrl()) {
+              return { path: args.path, external: true };
+            }
             if (isBuiltin(args.path)) {
               return {
                 path: args.path.startsWith("node:") ? args.path : `node:${args.path}`,
@@ -443,6 +463,36 @@ async function transpileWithEsbuild(
             }
             if (isBun && (args.path === "bun" || args.path.startsWith("bun:"))) {
               return { path: args.path, external: true };
+            }
+            const configured = !/^react(?:-dom)?(?:\/|$)/.test(args.path) &&
+              serverExternalPackages?.some((name) =>
+                args.path === name || args.path.startsWith(`${name}/`)
+              );
+            if (
+              (configured || args.path.endsWith(".node")) && args.pluginData !== externalResolution
+            ) {
+              if (!pluginBuild.resolve) {
+                throw new TypeError("Script bundler cannot resolve native dependencies");
+              }
+              const resolved = await pluginBuild.resolve(args.path, {
+                importer: args.importer,
+                resolveDir: args.resolveDir || resolveDir,
+                kind: args.kind,
+                pluginData: externalResolution,
+              });
+              if (resolved.errors?.length || !resolved.path) {
+                return {
+                  errors: resolved.errors?.length
+                    ? resolved.errors
+                    : [{ text: "Native script dependency is unavailable" }],
+                };
+              }
+              return {
+                path: args.kind === "require-call"
+                  ? resolved.path
+                  : pathToFileURL(resolved.path).href,
+                external: true,
+              };
             }
             return undefined;
           });
@@ -555,6 +605,7 @@ async function loadScriptModule(
   adapter: RuntimeAdapter,
   reactPeers?: LocalReactPeerSnapshot,
   productionIdentity?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<ScriptPageModule> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -584,6 +635,7 @@ async function loadScriptModule(
     reactPeers ? normalizedPath : modulePath,
     resolveDir,
     reactPeers,
+    serverExternalPackages,
   );
   logger.debug(`Transpiled ${modulePath}`);
 
@@ -596,16 +648,16 @@ async function loadScriptModule(
   if (cached) {
     scriptModules.delete(key);
     scriptModules.set(key, cached);
-    return cached;
+    return await cached.load;
   }
-  const pending = importFromTempFile(fs, code);
+  const pending = { load: importFromTempFile(fs, code) };
   scriptModules.set(key, pending);
   while (scriptModules.size > SCRIPT_MODULE_CACHE_LIMIT) {
     const oldest = scriptModules.keys().next().value;
     if (oldest !== undefined) scriptModules.delete(oldest);
   }
   try {
-    return await pending;
+    return await pending.load;
   } catch (error) {
     if (scriptModules.get(key) === pending) scriptModules.delete(key);
     throw error;

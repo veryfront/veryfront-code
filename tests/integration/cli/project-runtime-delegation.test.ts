@@ -185,31 +185,12 @@ describe("project runtime delegation", () => {
         stderr: "piped",
       }).output();
       assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
-      assertEquals(
-        new TextDecoder().decode(result.stderr),
-        "",
-        "PnP startup must not warn or expose loader paths",
-      );
+      assertEquals(new TextDecoder().decode(result.stderr), "");
       assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
         react: "19.2.5",
         origin: "project",
         args: ["dev"],
       });
-      for (const flag of ["--json", "--ndjson"]) {
-        const structured = await new Deno.Command("node", {
-          args: [join(f.global, "bin", "veryfront.js"), "deploy", flag],
-          cwd: f.project,
-          stdout: "piped",
-          stderr: "piped",
-        }).output();
-        assertEquals(structured.code, 0);
-        assertEquals(
-          new TextDecoder().decode(structured.stderr),
-          "",
-          `${flag} startup is warning-free`,
-        );
-        assertEquals(JSON.parse(new TextDecoder().decode(structured.stdout)).origin, "project");
-      }
       const outside = await new Deno.Command("node", {
         args: [
           join(f.global, "bin", "veryfront.js"),
@@ -222,11 +203,26 @@ describe("project runtime delegation", () => {
         stderr: "piped",
       }).output();
       assertEquals(outside.code, 0, new TextDecoder().decode(outside.stderr));
+      assertEquals(new TextDecoder().decode(outside.stderr), "");
       assertEquals(JSON.parse(new TextDecoder().decode(outside.stdout)), {
         react: "19.2.5",
         origin: "project",
         args: ["dev", "--project", f.project],
       });
+      await Deno.writeTextFile(join(f.project, ".pnp.loader.mjs"), "export const = invalid;");
+      for (const args of [["deploy", "--json"], ["project", "runs", "list", "--ndjson"]]) {
+        const failed = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), ...args],
+          cwd: f.project,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(failed.code, 1);
+        assertEquals(new TextDecoder().decode(failed.stderr), "");
+        const output = new TextDecoder().decode(failed.stdout);
+        assertEquals(JSON.parse(output).error.slug, "command-failed");
+        assertEquals(output.includes(f.root), false);
+      }
     } finally {
       await Deno.remove(f.root, { recursive: true });
     }

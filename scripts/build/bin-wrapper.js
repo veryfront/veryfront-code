@@ -336,14 +336,23 @@ try {
 }
 if (launch.pnpStartup) {
   const { pnpStartup, loader } = launch;
+  const message = "Project CLI setup failed; verify the project directory and reinstall its dependencies";
+  const errorEnvelope = { success: false, command: launcherCommand,
+    error: { code: "RUNTIME_ERROR", slug: "command-failed", message } };
+  const report = launcherJsonMode()
+    ? `console.log(${JSON.stringify(JSON.stringify(errorEnvelope))});`
+    : `console.error(${JSON.stringify(message)});`;
+  // register() installs the PnP ESM hooks without experimental-loader warnings.
+  // Its startup failures occur before this wrapper reloads, so report them here.
+  const registration = "data:text/javascript," + encodeURIComponent(
+    `import { register } from "node:module"; try { register(${JSON.stringify(pathToFileURL(loader).href)}); } catch { ${report} process.exit(1); }`,
+  );
   const child = spawn(process.execPath, [
     ...process.execArgv,
     "--require",
     pnpStartup,
     "--import",
-    "data:text/javascript," + encodeURIComponent(
-      `import { register } from "node:module"; register(${JSON.stringify(pathToFileURL(loader).href)});`,
-    ),
+    registration,
     fileURLToPath(import.meta.url),
     ...process.argv.slice(2),
   ], { stdio: "inherit" });
@@ -352,10 +361,7 @@ if (launch.pnpStartup) {
   const onTerminate = () => forwardSignal("SIGTERM");
   process.on("SIGINT", onInterrupt);
   process.on("SIGTERM", onTerminate);
-  child.once("error", (error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  child.once("error", failProjectLaunch);
   child.once("exit", (code, signal) => {
     process.removeListener("SIGINT", onInterrupt);
     process.removeListener("SIGTERM", onTerminate);

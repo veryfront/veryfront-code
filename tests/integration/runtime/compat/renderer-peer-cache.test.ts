@@ -20,6 +20,16 @@ describe("Renderer React peer cache", () => {
           data.set(key, value);
           return Promise.resolve();
         },
+        deleteByPrefix: (prefix) => {
+          let deleted = 0;
+          for (const key of data.keys()) {
+            if (key.startsWith(prefix)) {
+              data.delete(key);
+              deleted++;
+            }
+          }
+          return Promise.resolve(deleted);
+        },
         delete: (key) => {
           data.delete(key);
           return Promise.resolve();

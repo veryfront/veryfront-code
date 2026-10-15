@@ -50,6 +50,204 @@ function overrideInstalledVersion(
 }
 
 describe("react-paths", () => {
+  it("renders an adapter-backed script without a supplied cache identity", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      "/virtual-script/page.js",
+      'export default () => "<main>virtual script</main>";',
+    );
+    const rendered = await handleScriptPage(
+      { entity: { path: "/virtual-script/page.js", frontmatter: {} } } as never,
+      "page",
+      {
+        mode: "production",
+        projectDir: "/virtual-script",
+        adapter,
+        config: {},
+        dependencyPinningCacheKey: "off",
+      },
+    );
+    assertEquals(rendered.html.includes("virtual script"), true);
+  });
+
+  it("preserves native addons and configured native module identity in script pages", async () => {
+    if (!isNode) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const { pathToFileURL } = await import("node:url");
+    const directory = mkdtempSync(join(tmpdir(), "script-native-deps-"));
+    const adapter = createMockAdapter();
+    const addon = join(directory, "node_modules", "native-addon");
+    const external = join(directory, "node_modules", "keep-native");
+    fs.mkdirSync(addon, { recursive: true });
+    fs.mkdirSync(external, { recursive: true });
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    fs.writeFileSync(join(addon, "package.json"), '{"name":"native-addon","main":"index.cjs"}');
+    fs.writeFileSync(join(addon, "index.cjs"), 'module.exports = require("./binding.node");');
+    fs.writeFileSync(join(addon, "binding.node"), "test native boundary");
+    fs.writeFileSync(
+      join(external, "package.json"),
+      '{"name":"keep-native","type":"module","exports":"./index.js"}',
+    );
+    fs.writeFileSync(join(external, "index.js"), "export const marker = {};");
+    const source =
+      'import addon from "native-addon"; import { marker } from "keep-native"; export default () => "<main>" + addon.value + "|" + (marker === globalThis.__scriptNativeMarker) + "</main>";';
+    const pagePath = join(directory, "page.js");
+    fs.writeFileSync(pagePath, source);
+    const original = process.dlopen;
+    const globalState = globalThis as Record<string, unknown>;
+    try {
+      globalState.__scriptNativeMarker =
+        (await import(pathToFileURL(join(external, "index.js")).href)).marker;
+      process.dlopen = ((module: { exports: unknown }, filename: string) => {
+        assertEquals(filename.endsWith("binding.node"), true);
+        module.exports = { value: "native-addon" };
+      }) as typeof process.dlopen;
+      const rendered = await handleScriptPage(
+        { entity: { path: pagePath, frontmatter: {} } } as never,
+        "page",
+        {
+          mode: "production",
+          projectDir: directory,
+          adapter,
+          reactPeers: captureLocalReactPeers(),
+          config: { build: { serverExternalPackages: ["keep-native"] } },
+          dependencyPinningCacheKey: "off",
+        },
+      );
+      assertEquals(rendered.html.includes("<main>native-addon|true</main>"), true);
+    } finally {
+      process.dlopen = original;
+      delete globalState.__scriptNativeMarker;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves source-relative assets in local scripts and their dependencies", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const directory = mkdtempSync(join(tmpdir(), "script-assets-"));
+    const adapter = createMockAdapter();
+    const peers = captureLocalReactPeers();
+    const { loadModuleFromSource } = await import(
+      "#veryfront/modules/react-loader/component-loader.ts"
+    );
+    const pagePath = join(directory, "page.js");
+    const helperPath = join(directory, "helper.js");
+    const source =
+      'import { readFileSync } from "node:fs"; import { readTemplate } from "./helper.js"; export default () => "<main>" + readFileSync(new URL(import.meta.resolve("./template.html")), "utf8") + "|" + readTemplate() + "</main>";';
+    const helper =
+      'import { readFileSync } from "node:fs"; export const readTemplate = () => readFileSync(new URL("./template.html", import.meta.url), "utf8");';
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    fs.writeFileSync(join(directory, "template.html"), "source asset");
+    fs.writeFileSync(pagePath, source);
+    fs.writeFileSync(helperPath, helper);
+    adapter.fs.files.set(pagePath, source);
+    adapter.fs.files.set(helperPath, helper);
+    try {
+      // Seed ordinary component transforms first: source-location mode must not
+      // reuse their cache entries, including entries for imported helpers.
+      await loadModuleFromSource(source, pagePath, directory, adapter, {
+        dev: false,
+        ssr: true,
+        mode: "production",
+        contentSourceId: "local-assets",
+        dependencyPinningCacheKey: "off",
+        reactPeers: peers,
+        reactVersion: peers.versions.react,
+      });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const rendered = await handleScriptPage(
+          { entity: { path: pagePath, frontmatter: {} } } as never,
+          "page",
+          {
+            mode: "production",
+            projectDir: directory,
+            adapter,
+            config: {},
+            reactPeers: peers,
+            dependencyPinningCacheKey: "off",
+          },
+        );
+        assertEquals(rendered.html.includes("<main>source asset|source asset</main>"), true);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  for (const fullDocument of [false, true]) {
+    it(`keeps script-page imports on admitted peers with full document ${fullDocument}`, async () => {
+      if (!isNode && !isBun) return;
+      const { PageRenderer } = await import("#veryfront/rendering/page-renderer.ts");
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const { hashDependencyPins } = await import(
+        "#veryfront/transforms/esm/dependency-snapshot.ts"
+      );
+      const peers = captureLocalReactPeers();
+      const directory = mkdtempSync(join(tmpdir(), "script-peer-snapshot-"));
+      const adapter = createMockAdapter();
+      const pagePath = join(directory, "page.js");
+      const html = fullDocument
+        ? "<html><head></head><body>script</body></html>"
+        : "<main>script</main>";
+      const source = `import React from "react"; export default () => ${
+        JSON.stringify(html)
+      } + React.version;`;
+      fs.mkdirSync(join(directory, "node_modules"), { recursive: true });
+      assertExists(peers.roots.react);
+      fs.symlinkSync(peers.roots.react, join(directory, "node_modules", "react"), "dir");
+      fs.writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({ type: "module", dependencies: { react: "^19.2.0" } }),
+      );
+      fs.writeFileSync(pagePath, source);
+      adapter.fs.files.set(pagePath, source);
+      adapter.fs.files.set(
+        join(directory, "package.json"),
+        JSON.stringify({ dependencies: { react: "^19.2.0" } }),
+      );
+      const renderer = new PageRenderer({
+        projectDir: directory,
+        mode: "production",
+        environment: "production",
+        adapter,
+        config: { react: { version: "^19.2.0" } },
+        componentRegistry: {} as never,
+        compileMDX: () => Promise.reject(new Error("not a markdown page")),
+      });
+      const restoreReact = isNode ? overrideInstalledVersion("react", "19.2.5") : () => {};
+      const restoreDom = isNode ? overrideInstalledVersion("react-dom", "19.2.5") : () => {};
+      try {
+        const result = await renderer.preparePageBundles(
+          { entity: { path: pagePath, frontmatter: {} } } as never,
+          "script-page",
+          undefined,
+          {
+            reactPeers: peers,
+            dependencyPinningCacheKey: fullDocument
+              ? `on:${hashDependencyPins({ react: "^19.2.0" })}`
+              : "off",
+            dependencyPinningDependencies: fullDocument ? { react: "^19.2.0" } : undefined,
+          },
+        );
+        const rendered = result.scriptResult?.html ?? "";
+        const match = rendered.match(/<script type="importmap"[^>]*>\s*([\s\S]*?)\s*<\/script>/i);
+        assertExists(match?.[1], rendered);
+        const imports = JSON.parse(match[1]).imports;
+        assertEquals(imports.react.includes(`react@${peers.versions.react}`), true, imports.react);
+      } finally {
+        restoreDom();
+        restoreReact();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("keeps script module imports and wrapped/full browser maps on captured peers", async () => {
     if (!isNode && !isBun) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");

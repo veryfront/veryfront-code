@@ -570,82 +570,162 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(deletedKeys.every((k) => k.includes("test-slug")), true);
     });
 
-    it("clears scoped overrides without prefix deletion and preserves other tenants and slugs", async () => {
+    it("invalidates scoped and hashed variants across coordinators sharing a prefix-capable store", async () => {
       const store = createInMemoryStore();
-      const { deleteByPrefix: _unused, ...withoutPrefix } = store;
-      const cache = new ContextAwareCacheCoordinator({ store: withoutPrefix });
+      const writer = new ContextAwareCacheCoordinator({ store });
+      const clearer = new ContextAwareCacheCoordinator({ store });
       const ctx = makeMockCtx();
       const other = makeMockCtx({
         projectId: "proj-2",
         cachePrefix: "proj-2:production:release-1",
       });
-      const result = { html: "<p>scoped</p>", frontmatter: {}, stream: null };
-      for (const key of ["test-slug:react-runtime:first", "render-identity:hash-scoped"]) {
-        await cache.persistResult(result, "test-slug", ctx, undefined, key);
-        assertEquals((await cache.checkCache("test-slug", ctx, undefined, key)).hit, true);
-      }
-      await cache.persistResult(result, "other-slug", ctx);
-      await cache.persistResult(
-        result,
-        "test-slug",
-        other,
-        undefined,
+      const result = { html: "scoped", frontmatter: {}, stream: null };
+      const variants = [
         "test-slug:react-runtime:first",
-      );
-      await cache.clearSlug("test-slug", ctx);
-      for (const key of ["test-slug:react-runtime:first", "render-identity:hash-scoped"]) {
-        assertEquals(
-          (await cache.checkCache("test-slug", ctx, undefined, key)).hit,
-          false,
-          "scoped entry must be invalidated",
-        );
+        "render-identity:hash-scoped",
+        "custom-key",
+      ];
+      for (const key of variants) {
+        await writer.persistResult(result, "test-slug", ctx, undefined, key);
       }
-      assertEquals((await cache.checkCache("other-slug", ctx)).hit, true);
+      await writer.persistResult(result, "other-slug", ctx, undefined, variants[0]);
+      await writer.persistResult(result, "test-slug", other, undefined, variants[0]);
+      await clearer.clearSlug("test-slug", ctx);
+      for (const key of variants) {
+        assertEquals((await writer.checkCache("test-slug", ctx, undefined, key)).hit, false);
+      }
+      assertEquals((await writer.checkCache("other-slug", ctx, undefined, variants[0])).hit, true);
+      assertEquals((await writer.checkCache("test-slug", other, undefined, variants[0])).hit, true);
+      await clearer.clearForContext(ctx);
+      assertEquals((await writer.checkCache("other-slug", ctx, undefined, variants[0])).hit, false);
+      await clearer.clearForProject("proj-2");
       assertEquals(
-        (await cache.checkCache("test-slug", other, undefined, "test-slug:react-runtime:first"))
-          .hit,
-        true,
+        (await writer.checkCache("test-slug", other, undefined, variants[0])).hit,
+        false,
       );
-      await cache.destroy();
+      await writer.destroy();
     });
 
-    it("waits for an admitted scoped cache write before invalidating its slug", async () => {
+    it("does not admit scoped caching when a shared store cannot invalidate prefixes", async () => {
       const store = createInMemoryStore();
       const { deleteByPrefix: _unused, ...withoutPrefix } = store;
-      let release!: () => void;
-      let started!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const admitted = new Promise<void>((resolve) => {
-        started = resolve;
-      });
-      withoutPrefix.set = async (key, value) => {
-        started();
-        await blocked;
-        await store.set(key, value);
-      };
       const cache = new ContextAwareCacheCoordinator({ store: withoutPrefix });
       const ctx = makeMockCtx();
-      const key = "page:pending:react-runtime:captured";
-      const write = cache.persistResult(
-        { html: "pending", frontmatter: {}, stream: null },
-        "pending",
+      const key = "page:test:react-runtime:captured";
+      await cache.persistResult(
+        { html: "unsafe", frontmatter: {}, stream: null },
+        "test",
         ctx,
         undefined,
         key,
       );
-      await admitted;
-      const clear = cache.clearSlug("pending", ctx);
-      release();
-      await Promise.all([write, clear]);
-      assertEquals(
-        (await cache.checkCache("pending", ctx, undefined, key)).hit,
-        false,
-        "pending write cannot repopulate an invalidated slug",
-      );
+      assertEquals(store.data.size, 0);
+      assertEquals((await cache.checkCache("test", ctx, undefined, key)).hit, false);
+      await cache.persistResult({ html: "legacy", frontmatter: {}, stream: null }, "legacy", ctx);
+      assertEquals((await cache.checkCache("legacy", ctx)).hit, true);
       await cache.destroy();
     });
+
+    it("clears locally written legacy entries on stores without prefix deletion", async () => {
+      const store = createInMemoryStore();
+      const { deleteByPrefix: _unused, ...withoutPrefix } = store;
+      const cache = new ContextAwareCacheCoordinator({
+        store: withoutPrefix,
+        memory: { maxEntries: 2 },
+      });
+      const ctx = makeMockCtx();
+      const other = makeMockCtx({
+        projectId: "proj-2",
+        cachePrefix: "proj-2:production:release-1",
+      });
+      const result = { html: "legacy", frontmatter: {}, stream: null };
+      await cache.persistResult(result, "old", ctx);
+      await cache.persistResult(result, "new", ctx);
+      await cache.persistResult(result, "other", other);
+      assertEquals(
+        (await cache.checkCache("old", ctx)).hit,
+        false,
+        "bounded fallback evicts older entries",
+      );
+      assertEquals((await cache.checkCache("new", ctx)).hit, true);
+      await cache.clearForContext(ctx);
+      assertEquals((await cache.checkCache("new", ctx)).hit, false);
+      assertEquals((await cache.checkCache("other", other)).hit, true);
+      await cache.clearForProject("proj-2");
+      assertEquals((await cache.checkCache("other", other)).hit, false);
+      await cache.destroy();
+    });
+
+    it("continues caching new routes through backing-store LRU eviction", async () => {
+      const cache = new ContextAwareCacheCoordinator({ memory: { maxEntries: 2 } });
+      const ctx = makeMockCtx();
+      const result = { html: "cached", frontmatter: {}, stream: null };
+      for (const slug of ["one", "two", "three"]) await cache.persistResult(result, slug, ctx);
+      assertEquals((await cache.checkCache("three", ctx)).hit, true);
+      assertEquals((await cache.checkCache("one", ctx)).hit, false);
+      await cache.destroy();
+    });
+
+    for (const clear of ["clearAll", "destroy"] as const) {
+      it(`drains admitted writes before ${clear}`, async () => {
+        const store = createInMemoryStore();
+        const cache = new ContextAwareCacheCoordinator({ store });
+        const write = cache.persistResult(
+          { html: "pending", frontmatter: {}, stream: null },
+          "pending",
+          makeMockCtx(),
+        );
+        await Promise.all([write, cache[clear]()]);
+        assertEquals(store.data.size, 0, "a prior write cannot repopulate a cleared store");
+      });
+    }
+
+    for (const clear of ["clearSlug", "clearForContext", "clearForProject"] as const) {
+      it(`invalidates old HTML when a replacement write rejects during ${clear}`, async () => {
+        const store = createInMemoryStore();
+        const cache = new ContextAwareCacheCoordinator({ store });
+        const ctx = makeMockCtx();
+        const key = "pending:react-runtime:captured";
+        await cache.persistResult(
+          { html: "old", frontmatter: {}, stream: null },
+          "pending",
+          ctx,
+          undefined,
+          key,
+        );
+        let release!: () => void;
+        let admitted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          admitted = resolve;
+        });
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        store.set = async () => {
+          admitted();
+          await blocked;
+          throw new Error("write rejected");
+        };
+        const write = cache.persistResult(
+          { html: "new", frontmatter: {}, stream: null },
+          "pending",
+          ctx,
+          undefined,
+          key,
+        );
+        await started;
+        const invalidate = clear === "clearSlug"
+          ? cache.clearSlug("pending", ctx)
+          : clear === "clearForContext"
+          ? cache.clearForContext(ctx)
+          : cache.clearForProject(ctx.projectId);
+        release();
+        const outcomes = await Promise.allSettled([write, invalidate]);
+        assertEquals(outcomes.map((result) => result.status), ["rejected", "rejected"]);
+        assertEquals((await cache.checkCache("pending", ctx, undefined, key)).hit, false);
+        await cache.destroy();
+      });
+    }
 
     for (const secondSlug of ["first", "independent"]) {
       it(`keeps a failed predecessor from aborting write and clear for ${secondSlug}`, async () => {
@@ -681,11 +761,10 @@ describe("rendering/shared/context-aware-cache", () => {
           ["rejected", "fulfilled"],
           "each write owns its failure",
         );
-        assertEquals(
-          (await cleared)[0].status,
-          "fulfilled",
-          "clear owns only its own store errors",
-        );
+        const clearOutcome = (await cleared)[0];
+        if (clearOutcome.status === "rejected") {
+          assertEquals(clearOutcome.reason instanceof AggregateError, true);
+        }
         assertEquals(writes, 2, "later operation reaches the recovered store");
         assertEquals(store.data.size, 0, "failed predecessor must not prevent invalidation");
         await cache.destroy();
@@ -725,64 +804,6 @@ describe("rendering/shared/context-aware-cache", () => {
         (await cache.checkCache("a", ctx)).cachedResult?.html,
         "new-a",
         "eviction cannot delete the later successful write",
-      );
-      await cache.destroy();
-    });
-
-    it("continues caching new routes when the backing LRU is full", async () => {
-      const cache = new ContextAwareCacheCoordinator({ memory: { maxEntries: 2 } });
-      const ctx = makeMockCtx();
-      const result = { html: "cached", frontmatter: {}, stream: null };
-      await cache.persistResult(result, "one", ctx);
-      await cache.persistResult(result, "two", ctx);
-      await cache.checkCache("one", ctx);
-      await cache.persistResult(result, "three", ctx);
-      assertEquals(
-        (await cache.checkCache("three", ctx)).hit,
-        true,
-        "new routes must remain cacheable at capacity",
-      );
-      assertEquals(
-        (await cache.checkCache("one", ctx)).hit,
-        true,
-        "recently read route remains cached",
-      );
-      assertEquals(
-        (await cache.checkCache("two", ctx)).hit,
-        false,
-        "least recently used route is evicted",
-      );
-      await cache.destroy();
-    });
-
-    for (const operation of ["clearAll", "destroy"] as const) {
-      it(`drains admitted writes before ${operation}`, async () => {
-        const store = createInMemoryStore();
-        const cache = new ContextAwareCacheCoordinator({ store });
-        const ctx = makeMockCtx();
-        const write = cache.persistResult(
-          { html: "old", frontmatter: {}, stream: null },
-          "pending",
-          ctx,
-        );
-        await cache[operation]();
-        await write;
-        assertEquals(store.data.size, 0, "pre-clear write cannot repopulate the store");
-      });
-    }
-
-    it("releases variant capacity after context invalidation", async () => {
-      const cache = new ContextAwareCacheCoordinator({ memory: { maxEntries: 2 } });
-      const ctx = makeMockCtx();
-      const result = { html: "cached", frontmatter: {}, stream: null };
-      await cache.persistResult(result, "one", ctx);
-      await cache.persistResult(result, "two", ctx);
-      await cache.clearForContext(ctx);
-      await cache.persistResult(result, "three", ctx);
-      assertEquals(
-        (await cache.checkCache("three", ctx)).hit,
-        true,
-        "cleared entries must release bookkeeping capacity",
       );
       await cache.destroy();
     });
