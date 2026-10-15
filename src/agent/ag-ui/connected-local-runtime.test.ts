@@ -25,6 +25,8 @@ function fixture(
     studioUrl?: string;
     apiFailure?: { path: string; status: number; detail?: string; invalidJson?: boolean };
     registerFailureOnce?: boolean;
+    heartbeatFailure?: boolean;
+    abortBeforeWrite?: "register" | "heartbeat";
     completeFailure?: boolean;
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
@@ -48,13 +50,19 @@ function fixture(
   const client = {
     registerWorker: (input: Record<string, unknown>) => {
       registeredWorkers.push(input);
+      if (options.abortBeforeWrite === "register") options.controller?.abort();
       registrations++;
       if (options.registerFailureOnce && registrations === 1) {
         return Promise.reject(new Error("registration offline"));
       }
       return Promise.resolve({ id: "worker" });
     },
-    heartbeatWorker: () => Promise.resolve({}),
+    heartbeatWorker: () => {
+      if (options.abortBeforeWrite === "heartbeat") options.controller?.abort();
+      return options.heartbeatFailure
+        ? Promise.reject(new Error("heartbeat offline"))
+        : Promise.resolve({});
+    },
     claimRun: (input: { canonicalRunId?: string }) =>
       Promise.resolve(
         options.claimNull || (options.requireExactClaim && input.canonicalRunId !== `run-${id}`)
@@ -716,6 +724,87 @@ describe("connected local execution", () => {
     );
     assertEquals(f.logs.some((line) => line.includes("not-json")), false);
   });
+  for (const failure of ["register", "heartbeat", "abort-register", "abort-heartbeat"] as const) {
+    it(`does not serialize pending admission history before ${failure} failure`, async () => {
+      const controller = new AbortController();
+      const f = fixture({
+        controller,
+        registerFailureOnce: failure === "register",
+        heartbeatFailure: failure === "heartbeat",
+        abortBeforeWrite: failure === "abort-register"
+          ? "register"
+          : failure === "abort-heartbeat"
+          ? "heartbeat"
+          : undefined,
+      });
+      let serializations = 0;
+      await assertRejects(() =>
+        f.runtime.admit({
+          agentId: "assistant",
+          threadId: "thread",
+          signal: controller.signal,
+          messages: [{
+            role: "user",
+            parts: [{
+              toJSON() {
+                serializations++;
+                return { type: "text", text: "private history" };
+              },
+            }],
+          }],
+        })
+      );
+      assertEquals(serializations, 0);
+      assertEquals(f.requests.length, 0);
+      await f.runtime.dispose();
+    });
+  }
+
+  it("retains an already ambiguous write key if a retry fails before admission", async () => {
+    const options = { lostResponseOnce: "/runs", heartbeatFailure: false };
+    const f = fixture(options);
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    };
+    await assertRejects(() => f.runtime.admit(input), Error, "accepted response lost");
+    options.heartbeatFailure = true;
+    await assertRejects(() => f.runtime.admit(input), Error, "heartbeat offline");
+    options.heartbeatFailure = false;
+    const run = await f.runtime.admit(input);
+    try {
+      assertEquals(f.createdRuns.length, 1);
+    } finally {
+      await run.finish("completed");
+    }
+  });
+
+  it("clears ambiguous admission keys when the runtime is disposed", async () => {
+    const f = fixture({ lostResponseOnce: "/runs" });
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    };
+    await assertRejects(() => f.runtime.admit(input), Error, "accepted response lost");
+    const firstKey = f.requests.find((request) => request.path === "/runs")!.headers.get(
+      "Idempotency-Key",
+    );
+    await f.runtime.dispose();
+    const run = await f.runtime.admit(input);
+    try {
+      const secondKey = f.requests.filter((request) => request.path === "/runs")[1]!.headers.get(
+        "Idempotency-Key",
+      );
+      assertEquals(firstKey === secondKey, false);
+    } finally {
+      await run.finish("completed");
+    }
+  });
+
   for (const path of ["/runs", "/conversations/conversation-1/messages"]) {
     it(`retries an ambiguously accepted ${path} without duplicating the message or run`, async () => {
       const f = fixture({ lostResponseOnce: path });

@@ -173,19 +173,6 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   ): Promise<ConnectedLocalRun> {
     const operation = admissionTail.then(async () => {
       input.signal.throwIfAborted();
-      // A failed response does not tell us whether admission committed. Keep the
-      // write identity until its run receipt arrives, including across cloned retries.
-      const requestIdentity = JSON.stringify([
-        input.threadId,
-        input.agentId,
-        input.agentName,
-        input.messages,
-      ]);
-      let admissionKey = pendingAdmissions.get(requestIdentity);
-      if (!admissionKey) {
-        admissionKey = `local:${crypto.randomUUID()}`;
-        pendingAdmissions.set(requestIdentity, admissionKey);
-      }
       worker ??= client.registerWorker({
         projectReference: options.projectId,
         implementationKind: "veryfront-local",
@@ -200,6 +187,19 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       input.signal.throwIfAborted();
       await client.heartbeatWorker(registered.id);
       input.signal.throwIfAborted();
+      // A failed response does not tell us whether admission committed. Keep the
+      // write identity until its run receipt arrives, including across cloned retries.
+      const requestIdentity = JSON.stringify([
+        input.threadId,
+        input.agentId,
+        input.agentName,
+        input.messages,
+      ]);
+      let admissionKey = pendingAdmissions.get(requestIdentity);
+      if (!admissionKey) {
+        admissionKey = `local:${crypto.randomUUID()}`;
+        pendingAdmissions.set(requestIdentity, admissionKey);
+      }
       let conversationId = conversations.get(input.threadId);
       if (!conversationId) {
         conversationId = (await api("/conversations", {
@@ -553,6 +553,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     runtimeId: workerKey,
     admit,
     async dispose() {
+      pendingAdmissions.clear();
       const results = await Promise.allSettled([...active].map((run) => run.finish("cancelled")));
       const failure = results.find((result) => result.status === "rejected");
       if (failure) throw failure.reason;
