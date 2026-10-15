@@ -136,7 +136,7 @@ export function extractRequestHeaders(
       ? req.headers.get("x-environment-id") ?? undefined
       : undefined,
     environmentName: identityHeadersTrusted
-      ? req.headers.get("x-environment-name")?.trim() || undefined
+      ? decodeIdentityHeaderValue(req.headers.get("x-environment-name"))?.trim() || undefined
       : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,

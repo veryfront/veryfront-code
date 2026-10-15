@@ -4175,6 +4175,11 @@ describe("Proxy Handler", () => {
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), "env-789");
       assertEquals(injected.headers.get("x-environment-name"), "staging");
+      const unicode = injectContextHeaders(req, { ...ctx, environmentName: "日本語\nblue" });
+      assertEquals(
+        unicode.headers.get("x-environment-name"),
+        "vf-utf8:%E6%97%A5%E6%9C%AC%E8%AA%9E%0Ablue",
+      );
       assertEquals(injected.headers.get("x-project-id"), "proj-123");
       assertEquals(injected.headers.get("x-release-id"), "rel-456");
     });
