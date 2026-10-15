@@ -5,8 +5,8 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
-import { withVeryfrontPlatformRemoteTools } from "./agent-stream.handler.ts";
-import { createAgentWithConfig } from "./internal-agent-run.test-helpers.ts";
+import { withVeryfrontPlatformRemoteTools } from "#veryfront/server/handlers/request/agent-stream.handler.ts";
+import { createAgentWithConfig } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 
 const apiOrigin = "https://8.8.8.8";
 const catalog = ["get_file", "create_file", "outlook__upload_attachment", "succeed_run"].map((
@@ -25,7 +25,7 @@ async function withPlatformTransport(fn: (calls: Record<string, unknown>[]) => P
   const calls: Record<string, unknown>[] = [];
   try {
     await withMockFetch(async (_url, init) => {
-      const request = JSON.parse(String(init?.body));
+      const request = JSON.parse(String(observeFetchRequestInit(init).body));
       if (request.method === "tools/call") {
         calls.push({
           ...request.params,

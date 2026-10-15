@@ -81,7 +81,7 @@ async function executeLocalWrapper(
   return await intrinsicReflectApply(InvocationRun, platformWrapperInvocation, [
     invocation,
     async () => {
-      const executePlatformTool = async (name: string, arguments_: Record<string, unknown>) => {
+      const assertInvocationAuthority = (name: string) => {
         if (
           !active ||
           !context || getActivePlatformToolDependencies(context) !== mapping ||
@@ -93,6 +93,9 @@ async function executeLocalWrapper(
           });
         }
         abortSignal?.throwIfAborted();
+      };
+      const executePlatformTool = async (name: string, arguments_: Record<string, unknown>) => {
+        assertInvocationAuthority(name);
         const trusted = [...(sources ?? []), ...getActivePlatformDependencySources(context ?? {})]
           .filter(hasTrustedPlatformSource);
         const result = await executeRemoteToolFromSources(
@@ -102,6 +105,7 @@ async function executeLocalWrapper(
           [...allowed],
           trusted,
           sourcePolicy,
+          { assertAuthority: () => assertInvocationAuthority(name) },
         );
         if (!result.handled) throw new Error(`Platform operation "${name}" is unavailable`);
         return result.result;
@@ -406,8 +410,9 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
-  selectedSource?: RemoteToolSource,
+  dispatch?: { selectedSource?: RemoteToolSource; assertAuthority?: () => void },
 ): Promise<{ handled: boolean; result?: unknown }> {
+  const selectedSource = dispatch?.selectedSource;
   const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
   const source = await findSequential(sources, async (candidate) => {
     if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(candidate)) return false;
@@ -425,13 +430,17 @@ async function executeRemoteToolFromSources(
     ) {
       throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
     }
+    const execute = () => {
+      // Discovery and terminal admission can both suspend. The owner may have
+      // settled during either await, so check at the actual effect boundary.
+      dispatch?.assertAuthority?.();
+      return source.executeTool(toolName, input, context);
+    };
     return {
       handled: true,
       result: await (hasTrustedPlatformSource(source)
-        ? executeTerminalRunTool(toolName, input, context, () =>
-          source.executeTool(toolName, input, context))
-        : dispatchWithTerminalRunControl(context, () =>
-          source.executeTool(toolName, input, context))),
+        ? executeTerminalRunTool(toolName, input, context, execute)
+        : dispatchWithTerminalRunControl(context, execute)),
     };
   }
 
@@ -540,7 +549,7 @@ export async function executeConfiguredTool(
       allowedRemoteToolNames,
       remoteToolSources,
       sourceIntegrationPolicy,
-      selectedSource,
+      { selectedSource },
     );
     if (remoteSourceResult.handled) {
       return remoteSourceResult.result;
@@ -585,7 +594,7 @@ export async function executeConfiguredTool(
     allowedRemoteToolNames,
     remoteToolSources,
     sourceIntegrationPolicy,
-    selectedSource,
+    { selectedSource },
   );
   if (remoteSourceResult.handled) {
     return remoteSourceResult.result;

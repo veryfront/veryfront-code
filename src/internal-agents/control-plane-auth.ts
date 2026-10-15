@@ -1,3 +1,4 @@
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
   type ControlPlaneClaims,
   type ControlPlaneSurface,
@@ -21,6 +22,8 @@ const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
 const DateNow = Date.now;
 const ObjectFreeze = Object.freeze;
+const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
 const verifiedPlatformGrants = createPrivateWeakStore<
   object,
   Readonly<
@@ -171,9 +174,20 @@ export async function verifyControlPlaneRequest(
     // This new authority uses the operator's value captured before tenant env
     // loading. Legacy transport/cache compatibility deliberately stays separate.
     const pinnedKey = getHostBootEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const body = IntrinsicReflectApply(JsonParse, JSON, [rawBody]) as Record<string, unknown>;
-    if (Object.hasOwn(body, "platformToolDependencies")) {
-      const dependencies = readPlatformToolDependencies(body.platformToolDependencies);
+    let body: Record<string, unknown> | undefined;
+    try {
+      const parsed: unknown = IntrinsicReflectApply(JsonParse, JSON, [rawBody]);
+      if (parsed !== null && typeof parsed === "object" && !ArrayIsArray(parsed)) {
+        body = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // A valid signature can cover a plain cancel or malformed resume body.
+      // The handler owns payload validation; no dependency grant is minted.
+    }
+    if (body && ObjectHasOwn(body, "platformToolDependencies")) {
+      const dependencies = readPlatformToolDependencies(
+        readOwnDataProperty(body, "platformToolDependencies", "Platform dependencies"),
+      );
       if (pinnedKey) {
         let operatorVerified = pinnedKey === publicKeyPem;
         if (!operatorVerified) {
@@ -186,19 +200,22 @@ export async function verifyControlPlaneRequest(
           } catch { /* Adapter compatibility never grants platform dependencies. */ }
         }
         if (operatorVerified) {
-          const run = body.run as Record<string, unknown> | undefined;
-          const project = run?.project as Record<string, unknown> | undefined;
+          const run = readOwnDataProperty(body, "run", "Platform dependency scope");
+          const project = readOwnDataProperty(run, "project", "Platform dependency scope");
+          const runId = readOwnDataProperty(run, "runId", "Platform dependency scope");
+          const agentId = readOwnDataProperty(run, "agentId", "Platform dependency scope");
+          const projectId = readOwnDataProperty(project, "projectId", "Platform dependency scope");
           if (
-            typeof run?.runId !== "string" || run.runId !== claims.sub ||
-            typeof run.agentId !== "string" || typeof project?.projectId !== "string" ||
-            project.projectId !== claims.project_id
+            typeof runId !== "string" || runId !== claims.sub ||
+            typeof agentId !== "string" || typeof projectId !== "string" ||
+            projectId !== claims.project_id
           ) throw new Error("Platform dependency scope is invalid");
           verifiedPlatformGrants.set(
             verifiedClaims,
             ObjectFreeze({
-              projectId: project.projectId,
-              runId: run.runId,
-              agentId: run.agentId,
+              projectId,
+              runId,
+              agentId,
               expiresAt: claims.exp,
               dependencies,
             }),

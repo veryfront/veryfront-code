@@ -6,7 +6,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import apiRunEventWriterContract from "../../../tests/fixtures/contracts/api-run-event-writer-jwt-payload.json" with {
+import apiRunEventWriterContract from "../../../../fixtures/contracts/api-run-event-writer-jwt-payload.json" with {
   type: "json",
 };
 import {
@@ -21,7 +21,7 @@ import {
   revokePlatformDependencyOwner,
   runWithPlatformDependencyOwner,
   runWithVerifiedPlatformToolDependencies,
-} from "./auth.ts";
+} from "#veryfront/agent/service/auth.ts";
 import { dynamicTool, type ToolExecutionContext } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
@@ -497,6 +497,97 @@ describe("agent/agent-service-auth", () => {
       }),
       { verified: false },
     );
+  });
+
+  it("rechecks platform authority after tool discovery before dispatch", async () => {
+    const platformToolDependencies = [{
+      toolId: "intake",
+      platformTools: ["outlook__upload_attachment"],
+    }];
+    const fixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      agentId: "ingestion-agent",
+      platformToolDependencies,
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const scope = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      agentId: "ingestion-agent",
+    };
+    const verification = await auth.verifyRunEventAppendToken({ token: fixture.token, ...scope });
+    for (const ending of ["wrapper", "owner", "abort"] as const) {
+      const discovered = Promise.withResolvers<void>();
+      const releaseDiscovery = Promise.withResolvers<void>();
+      const releaseWrapper = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let effects = 0;
+      let pending: Promise<unknown> | undefined;
+      const source = markTrustedPlatformSource({
+        id: `delayed-${ending}`,
+        listTools: async () => {
+          discovered.resolve();
+          await releaseDiscovery.promise;
+          return [{
+            name: "outlook__upload_attachment",
+            description: "Upload",
+            parameters: { type: "object" as const, properties: {} },
+          }];
+        },
+        executeTool: async () => {
+          effects++;
+          return { uploaded: true };
+        },
+      });
+      const intake = dynamicTool({
+        id: "intake",
+        description: "Intake",
+        inputSchema: {},
+        delegatedPlatformTools: ["outlook__upload_attachment"],
+        execute: async (_, context) => {
+          pending = context!.executePlatformTool!("outlook__upload_attachment", {});
+          // Retain the original promise for the rejection assertion below.
+          pending.catch(() => {});
+          await discovered.promise;
+          if (ending !== "wrapper") await releaseWrapper.promise;
+          return { scheduled: true };
+        },
+      });
+      const owner = {};
+      registerPlatformDependencyOwner(owner, verification, scope);
+      const execution = runWithPlatformDependencyOwner(owner, () =>
+        executeConfiguredTool(
+          "intake",
+          {},
+          { intake },
+          { ...scope, abortSignal: controller.signal },
+          [],
+          [source],
+        ));
+      try {
+        await discovered.promise;
+        if (ending === "wrapper") await execution;
+        if (ending === "owner") revokePlatformDependencyOwner(owner);
+        if (ending === "abort") controller.abort();
+        releaseDiscovery.resolve();
+        await assertRejects(() => pending!);
+        assertEquals(effects, 0, `${ending} must revoke authority before the remote effect`);
+      } finally {
+        releaseDiscovery.resolve();
+        releaseWrapper.resolve();
+        await execution;
+        await pending?.catch(() => {});
+        revokePlatformDependencyOwner(owner);
+      }
+    }
   });
 
   it("executes only the signed wrapper dependency during its exact active invocation", async () => {

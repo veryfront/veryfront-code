@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { createControlPlaneSignature } from "../server/handlers/request/internal-agent-run.test-helpers.ts";
+import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 
 // A fresh production-mode process pins the operator key before any tenant code.
 // Only the final MCP transport is mocked; signature, private owner, real platform

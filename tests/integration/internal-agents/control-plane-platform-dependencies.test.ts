@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createControlPlaneSignature } from "../server/handlers/request/internal-agent-run.test-helpers.ts";
+import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 
 const program = `
 import "#veryfront/schemas/_test-setup.ts";
@@ -16,6 +16,12 @@ if (data.projectEnv) {
 }
 if (data.projectEnv && Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") !== data.publicKeyPem) throw new Error("Project env control did not load its key");
 if (data.mutate) Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", data.mutate);
+if (data.inheritedDependencies) {
+  const own = Object.hasOwn;
+  Object.defineProperty(Object.prototype, "platformToolDependencies", { value: data.inheritedDependencies, configurable: true });
+  Object.hasOwn = (value, key) => key === "platformToolDependencies" || own(value, key);
+}
+
 const claims = await verifyControlPlaneRequest(new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", { method: "POST", headers: { "x-veryfront-control-plane-jws": data.jws } }), createCtx(data.publicKeyPem), data.body);
 const scope = { projectId: "proj-1", runId: "run-1", agentId: "intake-agent" };
 console.log(JSON.stringify({ accepted: getVerifiedControlPlanePlatformDependencies(claims, scope) ?? null, clone: getVerifiedControlPlanePlatformDependencies({...claims}, scope) ?? null, otherRun: getVerifiedControlPlanePlatformDependencies(claims, {...scope, runId:"run-child"}) ?? null, otherAgent: getVerifiedControlPlanePlatformDependencies(claims, {...scope, agentId:"foreign"}) ?? null, otherProject: getVerifiedControlPlanePlatformDependencies(claims, {...scope, projectId:"foreign"}) ?? null }));
@@ -30,13 +36,28 @@ describe("pinned operator platform-dependency authority", () => {
     });
     const operator = await createControlPlaneSignature(body);
     const tenant = await createControlPlaneSignature(body);
-    for (const control of ["operator", "mutation", "adapter-only", "project-env"] as const) {
-      const signed = control === "adapter-only" || control === "project-env" ? tenant : operator;
+    const unsignedMapBody = JSON.stringify({
+      run: { runId: "run-1", agentId: "intake-agent", project: { projectId: "proj-1" } },
+    });
+    const withoutMap = await createControlPlaneSignature(unsignedMapBody);
+    for (
+      const control of [
+        "operator",
+        "mutation",
+        "adapter-only",
+        "project-env",
+        "inherited-map",
+      ] as const
+    ) {
+      const signingOperator = control === "inherited-map" ? withoutMap : operator;
+      const signed = control === "adapter-only" || control === "project-env"
+        ? tenant
+        : signingOperator;
       const env: Record<string, string> = { DENO_TESTING: "0", NODE_ENV: "production" };
       if (Deno.env.get("HOME")) env.HOME = Deno.env.get("HOME")!;
       if (Deno.env.get("DENO_DIR")) env.DENO_DIR = Deno.env.get("DENO_DIR")!;
       if (control !== "project-env") {
-        env.CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY = operator.publicKeyPem;
+        env.CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY = signingOperator.publicKeyPem;
       }
       const child = new Deno.Command(Deno.execPath(), {
         args: ["eval", "--config", "deno.json", program],
@@ -50,8 +71,9 @@ describe("pinned operator platform-dependency authority", () => {
       await writer.write(
         new TextEncoder().encode(
           JSON.stringify({
-            body,
+            body: control === "inherited-map" ? unsignedMapBody : body,
             ...signed,
+            inheritedDependencies: control === "inherited-map" ? dependencies : undefined,
             mutate: control === "mutation" ? tenant.publicKeyPem : undefined,
             projectEnv: control === "project-env",
           }),
