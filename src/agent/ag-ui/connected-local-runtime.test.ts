@@ -1,3 +1,6 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { createEphemeralAgent } from "../factory.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -15,6 +18,10 @@ function fixture(
     renewOutcome?: "missing" | "error";
     renew?: () => Promise<unknown>;
     studioUrl?: string;
+    apiFailure?: { path: string; status: number; detail?: string; invalidJson?: boolean };
+    registerFailureOnce?: boolean;
+    completeFailure?: boolean;
+    claimConversationMismatch?: boolean;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -29,6 +36,9 @@ function fixture(
   const client = {
     registerWorker: () => {
       registrations++;
+      if (options.registerFailureOnce && registrations === 1) {
+        return Promise.reject(new Error("registration offline"));
+      }
       return Promise.resolve({ id: "worker" });
     },
     heartbeatWorker: () => Promise.resolve({}),
@@ -38,7 +48,9 @@ function fixture(
           ? null
           : {
             run_id: `run-${id}`,
-            conversation_id: `conversation-${id}`,
+            conversation_id: options.claimConversationMismatch
+              ? "foreign-conversation"
+              : `conversation-${id}`,
             message_id: "message",
             latest_external_event_sequence: 0,
           },
@@ -55,7 +67,9 @@ function fixture(
     },
     completeRun: (input: { status: string }) => {
       completed.push(input.status);
-      return Promise.resolve();
+      return options.completeFailure
+        ? Promise.reject(new Error("finalization offline"))
+        : Promise.resolve();
     },
   } as unknown as ExternalAgentWorkerClient;
   const runtime = createConnectedLocalRuntime({
@@ -79,6 +93,15 @@ function fixture(
       const path = new URL(String(_url)).pathname;
       const body = JSON.parse(String(init?.body ?? "{}"));
       requests.push({ path, body, headers: new Headers(init?.headers) });
+      if (path === options.apiFailure?.path) {
+        return Promise.resolve(
+          options.apiFailure.invalidJson
+            ? new Response("not-json", { status: options.apiFailure.status })
+            : Response.json({ detail: options.apiFailure.detail }, {
+              status: options.apiFailure.status,
+            }),
+        );
+      }
       if (path === options.abortOnPath) options.controller?.abort();
       if (path === "/conversations") {
         id++;
@@ -367,4 +390,350 @@ describe("connected local execution", () => {
     );
     assertEquals(f.completed, ["failed"]);
   });
+  it("retries registration after an outage without poisoning later admissions", async () => {
+    const f = fixture({ registerFailureOnce: true });
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    };
+    await assertRejects(() => f.runtime.admit(input), Error, "registration offline");
+    const run = await f.runtime.admit(input);
+    assertEquals(f.registrations(), 2);
+    await run.finish("cancelled");
+  });
+  for (
+    const [status, detail, expected] of [
+      [401, "private server detail", "Veryfront login expired"],
+      [403, "private server detail", "You do not have access"],
+      [
+        409,
+        "selected environment has no deployed release",
+        "The selected environment has no deployed release",
+      ],
+      [409, "account ownership missing", "Project billing is not ready"],
+      [503, "private server detail", "HTTP 503"],
+    ] as const
+  ) {
+    it(`reports actionable admission failure for HTTP ${status}: ${expected}`, async () => {
+      const f = fixture({ apiFailure: { path: "/runs", status, detail } });
+      await assertRejects(
+        () =>
+          f.runtime.admit({
+            agentId: "assistant",
+            threadId: "thread",
+            messages: [],
+            signal: new AbortController().signal,
+          }),
+        Error,
+        expected,
+      );
+      assertEquals(f.logs.some((line) => line.includes("private server detail")), false);
+      assertEquals(f.completed, []);
+      await f.runtime.dispose();
+    });
+  }
+  it("handles non-JSON API failures without exposing the server response", async () => {
+    const f = fixture({ apiFailure: { path: "/conversations", status: 502, invalidJson: true } });
+    await assertRejects(
+      () =>
+        f.runtime.admit({
+          agentId: "assistant",
+          threadId: "thread",
+          messages: [],
+          signal: new AbortController().signal,
+        }),
+      Error,
+      "HTTP 502",
+    );
+    assertEquals(f.logs.some((line) => line.includes("not-json")), false);
+  });
+  it("reuses a conversation and sends only the latest user message as run input", async () => {
+    const f = fixture();
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [
+        { role: "user", parts: [{ type: "text", text: "old" }] },
+        { role: "assistant", parts: [{ type: "text", text: "previous answer" }] },
+        {
+          role: "user",
+          parts: [{ type: "text", text: "first" }, { type: "image", image: "asset" }, {
+            type: "text",
+            text: "second",
+          }],
+        },
+      ],
+      signal: new AbortController().signal,
+    };
+    const first = await f.runtime.admit(input);
+    await first.finish("completed");
+    const second = await f.runtime.admit(input);
+    await second.finish("completed");
+    assertEquals(first.conversationId, second.conversationId);
+    assertEquals(f.requests.filter((r) => r.path === "/conversations").length, 1);
+    assertEquals(f.requests.filter((r) => r.path.endsWith("/messages")).map((r) => r.body.parts), [
+      input.messages[2].parts,
+      input.messages[2].parts,
+    ]);
+    assertEquals(f.requests.filter((r) => r.path === "/runs").map((r) => r.body.input), [
+      "first\nsecond",
+      "first\nsecond",
+    ]);
+  });
+  it("rejects a foreign conversation claim and reports failed cancellation cleanup", async () => {
+    const f = fixture({
+      claimConversationMismatch: true,
+      apiFailure: { path: "/runs/run-1/cancel", status: 503 },
+    });
+    await assertRejects(
+      () =>
+        f.runtime.admit({
+          agentId: "assistant",
+          threadId: "thread",
+          messages: [],
+          signal: new AbortController().signal,
+        }),
+      Error,
+      "did not return the admitted local run",
+    );
+    assertEquals(f.logs.some((line) => line.includes("Could not cancel local run run-1")), true);
+  });
+  it("fails persistence before forwarding output and releases active execution", async () => {
+    const f = fixture({ appendFailure: true });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode('data: {"type":"text-delta","delta":"unpersisted"}\n\n'),
+        );
+        c.close();
+      },
+    });
+    await assertRejects(
+      () => new Response(run.wrapStream(body)).text(),
+      Error,
+      "event append failed",
+    );
+    assertEquals(f.completed, ["failed"]);
+    assertEquals(f.logs.some((line) => line.includes("run persistence failed")), true);
+    await f.runtime.dispose();
+    assertEquals(f.completed, ["failed"]);
+  });
+  it("keeps failed finalization observable and does not finalize twice on disposal", async () => {
+    const f = fixture({ completeFailure: true });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await assertRejects(() => run.finish("completed"), Error, "finalization offline");
+    await f.runtime.dispose();
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(f.logs.some((line) => line.includes("run persistence failed")), true);
+  });
+  it("records explicit model errors as failed execution", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await assertRejects(
+      () =>
+        new Response(run.wrapStream(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"error","errorText":"provider failed"}\n\n',
+                ),
+              );
+              c.close();
+            },
+          }),
+        )).text(),
+      Error,
+      "Local model execution failed",
+    );
+    assertEquals(f.completed, ["failed"]);
+  });
+
+  it("cancels upstream and finalizes once when the browser stops reading", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('data: {"type":"text-delta","delta":"partial"}\n\n'));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const reader = run.wrapStream(body).getReader();
+    await reader.read();
+    await reader.cancel();
+    assertEquals(cancelled, true);
+    assertEquals(run.signal.aborted, true);
+    assertEquals(f.completed, ["cancelled"]);
+    await f.runtime.dispose();
+    assertEquals(f.completed, ["cancelled"]);
+  });
+  it("accepts completed tool output without requiring a text response", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (
+          const event of [
+            { type: "step-start" },
+            { type: "tool-output-available", toolCallId: "call", output: { answer: 42 } },
+            { type: "step-end" },
+            { type: "message-finish" },
+          ]
+        ) {
+          c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        c.close();
+      },
+    });
+    assertEquals((await new Response(run.wrapStream(body)).text()).includes('"answer":42'), true);
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(JSON.stringify(f.batches).includes("TOOL_CALL_RESULT"), true);
+  });
+
+  for (const inferenceToken of [undefined, "scoped-inference"] as const) {
+    it(`prepares project source only with claimed inference authority (${inferenceToken ?? "missing"})`, async () => {
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const workerId = "11111111-1111-4111-8111-111111111111";
+      const conversationId = "33333333-3333-4333-8333-333333333333";
+      const canonicalId = "77777777-7777-4777-8777-777777777777";
+      const runId = "run_local_prepare";
+      const terminalToken = `header.${
+        btoa(
+          JSON.stringify({
+            runId,
+            canonicalRunId: canonicalId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "generation",
+          }),
+        )
+      }.signature`;
+      const worker = {
+        id: workerId,
+        project_id: projectId,
+        implementation_kind: "veryfront-local",
+        worker_key: "local:test",
+      };
+      const requests: Array<{ path: string; authorization: string | null }> = [];
+      const transport = ((input: string | Request | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        requests.push({ path, authorization: new Headers(init?.headers).get("authorization") });
+        if (path.endsWith("/workers")) {
+          return Promise.resolve(Response.json({ worker, token: "worker-token" }));
+        }
+        if (path.endsWith("/heartbeat")) return Promise.resolve(Response.json({ worker }));
+        if (path === "/conversations") {
+          return Promise.resolve(Response.json({ id: conversationId }));
+        }
+        if (path === "/runs") return Promise.resolve(Response.json({ id: canonicalId }));
+        if (path.endsWith("/claim")) {
+          return Promise.resolve(Response.json({
+            credentials: {
+              auth_token: "invocation-token",
+              run_event_token: "event-token",
+              run_terminal_token: terminalToken,
+              ...(inferenceToken ? { inference_token: inferenceToken } : {}),
+            },
+            run: {
+              run_id: runId,
+              conversation_id: conversationId,
+              message_id: workerId,
+              project_id: projectId,
+              agent_id: "assistant",
+              status: "running",
+              request_snapshot: null,
+              latest_event_id: 0,
+              latest_external_event_sequence: 0,
+              lease_owner: workerId,
+              lease_expires_at: null,
+              worker_session: null,
+            },
+          }));
+        }
+        if (path === "/ai/models") return Promise.resolve(Response.json({ models: [] }));
+        if (path.endsWith("/finalize")) {
+          return Promise.resolve(Response.json({ id: canonicalId, status: "failed" }));
+        }
+        throw new Error(`Unexpected local runtime request: ${path}`);
+      }) as typeof fetch;
+      await withMockFetch(transport, async () => {
+        const runtime = createConnectedLocalRuntime({
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "account-token",
+          projectId,
+          projectSlug: "sample",
+          studioUrl: "https://studio.example.com",
+        }, { fetch: transport, log: () => {} });
+        const run = await runtime.admit({
+          agentId: "assistant",
+          threadId: "thread",
+          messages: [],
+          signal: new AbortController().signal,
+        });
+        try {
+          const source = createEphemeralAgent({
+            id: "assistant",
+            model: "veryfront-cloud/test-model",
+            system: "Local source instructions.",
+          });
+          if (!inferenceToken) {
+            await assertRejects(
+              () => run.prepareAgent(source),
+              Error,
+              "run-scoped inference authority",
+            );
+            assertEquals(requests.some((r) => r.path === "/ai/models"), false);
+          } else {
+            const prepared = await run.prepareAgent(source);
+            assertEquals(prepared.id, source.id);
+            assertEquals(prepared.config.system, source.config.system);
+            assertEquals(
+              requests.find((r) => r.path === "/ai/models")?.authorization,
+              `Bearer ${inferenceToken}`,
+            );
+          }
+        } finally {
+          await run.finish("failed");
+        }
+        const source = createEphemeralAgent({
+          id: "assistant",
+          model: "veryfront-cloud/test-model",
+        });
+        await assertRejects(() => run.prepareAgent(source));
+        await runtime.dispose();
+        assertEquals(requests.filter((r) => r.path.endsWith("/finalize")).length, 1);
+      });
+    });
+  }
 });
