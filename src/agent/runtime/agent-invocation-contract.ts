@@ -744,6 +744,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // stops MCP and inherited first-party sources from materializing a tool
   // whose name collides with an allowlisted provider-native tool.
   defineOwnData(normalizedAgentConfig, "mcpServers", []);
+  // The tool-result context appends the framework `get_tool_result` reader
+  // after the allowlists apply, which would re-grant a callable host tool.
+  defineOwnData(normalizedAgentConfig, "toolResultContext", false);
   defineOwnData(normalized, "agentConfig", normalizedAgentConfig);
 
   // Deny-all exposes no caller-injected tools either. A malformed value is
@@ -764,8 +767,13 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   defineOwnData(normalized, "tools", []);
 
   const forwardedProps = readOwn(value, "forwardedProps");
-  if (forwardedProps !== undefined && !isPlainRecord(forwardedProps)) {
-    // Leave malformed caller data for the invocation schema to reject.
+  if (
+    forwardedProps !== undefined &&
+    (!isPlainRecord(forwardedProps) ||
+      !isWithinJsonSizeLimit(forwardedProps, MAX_FORWARDED_PROPS_BYTES))
+  ) {
+    // Leave malformed or oversized caller data for the invocation schema to
+    // reject; the size cap applies before any field is discarded or replaced.
     return { value: normalized, denyAll: true };
   }
   const forwardedRecord = forwardedProps === undefined

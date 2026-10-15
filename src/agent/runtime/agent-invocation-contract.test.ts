@@ -901,6 +901,38 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.success, false);
   });
 
+  it("disables the tool-result reader for a deny-all agent", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["web_search"],
+        toolResultContext: { maxInlineBytes: 1_024 },
+      }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(parsed.agentConfig?.toolResultContext, false);
+
+    const invalid = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ toolResultContext: { maxInlineBytes: 0 } }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(invalid.success, false);
+  });
+
+  it("enforces the forwardedProps size cap before discarding deny-all remote sources", () => {
+    const padding = "x".repeat(200_000);
+    for (
+      const key of ["integrationToolDefinitions", "serverResolvedIntegrationTools", "toolAllowlist"]
+    ) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: {
+          runtimeOverrides: { [key]: [{ name: "web_search", description: padding }] },
+        },
+      }));
+      assertEquals(parsed.success, false, `accepted oversized ${key}`);
+    }
+  });
+
   it("rejects malformed caller-injected tools on a deny-all invocation instead of clearing them", () => {
     for (const tools of ["web_search", [{ description: "missing name" }]]) {
       const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
