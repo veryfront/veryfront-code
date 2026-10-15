@@ -276,7 +276,7 @@ const REMOTE_SCHEDULE_RUN_STATUSES: ReadonlySet<string> = new Set(
 );
 
 /**
- * Reject a run body whose polled fields are malformed. `getRun()` only decodes JSON, so an
+ * Reject a run body whose polled fields are malformed or whose `id` is not the polled run. `getRun()` only decodes JSON, so an
  * unknown status would otherwise be polled until the execution deadline.
  */
 function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRun {
@@ -286,6 +286,7 @@ function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRu
     value === undefined || value === null || typeof value === "number";
   if (
     typeof candidate !== "object" || candidate === null ||
+    candidate.id !== runId ||
     typeof candidate.status !== "string" || !REMOTE_SCHEDULE_RUN_STATUSES.has(candidate.status) ||
     !(candidate.started_at === undefined || candidate.started_at === null ||
       typeof candidate.started_at === "string") ||
