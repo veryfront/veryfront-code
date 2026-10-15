@@ -463,7 +463,7 @@ describe("hosted child fork stream execution", () => {
             filename: "limits.md",
           },
         ]),
-        steps: Promise.resolve([createStep({ text: "" })]),
+        steps: Promise.resolve([createStep({ text: "Limits read." })]),
         totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
       },
       abortForkStream: () => undefined,

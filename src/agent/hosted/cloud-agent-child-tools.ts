@@ -50,6 +50,7 @@ import {
   resolveHostedRuntimeSkillLoaderToolName,
 } from "./cloud-runtime-system-messages.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
+import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
   DefaultHostedChildAgentExecutionConfig,
@@ -429,12 +430,25 @@ export async function resolveHostedChildAgentExecutionConfig(
   childAgentId: string,
   projectId: string,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
-  if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
-    return undefined;
-  }
-
-  const agentConfig = await resolveAgentConfig(context, childAgentId);
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
+  let agentConfig: RuntimeAgentMarkdownDefinition;
+  if (getProjectAgentRuntime(context).agents.has(childAgentId)) {
+    agentConfig = await resolveAgentConfig(context, childAgentId);
+  } else {
+    // A saved project agent is not part of this service's discovered runtime.
+    // Read its definition through the API so the child runs with the target
+    // agent's own instructions and tool selection, never the parent's toolset.
+    if (!projectId) return undefined;
+    const remoteAgentConfig = await fetchHostedProjectAgentDefinition({
+      apiUrl: context.infrastructure.getConfig().VERYFRONT_API_URL,
+      authToken: taskContext.authToken,
+      projectId,
+      agentId: childAgentId,
+      branchId,
+    });
+    if (!remoteAgentConfig) return undefined;
+    agentConfig = remoteAgentConfig;
+  }
   const steering = await fetchProjectSteering(context, {
     projectId: projectId || null,
     authToken: taskContext.authToken,

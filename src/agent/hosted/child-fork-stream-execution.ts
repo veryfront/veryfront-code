@@ -61,6 +61,11 @@ const hasOwn = Object.hasOwn;
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;
 
+/** Terminal error code for a child run that completed without any final text. */
+export const HOSTED_CHILD_EMPTY_RESULT_CODE = "CHILD_RESULT_EMPTY";
+const HOSTED_CHILD_EMPTY_RESULT_MESSAGE =
+  "The child agent completed without a final response. Do not infer or invent its answer; report that it returned no output.";
+
 /** State for hosted child fork stream handling. */
 export interface HostedChildForkStreamHandlingState {
   activeToolCallId: string | null;
@@ -267,6 +272,31 @@ export async function finalizeHostedChildForkCompletion(input: {
     const snapshot = buildChildRunFailureSnapshot(common, errorMessage, finalText || null);
     await input.onSettled?.(snapshot);
     return buildChildRunFailureResult(common, errorMessage);
+  }
+
+  if (finalText.trim().length === 0) {
+    // An empty completion carries no answer. Report it explicitly so the
+    // parent cannot present an invented reply as the child's result.
+    const common = buildChildRunResultCommon({
+      description: input.description,
+      steps: stepCount,
+      toolCalls: input.toolCalls,
+      toolResults: input.toolResults,
+      usage,
+      durationMs: Date.now() - input.startTime,
+    });
+    const snapshot = buildChildRunFailureSnapshot(
+      common,
+      HOSTED_CHILD_EMPTY_RESULT_MESSAGE,
+      null,
+      HOSTED_CHILD_EMPTY_RESULT_CODE,
+    );
+    await input.onSettled?.(snapshot);
+    return buildChildRunFailureResult(
+      common,
+      HOSTED_CHILD_EMPTY_RESULT_MESSAGE,
+      HOSTED_CHILD_EMPTY_RESULT_CODE,
+    );
   }
 
   input.writeLog?.(

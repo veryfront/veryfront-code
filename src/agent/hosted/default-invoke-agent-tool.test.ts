@@ -494,6 +494,117 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
+function startRuntimeReturning(
+  text: string,
+  captured: { forkToolNames?: readonly string[]; toolNames?: string[] },
+): NonNullable<
+  DefaultHostedInvokeAgentToolOptions<DefaultHostedInvokeAgentContext>["startRuntime"]
+> {
+  return (input) => {
+    captured.forkToolNames = input.forkToolNames;
+    captured.toolNames = Object.keys(input.forkTools ?? {});
+    return {
+      forkStreamAbortController: new AbortController(),
+      childRunMonitorAbortController: null,
+      childRunMonitorPromise: Promise.resolve(),
+      forkToolNames: [...(input.forkToolNames ?? [])],
+      streamResult: {
+        fullStream: (async function* () {
+          if (text) yield { type: "text-delta", text } as const;
+        })(),
+        steps: Promise.resolve([
+          { text, finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+        ]),
+        totalUsage: Promise.resolve(undefined),
+      },
+    };
+  };
+}
+
+function parentToolset() {
+  const definition = (description: string) => ({
+    description,
+    inputSchema: {},
+    execute: () => ({ ok: true }),
+  });
+  return {
+    load_skill: definition("Load a skill"),
+    get_agent_source: definition("Read an agent"),
+    create_file: definition("Create a file"),
+  };
+}
+
+it("default hosted invoke gives a tools: false child agent no callable tools", async () => {
+  const captured: { forkToolNames?: readonly string[]; toolNames?: string[] } = {};
+
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "You are Lifecycle Eval Triage. Do not use tools.",
+            toolNames: [],
+            deniedToolNames: ["load_skill", "veryfront__load_skill"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: parentToolset,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("Summary: a reply is needed.", captured),
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "lifecycle-eval-triage",
+    },
+    "lifecycle-eval-triage",
+    { toolCallId: "tool-call-tools-false" },
+  );
+
+  assertEquals("success" in result && result.success, true);
+  assertEquals(captured.forkToolNames ?? [], []);
+  assertEquals(captured.toolNames, []);
+});
+
+it("default hosted invoke reports an empty child completion as an explicit failure", async () => {
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({ system: "Answer briefly.", toolNames: [], availableSkillIds: [] }),
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("", {}),
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "lifecycle-eval-triage",
+      result_mode: "full",
+    },
+    "lifecycle-eval-triage",
+    { toolCallId: "tool-call-empty" },
+  );
+
+  assertEquals("success" in result && result.success, false);
+  assertEquals("terminalErrorCode" in result && result.terminalErrorCode, "CHILD_RESULT_EMPTY");
+  assertStringIncludes("error" in result ? String(result.error) : "", "without a final response");
+});
+
 it("default hosted invoke prunes unavailable optional Studio child tools before selection", async () => {
   let capturedForkToolNames: readonly string[] | undefined;
   let started = false;
