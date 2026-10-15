@@ -100,7 +100,7 @@ Research the question and cite every claim.
   because there is nothing for them to load. `skills: true` is a declaration,
   so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
-  schemas are deferred behind `tool_search` until the agent searches for them.
+  schemas are deferred behind `veryfront__tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
@@ -169,7 +169,7 @@ The `tools` selector controls both authorization and initial schema exposure:
 - Omit `tools` to expose no project tools.
 - Use an explicit map to expose only those selected schemas immediately.
 - Use `tools: true` to authorize every tool in the current scope while initially
-  exposing only bootstrap tools and `tool_search`.
+  exposing only bootstrap tools and `veryfront__tool_search`.
 
 A successful search makes matching authorized schemas visible on the next model
 step.
@@ -178,14 +178,14 @@ Set `toolLoading: "deferred"` to use the same lookup flow with an explicit tool
 map. Authorization stays limited to the selected tools; lookup cannot enable a
 denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preserves
 the existing defaults above. Deferred inventories show up to 20 descriptions;
-`tool_search` also finds authorized tools omitted from that initial inventory.
+`veryfront__tool_search` also finds authorized tools omitted from that initial inventory.
 
 ### Expose a startup tool set
 
 To expose a small startup set while leaving the rest of the catalog deferred,
 set `bootstrapTools` to up to 16 exact executable tool names. The selection does
 not grant access or replace the trusted skill loader. The runtime rejects names
-outside the authorized catalog, `tool_search`, and selections that exceed the
+outside the authorized catalog, `veryfront__tool_search`, and selections that exceed the
 model's schema limit. Per-step skill and execution restrictions still apply, so
 a startup tool removed by those restrictions is unavailable on that step. Other
 authorized tools remain discoverable. Omit `bootstrapTools` to keep the default
@@ -218,7 +218,7 @@ not make that mode deferred.
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
 The default inline limit is 16 KiB. Larger results become a run-scoped reference
-with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up to
+with a 4 KiB preview; the framework supplies `veryfront__get_tool_result` for reads of up to
 16 KiB per section. The result identifies its total size and next cursor.
 
 ```ts
@@ -279,7 +279,7 @@ const assistant = agent({
 });
 ```
 
-The framework `tool_search` fallback is provider-neutral. It searches the
+The framework `veryfront__tool_search` fallback is provider-neutral. It searches the
 authorized `tools` catalog and configured `providerTools` that the selected
 model supports. Provider-native entries contain only a name and description
 until a search loads them. The runtime attaches the provider's native schema on
@@ -287,7 +287,7 @@ the next model step.
 
 Search ranks an exact tool name first, followed by normalized substrings in the
 tool name, description, and input parameter descriptions. It returns at most
-five names and descriptions. Results never include schemas, and `tool_search`
+five names and descriptions. Results never include schemas, and `veryfront__tool_search`
 has no pagination options.
 
 Loading a schema never authorizes a tool. The runtime rechecks authorization

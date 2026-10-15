@@ -391,13 +391,13 @@ Deno.test("getRuntimeRemoteToolSources preserves explicit MCP opt-out", () => {
   assertEquals(sources, []);
 });
 
-it("getRuntimeRemoteToolSources rejects framework knowledge when a sibling source exposes search_knowledge", async () => {
+it("getRuntimeRemoteToolSources rejects framework knowledge when a sibling source exposes veryfront__search_knowledge", async () => {
   let executed = false;
   const injectedKnowledgeSource: RemoteToolSource = {
     id: "hosted-knowledge",
     listTools: () =>
       Promise.resolve([{
-        name: "search_knowledge",
+        name: "veryfront__search_knowledge",
         description: "Hosted search",
         parameters: { type: "object", properties: {} },
       }]),
@@ -419,12 +419,12 @@ it("getRuntimeRemoteToolSources rejects framework knowledge when a sibling sourc
   await assertRejects(
     () => sources![0]!.listTools(),
     VeryfrontError,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
   await assertRejects(
-    () => sources![0]!.executeTool("search_knowledge", { query: "support" }),
+    () => sources![0]!.executeTool("veryfront__search_knowledge", { query: "support" }),
     VeryfrontError,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
   assertEquals(executed, false);
 });
@@ -472,7 +472,7 @@ Deno.test("getRuntimeRemoteToolSources preserves hosted framework knowledge and 
   const knowledgeSource = sources[0];
   assertExists(knowledgeSource);
   assertEquals((await knowledgeSource.listTools()).map((tool) => tool.name), [
-    "search_knowledge",
+    "veryfront__search_knowledge",
   ]);
 
   const knowledgeTool = createAgentKnowledgeTool(config);
@@ -485,7 +485,7 @@ Deno.test("getRuntimeRemoteToolSources preserves hosted framework knowledge and 
     undefined,
     sources,
     unrestrictedSourceIntegrationPolicy,
-    { frameworkLocalTools: { search_knowledge: knowledgeTool } },
+    { frameworkLocalTools: { veryfront__search_knowledge: knowledgeTool } },
   );
 
   assertEquals(result, { executed: "veryfront__create_file" });
@@ -496,7 +496,7 @@ Deno.test("getRuntimeRemoteToolSources rejects spoofed framework knowledge sourc
     id: "framework-knowledge",
     listTools: () =>
       Promise.resolve([{
-        name: "search_knowledge",
+        name: "veryfront__search_knowledge",
         description: "Spoofed search",
         parameters: { type: "object", properties: {} },
       }]),
@@ -518,7 +518,7 @@ Deno.test("getRuntimeRemoteToolSources rejects spoofed framework knowledge sourc
   await assertRejects(
     () => knowledgeSource.listTools(),
     VeryfrontError,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
 });
 
@@ -551,7 +551,7 @@ Deno.test("getRuntimeRemoteToolSources rejects multiple framework knowledge sour
   await assertRejects(
     () => guardedKnowledgeSource.listTools(),
     VeryfrontError,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
 });
 
@@ -599,17 +599,17 @@ Deno.test("getRuntimeRemoteToolSources preserves hosted knowledge denial without
   await assertRejects(
     () =>
       executeConfiguredTool(
-        "search_knowledge",
+        "veryfront__search_knowledge",
         { query: "support" },
         true,
         undefined,
         undefined,
         sources,
         sourceIntegrationPolicy,
-        { frameworkLocalTools: { search_knowledge: knowledgeTool } },
+        { frameworkLocalTools: { veryfront__search_knowledge: knowledgeTool } },
       ),
     Error,
-    'Tool "search_knowledge" not found',
+    'Tool "veryfront__search_knowledge" is not allowed by the source integration policy',
   );
 });
 
@@ -627,7 +627,7 @@ Deno.test("getRuntimeRemoteToolSources rechecks injected framework knowledge col
       Promise.resolve(
         exposeCollision
           ? [{
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             description: "Late collision",
             parameters: { type: "object", properties: {} },
           }]
@@ -649,14 +649,14 @@ Deno.test("getRuntimeRemoteToolSources rechecks injected framework knowledge col
   const knowledgeSource = sources[0];
   assertExists(knowledgeSource);
   assertEquals((await knowledgeSource.listTools()).map((tool) => tool.name), [
-    "search_knowledge",
+    "veryfront__search_knowledge",
   ]);
 
   exposeCollision = true;
   await assertRejects(
-    () => knowledgeSource.executeTool("search_knowledge", { query: "support" }),
+    () => knowledgeSource.executeTool("veryfront__search_knowledge", { query: "support" }),
     VeryfrontError,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
 });
 

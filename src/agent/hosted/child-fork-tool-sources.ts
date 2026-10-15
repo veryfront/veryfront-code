@@ -167,7 +167,7 @@ export async function prepareDefaultHostedChildForkToolSources(
           projectId: input.getProjectId() ?? null,
         })
         : rawDefinitions;
-      const catalog = server.kind === "veryfront-api" || server.kind === "veryfront-studio"
+      const catalog = server.kind === "veryfront-api"
         ? createPlatformMcpCatalogSource(rawSource, accessFilteredDefinitions)
         : {
           source: rawSource,
@@ -175,7 +175,7 @@ export async function prepareDefaultHostedChildForkToolSources(
             !name.startsWith("veryfront__")
           ),
         };
-      const policy = server.kind === "veryfront-api" || server.kind === "veryfront-studio"
+      const policy = server.kind === "veryfront-api"
         ? withPlatformMcpPolicyAliases(server.toolPolicy)
         : server.toolPolicy;
       const policySource = createHostedMcpToolPolicySource(catalog.source, policy);

@@ -224,7 +224,7 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["tool_search", "veryfront__load_skill"],
+      availableToolNames: ["veryfront__load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
     assertStringIncludes(canonicalText, "Call veryfront__load_skill({ inventory:");
     assertEquals(canonicalText.includes("Call load_skill({ inventory:"), false);
@@ -235,7 +235,7 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["load_skill", "tool_search"],
+      availableToolNames: ["load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
     assertStringIncludes(legacyText, "Call load_skill({ inventory:");
     assertEquals(legacyText.includes("Call veryfront__load_skill({ inventory:"), false);
@@ -246,7 +246,7 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["load_skill", "tool_search", "veryfront__load_skill"],
+      availableToolNames: ["load_skill", "veryfront__load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
     assertStringIncludes(collisionText, "Call veryfront__load_skill({ inventory:");
     assertEquals(collisionText.includes("Call load_skill({ inventory:"), false);
@@ -266,7 +266,7 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["tool_search"],
+      availableToolNames: ["veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
     assertEquals(disabledText.includes("<available_skills>"), false);
     assertEquals(disabledText.includes("Call load_skill({ inventory:"), false);

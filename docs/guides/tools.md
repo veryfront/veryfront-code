@@ -108,7 +108,7 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 An explicit tool map authorizes only the selected tools and sends those schemas
 to the model immediately. Use `tools: true` for a broad authorized scope. The
 framework initially sends only the `load_skill` bootstrap schema when it is
-authorized, plus `tool_search`, then loads matching schemas for the next model
+authorized, plus `veryfront__tool_search`, then loads matching schemas for the next model
 step. `form_input` is authorized but deferred until it is needed. Omit `tools`
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
@@ -128,7 +128,7 @@ Use an explicit map such as `tools: { getWeather: true }` when the model needs a
 selected schema on its first step. Schema loading and tool authorization stay
 separate, and execution rechecks authorization.
 
-`tool_search` accepts exactly one of four mode fields. All arguments are
+`veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
 top-level strings or integers:
 
 - `schema: "<exact name>"` returns one exact tool's input schema and loads it
@@ -193,7 +193,7 @@ Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", an agent with `tools: true`:
 
-1. Sends the question with `tool_search` to the model.
+1. Sends the question with `veryfront__tool_search` to the model.
 2. The model searches for a weather capability.
 3. The framework loads the matching authorized `getWeather` schema.
 4. The next model step calls `getWeather({ city: "Tokyo" })`.
@@ -215,7 +215,7 @@ Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
 Use `providerTools` for provider-executed capabilities. In deferred mode,
-`tool_search` can load a configured capability when the selected model supports
+`veryfront__tool_search` can load a configured capability when the selected model supports
 it:
 
 ```ts

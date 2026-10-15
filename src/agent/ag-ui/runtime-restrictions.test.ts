@@ -158,7 +158,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     // Replacing `tools: true` with an explicit map must not flip the run from
     // deferred to eager loading, or a restricted run would send every
     // allowlisted schema on the first provider call instead of exposing
-    // `tool_search`.
+    // `veryfront__tool_search`.
     const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
       allowedTools: ["web_search", "read_file"],
     });
@@ -683,13 +683,13 @@ describe("agent/ag-ui/runtime-restrictions", () => {
   it("retains scoped framework knowledge only when the tool ceiling allows it", () => {
     const allowed = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, knowledge: "knowledge/public/**" }),
-      { allowedTools: ["search_knowledge"] },
+      { allowedTools: ["veryfront__search_knowledge"] },
     );
     const allowedTools = allowed.tools;
     if (allowedTools === true || allowedTools === undefined) {
       throw new Error("Expected explicit restricted tool map");
     }
-    assertEquals(typeof allowedTools.search_knowledge, "object");
+    assertEquals(typeof allowedTools.veryfront__search_knowledge, "object");
 
     const denied = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, knowledge: "knowledge/public/**" }),

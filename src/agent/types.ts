@@ -219,15 +219,15 @@ export interface AgentConfig<TOutput = any> {
    * Project tools available to this agent.
    *
    * Omit to expose no project tools. `true` authorizes the current scoped
-   * catalog behind `tool_search`; an explicit map exposes only those selected
+   * catalog behind `veryfront__tool_search`; an explicit map exposes only those selected
    * schemas immediately.
    */
   tools?: true | Record<string, Tool | boolean>;
-  /** Load selected tool schemas immediately or discover them through tool_search. */
+  /** Load selected tool schemas immediately or discover them through veryfront__tool_search. */
   toolLoading?: "eager" | "deferred";
   /**
    * Expose up to 16 exact authorized tool schemas immediately in deferred mode.
-   * Other tools stay discoverable through `tool_search`. In eager mode these
+   * Other tools stay discoverable through `veryfront__tool_search`. In eager mode these
    * tools are kept when a provider's schema limit caps the catalog. This does
    * not grant tool access or replace the trusted skill loader. Applies to root
    * runs; hosted `invoke_agent` child runs do not apply it. Omit to keep the
@@ -236,7 +236,7 @@ export interface AgentConfig<TOutput = any> {
   bootstrapTools?: string[];
   /**
    * Return references for oversized model-facing tool results, with bounded
-   * get_tool_result reads. Raw results remain available to events and callbacks.
+   * veryfront__get_tool_result reads. Raw results remain available to events and callbacks.
    * Omit or false to preserve inline result behavior.
    */
   toolResultContext?: boolean | ToolResultContextLimits;

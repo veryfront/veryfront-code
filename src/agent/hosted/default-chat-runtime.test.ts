@@ -165,7 +165,9 @@ for (const trusted of [false, true]) {
                 controller.enqueue({
                   type: "tool-call",
                   toolCallId: `policy-${calls}`,
-                  toolName: calls === 1 ? "load_skill" : "form_input",
+                  toolName: trusted
+                    ? (calls === 1 ? "veryfront__load_skill" : "veryfront__form_input")
+                    : (calls === 1 ? "load_skill" : "form_input"),
                   input: calls === 1 ? { skillId: "review" } : {},
                 });
                 controller.enqueue({
@@ -248,7 +250,7 @@ for (const trusted of [false, true]) {
   });
 }
 
-it("default hosted runtime executes a trusted legacy loader alias after canonical-only stream exposure", async () => {
+it("default hosted runtime rejects a legacy loader alias after canonical-only stream exposure", async () => {
   clearModelProviders();
   let modelCallCount = 0;
   let platformLoadSkillExecutions = 0;
@@ -349,7 +351,7 @@ it("default hosted runtime executes a trusted legacy loader alias after canonica
     assertEquals(modelCallCount, 2);
     assertEquals(toolNamesByCall[0], ["veryfront__load_skill"]);
     assertEquals(toolNamesByCall[0]?.includes("load_skill"), false);
-    assertEquals(platformLoadSkillExecutions, 1);
+    assertEquals(platformLoadSkillExecutions, 0);
   } finally {
     clearModelProviders();
   }
@@ -708,7 +710,7 @@ it("default hosted runtime defers a project load_skill collision after full cons
               controller.enqueue({
                 type: "tool-call",
                 toolCallId: "find-project-loader",
-                toolName: "tool_search",
+                toolName: "veryfront__tool_search",
                 input: { query: "custom" },
               });
               controller.enqueue({
@@ -784,8 +786,12 @@ it("default hosted runtime defers a project load_skill collision after full cons
     });
 
     assertEquals(modelCallCount, 3);
-    assertEquals(toolNamesByCall[0], ["tool_search", "veryfront__load_skill"]);
-    assertEquals(toolNamesByCall[1], ["load_skill", "tool_search", "veryfront__load_skill"]);
+    assertEquals(toolNamesByCall[0], ["veryfront__load_skill", "veryfront__tool_search"]);
+    assertEquals(toolNamesByCall[1], [
+      "load_skill",
+      "veryfront__load_skill",
+      "veryfront__tool_search",
+    ]);
     assertEquals(projectLoadSkillExecutions, 1);
   } finally {
     clearModelProviders();
@@ -889,7 +895,7 @@ function restoreEnv(key: string, value: string | undefined): void {
   setEnv(key, value);
 }
 
-it("caps eager hosted tools when tool_search is denied", async () => {
+it("caps eager hosted tools when veryfront__tool_search is denied", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
   await createDefaultHostedChatRuntime({
     sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
@@ -898,7 +904,7 @@ it("caps eager hosted tools when tool_search is denied", async () => {
       authToken: "token-1",
       instructions: "Use only authorized tools.",
       model: "openai/gpt-5.4",
-      deniedTools: ["tool_search"],
+      deniedTools: ["veryfront__tool_search"],
     },
     config: {
       apiUrl: "https://api.example.com",
@@ -919,7 +925,7 @@ it("caps eager hosted tools when tool_search is denied", async () => {
 
   assertExists(capturedContext);
   assertEquals(capturedContext.availableToolNames?.length, 128);
-  assertEquals(capturedContext.availableToolNames?.includes("tool_search"), false);
+  assertEquals(capturedContext.availableToolNames?.includes("veryfront__tool_search"), false);
 });
 
 it("honors authored eager tool loading in the default hosted runtime", async () => {
@@ -1073,7 +1079,7 @@ it("mirrors default research artifacts through the API source when knowledge is 
               controller.enqueue({
                 type: "tool-call",
                 toolCallId: "create-report",
-                toolName: "create_file",
+                toolName: "veryfront__create_file",
                 input: { path: "report.md", content: reportContent },
               });
               controller.enqueue({
@@ -1104,7 +1110,11 @@ it("mirrors default research artifacts through the API source when knowledge is 
         authToken: "token-1",
         instructions: "Write the default research report.",
         model: "test/default-research-mirror-source",
-        allowedTools: ["create_file", "update_file", "search_knowledge"],
+        allowedTools: [
+          "veryfront__create_file",
+          "veryfront__update_file",
+          "veryfront__search_knowledge",
+        ],
         knowledge: true,
         runId: "run-1",
       },
@@ -2307,7 +2317,7 @@ for (const denySkillLoader of [false, true]) {
   });
 }
 
-it("default hosted runtime executes a hidden trusted loader alias without exposing its schema", async () => {
+it("default hosted runtime rejects a hidden legacy loader alias", async () => {
   clearModelProviders();
   let modelCallCount = 0;
   const toolNamesByCall: string[][] = [];
@@ -2413,10 +2423,10 @@ it("default hosted runtime executes a hidden trusted loader alias without exposi
     });
 
     assertEquals(modelCallCount, 2);
-    assertEquals(toolNamesByCall[0], ["tool_search", "veryfront__load_skill"]);
-    assertEquals(toolNamesByCall[1], ["tool_search", "veryfront__load_skill"]);
-    assertEquals(platformLoaderExecutions, 1);
-    assertEquals(JSON.stringify(toolOutputs).includes("not available"), false);
+    assertEquals(toolNamesByCall[0], ["veryfront__load_skill", "veryfront__tool_search"]);
+    assertEquals(toolNamesByCall[1], ["veryfront__load_skill", "veryfront__tool_search"]);
+    assertEquals(platformLoaderExecutions, 0);
+    assertEquals(JSON.stringify(toolOutputs).includes('"skillId":"build"'), false);
   } finally {
     clearModelProviders();
   }
@@ -2556,7 +2566,7 @@ it("preselects eager hosted tools under the strictest limit when only a stale ca
             authToken: "token-stale-catalog",
             instructions: "Use only authorized tools.",
             model: "google/stale-model",
-            deniedTools: ["tool_search"],
+            deniedTools: ["veryfront__tool_search"],
           },
           config: {
             apiUrl: "https://api.example.com",

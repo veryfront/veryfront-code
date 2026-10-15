@@ -429,7 +429,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       ? {}
       : { __vfToolSchemaTarget: input.toolAssembly.toolSchemaTarget }),
     // Assembly consumed the authored startup tools; the runtime's provider
-    // capping pass (for example after exposing get_tool_result) must keep them.
+    // capping pass (for example after exposing veryfront__get_tool_result) must keep them.
     ...(input.options.bootstrapTools !== undefined
       ? { __vfRetainedBootstrapToolNames: input.options.bootstrapTools }
       : {}),

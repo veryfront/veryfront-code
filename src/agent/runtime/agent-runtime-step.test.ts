@@ -87,7 +87,10 @@ describe("agent/runtime-step", () => {
 
   it("exposes authored bootstrap tools immediately and keeps the rest deferred", async () => {
     const prepared = await prepareAgentRuntimeStep(bootstrapStepInput(["read_state"]));
-    assertEquals(prepared.tools.map((tool) => tool.name).sort(), ["read_state", "tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name).sort(), [
+      "read_state",
+      "veryfront__tool_search",
+    ]);
     assertEquals(prepared.toolExposurePlan.deferred.map((tool) => tool.name), ["write_state"]);
   });
 
@@ -130,7 +133,7 @@ describe("agent/runtime-step", () => {
           step: 1,
         }));
         assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["read_state"]);
-        assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+        assertEquals(prepared.tools.map((tool) => tool.name), ["veryfront__tool_search"]);
       });
     }
   }
@@ -252,7 +255,7 @@ describe("agent/runtime-step", () => {
     assertEquals(publisherOnly.tools.length, 130);
     const openaiWire = await prepare("openai");
     assertEquals(openaiWire.tools.length <= 128, true);
-    assertEquals(openaiWire.tools.some((tool) => tool.name === "tool_search"), true);
+    assertEquals(openaiWire.tools.some((tool) => tool.name === "veryfront__tool_search"), true);
     assertEquals(openaiWire.toolExposurePlan.deferred.length > 0, true);
   });
 
@@ -291,7 +294,7 @@ describe("agent/runtime-step", () => {
 
     assertEquals(
       prepared.tools.map((tool) => tool.name),
-      ["get_release", "load_skill", "tool_search"],
+      ["get_release", "load_skill", "veryfront__tool_search"],
     );
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
@@ -332,7 +335,7 @@ describe("agent/runtime-step", () => {
       toolExposureState: createToolExposureState(),
     });
 
-    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "veryfront__tool_search"]);
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
       ["veryfront__load_skill"],
@@ -367,7 +370,7 @@ describe("agent/runtime-step", () => {
       toolExposureState: createToolExposureState(),
     });
 
-    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["veryfront__tool_search"]);
   });
 
   it("bootstraps the host-selected loader instead of the provenance default", async () => {
@@ -405,14 +408,14 @@ describe("agent/runtime-step", () => {
       toolExposureState: createToolExposureState(),
     });
 
-    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "veryfront__tool_search"]);
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
       ["veryfront__load_skill"],
     );
   });
 
-  it("keeps provider-native tools authorized but deferred until tool_search loads them", async () => {
+  it("keeps provider-native tools authorized but deferred until veryfront__tool_search loads them", async () => {
     const state = createToolExposureState();
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
@@ -428,7 +431,7 @@ describe("agent/runtime-step", () => {
       remoteToolSources: undefined,
       resolveRuntimeState: async () => ({
         systemPrompt:
-          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Use schema with one exact tool name when known, search with one short capability phrase, or inventory to browse tool metadata. A loaded tool becomes callable on the next model step.',
+          'Base\n\nCurrent run tool inventory:\n\n- veryfront__tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nAdditional authorized tools may be deferred.',
       }),
       runtimeContext: undefined,
       step: 0,
@@ -438,7 +441,7 @@ describe("agent/runtime-step", () => {
     });
 
     assertEquals(systemText(prepared.systemPrompt).includes("- web_search"), true);
-    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["veryfront__tool_search"]);
     assertEquals(
       prepared.toolExposurePlan.authorized.map((tool) => tool.name),
       ["create_release", "web_search"],
@@ -468,7 +471,7 @@ describe("agent/runtime-step", () => {
       toolContextBase: undefined,
       toolExposureState: state,
     });
-    assertEquals(loaded.tools.map((tool) => tool.name), ["tool_search", "web_search"]);
+    assertEquals(loaded.tools.map((tool) => tool.name), ["veryfront__tool_search", "web_search"]);
   });
 
   it("preserves a typed empty integration catalog without adding a warning", async () => {

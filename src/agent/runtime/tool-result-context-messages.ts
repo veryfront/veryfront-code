@@ -7,8 +7,8 @@ const hasOwn = Object.hasOwn;
 const SKIPPED_TOOL_RESULT_CONTEXT_TOOLS = new Set([
   "load_skill",
   "veryfront__load_skill",
-  "tool_search",
-  "get_tool_result",
+  "veryfront__tool_search",
+  "veryfront__get_tool_result",
 ]);
 
 export interface ToolResultContextMessageTransformOptions {

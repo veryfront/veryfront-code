@@ -609,13 +609,14 @@ function createAgent<TOutput = never>(
   // ceiling. Feature configuration must not re-add a filtered capability.
   const knowledgeEnabled = isKnowledgeEnabled(config.knowledge);
   if (preserveToolCatalog && knowledgeEnabled && mergedToolsConfig !== true) {
-    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       typeof configuredKnowledgeTool === "object" && configuredKnowledgeTool !== null &&
       !isAgentKnowledgeTool(configuredKnowledgeTool)
     ) {
       throw INVALID_ARGUMENT.create({
-        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+        detail:
+          "A custom veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
           "Rename the custom tool or remove the knowledge selector.",
       });
     }
@@ -627,23 +628,25 @@ function createAgent<TOutput = never>(
     isToolVisibleTo(registeredKnowledgeTool, { agentId: id })
   ) {
     throw INVALID_ARGUMENT.create({
-      detail: "A registered search_knowledge tool conflicts with the agent knowledge scope. " +
+      detail:
+        "A registered veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
         "Use an explicit tool selection or rename the custom tool.",
     });
   }
   if (knowledgeTool && mergedToolsConfig !== true) {
-    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       configuredKnowledgeTool && configuredKnowledgeTool !== true &&
       !isAgentKnowledgeTool(configuredKnowledgeTool)
     ) {
       throw INVALID_ARGUMENT.create({
-        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+        detail:
+          "A custom veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
           "Rename the custom tool or remove the knowledge selector.",
       });
     }
-    if (configuredKnowledgeTool !== false) {
-      mergedToolsConfig = { ...mergedToolsConfig, search_knowledge: knowledgeTool };
+    if (configuredKnowledgeTool !== false && mergedToolsConfig?.search_knowledge !== false) {
+      mergedToolsConfig = { ...mergedToolsConfig, veryfront__search_knowledge: knowledgeTool };
     }
   }
 
@@ -730,7 +733,7 @@ let agentIdCounter = 0;
  * Names advertised to the model in the system-prompt tool inventory.
  *
  * `tools: true` authorizes the whole catalog but sends only the tools that make
- * the deferred catalog reachable: `tool_search` finds schemas, `load_skill`
+ * the deferred catalog reachable: `veryfront__tool_search` finds schemas, `load_skill`
  * loads instructions, and `form_input` asks the user. Project tools are
  * deferred and are named by the runtime inventory instead.
  *
@@ -789,7 +792,7 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const name = pair[0];
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
-    if (isRuntimeLocalTool(entry)) continue;
+    if (isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry)) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);
 

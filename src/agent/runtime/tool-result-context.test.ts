@@ -50,7 +50,7 @@ describe("agent runtime tool result context", () => {
     assertEquals(disclosure.modelResult.toolCallId, "call-large");
     assertEquals(disclosure.modelResult.toolName, "list_rows");
     assertEquals(disclosure.modelResult.complete, false);
-    assertEquals(disclosure.modelResult.retrieval.tool, "get_tool_result");
+    assertEquals(disclosure.modelResult.retrieval.tool, "veryfront__get_tool_result");
     assertEquals(disclosure.modelResult.retrieval.input.ref, disclosure.modelResult.ref);
     assertLessOrEqual(disclosure.modelResult.previewBytes, 16);
     assertEquals(context.size, 1);

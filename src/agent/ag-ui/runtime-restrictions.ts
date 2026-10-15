@@ -401,15 +401,17 @@ export function applyAgUiRuntimeRestrictionsForModel(
     visibleLocalTools,
     sourceAgentId,
   );
-  const frameworkKnowledgeTool = allowedTools.search_knowledge === true
+  const frameworkKnowledgeTool = allowedTools.veryfront__search_knowledge === true
     ? createAgentKnowledgeTool(config)
     : undefined;
   if (frameworkKnowledgeTool !== undefined) {
     const tools = restricted.tools === undefined || restricted.tools === true
       ? {}
       : { ...restricted.tools };
-    if (tools.search_knowledge === undefined || tools.search_knowledge === true) {
-      tools.search_knowledge = frameworkKnowledgeTool;
+    if (
+      tools.veryfront__search_knowledge === undefined || tools.veryfront__search_knowledge === true
+    ) {
+      tools.veryfront__search_knowledge = frameworkKnowledgeTool;
     }
     restricted.tools = tools;
   }
@@ -417,7 +419,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
     // Replacing the authored `tools: true` selector with an explicit map would
     // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
     // allowlisted schema on the first provider call instead of exposing
-    // `tool_search`. Pin the source configuration's resolved mode so the
+    // `veryfront__tool_search`. Pin the source configuration's resolved mode so the
     // intersection only narrows which tools exist, never how they load.
     (restricted as RuntimeToolFilterConfig).__vfToolLoadingMode =
       resolveRuntimeToolLoading(config).mode;

@@ -123,7 +123,7 @@ const numberIsSafeInteger = Number.isSafeInteger;
 const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const iteratorSymbol = Symbol.iterator;
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
   "load_skill",
   "load_skill_reference",

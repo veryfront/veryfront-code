@@ -17,7 +17,7 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   /** Tool description for the AI model */
   description: string;
 
-  /** Catalog navigation hints for `tool_search`, without execution authority. */
+  /** Catalog navigation hints for `veryfront__tool_search`, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
 
   /**

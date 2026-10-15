@@ -68,7 +68,7 @@ export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const applyIntrinsic = Reflect.apply;
@@ -626,13 +626,16 @@ export function getRuntimeRemoteToolSources(
       // Trusted platform sources get the same live canonical catalog as a
       // configured platform server, so legacy-only listings still expose
       // `veryfront__*` names.
-      return propagateBootstrapIdentity(
+      return inheritAgentKnowledgeSource(
         source,
-        hasTrustedPlatformSource(source)
-          ? createLivePlatformMcpSource(
-            createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
-          )
-          : createMcpToolPolicySource(source, policy),
+        propagateBootstrapIdentity(
+          source,
+          hasTrustedPlatformSource(source)
+            ? createLivePlatformMcpSource(
+              createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
+            )
+            : createMcpToolPolicySource(source, policy),
+        ),
       );
     },
   );

@@ -135,7 +135,7 @@ describe("agent factory", () => {
     toolRegistryInternal.clearAll();
   });
 
-  it("ignores another agent's owned search_knowledge tool for tools true knowledge agents", () => {
+  it("ignores another agent's owned veryfront__search_knowledge tool for tools true knowledge agents", () => {
     toolRegistryInternal.register("search_knowledge", {
       ...tool({
         id: "search_knowledge",
@@ -157,7 +157,7 @@ describe("agent factory", () => {
     assertEquals(assistant.id, "knowledge-owner");
   });
 
-  it("rejects visible registered search_knowledge tools for tools true knowledge agents", () => {
+  it("rejects visible registered veryfront__search_knowledge tools for tools true knowledge agents", () => {
     for (
       const [registeredOwner, expectedAgentId] of [
         [undefined, "global-collision-agent"],
@@ -185,7 +185,7 @@ describe("agent factory", () => {
             skills: [],
           }),
         Error,
-        "registered search_knowledge tool conflicts with the agent knowledge scope",
+        "registered veryfront__search_knowledge tool conflicts with the agent knowledge scope",
       );
     }
   });
@@ -209,7 +209,7 @@ describe("agent factory", () => {
     await assistant.generate({ input: "List available knowledge tools" });
 
     const names = model.toolNames(0);
-    assertEquals(names.filter((name) => name === "search_knowledge").length, 1);
+    assertEquals(names.filter((name) => name === "veryfront__search_knowledge").length, 1);
   });
 
   it("loads one deferred framework knowledge schema for tools true agents", async () => {
@@ -217,8 +217,8 @@ describe("agent factory", () => {
       {
         toolCalls: [{
           id: "load-knowledge",
-          name: "tool_search",
-          input: { query: "search_knowledge" },
+          name: "veryfront__tool_search",
+          input: { query: "veryfront__search_knowledge" },
         }],
       },
       { text: "done" },
@@ -240,11 +240,17 @@ describe("agent factory", () => {
 
     await assistant.generate({ input: "Load the knowledge tool" });
 
-    assertEquals(model.toolNames(0).filter((name) => name === "search_knowledge").length, 0);
-    assertEquals(model.toolNames(1).filter((name) => name === "search_knowledge").length, 1);
+    assertEquals(
+      model.toolNames(0).filter((name) => name === "veryfront__search_knowledge").length,
+      0,
+    );
+    assertEquals(
+      model.toolNames(1).filter((name) => name === "veryfront__search_knowledge").length,
+      1,
+    );
   });
 
-  it("keeps tools true knowledge scoped when search_knowledge registers later", async () => {
+  it("keeps tools true knowledge scoped when veryfront__search_knowledge registers later", async () => {
     let modelCalls = 0;
     let unscopedCalls = 0;
     const assistant = agent({
@@ -265,7 +271,7 @@ describe("agent factory", () => {
                 content: [{
                   type: "tool-call",
                   toolCallId: "search-late-knowledge",
-                  toolName: "search_knowledge",
+                  toolName: "veryfront__search_knowledge",
                   input: JSON.stringify({ query: "support", limit: 1 }),
                 }],
                 finishReason: "tool-calls",
@@ -304,7 +310,7 @@ describe("agent factory", () => {
     assertEquals(JSON.stringify(response.toolCalls).includes("unscoped"), false);
   });
 
-  it("rejects late sibling remote search_knowledge collisions before dispatch", async () => {
+  it("rejects late sibling remote veryfront__search_knowledge collisions before dispatch", async () => {
     let siblingListCalls = 0;
     let siblingExecuted = false;
     const siblingSource: RemoteToolSource = {
@@ -314,7 +320,7 @@ describe("agent factory", () => {
         return Promise.resolve(
           siblingListCalls >= 3
             ? [{
-              name: "search_knowledge",
+              name: "veryfront__search_knowledge",
               description: "Late sibling knowledge search",
               parameters: { type: "object", properties: {} },
             }]
@@ -330,7 +336,7 @@ describe("agent factory", () => {
       {
         toolCalls: [{
           id: "late-sibling-search",
-          name: "search_knowledge",
+          name: "veryfront__search_knowledge",
           input: { query: "support", limit: 1 },
         }],
       },
@@ -358,12 +364,12 @@ describe("agent factory", () => {
     assertEquals(response.toolCalls[0]?.status, "error");
     assertStringIncludes(
       response.toolCalls[0]?.error ?? "",
-      'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+      'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
     );
     assertEquals(siblingExecuted, false);
   });
 
-  it("keeps streamed tools true knowledge scoped when search_knowledge registers later", async () => {
+  it("keeps streamed tools true knowledge scoped when veryfront__search_knowledge registers later", async () => {
     let modelCalls = 0;
     let unscopedCalls = 0;
     const assistant = agent({
@@ -389,7 +395,7 @@ describe("agent factory", () => {
                     controller.enqueue({
                       type: "tool-call",
                       toolCallId: "search-late-stream-knowledge",
-                      toolName: "search_knowledge",
+                      toolName: "veryfront__search_knowledge",
                       input: { query: "support", limit: 1 },
                     });
                     controller.enqueue({
@@ -450,7 +456,7 @@ describe("agent factory", () => {
     const assistant = agent({
       id: "map-scoped-knowledge",
       system: "Use scoped knowledge.",
-      tools: { search_knowledge: true },
+      tools: { veryfront__search_knowledge: true },
       knowledge: {
         "knowledge/public/**": true,
         "knowledge/private/**": false,
@@ -462,13 +468,13 @@ describe("agent factory", () => {
       throw new Error("Expected a concrete scoped knowledge tool map");
     }
 
-    const scopedKnowledgeTool = assistant.config.tools.search_knowledge;
+    const scopedKnowledgeTool = assistant.config.tools.veryfront__search_knowledge;
     if (!scopedKnowledgeTool || typeof scopedKnowledgeTool !== "object") {
-      throw new Error("Expected scoped search_knowledge tool");
+      throw new Error("Expected scoped veryfront__search_knowledge tool");
     }
-    assertEquals(scopedKnowledgeTool === toolRegistry.get("search_knowledge"), false);
+    assertEquals(scopedKnowledgeTool === toolRegistry.get("veryfront__search_knowledge"), false);
     const definitions = await getAvailableTools(assistant.config.tools);
-    assertEquals(definitions.map((definition) => definition.name), ["search_knowledge"]);
+    assertEquals(definitions.map((definition) => definition.name), ["veryfront__search_knowledge"]);
     const result = await scopedKnowledgeTool.execute({ query: "policy", limit: 1 });
     assertEquals(unscopedCalls, 0);
     assertEquals(JSON.stringify(result).includes("unscoped"), false);
@@ -487,22 +493,22 @@ describe("agent factory", () => {
 
     const assistant = createEphemeralAgentWithRuntimeOptions({
       ...config,
-      tools: { search_knowledge: knowledgeTool },
+      tools: { veryfront__search_knowledge: knowledgeTool },
     }, { preserveToolCatalog: true });
 
-    assertEquals(assistant.config.tools, { search_knowledge: knowledgeTool });
+    assertEquals(assistant.config.tools, { veryfront__search_knowledge: knowledgeTool });
   });
 
   it("allows hosted boolean remote knowledge selections when preserving a prevalidated catalog", () => {
     const assistant = createEphemeralAgentWithRuntimeOptions({
       id: "prevalidated-remote-knowledge",
       system: "Use hosted knowledge.",
-      tools: { search_knowledge: true },
+      tools: { veryfront__search_knowledge: true },
       knowledge: true,
       skills: [],
     }, { preserveToolCatalog: true });
 
-    assertEquals(assistant.config.tools, { search_knowledge: true });
+    assertEquals(assistant.config.tools, { veryfront__search_knowledge: true });
   });
 
   it("rejects custom knowledge collisions when preserving a prevalidated catalog", () => {
@@ -518,24 +524,24 @@ describe("agent factory", () => {
         createEphemeralAgentWithRuntimeOptions({
           id: "prevalidated-custom-knowledge",
           system: "Use scoped knowledge.",
-          tools: { search_knowledge: customKnowledgeTool },
+          tools: { veryfront__search_knowledge: customKnowledgeTool },
           knowledge: true,
           skills: [],
         }, { preserveToolCatalog: true }),
       Error,
-      "custom search_knowledge tool conflicts with the agent knowledge scope",
+      "reserved integration tool namespace",
     );
   });
 
-  it("preserves knowledge denials and rejects concrete search_knowledge collisions", () => {
+  it("preserves knowledge denials and rejects concrete veryfront__search_knowledge collisions", () => {
     const denied = agent({
       id: "denied-scoped-knowledge",
       system: "Do not search knowledge.",
-      tools: { search_knowledge: false },
+      tools: { veryfront__search_knowledge: false },
       knowledge: true,
       skills: [],
     });
-    assertEquals(denied.config.tools, { search_knowledge: false });
+    assertEquals(denied.config.tools, { veryfront__search_knowledge: false });
 
     const customKnowledgeTool = tool({
       id: "search_knowledge",
@@ -549,12 +555,12 @@ describe("agent factory", () => {
         agent({
           id: "custom-knowledge-collision",
           system: "Use scoped knowledge.",
-          tools: { search_knowledge: customKnowledgeTool },
+          tools: { veryfront__search_knowledge: customKnowledgeTool },
           knowledge: true,
           skills: [],
         }),
       Error,
-      "custom search_knowledge tool conflicts with the agent knowledge scope",
+      "reserved integration tool namespace",
     );
   });
 

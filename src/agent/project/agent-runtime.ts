@@ -43,7 +43,7 @@ const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 
 function shouldProjectPositiveToolName(
   name: string,
