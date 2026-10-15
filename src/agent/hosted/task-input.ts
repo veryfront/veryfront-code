@@ -20,7 +20,8 @@ const apply = Reflect.apply,
 const trustedInputs = new WeakSet<object>();
 const weakHas = WeakSet.prototype.has, weakAdd = WeakSet.prototype.add;
 const encoder = new PrivateTextEncoder();
-const sortedKeys = (value: object) => apply(sort, keys(value), []) as string[];
+const sortedKeys = <TValue extends object>(value: TValue) =>
+  apply(sort, keys(value), []) as string[];
 /** JSON values transported separately from model-visible handoff instructions. */
 export type HostedTaskInputValue =
   | null
@@ -166,10 +167,11 @@ export function getVerifiedHostedTaskInput(context: unknown): HostedTaskInput | 
 }
 
 const executionInputs = createPrivateWeakStore<object, HostedTaskInput | undefined>();
+type HostedTaskInputExecutionOwner = Parameters<typeof executionInputs.get>[0];
 
 /** @internal Attach only verified, exact-scope input to a host-owned execution carrier. */
 export function bindHostedTaskInputAuthority(
-  owner: object,
+  owner: HostedTaskInputExecutionOwner,
   input: HostedTaskInput | undefined,
   scope: HostedTaskInputScope,
 ): void {
@@ -187,13 +189,16 @@ export function bindHostedTaskInputAuthority(
 }
 
 /** @internal Preserve input authority across framework-owned fork projections. */
-export function inheritHostedTaskInputAuthority(target: object, source: object): void {
+export function inheritHostedTaskInputAuthority(
+  target: HostedTaskInputExecutionOwner,
+  source: HostedTaskInputExecutionOwner,
+): void {
   executionInputs.set(target, executionInputs.get(source));
 }
 
 /** @internal Read the private channel against the actual execution project. */
 export function readHostedTaskInputAuthority(
-  owner: object,
+  owner: HostedTaskInputExecutionOwner,
   projectId: string | null,
 ): HostedTaskInput | undefined {
   const input = executionInputs.get(owner);

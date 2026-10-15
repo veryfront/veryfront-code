@@ -22,8 +22,8 @@ export function snapshotHostedAcceptedTaskInputEvent(
     projectId: "bounded",
     rootRunId: "bounded",
     runId: "bounded",
-    payload: value as unknown as Record<string, HostedTaskInputValue>,
-  }).payload as unknown as HostedAcceptedTaskInputEvent;
+    payload: value,
+  }).payload as HostedAcceptedTaskInputEvent;
   if (
     Object.keys(snapshot).sort().join(",") !==
       "artifactVersions,payload,sourceEventIds,targetAgentId,type,version" ||

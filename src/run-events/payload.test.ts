@@ -92,7 +92,7 @@ describe("run-events/payload", () => {
     const withSchema = RUN_EVENT_TYPES.filter((eventType) =>
       RUN_EVENT_PAYLOAD_SCHEMAS[eventType] !== undefined
     );
-    assertEquals(CONTROL_PLANE_TYPES.length, 17);
+    assertEquals(CONTROL_PLANE_TYPES.length, 19);
     assertEquals(withSchema.length, RUN_EVENT_TYPES.length - CONTROL_PLANE_TYPES.length);
     for (const eventType of CONTROL_PLANE_TYPES) {
       assertEquals(RUN_EVENT_PAYLOAD_SCHEMAS[eventType], undefined);

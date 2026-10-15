@@ -245,13 +245,13 @@ export type CreateDefaultHostedChatRuntimeOptions = {
 };
 
 function createDefaultTaskContext(
-  input: CreateDefaultHostedChatRuntimeContextInput,
+  input: CreateDefaultHostedChatRuntimeContextInput & { taskInput: HostedTaskInput | undefined },
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
     runId: input.options.runId,
     rootRunId: input.options.rootRunId,
-    taskInput: resolveHostedTaskInput(input.options.taskInput, input.options),
+    taskInput: input.taskInput,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     projectSlug: input.options.projectSlug,
@@ -653,7 +653,6 @@ export async function createDefaultHostedChatRuntime(
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
   const taskInput = resolveHostedTaskInput(input.options.taskInput, input.options);
-  input = { ...input, options: { ...input.options, taskInput } };
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
@@ -679,7 +678,7 @@ export async function createDefaultHostedChatRuntime(
       );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
-        : createDefaultTaskContext({ options: input.options, modelId });
+        : createDefaultTaskContext({ options: input.options, modelId, taskInput });
       inheritHostedChildInferenceAuthority(taskContext, input.options);
       // The id is normalized, so hosted identity comes from the run's routing,
       // read with the run's credentials and served catalog.

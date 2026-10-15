@@ -1,7 +1,10 @@
 import { hostedInheritedRootRunId, hostedInheritedTaskInput } from "./terminal-credential.ts";
 import type { HostedTaskInput } from "./task-input.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
-import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
+import {
+  inheritHostedChildInferenceAuthority,
+  scopeHostedChildInferenceAuthority,
+} from "./inference-credential.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
@@ -371,6 +374,8 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
       ? hostedInheritedRootRunId(durableChildRun, options.context.projectId) ?? taskInput?.rootRunId
       : undefined,
   };
+
+  inheritHostedChildInferenceAuthority(childContext, options.context);
 
   const globalTools = withPlatformHostToolAliases(
     {
