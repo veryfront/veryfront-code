@@ -122,6 +122,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
   const conversations = new Map<string, string>();
+  const pendingAdmissions = new Map<string, { key: string; messagePersisted: boolean }>();
   const active = new Set<ConnectedLocalRun>();
   let worker: Promise<{ id: string }> | undefined;
   let admissionTail: Promise<unknown> = Promise.resolve();
@@ -189,21 +190,30 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       input.signal.throwIfAborted();
       await client.heartbeatWorker(registered.id);
       input.signal.throwIfAborted();
+      const requestKey = JSON.stringify([input.agentId, input.threadId, input.messages]);
+      const admission = pendingAdmissions.get(requestKey) ?? {
+        key: `local-admission:${crypto.randomUUID()}`,
+        messagePersisted: false,
+      };
+      pendingAdmissions.set(requestKey, admission);
       let conversationId = conversations.get(input.threadId);
       if (!conversationId) {
         conversationId = (await api("/conversations", {
           project_reference: options.projectId,
           title: `Local ${input.agentId}`,
+          idempotency_key: `${workerKey}:${input.threadId}`,
         })).id;
         conversations.set(input.threadId, conversationId);
         input.signal.throwIfAborted();
       }
       const lastUser = input.messages.findLast((message) => message.role === "user");
-      if (lastUser) {
+      if (lastUser && !admission.messagePersisted) {
         await api(`/conversations/${conversationId}/messages`, {
           role: "user",
           parts: lastUser.parts,
+          idempotency_key: admission.key,
         });
+        admission.messagePersisted = true;
       }
       input.signal.throwIfAborted();
       const accepted = await api("/runs", {
@@ -228,7 +238,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             worker_key: workerKey,
           },
         },
-      });
+      }, { "Idempotency-Key": admission.key });
+      pendingAdmissions.delete(requestKey);
       try {
         input.signal.throwIfAborted();
         const claim = await client.claimRun({

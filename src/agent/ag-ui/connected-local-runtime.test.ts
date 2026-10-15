@@ -27,6 +27,7 @@ function fixture(
     registerFailureOnce?: boolean;
     registerGate?: Promise<void>;
     completeFailure?: boolean;
+    loseRunResponseOnce?: boolean;
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
     workerDisplayName?: string;
@@ -40,6 +41,7 @@ function fixture(
   const batches: unknown[][] = [];
   let id = 0;
   let registrations = 0;
+  let runResponseLost = false;
   const registeredWorkers: Record<string, unknown>[] = [];
   const sequences: number[] = [];
   const client = {
@@ -113,6 +115,10 @@ function fixture(
               status: options.apiFailure.status,
             }),
         );
+      }
+      if (path === "/runs" && options.loseRunResponseOnce && !runResponseLost) {
+        runResponseLost = true;
+        return Promise.reject(new TypeError("accepted run response lost"));
       }
       if (path === options.abortOnPath) options.controller?.abort();
       if (path === "/conversations") {
@@ -375,6 +381,30 @@ describe("connected local execution", () => {
     }
   });
 
+  it("reuses run admission authority without appending a duplicate user message after a lost response", async () => {
+    const f = fixture({ loseRunResponseOnce: true });
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      signal: new AbortController().signal,
+    };
+    await assertRejects(() => f.runtime.admit(input), TypeError, "response lost");
+    const run = await f.runtime.admit(input);
+    await run.finish("completed");
+    const requests = f.requests.filter((request) => request.path === "/runs");
+    assertEquals(requests.length, 2);
+    const key = requests[0]!.headers.get("Idempotency-Key");
+    assertEquals(typeof key, "string");
+    assertEquals(requests[1]!.headers.get("Idempotency-Key"), key);
+    assertEquals(requests[1]!.body, requests[0]!.body);
+    assertEquals(f.requests.filter((request) => request.path.endsWith("/messages")).length, 1);
+    assertEquals(
+      f.requests.filter((request) => request.path.endsWith("/messages"))[0]!.body.idempotency_key,
+      key,
+    );
+    await f.runtime.dispose();
+  });
   it("admits the selected project/environment and persists before forwarding output", async () => {
     const f = fixture();
     const run = await f.runtime.admit({
