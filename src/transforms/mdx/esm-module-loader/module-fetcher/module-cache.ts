@@ -63,6 +63,7 @@ export async function cacheModule(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   dev = false,
+  runtimeScope?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
 
@@ -85,6 +86,7 @@ export async function cacheModule(
       moduleServerOrigin,
       serverExternalPackages,
       dev,
+      runtimeScope,
     ),
   );
 

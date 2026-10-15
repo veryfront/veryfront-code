@@ -98,3 +98,7 @@ Validate the status that route normally returns. Do not require a `200` from
 the environment root when the project has no static page at `/`.
 
 See [Deployment behavior](./deploying.md) for readiness and URL semantics.
+See [Environments](https://veryfront.com/docs/cloud/apis/environments) for
+environment variables, custom domains and dedicated servers through the API.
+Access tokens belong to
+[Identity and access](https://veryfront.com/docs/cloud/apis/identity-and-access).

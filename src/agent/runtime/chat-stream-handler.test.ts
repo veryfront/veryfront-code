@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 import {
   assert,
   assertEquals,
@@ -1182,6 +1183,84 @@ describe("chat-stream-handler", () => {
       );
       assertEquals(semanticIdleState.accumulatedText, "Ready.");
       assertEquals(semanticIdleState.finishReason, "stop");
+    });
+
+    for (const phase of ["input", "commit"] as const) {
+      it(`keeps the legacy local-tool ${phase} deadline across metadata`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        let now = 0;
+        let metadataRead = 0;
+        await processStream(
+          {
+            fullStream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+                if (phase === "commit") yield { type: "tool-input-end", id: "local" };
+                for (let i = 0; i < 3; i++) {
+                  now += 6;
+                  metadataRead++;
+                  yield { type: "data-heartbeat", data: i };
+                }
+                yield { type: "finish", finishReason: "stop", totalUsage: null };
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          {
+            streamLifecycleMode: "legacy",
+            localToolInputIdleTimeoutMs: 10,
+            localToolCommitGraceMs: 10,
+            streamLifecyclePolicy: {
+              clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+            },
+          },
+        );
+        assertEquals(metadataRead, 2, "metadata must not renew the local-tool deadline");
+        assertEquals(state.finishReason, "tool-calls");
+        assertEquals(state.toolCalls.get("local")?.inputAvailable, phase === "commit");
+      });
+    }
+
+    it("renews the legacy local-tool input deadline for changed arguments", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let now = 0;
+      await processStream(
+        {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+              now = 6;
+              yield { type: "tool-input-delta", id: "local", delta: '{"query":"ok"}' };
+              now = 12;
+              yield { type: "data-heartbeat", data: 1 };
+              yield { type: "tool-input-end", id: "local" };
+              yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        state,
+        controller,
+        encoder,
+        "t",
+        {
+          streamLifecycleMode: "legacy",
+          localToolInputIdleTimeoutMs: 10,
+          localToolCommitGraceMs: 10,
+          streamLifecyclePolicy: {
+            clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+          },
+        },
+      );
+      assertEquals(state.toolCalls.get("local")?.inputAvailable, true);
+      assertEquals(state.toolCalls.get("local")?.arguments, '{"query":"ok"}');
+      assertEquals(state.finishReason, "tool-calls");
     });
 
     it("applies the semantic-idle budget after reasoning-only progress", async () => {
@@ -4738,6 +4817,32 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
 // error can contain a database URL or an internal path, which AGENTS.md forbids
 // in user-facing output.
 describe("resolveRelayableExecutionFailure", () => {
+  it("preserves only the registered final-request budget failure across public boundaries", () => {
+    const budget = AGENT_CONTEXT_WINDOW_EXCEEDED.create({
+      detail: "Private request details must not cross the public stream boundary",
+    });
+    const expected = {
+      type: "error" as const,
+      error: AGENT_CONTEXT_WINDOW_EXCEEDED.title,
+      code: "AGENT_CONTEXT_WINDOW_EXCEEDED",
+    };
+    assertEquals(resolveRuntimeExecutionErrorEvent(budget), expected);
+    assertEquals(resolveRuntimeStreamErrorEvent(budget), expected);
+    assertEquals(resolveRelayableExecutionFailure(budget), {
+      message: expected.error,
+      code: expected.code,
+    });
+    assertStrictEquals(resolveRelayableExecutionFailure(new Error(budget.message)), undefined);
+    assertStrictEquals(
+      resolveRelayableExecutionFailure({
+        slug: AGENT_CONTEXT_WINDOW_EXCEEDED.slug,
+        code: expected.code,
+        message: budget.message,
+      }),
+      undefined,
+    );
+  });
+
   it("withholds a non-provider failure's message from the relay", () => {
     const persistenceFailure = new Error(
       "finalize failed: postgres://user:pw@db.internal:5432/veryfront timed out",

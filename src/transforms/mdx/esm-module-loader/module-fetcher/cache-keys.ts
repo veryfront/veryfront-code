@@ -30,6 +30,7 @@ export function getMdxModuleCacheVariant(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   dev?: boolean,
+  runtimeScope?: string,
 ): string | undefined {
   // MDX cache variants use the `on:` prefix to opt into the variant segment.
   const segments: string[] = [];
@@ -43,6 +44,7 @@ export function getMdxModuleCacheVariant(
   if (externalIdentity) segments.push(`on:server-externals-${hashString(externalIdentity)}`);
 
   if (dev) segments.push(MDX_MODULE_DEV_COMPILE_VARIANT);
+  if (runtimeScope) segments.push(`on:react-runtime-${runtimeScope}`);
 
   return segments.length > 0 ? segments.join(":") : undefined;
 }
@@ -67,6 +69,7 @@ export function getTransformCacheKey(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   dev?: boolean,
+  runtimeScope?: string,
 ): string {
   return buildMdxEsmTransformCacheKey(
     projectId,
@@ -79,6 +82,7 @@ export function getTransformCacheKey(
       moduleServerOrigin,
       serverExternalPackages,
       dev,
+      runtimeScope,
     ),
   );
 }
@@ -90,6 +94,7 @@ export function getVersionedPathCacheKey(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   dev?: boolean,
+  runtimeScope?: string,
 ): string {
   return buildMdxEsmPathCacheKey(
     normalizedPath,
@@ -99,6 +104,7 @@ export function getVersionedPathCacheKey(
       moduleServerOrigin,
       serverExternalPackages,
       dev,
+      runtimeScope,
     ),
   );
 }

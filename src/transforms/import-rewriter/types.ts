@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Unified import rewriting types.
  *
@@ -44,6 +45,7 @@ export interface RewriteContext {
   dependencyPinningCacheKey?: string;
   /** Immutable dependency map captured with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Collect inert unresolved-dependency metadata for cache-hit replay. */

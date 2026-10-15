@@ -1,6 +1,7 @@
 import { resolveVeryfrontCloudProviderToolNames } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { HostToolSet, ToolDefinition } from "#veryfront/tool";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_fetch",
@@ -13,15 +14,11 @@ const PROVIDER_NATIVE_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   web_fetch: "Fetch and read the contents of a web page.",
   web_search: "Search the web for current information.",
 };
-const providerNativeExposureDefinitions = new WeakSet<ToolDefinition>();
-const IntrinsicWeakSetAdd = WeakSet.prototype.add;
-const IntrinsicWeakSetHas = WeakSet.prototype.has;
+const providerNativeExposureDefinitions = createPrivateWeakStore<ToolDefinition, true>();
 
 /** Whether this definition is a schema-free provider-native discovery entry. */
 export function isProviderNativeToolExposureDefinition(definition: ToolDefinition): boolean {
-  return IntrinsicReflectApply(IntrinsicWeakSetHas, providerNativeExposureDefinitions, [
-    definition,
-  ]);
+  return providerNativeExposureDefinitions.get(definition) === true;
 }
 
 const IntrinsicArraySort = Array.prototype.sort;
@@ -147,7 +144,7 @@ export function createProviderNativeToolExposureDefinitions(
       description: PROVIDER_NATIVE_TOOL_DESCRIPTIONS[toolName] ?? "Provider-native tool.",
       parameters: { type: "object", properties: {} },
     };
-    IntrinsicReflectApply(IntrinsicWeakSetAdd, providerNativeExposureDefinitions, [definition]);
+    providerNativeExposureDefinitions.set(definition, true);
     selected[selected.length] = definition;
   }
   IntrinsicReflectApply(IntrinsicArraySort, selected, [

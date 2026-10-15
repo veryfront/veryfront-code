@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import {
   awaitAbortable,
   computeHash,
@@ -33,6 +35,7 @@ import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/depend
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -272,6 +275,8 @@ export async function loadTSXComponent(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<BundledReact.ComponentType> {
   throwIfAborted(signal);
   const prepared = getRuntimeModuleLoader(adapter);
@@ -289,6 +294,7 @@ export async function loadTSXComponent(
     dependencyPinningSource ?? projectDir,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   );
   const hash = await computeHash(source);
   const legacyCacheKey =
@@ -305,8 +311,11 @@ export async function loadTSXComponent(
   if (serverExternalPackagesIdentity) {
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
+  // Layout exports retain their React imports; peer replacement must separate
+  // both persistent entries and the single-flight work using this key.
+  cacheKey += `:react-runtime:${await getSSRReactRuntimeCacheScope(reactPeers)}`;
   // The transform output differs by mode, so the two modes must not share an
-  // entry. Production keeps the historical key shape. Preview instruments the
+  // entry. Preview instruments the
   // output with node positions on top of a production compile, so it needs its
   // own entry too.
   if (dev) cacheKey += ":dev";
@@ -339,6 +348,8 @@ export async function loadTSXComponent(
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
+          reactPeers,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
           mode: modes.environment,
           signal: control.signal,
@@ -383,6 +394,7 @@ export async function loadTSXComponent(
  * consumes it.
  */
 export interface MDXLayoutModuleOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   bundle: MdxBundle;
   /** Original layout source identity for prepared execution. */
   sourcePath?: string;
@@ -402,6 +414,7 @@ export interface MDXLayoutModuleOptions {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   moduleServerOrigin?: string;
   config?: VeryfrontConfig;
@@ -435,6 +448,8 @@ export function loadMDXLayout(
     reactVersion,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
+    reactPeers,
     dependencyPinningSource,
     moduleServerOrigin,
     config,
@@ -493,6 +508,8 @@ export function loadMDXLayout(
           reactVersion,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
           dependencyPinningSource,
           moduleServerOrigin,
           isLocalProject,
@@ -547,6 +564,8 @@ export async function applyTSXLayout(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -555,7 +574,7 @@ export async function applyTSXLayout(
     projectSlug,
   });
 
-  const React = await getProjectReact(reactVersion, adapter);
+  const React = await getProjectReact(reactVersion, adapter, reactPeers);
 
   try {
     applyTsxLayoutLog.debug("loadTSXComponent START", { componentPath: item.componentPath });
@@ -578,6 +597,8 @@ export async function applyTSXLayout(
       moduleServerOrigin,
       serverExternalPackages,
       signal,
+      dependencyPinningConfiguredVersions,
+      reactPeers,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -613,7 +634,7 @@ export async function applyMDXLayout(
   options: ApplyMDXLayoutOptions,
 ): Promise<BundledReact.ReactElement> {
   const { element, mergedComponents, reactVersion } = options;
-  const React = await getProjectReact(reactVersion, options.adapter);
+  const React = await getProjectReact(reactVersion, options.adapter, options.reactPeers);
   const LayoutFn = await loadMDXLayout(options);
 
   if (!LayoutFn) {

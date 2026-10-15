@@ -3,24 +3,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ClientGraph,
   collectClientGraph,
-  createRealReader,
   findServerOnlyLeaks,
-  loadImportMap,
   type ReadModule,
-  SERVER_ONLY_MODULE_PATTERNS,
   staticSpecifiers,
   summarizeGraph,
   traceLeak,
 } from "./client-bundle-graph.ts";
 
-const ROOT = new URL("../../", import.meta.url);
 const SRC_IMPORT_MAP = { "#veryfront/": "./src/" };
-
-// The #3661 crash class — must never reach a browser entrypoint.
-const CRITICAL_PATTERNS: readonly RegExp[] = [
-  /\/platform\/adapters\/runtime\/[^/]+\/(adapter|filesystem-adapter)\.ts$/,
-  /\/platform\/adapters\/runtime\/shared\/node-filesystem-adapter\.ts$/,
-];
 
 function memoryReader(modules: Record<string, string>): ReadModule {
   return (repoPath) => {
@@ -48,6 +38,32 @@ function graphFrom(modules: Record<string, string>): Promise<ClientGraph> {
 
 describe("scripts/lint/client-bundle-graph", () => {
   describe("findServerOnlyLeaks", () => {
+    it("rejects Node builtins through re-exports and side-effect imports", async () => {
+      const graph = await graphFrom({
+        "app/client-entry.ts": 'export { value } from "./helper.ts";',
+        "app/helper.ts":
+          'import "node:buffer";\nimport { readFile } from "fs";\nexport const value = readFile;',
+      });
+      assertEquals(findServerOnlyLeaks(graph), ["node:buffer", "node:fs"]);
+      assertEquals(
+        traceLeak(graph, "node:buffer"),
+        "app/client-entry.ts → app/helper.ts → node:buffer",
+      );
+    });
+
+    it("fails closed when an internal module cannot be read", async () => {
+      let failure: unknown;
+      try {
+        await graphFrom({
+          "app/client-entry.ts": 'export * from "./missing.ts";',
+        });
+      } catch (error) {
+        failure = error;
+      }
+      assert(failure instanceof Error);
+      assert(failure.message.includes("missing.ts"));
+    });
+
     it("flags a server module reached from a client entry, with the import chain", async () => {
       const graph = await graphFrom({
         "app/client-entry.ts":
@@ -154,6 +170,14 @@ describe("scripts/lint/client-bundle-graph", () => {
   });
 
   describe("staticSpecifiers", () => {
+    it("ignores imports in comments and template examples", () => {
+      assertEquals([
+        ...staticSpecifiers(
+          "// import x from \"node:fs\";\nconst example = `\nimport y from './missing.ts';\n`;\nexport { real } from './real.ts';",
+        ),
+      ], ["./real.ts"]);
+    });
+
     it("keeps two interleaved iterations independent", () => {
       // It is a generator, so it suspends mid-scan with a live `lastIndex`. A
       // shared global regex would let one source advance the other's cursor and
@@ -194,32 +218,6 @@ describe("scripts/lint/client-bundle-graph", () => {
         byteCount,
         encoder.encode(entry).length + encoder.encode(dep).length,
       );
-    });
-  });
-
-  describe("the framework's real browser barrel", () => {
-    it("index.client.ts reaches no server runtime adapter (#3661 crash class)", async () => {
-      const graph = await collectClientGraph(
-        "src/index.client.ts",
-        await loadImportMap(ROOT),
-        createRealReader(ROOT),
-      );
-
-      assert(
-        graph.size > 10,
-        `expected a non-trivial graph, got ${graph.size} modules`,
-      );
-      const critical = findServerOnlyLeaks(graph, CRITICAL_PATTERNS);
-      assertEquals(
-        critical,
-        [],
-        critical.length
-          ? "index.client.ts leaks a runtime adapter:\n" +
-            critical.map((leak) => traceLeak(graph, leak)).join("\n")
-          : "",
-      );
-      // Every server-only pattern is a valid RegExp against a normalised path.
-      assert(SERVER_ONLY_MODULE_PATTERNS.every((p) => p instanceof RegExp));
     });
   });
 });

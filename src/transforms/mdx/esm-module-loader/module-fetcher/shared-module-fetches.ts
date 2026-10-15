@@ -1,3 +1,4 @@
+import { getModuleFetcherReactRuntimeIdentity } from "./react-runtime-identity.ts";
 /**
  * Process-wide single-flight for entry module fetches.
  *
@@ -22,7 +23,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { recordModuleToSession, runWithModuleRecorder } from "./render-sessions.ts";
 
@@ -115,10 +115,11 @@ export function replayBorrowedModules(borrowed: BorrowedModules): void {
  * module is part of the key, so results never cross projects, content
  * sources, compile modes, or dependency snapshots.
  */
-export function getSharedModuleFetchKey(
+export async function getSharedModuleFetchKey(
   context: ModuleFetcherContext,
   bindingKey: string,
-): string {
+): Promise<string> {
+  const identity = getModuleFetcherReactRuntimeIdentity(context);
   return JSON.stringify([
     context.projectId,
     context.contentSourceId ?? "",
@@ -126,7 +127,8 @@ export function getSharedModuleFetchKey(
     context.projectDir,
     context.isLocalProject === true,
     context.dev === true,
-    context.reactVersion ?? REACT_DEFAULT_VERSION,
+    identity.reactVersion,
+    await identity.scope,
     context.dependencyPinningCacheKey ?? "off",
     context.moduleServerOrigin ?? "",
     [...(context.serverExternalPackages ?? [])].sort(compareStrings),
@@ -157,17 +159,21 @@ export interface SharedModuleFetchOptions {
  * shared resolution never waits on another one.
  */
 export async function runSharedModuleFetch(
-  key: string,
+  key: string | Promise<string>,
   resolve: () => Promise<string | null>,
   options: SharedModuleFetchOptions = {},
 ): Promise<string | null> {
   if (sharedResolutionScope.getStore()) return await resolve();
+  // Capture the pool before asynchronous key preparation. Invalidation swaps
+  // the pool, so a request already started cannot join the replacement pool.
+  const flights = sharedModuleFetches;
+  const resolvedKey = typeof key === "string" ? key : await key;
 
   let leading = false;
   let result: SharedModuleFetchResult;
   try {
-    result = await sharedModuleFetches.do(
-      key,
+    result = await flights.do(
+      resolvedKey,
       () => {
         leading = true;
         const recordedModules = new Set<string>();

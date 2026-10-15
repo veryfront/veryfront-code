@@ -111,7 +111,28 @@ describe("canonical npm artifact workflow", () => {
       30,
       "The tested npm artifact must remain available through production approval",
     );
+    const runtimeDependencies = namedStep(
+      producer,
+      "Install runtime resolver fixture",
+    );
+    assertStringIncludes(
+      String(runtimeDependencies.run),
+      "npm ci --ignore-scripts --prefix tests/node/resolver-dependencies",
+    );
+    assertStringIncludes(
+      String(runtimeDependencies.run),
+      "cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/",
+    );
+    assert(
+      steps.indexOf(runtimeDependencies) >
+        steps.indexOf(namedStep(producer, "Build and pack tested npm output")),
+      "test fixtures must not affect the published package manifest",
+    );
     const archive = namedStep(producer, "Archive npm runtime workspace");
+    assert(
+      steps.indexOf(runtimeDependencies) < steps.indexOf(archive),
+      "runtime dependencies must be archived for all consumers",
+    );
     assertStringIncludes(
       String(archive.run),
       "tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz",
@@ -121,7 +142,10 @@ describe("canonical npm artifact workflow", () => {
       asRecord(step.with, "runtime artifact upload inputs").name ===
         "npm-runtime-workspace-${{ github.sha }}"
     );
-    assert(runtimeUpload, "The producer must upload the built runtime workspace");
+    assert(
+      runtimeUpload,
+      "The producer must upload the built runtime workspace",
+    );
     assertEquals(
       asRecord(runtimeUpload.with, "runtime artifact upload inputs"),
       {
@@ -328,7 +352,10 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(node["continue-on-error"], undefined);
     assertEquals(node.needs, ["npm-compatibility-artifact"]);
     assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/4)");
-    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
+    assertEquals(
+      strategy["fail-fast"],
+      "${{ github.event_name == 'merge_group' }}",
+    );
     assertEquals(matrix.shard, [1, 2, 3, 4]);
     assert(
       jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),
@@ -402,7 +429,10 @@ describe("canonical npm artifact workflow", () => {
 
   it("prepares the numbered RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
-    const prerelease = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
+    const prerelease = asRecord(
+      jobs["github-prerelease"],
+      "GitHub prerelease job",
+    );
     const prereleaseSteps = jobSteps(prerelease, "prerelease job");
     const prepareSbom = namedStep(prerelease, "Prepare RC checkout for SBOM");
     const generateSbom = namedStep(prerelease, "Generate SBOM");
@@ -455,14 +485,20 @@ describe("canonical npm artifact workflow", () => {
       NPM_SMOKE_RESULT: "skipped",
       RUNTIME_CRITICAL_FLOW_RESULT: "skipped",
     };
-    const reused = await runArtifactGate({ ...skipped, REUSED_RUN_ID: "36825693208" });
+    const reused = await runArtifactGate({
+      ...skipped,
+      REUSED_RUN_ID: "36825693208",
+    });
     assertEquals(reused.code, 0);
     assertStringIncludes(
       new TextDecoder().decode(reused.stdout),
       "NPM_SMOKE_RESULT passed in merge-queue run 36825693208",
     );
     assertEquals(
-      (await runArtifactGate({ NPM_SMOKE_RESULT: "failure", REUSED_RUN_ID: "36825693208" })).code,
+      (await runArtifactGate({
+        NPM_SMOKE_RESULT: "failure",
+        REUSED_RUN_ID: "36825693208",
+      })).code,
       1,
     );
     assertEquals((await runArtifactGate(skipped)).code, 1);

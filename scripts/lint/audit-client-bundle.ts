@@ -1,3 +1,4 @@
+import { BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 /**
  * Fail-loud client-bundle boundary lint (#3670).
  *
@@ -35,12 +36,23 @@ const ROOT = new URL("../../", import.meta.url);
 const BASELINE_URL = new URL("client-bundle-baseline.json", import.meta.url);
 
 /** Browser entrypoints whose client graph must stay server-free. */
-const ENTRYPOINTS: ReadonlyArray<{ label: string; entry: string }> = [
-  { label: "veryfront (browser/SSR barrel)", entry: "src/index.client.ts" },
-];
+const denoConfig = JSON.parse(
+  await Deno.readTextFile(new URL("deno.json", ROOT)),
+);
+const ENTRYPOINTS = BROWSER_SAFE_EXPORTS.map((label) => {
+  const source = denoConfig.exports[label];
+  if (typeof source !== "string") {
+    throw new Error(`Missing browser entrypoint ${label}`);
+  }
+  return {
+    label: `veryfront${label.slice(1)}`,
+    entry: source.replace(/^\.\//, ""),
+  };
+});
 
 /** The #3661 crash class: reaching any of these in a browser aborts hydration. Never baselineable. */
 const CRITICAL_PATTERNS: readonly RegExp[] = [
+  /^\/node:/,
   /\/platform\/adapters\/runtime\/[^/]+\/(adapter|filesystem-adapter)\.ts$/,
   /\/platform\/adapters\/runtime\/shared\/node-filesystem-adapter\.ts$/,
 ];
@@ -220,7 +232,7 @@ async function main(): Promise<void> {
     for (const leak of r.critical) {
       failed = true;
       console.error(
-        `::error file=${r.entry}::CRITICAL: the client graph reaches the server runtime adapter ` +
+        `::error file=${r.entry}::CRITICAL: the client graph reaches a Node builtin or server runtime adapter ` +
           `${leak} (the #3661 hydration crash). Import chain: ${
             traceLeak(r.graph, leak)
           }`,

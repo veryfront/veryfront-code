@@ -1,3 +1,4 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Shared constants, types, and caches for the SSR VF Modules stage.
  */
@@ -88,6 +89,7 @@ export function buildFrameworkTransformCacheKey(
   projectDir: string,
   sourceContent: string,
   importMapFingerprint?: string,
+  reactRuntimeScope?: string,
 ): string {
   const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
     fnv1aHash(sourceContent)
@@ -97,10 +99,16 @@ export function buildFrameworkTransformCacheKey(
   const identifierPart = quoteCacheIdentityPart(identifier);
   const contentPart = quoteCacheIdentityPart(contentFingerprint);
   if (importMapFingerprint === undefined) {
-    return `[${projectPart},${reactPart},${identifierPart},${contentPart}]`;
+    const scopePart = reactRuntimeScope === undefined
+      ? ""
+      : `,${quoteCacheIdentityPart(reactRuntimeScope)}`;
+    return `[${projectPart},${reactPart},${identifierPart},${contentPart}${scopePart}]`;
   }
   const importMapPart = quoteCacheIdentityPart(importMapFingerprint);
-  return `[${projectPart},${reactPart},${importMapPart},${identifierPart},${contentPart}]`;
+  const scopePart = reactRuntimeScope === undefined
+    ? ""
+    : `,${quoteCacheIdentityPart(reactRuntimeScope)}`;
+  return `[${projectPart},${reactPart},${importMapPart},${identifierPart},${contentPart}${scopePart}]`;
 }
 
 // Maximum entries for the per-process framework transform caches.
@@ -134,6 +142,10 @@ export const transformingFiles = new Set<string>();
 export const MAX_RELATIVE_IMPORT_DEPTH = 64;
 
 export interface TransformContext {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
+  /** One installed-peer scope captured by the root framework traversal. */
+  reactRuntimeScope?: Promise<string>;
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
