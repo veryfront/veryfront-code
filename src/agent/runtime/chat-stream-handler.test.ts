@@ -1807,6 +1807,7 @@ describe("chat-stream-handler", () => {
         requireProviderFinish: true,
         localToolCommitGraceMs: 7,
         streamIdleTimeoutMs: 25,
+        streamLifecyclePolicy: { clock: new ManualMonotonicClock() },
         setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
           if (state.providerMetadata === providerMetadata) {
             deadlinesAfterFinish.push(timeoutMs ?? 0);
