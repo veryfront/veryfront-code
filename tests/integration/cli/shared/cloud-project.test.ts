@@ -1,6 +1,11 @@
+import { chooseCloudProject } from "../../../../cli/shared/cloud-project.ts";
+import { readProjectLink } from "../../../../cli/shared/project-link.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { saveSharedProjectAssociation } from "../../../../cli/shared/project-link.ts";
 
@@ -115,3 +120,133 @@ it("asks new or existing project only after choosing Yes", async () => {
     },
   ]);
 });
+
+it("creates a cloud project without uploading local source", async () => {
+  await withCloudSetup(async (directory, requests) => {
+    await withMockFetch(
+      ((_input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ url: String(_input), method: init?.method ?? "GET" });
+        return Promise.resolve(Response.json({ id: "cloud-new" }, { status: 201 }));
+      }) as typeof fetch,
+      async () => {
+        await chooseCloudProject(directory, (_question, _options) =>
+          Promise.resolve(
+            requests.length ? null : _question === "Use Veryfront Cloud?" ? "yes" : "new",
+          ));
+      },
+    );
+    assertEquals(requests.map((request) => [new URL(request.url).pathname, request.method]), [[
+      "/projects",
+      "POST",
+    ]]);
+    assertEquals(JSON.parse(await Deno.readTextFile(`${directory}/veryfront.json`)), {
+      projectSlug: "local-app",
+      apiUrl: "https://api.veryfront.com",
+    });
+    assertEquals((await readProjectLink(directory))?.projectId, "cloud-new");
+  });
+});
+
+it("lists every cloud project page and saves the selected canonical identity", async () => {
+  await withCloudSetup(async (directory, requests) => {
+    await withMockFetch(
+      ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        requests.push({ url: url.href, method: init?.method ?? "GET" });
+        return Promise.resolve(Response.json(
+          url.searchParams.has("cursor")
+            ? {
+              data: [{ id: "cloud-second", slug: "shared-app", name: "Shared app" }],
+              page_info: {},
+            }
+            : {
+              data: [{ id: "cloud-first", slug: "first-app" }],
+              page_info: { next: "next-page" },
+            },
+        ));
+      }) as typeof fetch,
+      async () => {
+        await chooseCloudProject(directory, (question, options) => {
+          if (question === "Use Veryfront Cloud?") return Promise.resolve("yes");
+          if (question === "Choose a cloud project:") return Promise.resolve("existing");
+          assertEquals(options.map((option) => option.value), ["cloud-first", "cloud-second"]);
+          return Promise.resolve("cloud-second");
+        });
+      },
+    );
+    assertEquals(requests.length, 2);
+    assertEquals(new URL(requests[1]!.url).searchParams.get("cursor"), "next-page");
+    assertEquals(JSON.parse(await Deno.readTextFile(`${directory}/veryfront.json`)), {
+      projectSlug: "shared-app",
+      apiUrl: "https://api.veryfront.com",
+    });
+    assertEquals((await readProjectLink(directory))?.projectId, "cloud-second");
+  });
+});
+
+it("leaves local source unassociated when the cloud project list is empty", async () => {
+  await withCloudSetup(async (directory) => {
+    await withMockFetch(
+      (() => Promise.resolve(Response.json({ data: [], page_info: {} }))) as typeof fetch,
+      async () => {
+        await assertRejects(
+          () =>
+            chooseCloudProject(
+              directory,
+              (question) =>
+                Promise.resolve(question === "Use Veryfront Cloud?" ? "yes" : "existing"),
+            ),
+          Error,
+          "No cloud projects found",
+        );
+      },
+    );
+    assertEquals(await readProjectLink(directory), null);
+    assertEquals((await Array.fromAsync(Deno.readDir(directory))).map((entry) => entry.name), [
+      "package.json",
+    ]);
+  });
+});
+
+it("keeps the local project unassociated when cloud project selection is cancelled", async () => {
+  await withCloudSetup(async (directory) => {
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          Response.json({ data: [{ id: "cloud-one", slug: "shared" }], page_info: {} }),
+        )) as typeof fetch,
+      async () => {
+        await chooseCloudProject(directory, (question) =>
+          Promise.resolve(
+            question === "Use Veryfront Cloud?"
+              ? "yes"
+              : question === "Choose a cloud project:"
+              ? "existing"
+              : null,
+          ));
+      },
+    );
+    assertEquals(await readProjectLink(directory), null);
+    assertEquals((await Array.fromAsync(Deno.readDir(directory))).map((entry) => entry.name), [
+      "package.json",
+    ]);
+  });
+});
+
+async function withCloudSetup(
+  action: (directory: string, requests: Array<{ url: string; method: string }>) => Promise<void>,
+) {
+  const directory = await makeTempDirWithOptions();
+  const saved = getEnv("VERYFRONT_API_TOKEN");
+  try {
+    setEnv("VERYFRONT_API_TOKEN", "host-only-token");
+    _resetEnvironmentConfig();
+    await Deno.writeTextFile(`${directory}/package.json`, JSON.stringify({ name: "local-app" }));
+    await action(directory, []);
+  } finally {
+    if (saved === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+    else setEnv("VERYFRONT_API_TOKEN", saved);
+    _resetEnvironmentConfig();
+    await Deno.remove(directory, { recursive: true });
+  }
+}

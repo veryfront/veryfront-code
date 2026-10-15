@@ -692,13 +692,26 @@ jobs:
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
+      - name: Collect connected local CLI coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/cli/dev/proxy-mode.test.ts \
+            tests/integration/cli/dev/display-options.test.ts \
+            tests/integration/cli/pull/project-bootstrap.test.ts \
+            tests/integration/cli/shared/cloud-project.test.ts \
+            tests/integration/agent/connected-local-inference.test.ts
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
       - name: Merge coverage reports for SonarQube
         run: |
           deno task coverage:ci:merge -- --threshold=0 \
             coverage-profiles/coverage-shard-* \
             coverage-profiles/coverage-native-executor \
             coverage-profiles/coverage-integration-client \
-            coverage-profiles/coverage-context-ownership
+            coverage-profiles/coverage-context-ownership \
+            coverage-profiles/coverage-connected-local
       - name: Upload merged Sonar coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

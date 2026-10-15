@@ -862,6 +862,28 @@ done
       String(merge.run),
       "coverage-profiles/coverage-context-ownership",
     );
+    const onboarding = steps.find((step) =>
+      step.name === "Collect connected local CLI coverage from checked-out source"
+    );
+    assert(onboarding, "Relocated onboarding tests must contribute to the Sonar report");
+    assertStringIncludes(String(onboarding.run), "--coverage-raw-data-only");
+    assertEquals(
+      asRecord(onboarding.env, "onboarding coverage environment").DENO_COVERAGE_DIR,
+      "coverage-profiles/coverage-connected-local",
+    );
+    for (
+      const target of [
+        "tests/integration/cli/dev/proxy-mode.test.ts",
+        "tests/integration/cli/dev/display-options.test.ts",
+        "tests/integration/cli/pull/project-bootstrap.test.ts",
+        "tests/integration/cli/shared/cloud-project.test.ts",
+      ]
+    ) assertStringIncludes(String(onboarding.run), target);
+    assertStringIncludes(
+      String(onboarding.run),
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local",
+    );
+    assertStringIncludes(String(merge.run), "coverage-profiles/coverage-connected-local");
     assertEquals(
       steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
       1,
