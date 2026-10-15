@@ -90,6 +90,8 @@ export function createNodeVeryfrontCloudAgentServiceContext(
   const defaultProcessTarget = resolveDefaultProcessTarget();
   const processTarget = options.processTarget ?? defaultProcessTarget;
   const environment = resolveEnvironment({ env: options.env, processTarget });
+  // The default target is the same process object, whose env may include project env files.
+  // Use the operator-only reader for it; explicit env and custom targets are caller-trusted.
   initializeServiceRuntimeIdentity(
     options.env ?? (processTarget !== defaultProcessTarget ? processTarget?.env : undefined),
   );
