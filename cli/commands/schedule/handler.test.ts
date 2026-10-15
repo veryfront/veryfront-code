@@ -621,6 +621,40 @@ describe("remote schedule polling", () => {
     );
   });
 
+  it("rejects a malformed run body on the first poll instead of polling it", async () => {
+    const malformed: unknown[] = [
+      null,
+      { ...makeRun(), status: undefined },
+      { ...makeRun(), status: "finished" },
+      { ...makeRun(), started_at: 42 },
+      { ...makeRun(), execution: { timeout_seconds: "60" } },
+    ];
+    for (const body of malformed) {
+      let polls = 0;
+      let sleeps = 0;
+      const client = {
+        getRun: () => {
+          polls += 1;
+          return Promise.resolve(body as RemoteScheduleRun);
+        },
+      } satisfies Pick<VeryfrontRunsClient, "getRun">;
+
+      await assertRejects(
+        () =>
+          waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(), {
+            sleep: () => {
+              sleeps += 1;
+              return Promise.resolve();
+            },
+          }),
+        Error,
+        "Remote schedule returned an invalid run",
+      );
+      assertEquals(polls, 1);
+      assertEquals(sleeps, 0);
+    }
+  });
+
   it("reports cancelled runs as failures", async () => {
     const client = {
       getRun: () => Promise.resolve(makeRun({ status: "cancelled" })),

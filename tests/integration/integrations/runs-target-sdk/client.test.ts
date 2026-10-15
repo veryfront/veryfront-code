@@ -723,6 +723,36 @@ describe("Runs target SDK", () => {
     assertEquals(requests(), 1);
   });
 
+  it("rejects an invalid artifact byte limit from a custom transport before reading", async () => {
+    for (const maxResponseBytes of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      let bodyRead = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          bodyRead = true;
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      }, { highWaterMark: 0 });
+      const sdk = createRunsSdk({
+        transport: {
+          // A host transport that forwards the limit without normalizing it.
+          request: async (_path, init) =>
+            await init!.onResponse!(
+              new Response(body),
+              { ...init, maxResponseBytes },
+              "https://api.example.test/runs/r/artifacts/a",
+            ),
+        },
+      });
+      await assertRejects(
+        () => sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "a" } }),
+        RangeError,
+        "maxResponseBytes",
+      );
+      assertEquals(bodyRead, false);
+    }
+  });
+
   it("rejects a run artifact call that is missing artifact_id before sending it", async () => {
     const { sdk, requests } = sdkWith([]);
     await assertRejects(

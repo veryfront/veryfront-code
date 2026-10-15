@@ -458,7 +458,11 @@ export async function readVeryfrontApiResponse(
   }
 }
 
-function requireSuccessResponseByteLimit(value: number | undefined): number {
+/**
+ * Resolve a success-body byte limit, defaulting when absent and throwing a `RangeError` for
+ * anything other than a positive safe integer within the transport ceiling.
+ */
+export function requireSuccessResponseByteLimit(value: number | undefined): number {
   const limit = value ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   if (
     !Number.isSafeInteger(limit) ||

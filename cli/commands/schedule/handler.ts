@@ -264,6 +264,42 @@ export function toScheduleAgentOptions(
 /** The grouped run resource `VeryfrontRunsClient.getRun()` returns. */
 export type RemoteScheduleRun = RunsOutput<"getRun">;
 
+const REMOTE_SCHEDULE_RUN_STATUSES: ReadonlySet<string> = new Set(
+  [
+    "pending",
+    "running",
+    "waiting",
+    "completed",
+    "failed",
+    "cancelled",
+  ] as const satisfies readonly RemoteScheduleRun["status"][],
+);
+
+/**
+ * Reject a run body whose polled fields are malformed. `getRun()` only decodes JSON, so an
+ * unknown status would otherwise be polled until the execution deadline.
+ */
+function requireRemoteScheduleRun(run: unknown, runId: string): RemoteScheduleRun {
+  const candidate = run as Partial<Record<keyof RemoteScheduleRun, unknown>> | null;
+  const execution = candidate?.execution as Record<string, unknown> | null | undefined;
+  const isOptionalNumber = (value: unknown) =>
+    value === undefined || value === null || typeof value === "number";
+  if (
+    typeof candidate !== "object" || candidate === null ||
+    typeof candidate.status !== "string" || !REMOTE_SCHEDULE_RUN_STATUSES.has(candidate.status) ||
+    !(candidate.started_at === undefined || candidate.started_at === null ||
+      typeof candidate.started_at === "string") ||
+    !(execution === undefined || (typeof execution === "object" && execution !== null)) ||
+    !isOptionalNumber(execution?.timeout_seconds) ||
+    !isOptionalNumber(execution?.duration_ms)
+  ) {
+    throw DEPLOYMENT_ERROR.create({
+      detail: `Remote schedule returned an invalid run: ${runId}`,
+    });
+  }
+  return candidate as RemoteScheduleRun;
+}
+
 export async function waitForRemoteScheduleRun(
   client: Pick<VeryfrontRunsClient, "getRun">,
   accepted: CreateScheduleRunFromSourceResult,
@@ -283,7 +319,7 @@ export async function waitForRemoteScheduleRun(
   const queueDeadline = acceptedAt + REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS;
   let executionStartedAtMs: number | undefined;
   while (true) {
-    const run = await client.getRun(runId);
+    const run = requireRemoteScheduleRun(await client.getRun(runId), runId);
     const observedAt = now();
     const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : NaN;
     if (executionStartedAtMs === undefined && Number.isFinite(parsedStartedAt)) {

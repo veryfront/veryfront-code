@@ -9,8 +9,8 @@
 import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
-  DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
   readVeryfrontApiResponse,
+  requireSuccessResponseByteLimit,
   successfulResponseProtocolError,
   type TransportRequestInit,
   type VeryfrontApiTransport,
@@ -223,10 +223,12 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
         if (response.ok && route.stream) return response;
         // Read the artifact here, under the attempt's timeout, abort signal and retry policy.
         if (response.ok && route.binary) {
+          // Validate the limit here too: a custom transport may pass it through unnormalized.
           return await readBlob(
             response,
-            responseInit.maxResponseBytes ?? options.maxResponseBytes ??
-              DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+            requireSuccessResponseByteLimit(
+              responseInit.maxResponseBytes ?? options.maxResponseBytes,
+            ),
             url,
             signal,
           );

@@ -15,9 +15,11 @@ runs through the built-in eval task.
 - A **target** names the capability being executed, for example
   `task:knowledge-ingest`, `workflow:content-pipeline`, or `task:eval`.
 - **events** are the canonical user-visible output stream.
-- The run record stores the terminal execution shape directly: `target`,
-  `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
-  and `exit_code`.
+- The run that `runs.getRun()` returns groups its execution details: `target`
+  is `{ type, id }`, `input`, `config`, `output`, `error` and `artifacts` sit at
+  the top level, and `execution` holds `logs`, `duration_ms`, `exit_code` and
+  `timeout_seconds`. The deprecated `get()` returns the older flat shape,
+  with those fields at the top level.
 - Runtime adapters such as process execution are implementation details.
 
 ## Prerequisites
@@ -77,10 +79,12 @@ await runs.createTaskRun({
 ```
 
 A run's `input` and `output` read back as the same JSON values. When the
-target declares an input or output schema, the run also carries
-`input_schema_sha256` and `output_schema_sha256`: the sha256 of the canonical
-JSON Schema it was admitted against. They are `null` when the target declares
-no schema, and absent on API versions that predate them.
+target declares an input or output schema, the run from `runs.getRun()` also
+carries `schemas.input` and `schemas.output`, each with the canonical JSON
+Schema the run was admitted against and its `sha256`. Each is `null` when the
+target declares no schema, and `schemas` is absent on API versions that
+predate it. The deprecated `get()` exposes the digests as
+`input_schema_sha256` and `output_schema_sha256`.
 
 See [Run input and output](./run-input-output.md) for what each run kind
 stores, declared schemas, rejected input, `null` output, and JSON
@@ -331,7 +335,10 @@ kind, and REST, GraphQL and MCP report the same code for the same failure:
 
 HTTP 413 and 429 responses map to `limit_exceeded` as well.
 
-Match on the `RUN_*` code from `runsProblemOf(error)?.code`.
+Match on the `RUN_*` code from `runsProblemOf(error)?.code`. When an error
+response has no Problem body (empty, HTML, truncated or malformed JSON), the
+target SDK builds one from the HTTP status with the code `UNEXPECTED_RESPONSE`.
+Treat it by its `status`, not as a Runs Problem.
 
 A `RUN_CONFLICT` may include an optional `cause`:
 `schedule_concurrency_forbidden` means the schedule forbids a new run while an

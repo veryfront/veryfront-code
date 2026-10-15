@@ -49,7 +49,9 @@ error kind: `RUN_INVALID_INPUT` is `invalid_input`, `RUN_UNAUTHENTICATED` is
 `unauthenticated`, `RUN_FORBIDDEN` is `forbidden`, `RUN_NOT_FOUND` and `RUN_GONE`
 are `not_found`, `RUN_CONFLICT` is `conflict`, `RUN_SNAPSHOT_LIMIT_EXCEEDED` is
 `limit_exceeded`, `RUN_EVENT_IDENTITY_PENDING` is `not_ready`, and
-`RUN_INTERNAL_ERROR` and `RUN_ERROR` are `internal`. The
+`RUN_INTERNAL_ERROR` and `RUN_ERROR` are `internal`. An error response without a
+Problem body (empty, HTML or malformed JSON) yields a Problem built from the HTTP
+status with the code `UNEXPECTED_RESPONSE`. The
 [Runs guide](../../../docs/guides/runs.md#error-codes) describes each code.
 
 The target routes remain gated by the consumer integration work in issue #2239;

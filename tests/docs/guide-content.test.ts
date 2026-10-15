@@ -1307,6 +1307,12 @@ describe("guide content contracts", () => {
     // get() is deprecated; every example reads the grouped resource.
     assertEquals(guide.includes("runs.get("), false);
     assertStringIncludes(guide, "The older `get()` is deprecated");
+    // Field guidance describes the grouped getRun() shape, with flat names scoped to get().
+    assertStringIncludes(guide, "`execution` holds `logs`, `duration_ms`, `exit_code`");
+    assertStringIncludes(guide, "carries `schemas.input` and `schemas.output`");
+    assertEquals(guide.includes("stores the terminal execution shape directly"), false);
+    // A non-Problem error body surfaces the SDK fallback code, not a RUN_* code.
+    assertStringIncludes(guide, "with the code `UNEXPECTED_RESPONSE`");
     for (
       const [code, kind] of [
         ["RUN_INVALID_INPUT", "invalid_input"],
