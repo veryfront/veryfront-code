@@ -813,6 +813,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
           "tool_search",
           "form_input",
           "agent_researcher",
+          "web_fetch",
           "web_search",
         ],
       }),

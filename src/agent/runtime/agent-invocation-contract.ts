@@ -512,6 +512,11 @@ const MALFORMED = Symbol("malformed");
  * provider tools, so a provider name that matches one of these would re-grant
  * the host capability (`invoke_agent` through legacy delegation, knowledge
  * search, a configured delegate, the skill loader, ...).
+ *
+ * `web_fetch` is reserved too: when the selected model has no native fetch
+ * support, hosted preparation satisfies a granted `web_fetch` provider tool
+ * with the framework's local host `web_fetch` fallback, which would make a
+ * callable host tool available despite deny-all.
  */
 const DENY_ALL_RESERVED_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
   "invoke_agent",
@@ -519,6 +524,7 @@ const DENY_ALL_RESERVED_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
   "form_input",
   "tool_search",
   "search_knowledge",
+  "web_fetch",
 ]);
 const DENY_ALL_RESERVED_HOST_TOOL_PREFIXES: readonly string[] = [
   "veryfront__",
