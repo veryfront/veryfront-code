@@ -187,7 +187,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
               controller.enqueue({
                 type: "tool-call",
                 toolCallId: "open-project-1",
-                toolName: "studio_open_project",
+                toolName: "veryfront__studio_open_project",
                 input: { project_reference: "project-two" },
               });
               controller.enqueue({ type: "finish", finishReason: "tool-calls", usage: {} });
@@ -209,7 +209,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     instructions: "Use the available tools.",
     agentId: "root-agent",
     model: "test/hosted-project-switch",
-    allowedTools: ["studio_open_project"],
+    allowedTools: ["veryfront__studio_open_project"],
     allowDelegation: false,
     clientProfile,
   });

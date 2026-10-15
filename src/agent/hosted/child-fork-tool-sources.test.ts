@@ -201,7 +201,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",
-      toolName: "veryfront__get_tool_access_profile",
+      toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
       context: undefined,
     },
@@ -216,63 +216,73 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   await result.closeStudioMcpTools?.();
 });
 
-Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with the tool access profile", async () => {
-  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
-    id: config.id ?? "source",
-    listTools: () =>
-      Promise.resolve([
-        remoteTool("create_server"),
-        remoteTool("delete_server"),
-        remoteTool("update_file"),
-      ]),
-    executeTool: (toolName, args) => {
-      if (toolName === "veryfront__get_tool_access_profile") {
-        return Promise.resolve({
-          version: 1,
-          freshness: {
-            resolved_at: "2999-01-01T00:00:00.000Z",
-            valid_for_ms: 60_000,
-            fail_closed_on_expiry: true,
-          },
-          families: [
-            {
-              family: "runtime",
-              default_decision: {
-                visibility: "hidden",
-                reason_code: "billing_plan_restriction",
-              },
-              action_overrides: [
-                {
-                  action: "delete_server",
-                  decision: { visibility: "visible", reason_code: "allowed" },
-                },
-              ],
+Deno.test("prepareDefaultHostedChildForkToolSources filters bare and canonical API catalogs without changing their wire names", async () => {
+  for (const wirePrefix of ["", "veryfront__"] as const) {
+    const executed: string[] = [];
+    const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
+      id: config.id ?? "source",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool(`${wirePrefix}create_server`),
+          remoteTool(`${wirePrefix}delete_server`),
+          remoteTool(`${wirePrefix}update_file`),
+        ]),
+      executeTool: (toolName, args) => {
+        if (!toolName.startsWith(wirePrefix) || (!wirePrefix && toolName.includes("__"))) {
+          throw new Error(`unexpected ${wirePrefix ? "bare" : "canonical"} wire name: ${toolName}`);
+        }
+        executed.push(toolName);
+        if (toolName === `${wirePrefix}get_tool_access_profile`) {
+          return Promise.resolve({
+            version: 1,
+            freshness: {
+              resolved_at: "2999-01-01T00:00:00.000Z",
+              valid_for_ms: 60_000,
+              fail_closed_on_expiry: true,
             },
-          ],
-        });
-      }
+            families: [
+              {
+                family: "runtime",
+                default_decision: {
+                  visibility: "hidden",
+                  reason_code: "billing_plan_restriction",
+                },
+                action_overrides: [
+                  {
+                    action: "delete_server",
+                    decision: { visibility: "visible", reason_code: "allowed" },
+                  },
+                ],
+              },
+            ],
+          });
+        }
 
-      return Promise.resolve({ success: true, project_id: args.project_id });
-    },
-  });
+        return Promise.resolve({ success: true, project_id: args.project_id });
+      },
+    });
 
-  const result = await prepareDefaultHostedChildForkToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "https://api.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
-    getProjectId: () => "project-1",
-    createRemoteToolSource,
-  });
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-api" }],
+      getProjectId: () => "project-1",
+      createRemoteToolSource,
+    });
 
-  assertEquals(result.ok, true);
-  if (!result.ok) {
-    return;
+    assertEquals(result.ok, true);
+    if (!result.ok) continue;
+
+    assertEquals(Object.keys(result.forkTools), [
+      "veryfront__delete_server",
+      "veryfront__update_file",
+    ]);
+    await result.forkTools.veryfront__delete_server?.execute?.({});
+    assertEquals(executed, [
+      `${wirePrefix}get_tool_access_profile`,
+      `${wirePrefix}delete_server`,
+    ]);
   }
-
-  assertEquals(Object.keys(result.forkTools), [
-    "veryfront__delete_server",
-    "veryfront__update_file",
-  ]);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy at listing and execution", async () => {
@@ -325,7 +335,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy
     Error,
     'Tool "delete_file" is not allowed for this MCP server',
   );
-  assertEquals(executed, ["veryfront__get_tool_access_profile", "update_file"]);
+  assertEquals(executed, ["get_tool_access_profile", "update_file"]);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources enforces generic MCP tool policy at listing and execution", async () => {
@@ -829,7 +839,7 @@ Deno.test("child canonical platform tools preserve wire names, denials, and proj
     assertEquals(Object.keys(result.forkTools), ["get_file", "veryfront__get_file"]);
     assertEquals(await result.forkTools.get_file!.execute!({}), { owner: "project" });
     assertEquals(await result.forkTools.veryfront__get_file!.execute!({}), { owner: "platform" });
-    assertEquals(executed, ["veryfront__get_tool_access_profile", "get_file"]);
+    assertEquals(executed, ["get_tool_access_profile", "get_file"]);
   }
 });
 

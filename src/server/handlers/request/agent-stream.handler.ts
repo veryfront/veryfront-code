@@ -628,9 +628,8 @@ async function withVeryfrontPlatformRemoteTools(input: {
     platformRemoteToolSource,
     platformToolDefinitions,
   );
-  const { aliases } = platformCatalog;
   platformToolDefinitions = platformCatalog.definitions;
-  for (const [, wireName] of aliases) {
+  for (const { name: wireName } of platformToolDefinitions) {
     const legacyName = platformMcpLegacyName(wireName);
     const canonicalName = `veryfront__${legacyName}`;
     if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {

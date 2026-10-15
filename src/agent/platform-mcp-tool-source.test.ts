@@ -1,6 +1,11 @@
 import { inheritTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { createMcpToolPolicyGate } from "./mcp-tool-policy.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLivePlatformMcpSource,
@@ -54,7 +59,9 @@ describe("platform MCP catalog aliases", () => {
         return {};
       },
     }, definitions);
-    assertEquals(catalog.definitions, [definitions[1]]);
+    const canonicalDefinition = definitions[1];
+    assertExists(canonicalDefinition);
+    assertEquals(catalog.definitions, [canonicalDefinition]);
     await catalog.source.executeTool("veryfront__get_file", {});
     assertEquals(calls, ["veryfront__get_file"]);
   });

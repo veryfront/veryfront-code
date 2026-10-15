@@ -114,6 +114,7 @@ const objectPrototype = Object.prototype;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
 const stringStartsWith = String.prototype.startsWith;
+const stringIndexOf = String.prototype.indexOf;
 const arrayIsArray = Array.isArray;
 const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
@@ -1005,7 +1006,17 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
-        if (!includes(toolAssembly.authorizedToolNames, name)) {
+        if (includes(toolAssembly.authorizedToolNames, name)) continue;
+        const localToolDescriptor = objectGetOwnPropertyDescriptor(assemblyInput.localTools, name);
+        const localTool = localToolDescriptor && hasOwn(localToolDescriptor, "value")
+          ? localToolDescriptor.value
+          : undefined;
+        const isBareTrustedHostTool = apply(stringIndexOf, name, ["__"]) === -1 &&
+          hasTrustedHostToolProvenance(localTool);
+        if (
+          !isBareTrustedHostTool ||
+          !includes(toolAssembly.authorizedToolNames, `veryfront__${name}`)
+        ) {
           refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
         }
       }

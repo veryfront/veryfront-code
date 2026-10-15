@@ -1370,7 +1370,7 @@ describe("agent/ag-ui-handler", () => {
 
     const body = await response.text();
     assertStringIncludes(body, "knowledge-kept");
-    assertEquals(observedToolNames.includes("search_knowledge"), true);
+    assertEquals(observedToolNames.includes("veryfront__search_knowledge"), true);
   });
 
   it("preserves a factory-assigned agent id on the rebuilt restricted agent", async () => {

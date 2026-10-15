@@ -19,7 +19,11 @@ for (const mode of ["generate", "stream"] as const) {
             const turns: ScriptedTurnScript[] = [];
             if (loading === "deferred") {
               turns.push({
-                toolCalls: [{ id: "search", name: "tool_search", input: { query: name } }],
+                toolCalls: [{
+                  id: "search",
+                  name: "veryfront__tool_search",
+                  input: { query: name },
+                }],
               });
             }
             turns.push({ toolCalls: [{ id: "write", name, input: { id: "synthetic-agent" } }] });

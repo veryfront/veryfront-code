@@ -253,9 +253,10 @@ export async function fetchVeryfrontApiToolAccessProfile(input: {
   source: RemoteToolSource;
   projectId: string;
   context?: ToolExecutionContext;
+  toolName?: string;
 }): Promise<VeryfrontApiToolAccessProfile | null> {
   const rawProfile = await input.source.executeTool(
-    `veryfront__${TOOL_ACCESS_PROFILE_TOOL_NAME}`,
+    input.toolName ?? `veryfront__${TOOL_ACCESS_PROFILE_TOOL_NAME}`,
     { project_reference: input.projectId },
     input.context,
   );
@@ -268,6 +269,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
   projectId: string | null;
   context?: ToolExecutionContext;
   nowMs?: number;
+  profileToolName?: string;
 }): Promise<ToolDefinition[]> {
   if (!input.projectId) {
     return [...input.toolDefinitions];
@@ -278,6 +280,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
       source: input.source,
       projectId: input.projectId,
       context: input.context,
+      toolName: input.profileToolName,
     });
     if (profile && isVeryfrontApiToolAccessProfileFresh(profile, input.nowMs)) {
       return filterVeryfrontApiToolDefinitionsByAccessProfile({

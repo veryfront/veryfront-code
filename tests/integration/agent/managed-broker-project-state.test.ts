@@ -98,7 +98,7 @@ describe("managed broker project state", () => {
     });
     const refreshed = await state.refreshProjectSteering(
       new AbortController().signal,
-      ["tool_search", "veryfront__load_skill"],
+      ["veryfront__load_skill", "veryfront__tool_search"],
     );
     const text = JSON.stringify(refreshed);
     assertStringIncludes(text, "Call veryfront__load_skill({ inventory:");
