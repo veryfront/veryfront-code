@@ -67,3 +67,33 @@ it("preserves onboarding response status, headers, and JSON", async () => {
   assertEquals(response.headers.get("x-request-id"), "request-1");
   assertEquals(await response.json(), { detail: "denied" });
 });
+
+it("cancels both buffered response branches when the read deadline expires", async () => {
+  let cancellation: unknown;
+  let cancelled!: () => void;
+  const cancellationDone = new Promise<void>((resolve) => {
+    cancelled = resolve;
+  });
+  const transport = withOnboardingDeadline(() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          cancel(reason) {
+            cancellation = reason;
+            cancelled();
+          },
+        }),
+      ),
+    ), 5);
+  await assertRejects(
+    () => transport("https://api.example.test/projects"),
+    DOMException,
+    "timed out",
+  );
+  await cancellationDone;
+  assertEquals(Array.isArray(cancellation), true);
+  assertEquals((cancellation as DOMException[]).map((reason) => reason.name), [
+    "TimeoutError",
+    "TimeoutError",
+  ]);
+});

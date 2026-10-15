@@ -1,7 +1,9 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { createApiClient } from "../../../../../../cli/shared/config.ts";
+import { withOnboardingDeadline } from "../../../../../../cli/shared/onboarding-fetch.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { stub } from "#std/testing/mock";
 import {
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
@@ -107,10 +109,11 @@ it("connected preflight ignores a project-replaced global fetch", async () => {
     throw new Error("host transport reached");
   }, async () => {
     // Fault injection models project config replacing the global, not a network stub.
-    const poisoned = stub(globalThis, "fetch", () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => {
       projectRequests++;
       throw new Error("project transport reached");
-    });
+    };
     try {
       const controlPlane = createConnectedDevControlPlane({
         apiUrl: "https://api.example.com",
@@ -121,7 +124,7 @@ it("connected preflight ignores a project-replaced global fetch", async () => {
       assertEquals(hostRequests, 1);
       assertEquals(projectRequests, 0);
     } finally {
-      poisoned.restore();
+      globalThis.fetch = originalFetch;
     }
   });
 });
@@ -176,4 +179,103 @@ for (const path of ["project", "environment"]) {
       );
     });
   });
+}
+
+for (const onboarding of [false, true]) {
+  for (const kind of ["json", "error", "empty", "binary", ...(onboarding ? ["auth"] : [])]) {
+    it(`consumes trusted ${kind} API responses after project prototype replacement (onboarding=${onboarding})`, async () => {
+      const response = kind === "error"
+        ? Response.json({ detail: "trusted rejection" }, { status: 403 })
+        : kind === "empty"
+        ? new Response(null, { status: 204 })
+        : kind === "binary"
+        ? new Response("trusted bytes", { headers: { "content-type": "application/octet-stream" } })
+        : Response.json({ secret: "trusted value" });
+      const responseFields = [
+        "body",
+        "headers",
+        "ok",
+        "status",
+        "statusText",
+        "json",
+        "arrayBuffer",
+        "text",
+        "clone",
+      ];
+      const responseDescriptors = responseFields.map((name) =>
+        [name, Object.getOwnPropertyDescriptor(Response.prototype, name)!] as const
+      );
+      const headerFields = ["get", Symbol.iterator] as const;
+      const headerDescriptors = headerFields.map((name) =>
+        [name, Object.getOwnPropertyDescriptor(Headers.prototype, name)!] as const
+      );
+      let poisonedCalls = 0;
+      const poison = () => {
+        poisonedCalls++;
+        throw new Error("project response hook invoked");
+      };
+      let result: unknown;
+      let failure: unknown;
+      try {
+        for (const [name, descriptor] of responseDescriptors) {
+          Object.defineProperty(
+            Response.prototype,
+            name,
+            "get" in descriptor ? { ...descriptor, get: poison } : { ...descriptor, value: poison },
+          );
+        }
+        for (const [name, descriptor] of headerDescriptors) {
+          Object.defineProperty(Headers.prototype, name, { ...descriptor, value: poison });
+        }
+        const transport: typeof fetch = () => Promise.resolve(response);
+        const client = createApiClient({
+          apiUrl: "https://api.example.test",
+          apiToken: "private",
+          projectSlug: "demo",
+        }, onboarding ? withOnboardingDeadline(transport) : transport);
+        try {
+          if (kind === "auth") {
+            const trusted = await withOnboardingDeadline(transport)("https://api.example.test/me");
+            result = {
+              ok: trusted.ok,
+              status: trusted.status,
+              contentType: trusted.headers.get("content-type"),
+              body: await trusted.json(),
+            };
+          } else {
+            result = kind === "binary"
+              ? await client.getStream!("/projects/demo/upload")
+              : await client.get("/projects/demo");
+          }
+        } catch (error) {
+          failure = error;
+        }
+      } finally {
+        for (const [name, descriptor] of responseDescriptors) {
+          Object.defineProperty(Response.prototype, name, descriptor);
+        }
+        for (const [name, descriptor] of headerDescriptors) {
+          Object.defineProperty(Headers.prototype, name, descriptor);
+        }
+      }
+      assertEquals(poisonedCalls, 0);
+      if (kind === "error") assertEquals((failure as Error)?.message, "trusted rejection");
+      else {
+        if (failure) throw failure;
+        if (kind === "binary") {
+          assertEquals(
+            await new Response(result as ReadableStream<Uint8Array>).text(),
+            "trusted bytes",
+          );
+        } else if (kind === "auth") {
+          assertEquals(result, {
+            ok: true,
+            status: 200,
+            contentType: "application/json",
+            body: { secret: "trusted value" },
+          });
+        } else assertEquals(result, kind === "empty" ? undefined : { secret: "trusted value" });
+      }
+    });
+  }
 }

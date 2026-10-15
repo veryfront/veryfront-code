@@ -32,6 +32,17 @@ const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
 const API_MAX_RETRIES = 3;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const stringSplit = String.prototype.split;
+const stringToLowerCase = String.prototype.toLowerCase;
+const ResponseJson = Response.prototype.json;
+const ResponseOkGet = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(Response.prototype, "statusText")!
+  .get!;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!.get!;
+const HeadersGet = Headers.prototype.get;
+const StreamCancel = ReadableStream.prototype.cancel;
 
 /** Returns true for HTTP status codes that indicate a transient gateway failure. */
 function isTransientStatus(status: number): boolean {
@@ -925,11 +936,14 @@ export function createApiClient(
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    if (!response.ok) {
-      let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+    const status = applyIntrinsic(ResponseStatusGet, response, []) as number;
+    if (!applyIntrinsic(ResponseOkGet, response, [])) {
+      let errorMessage = `API request failed: ${status} ${
+        applyIntrinsic(ResponseStatusTextGet, response, [])
+      }`;
 
       try {
-        const parsed = ApiErrorSchema.safeParse(await response.json());
+        const parsed = ApiErrorSchema.safeParse(await applyIntrinsic(ResponseJson, response, []));
         if (parsed.success) {
           errorMessage = formatApiError(parsed.data, errorMessage);
         }
@@ -937,26 +951,32 @@ export function createApiClient(
         // Keep default error message if JSON parsing fails
       }
 
-      errorMessage = addTokenSourceHint(errorMessage, response.status);
+      errorMessage = addTokenSourceHint(errorMessage, status);
       const err = new Error(errorMessage) as Error & { status: number };
-      err.status = response.status;
+      err.status = status;
       throw err;
     }
 
-    if (response.status === 204 && !binary) return undefined as T;
+    if (status === 204 && !binary) return undefined as T;
 
     if (binary) {
-      if (
-        !response.body ||
-        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
-          "application/octet-stream"
-      ) {
-        await response.body?.cancel();
+      const body = applyIntrinsic(ResponseBodyGet, response, []) as
+        | ReadableStream<Uint8Array>
+        | null;
+      const headers = applyIntrinsic(ResponseHeadersGet, response, []) as Headers;
+      const contentType = applyIntrinsic(HeadersGet, headers, ["content-type"]) as string | null;
+      const mimeType = contentType === null ? null : applyIntrinsic(
+        stringToLowerCase,
+        applyIntrinsic(stringTrim, applyIntrinsic(stringSplit, contentType, [";"])[0], []),
+        [],
+      );
+      if (!body || mimeType !== "application/octet-stream") {
+        if (body) await applyIntrinsic(StreamCancel, body, []);
         throw new Error("API did not return upload content");
       }
-      return response.body as T;
+      return body as T;
     }
-    return response.json() as Promise<T>;
+    return applyIntrinsic(ResponseJson, response, []) as Promise<T>;
   }
 
   /** Returns true for request methods that are safe to retry on any transient failure. */
