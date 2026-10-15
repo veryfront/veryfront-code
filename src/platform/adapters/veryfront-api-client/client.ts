@@ -396,10 +396,18 @@ export class VeryfrontApiClient {
   // Project Operations
   // =============================================================================
 
+  /**
+   * Lists the projects the credential can read (`listProjects`, `GET /projects`).
+   * Returns the first page only; the response's page cursor is not followed.
+   */
   listProjects() {
     return this.operations.listProjects();
   }
 
+  /**
+   * Reads one project by UUID or slug (`getProject`, `GET /projects/{project_reference}`).
+   * Defaults to the client's configured project slug.
+   */
   getProject(projectRef?: string, signal?: AbortSignal) {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
