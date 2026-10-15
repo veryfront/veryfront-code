@@ -214,12 +214,15 @@ describe("cicd coverage workflow", () => {
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts";
     assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), startupFixture);
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), startupFixture);
-    const processTargetFixture =
+    const processTargetStartupFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), processTargetFixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "sonar-coverage"),
+      processTargetStartupFixture,
+    );
     assertStringIncludes(
       jobBlock(await readPoolWorkflow(), "coverage-shards"),
-      processTargetFixture,
+      processTargetStartupFixture,
     );
     const envFileFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts";
