@@ -569,6 +569,65 @@ describe("Runs target SDK", () => {
     assertEquals(runsProblemOf(new Error("other")), undefined);
   });
 
+  it("downloads a run artifact as a Blob from its canonical route", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 250, 255]);
+    const { sdk, requests } = sdkWith([
+      new Response(bytes, { headers: { "Content-Type": "application/octet-stream" } }),
+    ]);
+    const blob: Blob = await sdk.readRunArtifact({
+      path: { run_id: RUN_ID, artifact_id: "report/v1.json" },
+    });
+    assert(blob instanceof Blob);
+    assertEquals(blob.type, "application/octet-stream");
+    assertEquals(new Uint8Array(await blob.arrayBuffer()), bytes);
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.method, "GET");
+    assertEquals(
+      requests[0]?.url,
+      `${BASE_URL}/runs/${RUN_ID}/artifacts/report%2Fv1.json`,
+    );
+    assertEquals(requests[0]?.headers.get("Accept"), "*/*");
+  });
+
+  it("maps a run artifact problem response to an error with its code and status", async () => {
+    const problem: RunsProblem = {
+      type: "about:blank",
+      title: "Not Found",
+      status: 404,
+      code: "RUN_NOT_FOUND",
+    };
+    const { sdk } = sdkWith([problemResponse(problem)]);
+    const error = await rejection(() =>
+      sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "missing" } })
+    );
+    assertEquals(error.status, 404);
+    assertEquals(runsProblemOf(error), problem);
+    assertEquals((error.context as { operationId?: string }).operationId, "readRunArtifact");
+  });
+
+  it("rejects a run artifact over maxResponseBytes", async () => {
+    const { sdk } = sdkWith([
+      new Response(streamResponse(["abcd", "efgh"]).body),
+      new Response("abcdefgh", { headers: { "Content-Length": "8" } }),
+    ]);
+    const input = { path: { run_id: RUN_ID, artifact_id: "big" } };
+    const streamed = await rejection(() => sdk.readRunArtifact(input, { maxResponseBytes: 6 }));
+    assertEquals(streamed.status, 502);
+    const declared = await rejection(() => sdk.readRunArtifact(input, { maxResponseBytes: 6 }));
+    assertEquals(declared.status, 502);
+  });
+
+  it("rejects a run artifact call that is missing artifact_id before sending it", async () => {
+    const { sdk, requests } = sdkWith([]);
+    await assertRejects(
+      // @ts-expect-error artifact_id is required.
+      () => sdk.readRunArtifact({ path: { run_id: RUN_ID } }),
+      TypeError,
+      "artifact_id",
+    );
+    assertEquals(requests.length, 0);
+  });
+
   it("rejects a call that is missing a path parameter before sending it", async () => {
     const { sdk, requests } = sdkWith([]);
     // @ts-expect-error run_id is required by the contract.

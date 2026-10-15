@@ -34,6 +34,10 @@ uses the same request path and response hook, then yields bounded frames rather
 than buffering the entire event stream. The host's transport owns tracing,
 metrics, retry decisions, redirect protection and outbound origin authorization.
 
+`sdk.readRunArtifact({ path: { run_id, artifact_id } })` downloads a file a run
+produced, using an `artifact_id` from `run.artifacts`, and resolves with a `Blob`. Its
+size is bounded by `maxResponseBytes` like a JSON body.
+
 List operations return `{ data, page_info }`. `page_info.next` is an opaque
 cursor: pass it back unchanged as `query.cursor`, with the same filters and
 ordering, and do not parse or build it. `sdk.paginate(operationId, input)`

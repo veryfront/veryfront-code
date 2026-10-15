@@ -9,6 +9,7 @@
 import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
+  DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
   readVeryfrontApiResponse,
   type TransportRequestInit,
   type VeryfrontApiTransport,
@@ -146,10 +147,20 @@ export type RunsPaginatedOperationId = {
     : never;
 }[RunsOperationId];
 
+/** Input of `readRunArtifact`: the canonical run UUID and an `artifact_id` from `run.artifacts`. */
+export interface RunsArtifactInput {
+  path: { run_id: string; artifact_id: string };
+}
+
 /** Typed client for every Runs target operation. */
 export type RunsSdk =
   & { readonly [K in RunsOperationId]: (...args: RunsArgs<K>) => RunsResult<K> }
   & {
+    /**
+     * Downloads a file a run produced (`GET /runs/{run_id}/artifacts/{artifact_id}`) as a
+     * `Blob`, bounded by `maxResponseBytes`. An error response rejects like every other method.
+     */
+    readRunArtifact(input: RunsArtifactInput, options?: RunsCallOptions): Promise<Blob>;
     /** Yields every item of a paginated list, following `page_info.next`. */
     paginate<K extends RunsPaginatedOperationId>(
       operationId: K,
@@ -176,16 +187,39 @@ const replacePath = String.prototype.replace;
 const applyPath = Reflect.apply;
 const FALLBACK_PROBLEM_CODE = "UNEXPECTED_RESPONSE";
 
+/** Operation IDs the SDK serves, including binary operations outside the pinned contract. */
+type SdkOperationId = RunsOperationId | "readRunArtifact";
+
+interface SdkRoute {
+  method: string;
+  path: string;
+  stream?: true;
+  binary?: true;
+}
+
+// The artifact download postdates the immutable 0.8.9 pin; move it into RUNS_OPERATIONS when
+// the pin includes it.
+const READ_RUN_ARTIFACT_ROUTE: SdkRoute = Object.freeze({
+  method: "GET",
+  path: "/runs/{run_id}/artifacts/{artifact_id}",
+  binary: true,
+});
+
+function routeOf(operationId: SdkOperationId): SdkRoute {
+  return operationId === "readRunArtifact" ? READ_RUN_ARTIFACT_ROUTE : RUNS_OPERATIONS[operationId];
+}
+
 /** Create a typed Runs SDK over the given transport. */
 export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
-  const send = async (operationId: RunsOperationId, input: WireInput, options: RunsCallOptions) => {
+  const send = async (operationId: SdkOperationId, input: WireInput, options: RunsCallOptions) => {
     const { path, init } = buildRequest(operationId, input, options);
     let headers: Headers | undefined;
     const result = await config.transport.request(path, {
       ...init,
       onResponse: async (response, responseInit, url, signal) => {
         if (response.ok) headers = response.headers;
-        if (response.ok && "stream" in RUNS_OPERATIONS[operationId]) return response;
+        const route = routeOf(operationId);
+        if (response.ok && (route.stream || route.binary)) return response;
         try {
           return await readVeryfrontApiResponse(response, responseInit, url, signal);
         } catch (error) {
@@ -260,7 +294,14 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     }
   }
 
-  const methods: Record<string, unknown> = { paginate };
+  const readRunArtifact = async (input: RunsArtifactInput, options: RunsCallOptions = {}) =>
+    await readBlob(
+      await send("readRunArtifact", input, options) as Response,
+      options.maxResponseBytes ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+      options.signal,
+    );
+
+  const methods: Record<string, unknown> = { paginate, readRunArtifact };
   for (const [operationId, route] of Object.entries(RUNS_OPERATIONS)) {
     methods[operationId] = "stream" in route
       ? (input?: WireInput, options?: RunsCallOptions) =>
@@ -279,11 +320,11 @@ export function runsProblemOf(error: unknown): RunsProblem | undefined {
 }
 
 function buildRequest(
-  operationId: RunsOperationId,
+  operationId: SdkOperationId,
   input: WireInput,
   options: RunsCallOptions,
 ): { path: string; init: TransportRequestInit } {
-  const route = RUNS_OPERATIONS[operationId];
+  const route = routeOf(operationId);
   const path = applyPath(replacePath, route.path, [
     PATH_PARAMETER,
     (_match: string, name: string) => {
@@ -305,7 +346,10 @@ function buildRequest(
   for (const [name, value] of Object.entries(input.headers ?? {})) {
     if (value !== undefined) headers.set(name, value);
   }
-  headers.set("Accept", "stream" in route ? "text/event-stream" : "application/json");
+  headers.set(
+    "Accept",
+    route.stream ? "text/event-stream" : route.binary ? "*/*" : "application/json",
+  );
   if (input.body !== undefined) headers.set("Content-Type", "application/json");
 
   return {
@@ -318,6 +362,40 @@ function buildRequest(
       maxResponseBytes: options.maxResponseBytes,
     },
   };
+}
+
+/** Read a binary success body into a `Blob`, failing closed once it exceeds `limit` bytes. */
+async function readBlob(response: Response, limit: number, signal?: AbortSignal): Promise<Blob> {
+  const tooLarge = () =>
+    API_CLIENT_ERROR.create({
+      detail: `readRunArtifact returned an artifact over ${limit} bytes`,
+      status: 502,
+      context: { operationId: "readRunArtifact" },
+    });
+  const declared = response.headers.get("content-length");
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) {
+    void response.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  const type = response.headers.get("content-type") ?? "";
+  if (!response.body) return new Blob([], { type });
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw tooLarge();
+      chunks.push(value);
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  }
+  return new Blob(chunks as BlobPart[], { type });
 }
 
 async function* readFrames(
@@ -412,7 +490,7 @@ function parseJson(operationId: RunsOperationId, text: string): unknown {
   }
 }
 
-function problemError(operationId: RunsOperationId, response: Response, text: string) {
+function problemError(operationId: SdkOperationId, response: Response, text: string) {
   const problem = readProblem(response, text);
   return API_CLIENT_ERROR.create({
     detail: problem.detail ?? problem.title,
