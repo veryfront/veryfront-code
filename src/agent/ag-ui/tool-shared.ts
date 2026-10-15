@@ -6,6 +6,7 @@ import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { RunResumeSessionManager } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
+import { createAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 
 /** Public API contract for AG-UI resume value. */
@@ -30,6 +31,8 @@ export function buildExplicitAgUiSourceTools(
   for (const [toolId, registryTool] of toolRegistry.getAll()) {
     if (isToolVisibleTo(registryTool, { agentId: agent.id })) tools[toolId] = true;
   }
+  const knowledgeTool = createAgentKnowledgeTool(agent.config);
+  if (knowledgeTool) tools.search_knowledge = knowledgeTool;
   return tools;
 }
 

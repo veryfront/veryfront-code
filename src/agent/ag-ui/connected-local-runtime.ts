@@ -447,7 +447,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             );
           },
           wrapStream(body) {
-            const iterator = streamDataStreamEvents(body);
+            const iterator = streamDataStreamEvents(body, controller.signal);
             let finished = false;
 
             return new ReadableStream<Uint8Array>({
@@ -509,8 +509,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               },
               async cancel() {
                 controller.abort();
-                await iterator.return(undefined);
-                await finish("cancelled");
+                try {
+                  await iterator.return(undefined);
+                } finally {
+                  await finish("cancelled");
+                }
               },
             });
           },

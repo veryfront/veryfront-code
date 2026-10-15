@@ -6,6 +6,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { createConnectedLocalRuntime } from "./connected-local-runtime.ts";
 import type { ExternalAgentWorkerClient } from "../service/external-worker-client.ts";
 import { createEphemeralAgent } from "../factory.ts";
+import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { tool } from "#veryfront/tool/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -353,6 +354,7 @@ describe("connected local execution", () => {
         id: "coder",
         system: "Use the project tools.",
         tools: true,
+        knowledge: true,
         skills: false,
       });
       assertEquals(source.config.tools, true);
@@ -365,6 +367,7 @@ describe("connected local execution", () => {
       assertEquals(preparedTools[registered[0]!], true);
       assertEquals(preparedTools[registered[1]!], true);
       assertEquals(preparedTools[registered[2]!], undefined);
+      assertEquals(isAgentKnowledgeTool(preparedTools.search_knowledge), true);
       assertEquals(prepared.config.delegates, undefined);
     } finally {
       await runtime.dispose().catch(() => {});
@@ -922,6 +925,43 @@ describe("connected local execution", () => {
     assertEquals(run.signal.aborted, true);
     assertEquals(f.completed, ["cancelled"]);
     await f.runtime.dispose();
+    assertEquals(f.completed, ["cancelled"]);
+  });
+  it("cancels a pending upstream read before waiting for stream cleanup", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        upstream = controller;
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const reader = run.wrapStream(body).getReader();
+    const read = reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const cancellation = reader.cancel();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      cancellation.then(() => true),
+      new Promise<boolean>((resolve) => timer = setTimeout(() => resolve(false), 100)),
+    ]);
+    clearTimeout(timer);
+    if (!settled) upstream.close();
+    await cancellation;
+    await read;
+    await f.runtime.dispose();
+    assertEquals(settled, true);
+    assertEquals(cancelled, true);
+    assertEquals(body.locked, false);
     assertEquals(f.completed, ["cancelled"]);
   });
   it("accepts completed tool output without requiring a text response", async () => {

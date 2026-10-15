@@ -214,9 +214,10 @@ function prepareAgUiStreamInput(options: {
   baseContext: Record<string, unknown>;
   runId: string;
   privateRuntime?: PrivateApplicationInferenceRuntime;
+  localRun?: ConnectedLocalRun;
 }): PreparedAgUiStreamInput {
-  const effectiveRunId = options.privateRuntime?.runId ?? options.runId;
-  const runIdBindsToolAuthorization = options.privateRuntime &&
+  const effectiveRunId = options.privateRuntime?.runId ?? options.localRun?.runId ?? options.runId;
+  const runIdBindsToolAuthorization = (options.privateRuntime || options.localRun) &&
       typeof options.baseContext.runIdBindsToolAuthorization !== "boolean"
     ? true
     : options.context.runIdBindsToolAuthorization;
@@ -590,8 +591,9 @@ async function createAgUiDirectStreamResponse(
       beforeStreamResult: beforeStreamResult ?? undefined,
       context,
       baseContext,
-      runId: localRun?.runId ?? runId,
+      runId,
       privateRuntime,
+      localRun,
     });
     messages = prepared.messages;
 
