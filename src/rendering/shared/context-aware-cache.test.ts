@@ -1,5 +1,6 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CachePayload, CacheStore } from "../cache/types.ts";
@@ -632,6 +633,145 @@ describe("rendering/shared/context-aware-cache", () => {
         (await cache.checkCache("second", ctx, undefined, "render-identity:hash-shared")).hit,
         false,
       );
+    });
+
+    for (const separateProjects of [false, true]) {
+      for (const refreshBy of ["hit", "write"] as const) {
+        it(`retains hot alias generations with separate projects ${separateProjects} and ${refreshBy}`, async () => {
+          const store = createInMemoryStore();
+          Reflect.deleteProperty(store, "deleteByPrefix");
+          const cache = new ContextAwareCacheCoordinator({ store, memory: { maxEntries: 2 } });
+          const contexts = ["a", "b", "c"].map((name) =>
+            makeMockCtx({
+              projectId: separateProjects ? `proj-${name}` : "proj-1",
+              cachePrefix: `${separateProjects ? `proj-${name}` : "proj-1"}:production:${name}`,
+            })
+          );
+          const contextAt = (index: number) => {
+            const context = contexts[index];
+            assertExists(context);
+            return context;
+          };
+          const write = (index: number) =>
+            cache.persistResult(
+              { html: String(index), frontmatter: {}, stream: null },
+              "page",
+              contextAt(index),
+              undefined,
+              "shared",
+            );
+          const read = (index: number) =>
+            cache.checkCache("page", contextAt(index), undefined, "shared");
+          await write(0);
+          await write(1);
+          if (refreshBy === "hit") assertEquals((await read(0)).hit, true);
+          else await write(0);
+          await write(2);
+          assertEquals((await read(0)).cachedResult?.html, "0");
+          assertEquals((await read(1)).hit, false);
+          assertEquals((await read(2)).cachedResult?.html, "2");
+        });
+      }
+    }
+
+    it("fails closed and recovers when an external writer supersedes a cold generation", async () => {
+      const store = createInMemoryStore();
+      Reflect.deleteProperty(store, "deleteByPrefix");
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const set = store.set;
+      store.set = async (key, payload) => {
+        if (payload.result.html === "losing cold write") {
+          // Another process can create competing generations after this writer
+          // captured its tokens. No process-local lock can serialize that actor.
+          for (const [controlKey, control] of store.data) {
+            if (control.aliasEpoch && control.result.html === "") {
+              store.data.set(controlKey, { ...control, aliasEpoch: crypto.randomUUID() });
+            }
+          }
+        }
+        await set(key, payload);
+      };
+      await cache.persistResult(
+        { html: "losing cold write", frontmatter: {}, stream: null },
+        "page",
+        ctx,
+        undefined,
+        "shared",
+      );
+      assertEquals((await cache.checkCache("page", ctx, undefined, "shared")).hit, false);
+      await cache.persistResult(
+        { html: "recovered", frontmatter: {}, stream: null },
+        "page",
+        ctx,
+        undefined,
+        "shared",
+      );
+      assertEquals(
+        (await cache.checkCache("page", ctx, undefined, "shared")).cachedResult?.html,
+        "recovered",
+      );
+    });
+
+    it("rotates finite legacy generations without restoring their old tokens", async () => {
+      const store = createInMemoryStore();
+      Reflect.deleteProperty(store, "deleteByPrefix");
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const result = { html: "old", frontmatter: {}, stream: null };
+      await cache.persistResult(result, "old", ctx, undefined, "old");
+      // Simulate control records persisted by the earlier finite-lease format.
+      for (const [key, payload] of store.data) {
+        if (payload.aliasEpoch && payload.result.html === "") {
+          store.data.set(key, { ...payload, expiresAt: Date.now() + 60_000 });
+        }
+      }
+      await cache.persistResult({ ...result, html: "new" }, "new", ctx, undefined, "new");
+      assertEquals(
+        (await cache.checkCache("new", ctx, undefined, "new")).cachedResult?.html,
+        "new",
+      );
+      assertEquals((await cache.checkCache("old", ctx, undefined, "old")).hit, false);
+    });
+
+    it("keeps newly written aliases fresh and stale beyond an older generation lifetime", async () => {
+      const time = new FakeTime(0);
+      const store = createInMemoryStore();
+      Reflect.deleteProperty(store, "deleteByPrefix");
+      const cache = new ContextAwareCacheCoordinator({ store, ttlMs: 100, staleMs: 300 });
+      const reader = new ContextAwareCacheCoordinator({
+        store: { ...store },
+        ttlMs: 100,
+        staleMs: 300,
+      });
+      const ctx = makeMockCtx();
+      try {
+        await cache.persistResult(
+          { html: "first", frontmatter: {}, stream: null },
+          "first",
+          ctx,
+          undefined,
+          "first",
+        );
+        time.tick(390);
+        await cache.persistResult(
+          { html: "fresh", frontmatter: {}, stream: null },
+          "fresh",
+          ctx,
+          undefined,
+          "fresh",
+        );
+        time.tick(20);
+        const fresh = await reader.checkCache("fresh", ctx, undefined, "fresh");
+        assertEquals(fresh.status, "hit");
+        assertEquals(fresh.cachedResult?.html, "fresh");
+        time.tick(100);
+        assertEquals((await reader.checkCache("fresh", ctx, undefined, "fresh")).status, "stale");
+        time.tick(281);
+        assertEquals((await reader.checkCache("fresh", ctx, undefined, "fresh")).hit, false);
+      } finally {
+        time.restore();
+      }
     });
 
     for (

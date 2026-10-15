@@ -204,6 +204,7 @@ export class ContextAwareCacheCoordinator {
 
         if (this.isExpired(cached)) {
           if (this.isStaleUsable(cached, ctx)) {
+            if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("stale", lookupDurationMs);
             logger.debug("Cache stale hit", {
@@ -243,6 +244,7 @@ export class ContextAwareCacheCoordinator {
           return { cacheKey, hit: false, status: "expired", lookupDurationMs };
         }
 
+        if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
         const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
         recordCacheLookup("hit", lookupDurationMs);
         logger.debug("Cache hit", {
@@ -336,6 +338,7 @@ export class ContextAwareCacheCoordinator {
           : undefined,
       });
       if (!this.store.deleteByPrefix) {
+        this.legacyKeys.delete(cacheKey);
         this.legacyKeys.set(cacheKey, createCacheKey(ctx, `page:${slug}`));
       }
     })();
@@ -369,16 +372,30 @@ export class ContextAwareCacheCoordinator {
     return `${projectId}:${CACHE_ALIAS_PROJECT_EPOCH_KEY}`;
   }
 
+  private touchAliasEpochs(ctx: RenderContext): void {
+    const contextKey = this.aliasEpochKey(ctx);
+    if (this.aliasEpochKeys.delete(contextKey)) this.aliasEpochKeys.add(contextKey);
+    const projectKey = this.aliasProjectEpochKey(ctx.projectId);
+    if (this.aliasProjectEpochKeys.delete(projectKey)) this.aliasProjectEpochKeys.add(projectKey);
+  }
+
   private captureAliasProjectEpoch(projectId: string): Promise<string> {
     const key = this.aliasProjectEpochKey(projectId);
     return withAliasGeneration(key, () => this.initializeEpoch(key, this.aliasProjectEpochKeys));
   }
 
+  // Cross-process cold starts may supersede a token and lose a cache hit.
+  // The losing entry fails closed; the next write observes the winning token.
+  // Arbitrary stores lack atomic creation, so this fallback is best effort.
   private async initializeEpoch(key: string, trackedKeys: Set<string>): Promise<string> {
     const existing = await this.store.get(key);
-    const valid = typeof existing?.aliasEpoch === "string" && !this.isExpired(existing);
+    // Do not renew a token read before another process revokes it. Generation
+    // records have no TTL; bounded tracking and backing-store eviction own cleanup.
+    // Rotate earlier finite leases instead of making their old tokens permanent.
+    const valid = typeof existing?.aliasEpoch === "string" && existing.expiresAt === undefined;
     const token = valid ? existing.aliasEpoch! : crypto.randomUUID();
-    if (!this.store.deleteByPrefix && !trackedKeys.has(key)) {
+    if (!this.store.deleteByPrefix) {
+      trackedKeys.delete(key);
       while (trackedKeys.size >= this.maxLegacyKeys) {
         const oldest = trackedKeys.values().next().value;
         if (oldest === undefined) break;
@@ -391,7 +408,6 @@ export class ContextAwareCacheCoordinator {
       await this.store.set(key, {
         aliasEpoch: token,
         storedAt: Date.now(),
-        ...(this.ttlMs ? { expiresAt: Date.now() + this.ttlMs + Math.max(0, this.staleMs) } : {}),
         result: { html: "", frontmatter: {}, stream: null },
       });
     }

@@ -112,6 +112,217 @@ describe("react-paths", () => {
     }
   });
 
+  it("keeps Pages Router fallback import maps on the peers captured before rendering", async () => {
+    if (!isNode) return;
+    const { buildPagesRoutes } = await import(
+      "#veryfront/build/production-build/static-generation.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const peers = captureLocalReactPeers();
+    const adapter = createMockAdapter();
+    const restores: Array<() => void> = [];
+    let captured: typeof peers | undefined;
+    const renderer = {
+      renderPage: (_slug: string, options?: { reactPeers?: typeof peers }) => {
+        captured = options?.reactPeers;
+        const admitted = captured ?? captureLocalReactPeers();
+        restores.push(overrideInstalledVersion("react", "19.2.5"));
+        restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
+        return Promise.resolve({
+          html: "<html><head></head><body>SSR " + admitted.versions.react + "</body></html>",
+        });
+      },
+    };
+    try {
+      await buildPagesRoutes([{ slug: "page", path: "/page", file: "pages/page.tsx" }], {
+        adapter,
+        projectDir: "/pages-peer-build",
+        outputDir: "/pages-peer-output",
+        renderer: renderer as never,
+        config: {},
+        enablePrefetch: false,
+        chunkManifest: null,
+      });
+      const html = adapter.fs.files.get("/pages-peer-output/page/index.html") ?? "";
+      assertEquals(html.includes("SSR " + peers.versions.react), true);
+      assertEquals(html.includes("react@" + peers.versions.react), true, html);
+      assertEquals(html.includes("react@19.2.5"), false);
+      assertEquals(captured?.versions.react, peers.versions.react);
+    } finally {
+      for (const restore of restores.reverse()) restore();
+      clearReactPathsCache();
+    }
+  });
+
+  for (const variant of ["local", "local-swap", "prepared", "unknown-prepared"] as const) {
+    it(`renders snippet hooks offline on one runtime with graph ${variant}`, async () => {
+      if (!isNode && !isBun) return;
+      if (variant === "local-swap" && !isNode) return;
+      const prepared = variant === "prepared" || variant === "unknown-prepared";
+      const { register, tryResolve, unregister } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      type Processor = import("#veryfront/extensions/content/index.ts").ContentProcessor;
+      const { renderSnippet, clearSnippetCache } = await import(
+        "#veryfront/rendering/snippet-renderer.ts"
+      );
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const { getHostEnv, setEnv, deleteEnv } = await import(
+        "#veryfront/platform/compat/process.ts"
+      );
+      const { DEPENDENCY_PINNING_ENV_FLAG } = await import(
+        "#veryfront/release-assets/constants.ts"
+      );
+      const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+      const directory = mkdtempSync(join(tmpdir(), "snippet-peer-runtime-"));
+      const adapter = createMockAdapter();
+      const previousProcessor = tryResolve<Processor>("ContentProcessor");
+      const previousFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const previousBackend = getHostEnv("VF_CACHE_BACKEND");
+      const { withMockFetch } = await import("#veryfront/testing/mock-fetch.ts");
+      const source = "# snippet hook";
+      const slug = `snippet-graph-${variant}`;
+      const sourcePath = join(directory, "components", "button.snippet.mdx");
+      const version = captureLocalReactPeers().versions.react;
+      const code =
+        'import React from "react"; export default function Snippet() { return React.createElement("p", null, React.useState("snippet hook")[0]); }';
+      const restores: Array<() => void> = [];
+      const compileMdx: Processor["compileMdx"] = () => {
+        if (variant === "local-swap") {
+          restores.push(overrideInstalledVersion("react", "19.2.5"));
+          restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
+        }
+        return Promise.resolve({ compiledCode: code, frontmatter: {}, globals: {} });
+      };
+      let fetches = 0;
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "false");
+        setEnv("VF_CACHE_BACKEND", "memory");
+        register<Processor>("ContentProcessor", {
+          compileMdx,
+          compileMarkdown: compileMdx,
+          getRemarkPlugins: () => [],
+          getRehypePlugins: () => [],
+        });
+        if (prepared) {
+          const peers = captureLocalReactPeers();
+          fs.mkdirSync(join(directory, "node_modules"));
+          for (const name of ["react", "react-dom"]) {
+            const root = peers.roots[name];
+            assertExists(root);
+            fs.cpSync(root, join(directory, "node_modules", name), {
+              recursive: true,
+            });
+          }
+          const require = createRequire(join(directory, "entry.cjs"));
+          const React = require("react") as typeof import("react");
+          const server = require("react-dom/server") as typeof import("react-dom/server");
+          if (isNode) {
+            const { createPreparedRenderModuleLoader } = await import(
+              "#veryfront/rendering/prepared-module-loader.ts"
+            );
+            const loader = await createPreparedRenderModuleLoader({
+              projectDir: directory,
+              maxEntries: 8,
+              binding: {
+                projectId: slug,
+                environmentId: "preview",
+                sourceSnapshotId: "source-one",
+                configurationId: "config-one",
+                dependencySnapshotId: "deps-one",
+                artifactId: "artifact-one",
+                frameworkId: "framework-one",
+                runtimeId: "runtime-one",
+                executionPolicyId: "policy-one",
+              },
+              sources: variant === "unknown-prepared" ? {} : {
+                "components/button.snippet.mdx": () =>
+                  Promise.resolve({
+                    default: () =>
+                      React.createElement("p", null, React.useState("snippet hook")[0]),
+                  }),
+              },
+              packages: {
+                react: () => Promise.resolve({ default: React }),
+                "react-dom/server": () => Promise.resolve(server),
+              },
+            });
+            Object.assign(adapter, { moduleLoader: loader });
+          } else {
+            Object.assign(adapter, {
+              moduleLoader: {
+                importModule: (
+                  reference: import("#veryfront/platform/adapters/base.ts").RuntimeModuleReference,
+                ) => {
+                  if (
+                    reference.kind === "package" && reference.specifier === "react"
+                  ) return Promise.resolve({ default: React });
+                  if (
+                    reference.kind === "package" && reference.specifier === "react-dom/server"
+                  ) return Promise.resolve(server);
+                  if (
+                    reference.kind === "source" && variant !== "unknown-prepared" &&
+                    reference.path === sourcePath
+                  ) {
+                    return Promise.resolve({
+                      default: () =>
+                        React.createElement("p", null, React.useState("snippet hook")[0]),
+                    });
+                  }
+                  return Promise.reject(new Error("Snippet source was not prepared"));
+                },
+              },
+            });
+          }
+        }
+        const result = await withMockFetch(
+          (() => {
+            fetches++;
+            throw new Error("Unexpected snippet network request");
+          }) as typeof fetch,
+          () =>
+            runWithCacheDir(directory, () =>
+              renderSnippet(source, {
+                mode: "development",
+                projectDir: directory,
+                projectId: slug,
+                projectSlug: slug,
+                contentSourceId: variant === "local" ? undefined : "snippet-test",
+                filePath: prepared ? sourcePath : undefined,
+                adapter,
+                isLocalProject: true,
+                moduleServerUrl: "http://127.0.0.1:1",
+                config: { react: { version } },
+              })),
+        );
+        if (variant === "unknown-prepared") {
+          assertEquals(
+            result.html.includes("not prepared"),
+            true,
+            result.html,
+          );
+          assertEquals(result.html.includes("<p>snippet hook</p>"), false);
+        } else {
+          assertEquals(result.html.includes("<p>snippet hook</p>"), true, result.html);
+          assertEquals(result.html.includes("react@" + version), true, result.html);
+          if (variant === "local-swap") assertEquals(result.html.includes("react@19.2.5"), false);
+        }
+        assertEquals(fetches, 0);
+      } finally {
+        for (const restore of restores.reverse()) restore();
+        clearReactPathsCache();
+        unregister("ContentProcessor");
+        if (previousProcessor) register("ContentProcessor", previousProcessor);
+        if (previousFlag === undefined) deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        else setEnv(DEPENDENCY_PINNING_ENV_FLAG, previousFlag);
+        if (previousBackend === undefined) deleteEnv("VF_CACHE_BACKEND");
+        else setEnv("VF_CACHE_BACKEND", previousBackend);
+        await clearSnippetCache();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("preserves one shared dependency instance across script pages", async () => {
     if (!isNode && !isBun) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");

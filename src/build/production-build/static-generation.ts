@@ -1,3 +1,6 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Static Site Generation (SSG) for Build
@@ -260,10 +263,14 @@ export async function buildPagesRoutes(
   for (const route of routes) {
     try {
       const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
+      const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+        ? captureLocalReactPeers()
+        : undefined;
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
+            reactPeers,
             contentSourceId,
             ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
@@ -289,6 +296,7 @@ export async function buildPagesRoutes(
 
       if (!hasImportMapScript(enhancedHtml)) {
         const importMap = await buildImportMap({
+          reactPeers,
           adapter: options.adapter,
           projectDir: options.projectDir,
           config: options.config,

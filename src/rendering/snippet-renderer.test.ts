@@ -159,6 +159,67 @@ describe("rendering/snippet-renderer", () => {
   });
 
   describe("renderSnippet", () => {
+    it("rejects shared snippet execution without invoking accessor-backed grants", async () => {
+      const adapter = createMockAdapter();
+      Object.assign(adapter.fs, { isMultiProjectMode: () => true });
+      let accessorCalls = 0;
+      let compileCalls = 0;
+      const options = {
+        mode: "development" as const,
+        projectDir: "/shared-snippet",
+        projectId: "shared-snippet",
+        adapter,
+        moduleServerUrl: UNDIALABLE_MODULE_SERVER_URL,
+      };
+      Object.defineProperty(options, "isLocalProject", {
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      });
+      await withContentProcessor(() => {
+        compileCalls++;
+        throw new Error("Unadmitted snippet must not compile");
+      }, async () => {
+        await assertRejects(
+          () => renderSnippet("# denied", options),
+          undefined,
+          "isolated project runtime",
+        );
+      });
+      assertEquals(compileCalls, 0);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("honors an explicit host grant for shared snippet compilation", async () => {
+      const adapter = createMockAdapter();
+      Object.assign(adapter.fs, { isMultiProjectMode: () => true });
+      let compileCalls = 0;
+      const previous = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "false");
+      try {
+        const result = await withContentProcessor(() => {
+          compileCalls++;
+          throw new Error("Admitted snippet compile");
+        }, () =>
+          renderSnippet(
+            "# admitted",
+            {
+              mode: "development",
+              projectDir: "/shared-snippet",
+              adapter,
+              isLocalProject: false,
+              allowHostProjectCodeExecution: true,
+              moduleServerUrl: UNDIALABLE_MODULE_SERVER_URL,
+            } as Parameters<typeof renderSnippet>[1],
+          ));
+        assertEquals(compileCalls, 1);
+        assertEquals(result.html.includes("Admitted snippet compile"), true);
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, previous);
+      }
+    });
+
     it("fails before caching when dependency metadata is malformed", async () => {
       const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
       const projectDir = "/malformed-snippet-project";

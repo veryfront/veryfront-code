@@ -440,6 +440,45 @@ describe(
     });
 
     describe("buildPagesRoutes", () => {
+      it("keeps prepared Pages Router peers in the fallback browser map", async () => {
+        const adapter = createMemoryAdapter();
+        Object.assign(adapter, {
+          moduleLoader: {
+            importModule: (
+              reference: import("#veryfront/platform/adapters/base.ts").RuntimeModuleReference,
+            ) => {
+              if (reference.kind === "package" && reference.specifier === "react") {
+                return Promise.resolve({ default: { ...React, version: "18.3.1" } });
+              }
+              if (reference.kind === "package" && reference.specifier === "react-dom/server") {
+                return Promise.resolve({ ...stubReactDOMServer(), version: "18.3.1" });
+              }
+              throw new Error("Unexpected prepared module load");
+            },
+          },
+        });
+        const renderer = {
+          renderPage: (_slug: string, options?: { reactPeers?: unknown }) => {
+            assertEquals(options?.reactPeers, undefined);
+            return Promise.resolve({
+              html: "<html><head></head><body>prepared page</body></html>",
+            });
+          },
+        } as unknown as VeryfrontRenderer;
+        await buildPagesRoutes([{ slug: "page", path: "/page", file: "pages/page.tsx" }], {
+          adapter,
+          renderer,
+          projectDir: "/tmp/prepared",
+          outputDir: "/tmp/prepared-out",
+          config: { react: { version: "18.3.1" } },
+          enablePrefetch: false,
+          chunkManifest: null,
+        });
+        const html = adapter.fs.files.get("/tmp/prepared-out/page/index.html") ?? "";
+        assertStringIncludes(html, "react@18.3.1");
+        assertEquals(html.includes("react@19.2.4"), false);
+      });
+
       it("should return empty stats for empty routes", async () => {
         const stats = await buildPagesRoutes([], {
           adapter: createMockAdapter(),
