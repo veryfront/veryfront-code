@@ -438,10 +438,36 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.4"),
       false,
     );
+    // A served OpenAI row that omits the capability fails closed.
     assertEquals(
       resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
         "openai/gpt-5.4-nano",
       ),
+      false,
+    );
+  });
+
+  it("fails closed for OpenAI models when the catalog has not loaded", () => {
+    __resetVeryfrontCloudCatalogForTests();
+    for (const modelId of ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-6-sol", "o3"]) {
+      assertEquals(
+        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`openai/${modelId}`),
+        false,
+        modelId,
+      );
+      assertEquals(
+        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`veryfront-cloud/openai/${modelId}`),
+        false,
+        modelId,
+      );
+    }
+    // Other providers, including ones serving GPT-named models, stay unknown.
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("acme-labs/gpt-5.4"),
+      undefined,
+    );
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("mistral/mistral-small-2503"),
       undefined,
     );
   });
@@ -775,7 +801,8 @@ describe("provider/veryfront-cloud/model-catalog without a loaded catalog", () =
       assertEquals(isListedInServedVeryfrontCloudCatalog(modelId), false);
     }
     assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), undefined);
-    assertEquals(resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.5"), undefined);
+    // Unknown function-tool reasoning fails closed for OpenAI's own models.
+    assertEquals(resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.5"), false);
     assertEquals(
       resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"),
       undefined,

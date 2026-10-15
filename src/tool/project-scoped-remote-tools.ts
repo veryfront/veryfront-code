@@ -1,3 +1,4 @@
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { isToolAllowedBySourcePolicy } from "./platform-tool-policy.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
@@ -346,6 +347,7 @@ function normalizeToolDefinitions(
       description: definition.description,
       parameters: snapshotToolParameters(definition),
     };
+    copyToolDiscoveryMetadata(definition, normalized);
     if (definition.title !== undefined) {
       if (typeof definition.title !== "string" || definition.title.length === 0) {
         throw new TypeError(

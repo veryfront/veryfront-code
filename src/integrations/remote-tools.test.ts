@@ -388,6 +388,38 @@ describe("integrations/remote-tools", () => {
     ]);
   });
 
+  it("keeps normalized discovery metadata on fetched integration tools", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    const discovery = { version: 1, type: "integration", domain: "github", resource: "issues" };
+    const result = await withMockFetch(
+      () =>
+        Promise.resolve(Response.json({
+          tools: [
+            {
+              name: "github__list_issues",
+              description: "List issues",
+              inputSchema: { type: "object", properties: {} },
+              discovery: { ...discovery, extra: "dropped" },
+            },
+            {
+              name: "github__get_issue",
+              description: "Get issue",
+              inputSchema: { type: "object", properties: {} },
+              discovery: { version: 2 },
+            },
+          ],
+        })),
+      () => getRemoteIntegrationToolDiscovery(),
+    );
+    assertEquals(result.status, "ok");
+    const tools = result.status === "ok" ? result.tools : [];
+    assertEquals<unknown>({ ...tools[0]?.discovery }, discovery);
+    assertEquals(tools[1] !== undefined && "discovery" in tools[1], false);
+  });
+
   it("shares one retry sequence across concurrent discovery callers", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",

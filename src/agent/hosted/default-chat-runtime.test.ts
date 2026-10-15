@@ -14,6 +14,12 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogClockForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  VERYFRONT_CLOUD_CATALOG_TTL_MS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -50,12 +56,14 @@ import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import { agentRegistry, getAgent } from "../composition/index.ts";
+import { createRuntimeLoadSkillTool } from "../runtime/load-skill-tool.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -2463,4 +2471,216 @@ it("hosted runtime retains authored parallel tool control with unchanged tool gr
   } finally {
     clearModelProviders();
   }
+});
+
+it("prepared hosted runtime converts tools for the assembly's target when the model has no cloud facts", async () => {
+  const modelId = "veryfront-cloud/google/prepared-tool-schema-target";
+  let names: string[] = [];
+  const model = scriptedModel([
+    (options) => {
+      names = (options.tools ?? []).map((tool) => tool.name);
+      return { text: "done" };
+    },
+  ], { only: "generate", provider: "google", modelId: "prepared-tool-schema-target" });
+  const toolNames = Array.from(
+    { length: 130 },
+    (_, index) => `tool_${String(index).padStart(3, "0")}`,
+  );
+  const runtimeTools = createToolsFromHostDefinitions(
+    markTrustedHostToolSet(Object.fromEntries(toolNames.map((name) => [name, {
+      description: `Tool ${name}`,
+      inputSchemaJson: { type: "object", properties: {} },
+      execute: () => ({ ok: true }),
+    }]))),
+  );
+  const runtime = createPreparedHostedRuntimeAgent({
+    options: {
+      projectId: "project",
+      instructions: "Use tools.",
+      model: modelId,
+      toolLoading: "eager",
+    },
+    taskContext: { projectId: "project", branchId: null },
+    toolAssembly: {
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      runtimeTools,
+      remoteToolSources: [],
+      localToolNames: toolNames,
+      remoteToolNames: [],
+      providerToolNames: [],
+      availableToolNames: toolNames,
+      modelVisibleToolNames: toolNames,
+      toolLoadingMode: "eager",
+      toolSchemaTarget: { model: modelId, wireSurface: "openai" },
+      compatibleRemoteToolNames: [],
+      systemInstructions: "Use tools.",
+    },
+    modelId,
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+  }, { resolveModelRuntime: (id) => id === modelId ? model : undefined });
+
+  await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+    await runtime.generate({ input: "Hello" });
+  });
+
+  assertEquals(names.length, 128);
+});
+
+it("preselects eager hosted tools under the strictest limit when only a stale catalog answered", async () => {
+  let now = 1_000_000;
+  __setVeryfrontCloudCatalogClockForTests(() => now);
+  __setVeryfrontCloudCatalogForScopeForTests(
+    { apiBaseUrl: "https://api.example.com", apiToken: "token-stale-catalog" },
+    {
+      models: [{
+        id: "stale-model",
+        modelId: "google/stale-model",
+        provider: "google",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    },
+  );
+  now += VERYFRONT_CLOUD_CATALOG_TTL_MS + 1;
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  try {
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ error: "unavailable" }, { status: 503 })),
+      async () => {
+        await createDefaultHostedChatRuntime({
+          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+          options: {
+            projectId: "project-1",
+            authToken: "token-stale-catalog",
+            instructions: "Use only authorized tools.",
+            model: "google/stale-model",
+            deniedTools: ["tool_search"],
+          },
+          config: {
+            apiUrl: "https://api.example.com",
+            apiMcpUrl: "https://api.example.com/mcp",
+          },
+          buildLocalTools: (taskContext) => {
+            capturedContext = taskContext;
+            return Object.fromEntries(
+              Array.from({ length: 129 }, (_, index) => [
+                `local_tool_${String(index).padStart(3, "0")}`,
+                localTool(`Local tool ${index}`),
+              ]),
+            );
+          },
+          createRemoteToolSource: emptyRemoteSource,
+          preloadLatestConversationUserText: false,
+        });
+      },
+    );
+  } finally {
+    __resetVeryfrontCloudCatalogForTests();
+  }
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
+});
+
+it("hosted form continuation does not repeat the startup skill load", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let loaderReads = 0;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/form-continuation",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      modelCallCount += 1;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project",
+        authToken: "token",
+        instructions: "Continue after the form.",
+        model: "test/form-continuation",
+        bootstrapSkill: "plan",
+        availableSkillIds: ["plan"],
+        submittedFormInputResult: { values: { topic: "FAQ" }, inputRequestId: "input-1" },
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({
+        load_skill: markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+          context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+          skillsDir: "/skills",
+          builtinSkillIds: ["plan"],
+          projectSkillLoader: {
+            loadProjectSkill: async () => null,
+            listProjectSkillReferences: async () => [],
+            loadProjectSkillReference: async () => null,
+          },
+          builtinStore: {
+            readSkill: async () => {
+              loaderReads += 1;
+              return "# Plan guidance";
+            },
+            listReferences: async () => [],
+            readReferenceFile: async () => null,
+          },
+        })),
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // Consume the continuation turn.
+      }
+    });
+
+    assertEquals(modelCallCount, 1);
+    assertEquals(loaderReads, 0);
+    await runtime.cleanup();
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("hosted runtime config keeps authored bootstrap tools for the runtime capping pass", () => {
+  const runtime = createPreparedHostedRuntimeAgent({
+    options: {
+      projectId: "project",
+      instructions: "Use the assembled hosted catalog.",
+      model: "openai/gpt-4.1",
+      toolLoading: "eager",
+      bootstrapTools: ["sleep"],
+    },
+    taskContext: { projectId: "project", branchId: null },
+    toolAssembly: {
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      runtimeTools: {},
+      remoteToolSources: [],
+      localToolNames: ["sleep"],
+      remoteToolNames: [],
+      providerToolNames: [],
+      availableToolNames: ["sleep"],
+      modelVisibleToolNames: ["sleep"],
+      toolLoadingMode: "eager",
+      compatibleRemoteToolNames: [],
+      systemInstructions: "Use the assembled hosted catalog.",
+    },
+    modelId: "openai/gpt-4.1",
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+  }, {});
+  assertEquals(
+    (runtime.config as { __vfRetainedBootstrapToolNames?: readonly string[] })
+      .__vfRetainedBootstrapToolNames,
+    ["sleep"],
+  );
 });

@@ -1,3 +1,4 @@
+import { boundChildResultTelemetry } from "./result-telemetry.ts";
 import type { ChildRunResultSummary } from "./result-summary.ts";
 
 /** Public API contract for child run execution usage. */
@@ -34,6 +35,7 @@ export interface ChildRunExecutionSnapshot {
   toolResults: ChildRunToolResultSnapshot[];
   usage?: ChildRunExecutionUsage;
   durationMs: number;
+  toolTelemetryOmitted?: { calls: number; results: number };
 }
 
 /** Result returned from child run execution. */
@@ -47,6 +49,7 @@ export type ChildRunExecutionResult =
     toolResults: ChildRunToolResultSnapshot[];
     usage?: ChildRunExecutionUsage;
     durationMs: number;
+    toolTelemetryOmitted?: { calls: number; results: number };
   }
   | {
     success: false;
@@ -58,6 +61,7 @@ export type ChildRunExecutionResult =
     toolResults: ChildRunToolResultSnapshot[];
     usage?: ChildRunExecutionUsage;
     durationMs: number;
+    toolTelemetryOmitted?: { calls: number; results: number };
   };
 
 /** Public API contract for child run result common. */
@@ -68,6 +72,7 @@ export interface ChildRunResultCommon {
   toolResults: ChildRunToolResultSnapshot[];
   usage?: ChildRunExecutionUsage;
   durationMs: number;
+  toolTelemetryOmitted?: { calls: number; results: number };
 }
 
 /** Return child run snapshot usage. */
@@ -98,6 +103,7 @@ export function buildChildRunExecutionSnapshot(
     steps: result.steps,
     toolCalls: result.toolCalls ?? [],
     toolResults: result.toolResults ?? [],
+    ...(result.toolTelemetryOmitted ? { toolTelemetryOmitted: result.toolTelemetryOmitted } : {}),
     ...optionalUsage(result.usage),
     durationMs: result.durationMs ?? 0,
   };
@@ -113,16 +119,17 @@ export function buildChildRunSuccessResult(
   common: ChildRunResultCommon,
   summary: ChildRunResultSummary,
 ): ChildRunExecutionResult & { success: true } {
-  return {
-    success: true,
+  return boundChildResultTelemetry({
+    success: true as const,
     description: common.description,
     summary,
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
+    ...(common.toolTelemetryOmitted ? { toolTelemetryOmitted: common.toolTelemetryOmitted } : {}),
     ...optionalUsage(common.usage),
     durationMs: common.durationMs,
-  };
+  });
 }
 
 /** Result returned from build child run failure. */
@@ -139,6 +146,7 @@ export function buildChildRunFailureResult(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
+    ...(common.toolTelemetryOmitted ? { toolTelemetryOmitted: common.toolTelemetryOmitted } : {}),
     ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
@@ -160,6 +168,7 @@ export function buildChildRunFailureSnapshot(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
+    ...(common.toolTelemetryOmitted ? { toolTelemetryOmitted: common.toolTelemetryOmitted } : {}),
     ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
@@ -178,6 +187,7 @@ export function buildChildRunSuccessSnapshot(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
+    ...(common.toolTelemetryOmitted ? { toolTelemetryOmitted: common.toolTelemetryOmitted } : {}),
     ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };

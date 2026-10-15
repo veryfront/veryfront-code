@@ -83,3 +83,12 @@ Google uses this capability to preserve Gemini thought signatures across tool
 turns. Both stream lifecycles wait for provider completion under the normal idle
 deadline instead of ending the stream after the local tool commit grace period.
 Hosted model bridges preserve this capability.
+
+### Required stream completion
+
+Veryfront Cloud models advertise `runtimeCapabilities.streamRequiresFinish`. The
+runtime waits for a provider finish or error event instead of ending these streams
+at the local idle or tool commit grace deadline. Provider HTTP deadlines and caller
+cancellation still apply. The active lifecycle keeps its existing attempt budget.
+EOF without a terminal event fails the stream. This capability does not establish
+that gateway billing has settled. Local model idle behavior remains compatible.

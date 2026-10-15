@@ -1,3 +1,4 @@
+import { boundChildResultTelemetry } from "../child-run/result-telemetry.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hostedInheritedEventWriter,
@@ -79,6 +80,7 @@ export type HostedDurableChildInvokeResult = {
   steps?: number;
   toolCalls?: ChildRunExecutionSnapshot["toolCalls"];
   toolResults?: ChildRunExecutionSnapshot["toolResults"];
+  toolTelemetryOmitted?: ChildRunExecutionSnapshot["toolTelemetryOmitted"];
   usage?: ChildRunExecutionSnapshot["usage"];
   durationMs?: ChildRunExecutionSnapshot["durationMs"];
   childConversationId?: string | null;
@@ -115,6 +117,7 @@ export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
     steps: v.number().optional(),
     toolCalls: v.array(v.unknown()).optional(),
     toolResults: v.array(v.unknown()).optional(),
+    toolTelemetryOmitted: v.object({ calls: v.number(), results: v.number() }).optional(),
     usage: v.record(v.string(), v.unknown()).optional(),
     durationMs: v.number().optional(),
     childCanonicalRunId: v.string().uuid().nullable().optional(),
@@ -300,9 +303,9 @@ export function buildHostedDurableChildInvokeSuccessResult<
     ? null
     : resolveKnownProviderTerminalError(input.snapshot.error);
 
-  return {
+  return boundChildResultTelemetry({
     ok: input.snapshot.success,
-    status: input.snapshot.success ? "completed" : "failed",
+    status: input.snapshot.success ? "completed" as const : "failed" as const,
     ...(summary
       ? {
         text: summary.text,
@@ -313,7 +316,10 @@ export function buildHostedDurableChildInvokeSuccessResult<
     steps: input.snapshot.steps,
     toolCalls: input.snapshot.toolCalls,
     toolResults: input.snapshot.toolResults,
-    usage: input.snapshot.usage,
+    ...(input.snapshot.toolTelemetryOmitted
+      ? { toolTelemetryOmitted: input.snapshot.toolTelemetryOmitted }
+      : {}),
+    ...(input.snapshot.usage === undefined ? {} : { usage: input.snapshot.usage }),
     durationMs: input.snapshot.durationMs,
     childConversationId: input.identifiers.childConversationId,
     childRunId: input.identifiers.childRunId,
@@ -329,7 +335,7 @@ export function buildHostedDurableChildInvokeSuccessResult<
     terminalErrorMessage: input.snapshot.success
       ? null
       : terminalError?.message ?? input.snapshot.error,
-  };
+  });
 }
 
 /** Create hosted durable child invoke trace recorder. */

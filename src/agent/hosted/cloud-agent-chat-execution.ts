@@ -46,6 +46,7 @@ import {
 } from "../service/registration.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import {
+  bindHostedChildModelStreamTimeouts,
   createHostedInferenceModelResolver,
   createHostedRuntimeWithChildInferenceAuthority,
 } from "./inference-credential.ts";
@@ -57,7 +58,10 @@ import {
 } from "./prepared-chat-execution.ts";
 import {
   createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
+  resolveVeryfrontCloudChatStreamWatchdogOptions,
 } from "./cloud-prepared-chat-execution-runtime.ts";
+import { DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS } from "#veryfront/chat/stream-watchdog.ts";
+import { resolveHostedModelRuntimeOptions } from "./hosted-model-stream-timeouts.ts";
 import { prepareVeryfrontCloudHostedChatExecution } from "./cloud-chat-execution-preparation.ts";
 import {
   getDefaultAgentId,
@@ -208,6 +212,15 @@ export async function createAgentRuntime(
   terminalRequest?: ParsedHostedChatRequest,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
+  // Validate host model budgets before any cleanup-owning resource is created.
+  const hostedRuntimeOptions = resolveHostedModelRuntimeOptions(
+    config,
+    runtimeOptions,
+    resolveVeryfrontCloudChatStreamWatchdogOptions().idleTimeoutMs ??
+      DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+  );
+  // Delegated child runtimes inherit the same budgets through private authority.
+  bindHostedChildModelStreamTimeouts(options, hostedRuntimeOptions?.modelStreamTimeouts);
   const projectRuntime = getProjectAgentRuntime(context);
   const refreshSystem = createProjectSteeringRefresh(context);
   const localToolRuntime = createHostedRootLocalToolRuntime({
@@ -232,6 +245,9 @@ export async function createAgentRuntime(
         createDefaultHostedChatRuntime({
           options,
           hostToolPolicy: context.options.hostToolPolicy,
+          projectDefinitionBootstrap: context.options.projectDefinitionBootstrap,
+          projectDefinitionBootstrapEnabled: context.projectDefinitionBootstrapEnabled,
+          projectDefinitionBootstrapSignal: resolveHostedRequestPreparationSignal(),
           sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
           config: {
             apiUrl: config.VERYFRONT_API_URL,
@@ -279,7 +295,7 @@ export async function createAgentRuntime(
             setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
           },
           logger: context.infrastructure.logger,
-        }, runtimeOptions),
+        }, hostedRuntimeOptions),
     );
   } catch (error) {
     await cleanup().catch(() => {});
@@ -346,7 +362,8 @@ function setPrepareChatExecutionResultAttributes(
   });
 }
 
-function createHostedChatContextBudgetOptions(
+/** Creates context budget options from the deployed hosted service configuration. */
+export function createHostedChatContextBudgetOptions(
   context: NodeVeryfrontCloudAgentServiceContext,
   req: ParsedHostedChatRequest,
   agentConfig: { model?: string },

@@ -502,12 +502,25 @@ export function resolveVeryfrontCloudOpenAITransport(
   return getVeryfrontCloudModelTransportCapabilities(modelId)?.openAITransport;
 }
 
-/** Resolves whether a model's Chat transport can combine reasoning with function tools. */
+const NativeOpenAIChatModelPattern = /^openai\/(gpt-|o[134](-|$)|chatgpt-)/;
+
+/**
+ * Resolves whether a model's Chat transport can combine reasoning with function tools.
+ *
+ * OpenAI's own Chat Completions endpoint rejects `reasoning_effort` alongside
+ * function tools for current models. When the catalog has no answer for an
+ * OpenAI model (not loaded yet, or the row omits the capability), this fails
+ * closed so the request does not send a combination OpenAI rejects.
+ */
 export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
   modelId: string,
 ): boolean | undefined {
-  return getVeryfrontCloudModelTransportCapabilities(modelId)
+  const declared = getVeryfrontCloudModelTransportCapabilities(modelId)
     ?.openAIChatReasoningWithFunctionTools;
+  if (declared !== undefined) return declared;
+  return NativeOpenAIChatModelPattern.test(canonicalVeryfrontCloudModelKey(modelId))
+    ? false
+    : undefined;
 }
 
 /** Resolves whether a verified Chat transport preserves system message boundaries. */
@@ -601,6 +614,11 @@ export interface VeryfrontCloudModelFacts {
   readonly openAITransport?: "chat-completions" | "responses";
   readonly openAIChatReasoningWithFunctionTools?: boolean;
   readonly openAIChatPreserveSystemMessages?: boolean;
+  /**
+   * Provider name the OpenAI Chat builder reads option buckets under, when it
+   * differs from the default Cloud name: the registry-backed compatible path.
+   */
+  readonly openAIChatProviderName?: "openai-compatible";
 }
 
 const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import {
   assertEquals,
   assertExists,
@@ -29,7 +30,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
-import { runWithRequestContext } from "./request-context.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 import { FSAdapterWrapper } from "../wrapper.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
@@ -39,6 +40,8 @@ import {
 } from "#veryfront/config/loader.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { createNotFoundLikeError } from "./read-operations-helpers.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { isNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { VeryfrontAPIOperations } from "../../veryfront-api-client/operations.ts";
 
 describe("VeryfrontFSAdapter", () => {
@@ -3001,6 +3004,388 @@ describe("VeryfrontFSAdapter", () => {
         }
       });
     }
+
+    for (
+      const scenario of [
+        "absent config",
+        "refresh denied",
+        "listed config",
+        "ordinary file",
+        "superseded refresh",
+        "created config",
+        "all config candidates",
+      ] as const
+    ) {
+      it(`preserves source authority for an invalidated missing file: ${scenario}`, async () => {
+        const adapter = createAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: false },
+          },
+        });
+        const internals = adapter as unknown as {
+          clearMemoryCaches: () => void;
+          client: {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+            getFileContent: () => Promise<string>;
+          };
+          wsManager: { connect: () => void };
+        };
+        const client = internals.client;
+        client.initialize = () => Promise.resolve();
+        client.getProjectSlug = () => "test-project";
+        client.getProjectId = () => "project-123";
+        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+        let listingPasses = 0;
+        let contentReads = 0;
+        client.listAllFiles = () => {
+          listingPasses++;
+          if (scenario === "superseded refresh" && listingPasses === 2) {
+            internals.clearMemoryCaches();
+          }
+          if (listingPasses > 1 && scenario === "refresh denied") {
+            return Promise.reject(
+              API_CLIENT_ERROR.create({ detail: "Project unavailable", status: 404 }),
+            );
+          }
+          return Promise.resolve(
+            scenario === "listed config" || (scenario === "superseded refresh" && listingPasses > 2)
+              ? [{ path: "veryfront.config.js" }]
+              : [],
+          );
+        };
+        client.getFileContent = () => {
+          contentReads++;
+          if (scenario === "created config" && contentReads > 1) {
+            return Promise.resolve("just-created config");
+          }
+          return Promise.reject(
+            API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }),
+          );
+        };
+        internals.wsManager.connect = () => {};
+        const prefix = buildFileCacheKeyPrefix({
+          sourceType: "branch",
+          projectSlug: "test-project",
+          branch: "main",
+        });
+        try {
+          await adapter.initialize();
+          addPendingInvalidation(prefix);
+          if (scenario === "created config") {
+            assertEquals(await adapter.readTextFile("/veryfront.config.js"), "just-created config");
+            assertEquals(listingPasses, 2);
+            assertEquals(contentReads, 2);
+            return;
+          }
+          if (scenario === "all config candidates") {
+            for (const candidate of VERYFRONT_CONFIG_FILES) {
+              const missing = await assertRejects(() => adapter.readTextFile(`/${candidate}`));
+              assertEquals(isNotFoundError(missing), true);
+            }
+            assertEquals(
+              listingPasses,
+              2,
+              "one recovery listing proves all root candidates absent",
+            );
+            assertEquals(
+              contentReads,
+              4,
+              "first exact retry plus one read per remaining candidate",
+            );
+            return;
+          }
+          const error = await assertRejects(() =>
+            adapter.readTextFile(
+              scenario === "ordinary file" ? "/data/missing.json" : "/veryfront.config.js",
+            )
+          );
+          assertEquals(isNotFoundError(error), scenario === "absent config");
+          assertEquals(
+            (error as { slug?: string }).slug,
+            scenario === "absent config" ? "file-not-found" : "api-client-error",
+          );
+          assertEquals(listingPasses, scenario === "superseded refresh" ? 3 : 2);
+          assertEquals(
+            contentReads,
+            scenario === "refresh denied" ? 1 : 2,
+          );
+        } finally {
+          removePendingInvalidation(prefix);
+          adapter.dispose();
+        }
+      });
+    }
+
+    it("retains config absence evidence for concurrent requests sharing a recovery listing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      const listingStarted = Promise.withResolvers<void>();
+      const secondReadStarted = Promise.withResolvers<void>();
+      const listing = Promise.withResolvers<Array<{ path: string }>>();
+      let lists = 0;
+      client.listAllFiles = () => {
+        if (++lists === 1) return Promise.resolve([]);
+        listingStarted.resolve();
+        return listing.promise;
+      };
+      let reads = 0;
+      client.getFileContent = () => {
+        if (++reads === 2) secondReadStarted.resolve();
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const firstDone = Promise.withResolvers<void>();
+      const secondDone = Promise.withResolvers<void>();
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        const first = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "test-token",
+          branch: "main",
+        }, async () => {
+          const missing = await assertRejects(() => adapter.readTextFile("/veryfront.config.js"));
+          assertEquals(isNotFoundError(missing), true);
+          firstDone.resolve();
+          await secondDone.promise;
+          const next = await assertRejects(() => adapter.readTextFile("/veryfront.config.ts"));
+          assertEquals(isNotFoundError(next), true);
+        });
+        await listingStarted.promise;
+        const second = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "test-token",
+          branch: "main",
+        }, async () => {
+          const missing = await assertRejects(() => adapter.readTextFile("/veryfront.config.js"));
+          assertEquals(isNotFoundError(missing), true);
+          await firstDone.promise;
+          secondDone.resolve();
+        });
+        // Both requests join the same in-flight listing before it publishes.
+        await secondReadStarted.promise;
+        await Promise.resolve();
+        listing.resolve([]);
+        await Promise.all([first, second]);
+        assertEquals(lists, 2);
+      } finally {
+        listing.resolve([]);
+        firstDone.resolve();
+        secondDone.resolve();
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
+
+    it("does not certify config absence from another request authority's winning listing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const ownStarted = Promise.withResolvers<void>();
+      const ownListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        const token = getCurrentRequestContext()?.token;
+        if (token === "own-token") {
+          ownStarted.resolve();
+          return ownListing.promise;
+        }
+        return Promise.resolve(token === "other-token" ? [] : [{ path: "initial.ts" }]);
+      };
+      let ownReads = 0;
+      client.getFileContent = () => {
+        if (getCurrentRequestContext()?.token === "own-token" && ++ownReads > 1) {
+          return Promise.resolve("export default { title: 'own authority' };");
+        }
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        const ownRead = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "own-token",
+          branch: "main",
+        }, () => adapter.readTextFile("/veryfront.config.js"));
+        // Attach rejection handling before releasing the concurrent listings.
+        const ownResult = ownRead.then((content) => ({ content }), (error) => ({ error }));
+        await ownStarted.promise;
+        const otherError = await assertRejects(() =>
+          runWithRequestContext(
+            { projectSlug: "test-project", token: "other-token", branch: "main" },
+            () => adapter.readTextFile("/veryfront.config.js"),
+          )
+        );
+        assertEquals(isNotFoundError(otherError), true);
+        ownListing.resolve([{ path: "veryfront.config.js", content: "export default {};" }]);
+        assertEquals(await ownResult, { content: "export default { title: 'own authority' };" });
+        assertEquals(ownReads, 2);
+      } finally {
+        ownListing.resolve([]);
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
+
+    it("does not certify config absence from an older warmup carrying a newer authority receipt", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const warmStarted = Promise.withResolvers<void>();
+      const warmListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const warmInternals = adapter as unknown as {
+        scheduleFileListWarmup: (reason: string) => void;
+        fileListWarmupPromise: Promise<unknown>;
+      };
+      const initialFiles = [{ path: "veryfront.config.js", content: "initial config" }];
+      let ownLists = 0;
+      const ownStarted = Promise.withResolvers<void>();
+      const ownListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        const token = getCurrentRequestContext()?.token;
+        if (token === "other-token") {
+          warmStarted.resolve();
+          return warmListing.promise;
+        }
+        if (token === "own-token" && ++ownLists === 1) {
+          ownStarted.resolve();
+          return ownListing.promise;
+        }
+        return Promise.resolve(initialFiles);
+      };
+      let ownReads = 0;
+      client.getFileContent = () => {
+        if (getCurrentRequestContext()?.token === "own-token" && ++ownReads > 1) {
+          return Promise.resolve("export default { title: 'own authority' };");
+        }
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        await runWithRequestContext(
+          { projectSlug: "test-project", token: "other-token", branch: "main" },
+          () => {
+            warmInternals.scheduleFileListWarmup("authority-race");
+            return Promise.resolve();
+          },
+        );
+        await warmStarted.promise;
+        const ownRead = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "own-token",
+          branch: "main",
+        }, () => adapter.readTextFile("/veryfront.config.js"));
+        // Attach rejection handling before releasing the concurrent listings.
+        const ownResult = ownRead.then((content) => ({ content }), (error) => ({ error }));
+        await ownStarted.promise;
+        await runWithRequestContext(
+          { projectSlug: "test-project", token: "own-token", branch: "main" },
+          () => adapter.refreshSourceSnapshot("newer unchanged listing"),
+        );
+        warmListing.resolve([]);
+        await warmInternals.fileListWarmupPromise;
+        ownListing.resolve([{ path: "veryfront.config.js", content: "export default {};" }]);
+        assertEquals(await ownResult, { content: "export default { title: 'own authority' };" });
+        assertEquals(ownReads, 2);
+      } finally {
+        ownListing.resolve([]);
+        warmListing.resolve([]);
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
 
     it("does not refresh for any absent root config candidate in a fresh complete snapshot", async () => {
       const adapter = createAdapter();

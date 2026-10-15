@@ -112,6 +112,7 @@ function createFsAdapterPlugin(
   fsAdapter: FileSystemAdapter,
   onDependencyLoaded?: (path: string, content: string) => void,
   projectDir = ".",
+  relativeEntry = false,
 ): Plugin {
   const existsCache = new Map<string, boolean>();
 
@@ -160,11 +161,20 @@ function createFsAdapterPlugin(
           // after this one.
           if (args.namespace === "http-url") return undefined;
           const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+          // esbuild makes stdin's initial importer absolute even for a relative
+          // VFS root; remove only that process-root anchoring before VFS lookup.
+          const sourceDir =
+            relativeEntry && args.namespace !== "fsadapter" && pathHelper.isAbsolute(importerDir)
+              ? pathHelper.relative(pathHelper.resolve("."), importerDir)
+              : importerDir;
           // The @/ alias addresses this project root, including hosted VFS
           // projects whose root is represented by an empty baseDir.
+          // Hosted adapters address files relative to the project root. Resolving
+          // against the process cwd invents a host prefix the adapter cannot strip
+          // when its configured project directory differs from that cwd.
           const basePath = args.path.startsWith("@/")
-            ? pathHelper.resolve(projectDir || ".", args.path.slice(2))
-            : pathHelper.resolve(importerDir, args.path);
+            ? pathHelper.normalize(pathHelper.join(projectDir || ".", args.path.slice(2)))
+            : pathHelper.normalize(pathHelper.join(sourceDir, args.path));
 
           const resolvedPath = await resolveWithExtensions(basePath);
           if (resolvedPath) return { path: resolvedPath, namespace: "fsadapter" };
@@ -2762,9 +2772,14 @@ export async function importModule(
   const bundledDeps: Array<{ path: string; content: string }> = [];
   const plugins: Plugin[] = hasFsAdapter
     ? [
-      createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
-        bundledDeps.push({ path, content });
-      }, context.baseDir),
+      createFsAdapterPlugin(
+        context.fsAdapter!,
+        (path, content) => {
+          bundledDeps.push({ path, content });
+        },
+        context.baseDir,
+        !pathHelper.isAbsolute(filePath),
+      ),
     ]
     : [];
 

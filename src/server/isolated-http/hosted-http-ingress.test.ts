@@ -4,6 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedHttpIngress, isHostedHttpApplicationRequest } from "./hosted-http-ingress.ts";
 import { createHostedHttpFixture } from "../../../tests/fixtures/hosted-http-broker.ts";
 import { CHANNEL_INVOKE_PATH } from "#veryfront/channels/control-plane.ts";
+import { createHostedExecutorSession } from "#veryfront/agent/hosted/executor-session.ts";
+import { createHostedHttpBroker } from "./hosted-http-broker.ts";
 
 const identity = {
   projectId: "project-a",
@@ -424,6 +426,67 @@ describe("hosted HTTP ingress", () => {
         TypeError,
         "preparation limit",
       );
+    }
+  });
+
+  it("gives the executor no Veryfront API credential", async () => {
+    const credential = "synthetic-source-credential-c4";
+    const f = createHostedHttpFixture((request) => {
+      assertEquals(request.headers.get("x-token"), null);
+      return new Response("app");
+    });
+    const sent: Uint8Array[] = [];
+    const connect = f.input.session.connectTransport;
+    f.input.session.connectTransport = async (options) => {
+      const transport = await connect(options);
+      const tap = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          sent.push(chunk.slice());
+          controller.enqueue(chunk);
+        },
+      });
+      void tap.readable.pipeTo(transport.writable).catch(() => {});
+      return { ...transport, writable: tap.writable };
+    };
+    const offered: string[][] = [];
+    const broker = createHostedHttpBroker({
+      maxActive: 1,
+      createSession(options) {
+        return createHostedExecutorSession({
+          ...options,
+          createOperations(binding, signal) {
+            const grant = options.createOperations(binding, signal);
+            offered.push([...grant.operations.keys()].sort());
+            return grant;
+          },
+        });
+      },
+    });
+    const ingress = createHostedHttpIngress({
+      broker,
+      resolve: (authority) => {
+        assertEquals(authority.sourceToken, credential);
+        return Promise.resolve({
+          ...f.input,
+          configuration: { ...identity, configurationId: "config-a", variables: { APP: "x" } },
+        });
+      },
+    });
+    try {
+      const response = await ingress(
+        new Request("https://app.example/api/proof", { headers: { "x-token": credential } }),
+        { ...selection, sourceToken: credential },
+      );
+      assertEquals(await response.text(), "app");
+      assertEquals(offered, [["http.configuration", "http.request-body"]]);
+      const bytes = new TextDecoder().decode(
+        new Uint8Array(sent.flatMap((chunk) => [...chunk])),
+      );
+      assertEquals(bytes.includes("/api/proof"), true);
+      assertEquals(bytes.includes(credential), false);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
     }
   });
 });
