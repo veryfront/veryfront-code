@@ -527,7 +527,7 @@ ${bound}`
     target: "es2022",
     jsx: "automatic",
     jsxImportSource: "react",
-    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"],
     external: reactPeers ? ["node:*"] : ESBUILD_EXTERNALS,
     conditions: reactPeers ? conditions ?? ["node", ...(isBun ? ["bun"] : [])] : undefined,
     plugins: reactPeers

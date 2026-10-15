@@ -73,6 +73,46 @@ describe("react-paths", () => {
     assertEquals(rendered.html.includes("virtual script"), true);
   });
 
+  for (
+    const [label, dependency] of [
+      ["flat", 'module.exports = require("./data");'],
+      ["directory", 'module.exports = require("./values");'],
+    ] as const
+  ) {
+    it(`preserves extensionless ${label} JSON requires in script dependencies`, async () => {
+      if (!isNode && !isBun) return;
+      const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const directory = mkdtempSync(join(tmpdir(), "script-json-dependency-"));
+      const page = join(directory, "page.js");
+      fs.mkdirSync(join(directory, "values"));
+      fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      fs.writeFileSync(join(directory, "data.json"), '{"value":"JSON dependency"}');
+      fs.writeFileSync(join(directory, "values", "index.json"), '{"value":"JSON dependency"}');
+      fs.writeFileSync(join(directory, "dependency.cjs"), dependency);
+      fs.writeFileSync(
+        page,
+        'import data from "./dependency.cjs"; export default () => "<main>" + data.value + "</main>";',
+      );
+      try {
+        const result = await handleScriptPage(
+          { entity: { path: page, frontmatter: {} } } as never,
+          "page",
+          {
+            mode: "production",
+            config: {},
+            projectDir: directory,
+            adapter: createMockAdapter(),
+            reactPeers: captureLocalReactPeers(),
+          },
+        );
+        assertEquals(result.html.includes("<main>JSON dependency</main>"), true);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("preserves per-file TypeScript decorator and class-field configuration", async () => {
     if (!isNode && !isBun) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
