@@ -24,6 +24,12 @@ import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 const ObjectCreate = Object.create;
+const apply = Reflect.apply;
+const responseJson = Response.prototype.json;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const streamCancel = ReadableStream.prototype.cancel;
 
 /** How long a loaded catalog is used before it is refreshed. */
 export const VERYFRONT_CLOUD_CATALOG_TTL_MS = 5 * 60_000;
@@ -348,13 +354,16 @@ async function fetchCatalog(
       catalogUrl(options.apiBaseUrl),
       createNativeRequestInit(undefined, { method: "GET", headers, signal }),
     );
-    if (!response.ok) {
-      await response.body?.cancel();
+    if (!apply(responseOk, response, [])) {
+      const body = apply(responseBody, response, []) as ReadableStream<Uint8Array> | null;
+      if (body) await apply(streamCancel, body, []);
       throw new Error(
-        `Veryfront Cloud model catalog request failed with status ${response.status}`,
+        `Veryfront Cloud model catalog request failed with status ${
+          apply(responseStatus, response, [])
+        }`,
       );
     }
-    const catalog = parseVeryfrontCloudCatalog(await response.json());
+    const catalog = parseVeryfrontCloudCatalog(await apply(responseJson, response, []));
     if (!catalog) throw new Error("Veryfront Cloud model catalog response has no model list");
     return catalog;
   } finally {

@@ -655,6 +655,14 @@ describe("pullCommand", () => {
         quiet: true,
       });
 
+      assertEquals(JSON.parse(await Deno.readTextFile(join(tempDir, "veryfront.json"))), {
+        projectSlug: "alpha-canonical",
+        apiUrl: "https://api.veryfront.com",
+      });
+      const gitignore = await Deno.readTextFile(join(tempDir, ".gitignore"));
+      for (const entry of ["node_modules/", ".veryfront/", ".env", ".cache/"]) {
+        assertEquals(gitignore.split("\n").includes(entry), true);
+      }
       assertEquals(await readProjectLink(tempDir), {
         version: 1,
         controlPlane: "https://api.veryfront.com",
@@ -706,6 +714,7 @@ describe("pullCommand", () => {
     const remoteTsconfig = `{"compilerOptions":{"strict":false},"include":["remote.ts"]}\n`;
 
     try {
+      await Deno.writeTextFile(join(tempDir, ".gitignore"), "custom-only/\n");
       await Deno.writeTextFile(join(tempDir, "package.json"), localPackage);
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
@@ -743,6 +752,7 @@ describe("pullCommand", () => {
         quiet: true,
       });
 
+      assertEquals(await Deno.readTextFile(join(tempDir, ".gitignore")), "custom-only/\n");
       assertEquals(await Deno.readTextFile(join(tempDir, "package.json")), localPackage);
       assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), remoteTsconfig);
       assertEquals((await readProjectLink(tempDir))?.projectId, "proj_alpha");
@@ -927,6 +937,8 @@ describe("pullCommand", () => {
       );
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       Deno.writeTextFile = originalWriteTextFile;
       globalThis.fetch = originalFetch;
@@ -1097,6 +1109,8 @@ describe("pullCommand", () => {
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
@@ -1150,6 +1164,8 @@ describe("pullCommand", () => {
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
       assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -1209,9 +1225,12 @@ describe("pullCommand", () => {
       );
       assertEquals(output.includes("  Would create: package.json"), true);
       assertEquals(output.includes("  Would create: tsconfig.json"), true);
+      assertEquals(output.includes("  Would create: .gitignore"), true);
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       cliLogger.info = originalInfo;
       globalThis.fetch = originalFetch;
@@ -1262,6 +1281,7 @@ describe("pullCommand", () => {
       assertEquals(output.includes("  Would create: .veryfront/project.json"), true);
       assertEquals(output.includes("  Would create: package.json"), true);
       assertEquals(output.includes("  Would create: tsconfig.json"), true);
+      assertEquals(output.includes("  Would create: .gitignore"), true);
     } finally {
       console.log = originalConsoleLog;
       cliLogger.info = originalInfo;

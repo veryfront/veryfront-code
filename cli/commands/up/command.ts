@@ -1,3 +1,4 @@
+import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger, exitProcess, isVerbose } from "#cli/utils";
@@ -337,6 +338,7 @@ export async function upCommand(
       } else {
         slug = outcome.project.slug;
         projectCreated = true;
+        if (!dryRun) await saveSharedProjectAssociation(projectDir, slug, context.config.apiUrl);
         if (!jsonOutput) logSuccess(`Created project ${slug}`);
       }
     } catch (error) {
