@@ -87,9 +87,12 @@ export function resolveRuntimeObservationCaptureBootstrap(input: {
 export function createNodeVeryfrontCloudAgentServiceContext(
   options: ResolvedNodeVeryfrontCloudAgentServiceOptions,
 ) {
-  const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
+  const defaultProcessTarget = resolveDefaultProcessTarget();
+  const processTarget = options.processTarget ?? defaultProcessTarget;
   const environment = resolveEnvironment({ env: options.env, processTarget });
-  initializeServiceRuntimeIdentity(environment);
+  initializeServiceRuntimeIdentity(
+    options.env ?? (processTarget !== defaultProcessTarget ? processTarget?.env : undefined),
+  );
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
     serviceName: options.serviceName,
     env: environment,
