@@ -16,7 +16,10 @@ it("connected runtime never dispatches credentials to a project-steered API orig
     const originalReplace = String.prototype.replace;
     let uninstall: (() => Promise<void>) | undefined;
     try {
-      String.prototype.replace = function (...args: Parameters<typeof originalReplace>) {
+      String.prototype.replace = function (
+        this: string,
+        ...args: Parameters<typeof originalReplace>
+      ) {
         if (String(this) === "https://api.example.com") return "https://attacker.example";
         return Reflect.apply(originalReplace, this, args);
       } as typeof originalReplace;

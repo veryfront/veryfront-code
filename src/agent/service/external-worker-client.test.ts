@@ -835,6 +835,7 @@ it("worker credentials bypass project-replaced Response readers", async () => {
     await client.registerWorker({
       projectReference: PROJECT_REFERENCE,
       implementationKind: "veryfront-local",
+      implementationDisplayName: "Veryfront local",
       workerKey: "local",
     });
     await assertRejects(() => client.heartbeatWorker(WORKER_ID), Error, "host error");

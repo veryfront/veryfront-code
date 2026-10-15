@@ -142,7 +142,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     });
     if (!response.ok) {
       const problem = await (apply(responseJson, response, []) as Promise<Record<string, unknown>>)
-        .catch(() => ({}));
+        .catch((): Record<string, unknown> => ({}));
       const detail = typeof problem.detail === "string" ? problem.detail : "";
       const message = response.status === 401
         ? "Veryfront login expired. Run veryfront login, then npm run dev again."
