@@ -445,6 +445,14 @@ export async function resolveHostedChildAgentExecutionConfig(
     agentId: childAgentId,
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
+  // Resolve startup inside the target's existing authorization, never the parent's catalog.
+  const bootstrapSkill = agentConfig.bootstrapSkill === undefined
+    ? undefined
+    : resolveRuntimeSkillSelectorForAgent({
+      skills: skillSelectorSnapshot.definitions,
+      agentId: childAgentId,
+      selector: [agentConfig.bootstrapSkill],
+    }).allowedSkillIds[0];
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);
   // The skill catalog and the load_skill fork guidance both advertise the
   // loader, so they must track its effective availability: an undefined
@@ -465,6 +473,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       availableToolNames: toolNames,
       skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(toolNames),
     }),
+    ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
     ...(agentConfig.parallelToolCalls === undefined

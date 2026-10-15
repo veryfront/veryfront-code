@@ -158,6 +158,8 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   hostedModel?: boolean;
   temperature?: number;
   parallelToolCalls?: boolean;
+  /** Canonical startup skill selected by the target configuration. */
+  bootstrapSkill?: string;
   maxSteps: number;
   effectivePrompt: string;
   forkContext?: HostedChildForkInstructionsContext;
@@ -459,6 +461,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
         forkModel: input.forkModel,
         hostedModel: input.hostedModel,
         temperature: input.temperature,
+        ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
         ...(input.parallelToolCalls === undefined
           ? {}
           : { parallelToolCalls: input.parallelToolCalls }),

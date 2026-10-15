@@ -131,6 +131,8 @@ export type StartAgentRuntimeForkInput = {
   model: string;
   temperature?: number;
   parallelToolCalls?: boolean;
+  /** Canonical startup skill configured by the target agent. */
+  bootstrapSkill?: string;
   maxSteps: number;
   prompt?: string;
   maxContinuationSteps?: number;
@@ -221,6 +223,7 @@ export function startAgentRuntimeForkWithHostTools<
       ...(input.parallelToolCalls === undefined
         ? {}
         : { parallelToolCalls: input.parallelToolCalls }),
+      ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
       maxSteps: input.maxSteps,
       prompt: input.prompt,
       maxContinuationSteps: input.maxContinuationSteps,
@@ -292,6 +295,8 @@ export type RunAgentRuntimeForkStepInput = {
   model: string;
   temperature?: number;
   parallelToolCalls?: boolean;
+  /** Canonical startup skill configured by the target agent. */
+  bootstrapSkill?: string;
   messages: AgentMessage[];
   system: AgentSystem;
   abortSignal?: AbortSignal;
@@ -361,6 +366,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         ? {}
         : { parallelToolCalls: input.parallelToolCalls }),
       system: input.system,
+      ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
       tools: input.runtimeTools,
       providerTools: input.providerToolNames ?? [],
       maxSteps: 1,
@@ -584,6 +590,10 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             ...(input.parallelToolCalls === undefined
               ? {}
               : { parallelToolCalls: input.parallelToolCalls }),
+            // Later steps hydrate activation from the real loader result in currentMessages.
+            ...(input.bootstrapSkill !== undefined && progress.steps.length === 0
+              ? { bootstrapSkill: input.bootstrapSkill }
+              : {}),
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
