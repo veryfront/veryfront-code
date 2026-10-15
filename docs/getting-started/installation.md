@@ -311,3 +311,10 @@ veryfront --version
 
 You should see the installed version printed. If the command is not found,
 restart your shell so the new `PATH` entry takes effect.
+
+Prepared adapters retain authority over their admitted module graph. When calling
+`renderSnippet` with an adapter that provides `moduleLoader`, supply `filePath`
+with the original source identifier admitted to that graph. Inline content without
+an admitted identifier is rejected before compilation; prepared adapters do not
+fall back to host evaluation or fetch unknown source. Ordinary local adapters
+continue to support inline snippets without `filePath`.

@@ -95,6 +95,42 @@ async function seedSnippet(mdxContent: string, projectSlug: string): Promise<str
   return hash;
 }
 
+describe("prepared snippet admission", () => {
+  it("requires an admitted source identifier before inline compilation", async () => {
+    const adapter = createMockAdapter();
+    let imported = false;
+    Object.assign(adapter, {
+      moduleLoader: {
+        importModule: () => {
+          imported = true;
+          throw new Error("unknown prepared source");
+        },
+      },
+    });
+    let compiled = false;
+    await withContentProcessor(() => {
+      compiled = true;
+      return Promise.resolve({
+        compiledCode: "export default () => null",
+        frontmatter: {},
+        globals: {},
+      });
+    }, () =>
+      assertRejects(
+        () =>
+          renderSnippet("# inline", {
+            adapter,
+            projectDir: "/prepared",
+            mode: "production",
+          }),
+        Error,
+        "Prepared snippet rendering requires an admitted filePath",
+      ));
+    assertEquals(compiled, false);
+    assertEquals(imported, false);
+  });
+});
+
 describe("rendering/snippet-renderer", () => {
   describe("buildSnippetModuleUrl", () => {
     it("binds SSR snippet imports to the captured dependency snapshot", () => {

@@ -373,14 +373,12 @@ if (launch.pnpStartup) {
     error: { code: "RUNTIME_ERROR", slug: "command-failed", message } };
   const report = `(${reportLauncherFailure.toString()})(${JSON.stringify(errorEnvelope)}, ${JSON.stringify(launcherOutputPath())}, ${JSON.stringify(launcherJsonMode())});`;
   // register() installs the PnP ESM hooks without experimental-loader warnings.
-  // Its startup failures occur before this wrapper reloads, so report them here.
+  // Both PnP setup and ESM hook registration must run inside the reporter.
   const registration = "data:text/javascript," + encodeURIComponent(
-    `import { register } from "node:module"; import { mkdirSync, writeFileSync } from "node:fs"; import { dirname } from "node:path"; try { register(${JSON.stringify(pathToFileURL(loader).href)}); } catch { ${report} process.exit(1); }`,
+    `import { register, createRequire } from "node:module"; import { mkdirSync, writeFileSync } from "node:fs"; import { dirname } from "node:path"; try { const api = createRequire(${JSON.stringify(pathToFileURL(pnpStartup).href)})(${JSON.stringify(pnpStartup)}); api.setup(); register(${JSON.stringify(pathToFileURL(loader).href)}); } catch { ${report} process.exit(1); }`,
   );
   const child = spawn(process.execPath, [
     ...process.execArgv,
-    "--require",
-    pnpStartup,
     "--import",
     registration,
     fileURLToPath(import.meta.url),

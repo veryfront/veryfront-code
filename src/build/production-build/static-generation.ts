@@ -1,5 +1,8 @@
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
@@ -53,6 +56,7 @@ export interface SSGStats {
 }
 
 export interface SSGOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   outputDir: string;
@@ -260,12 +264,13 @@ export async function buildPagesRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   const clientStyles = loadClientStyles();
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
+
   for (const route of routes) {
     try {
       const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
-      const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
-        ? captureLocalReactPeers()
-        : undefined;
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
@@ -406,6 +411,10 @@ export async function buildAppRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   if (appRoutes.length === 0) return stats;
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
+
   logger.debug("Building App Router static pages...");
   const stylesheetHref = await traceStep(
     "app:styles",
@@ -420,6 +429,7 @@ export async function buildAppRoutes(
           projectDir,
           routePath: route.path,
           pageFile: route.pageFile,
+          reactPeers,
           contentSourceId,
           moduleServerOrigin: getConfiguredModuleServerOrigin(options.baseUrl),
           reactVersion,

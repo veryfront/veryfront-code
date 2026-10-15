@@ -134,8 +134,59 @@ describe("react-paths", () => {
       },
     };
     try {
+      await buildPagesRoutes([{ slug: "page", path: "/page", file: "pages/page.tsx" }, {
+        slug: "next",
+        path: "/next",
+        file: "pages/next.tsx",
+      }], {
+        adapter,
+        projectDir: "/pages-peer-build",
+        outputDir: "/pages-peer-output",
+        renderer: renderer as never,
+        config: {},
+        enablePrefetch: false,
+        chunkManifest: null,
+      });
+      const html = adapter.fs.files.get("/pages-peer-output/page/index.html") ?? "";
+      assertEquals(html.includes("SSR " + peers.versions.react), true);
+      assertEquals(html.includes("react@" + peers.versions.react), true, html);
+      assertEquals(html.includes("react@19.2.5"), false);
+      assertEquals(captured?.versions.react, peers.versions.react);
+      const nextHtml = adapter.fs.files.get("/pages-peer-output/next/index.html") ?? "";
+      assertEquals(nextHtml.includes("SSR " + peers.versions.react), true, nextHtml);
+    } finally {
+      for (const restore of restores.reverse()) restore();
+      clearReactPathsCache();
+    }
+  });
+
+  it("uses the supplied build-wide peers after asset generation changes the installation", async () => {
+    if (!isNode) return;
+    const { buildPagesRoutes } = await import(
+      "#veryfront/build/production-build/static-generation.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const peers = captureLocalReactPeers();
+    const adapter = createMockAdapter();
+    const restores: Array<() => void> = [];
+    let captured: typeof peers | undefined;
+    const renderer = {
+      renderPage: (_slug: string, options?: { reactPeers?: typeof peers }) => {
+        captured = options?.reactPeers;
+        const admitted = captured ?? captureLocalReactPeers();
+        restores.push(overrideInstalledVersion("react", "19.2.5"));
+        restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
+        return Promise.resolve({
+          html: "<html><head></head><body>SSR " + admitted.versions.react + "</body></html>",
+        });
+      },
+    };
+    try {
+      restores.push(overrideInstalledVersion("react", "19.2.5"));
+      restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
       await buildPagesRoutes([{ slug: "page", path: "/page", file: "pages/page.tsx" }], {
         adapter,
+        reactPeers: peers,
         projectDir: "/pages-peer-build",
         outputDir: "/pages-peer-output",
         renderer: renderer as never,
@@ -1721,10 +1772,11 @@ describe("react-paths", () => {
         );
         const buildPage = join(directory, "app", "page.tsx");
         fs.writeFileSync(buildPage, pageSource);
-        selected = old;
+        selected = next;
         const buildHtml = await runWithCacheDir(directory, () =>
           _renderAppRouteToHTMLForTest({
             adapter,
+            reactPeers: old,
             projectDir: directory,
             pageFile: buildPage,
             routePath: "/",
@@ -1732,6 +1784,7 @@ describe("react-paths", () => {
             config: { react: { version: "^19.2.0" } },
           }, {
             componentLoader: async (...args) => {
+              assertEquals(args[4].reactPeers, old);
               const component = await loadComponentFromSource(...args);
               selected = next;
               return component;

@@ -1,3 +1,9 @@
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { serverLogger } from "#veryfront/utils";
 import { buildAppRoutes, buildPagesRoutes } from "../static-generation.ts";
@@ -15,6 +21,7 @@ import {
 const logger = serverLogger.component("build");
 
 export interface BuildExecutorOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   outputDir: string;
@@ -47,6 +54,9 @@ export async function executeBuild(
     `[BUILD] executeBuild: ${pagesRoutes.length} pages routes, ${appRoutes.length} app routes`,
   );
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(options.adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     createDependencyPinningSource({
       projectDir: options.projectDir,
@@ -61,6 +71,7 @@ export async function executeBuild(
   );
   const buildOptions: BuildExecutorOptions = {
     ...options,
+    reactPeers,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
     dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,

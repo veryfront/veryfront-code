@@ -1,3 +1,9 @@
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -31,6 +37,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
 
 export interface LocalReleaseAssetOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   outputDir: string;
@@ -78,6 +85,9 @@ export async function generateLocalReleaseAssetManifest(
   const vendorHttpImports = options.vendorHttpImports;
   const frameworkTransform = options.frameworkTransform;
 
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(options.adapter)
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
   const tempDir = await options.adapter.fs.makeTempDir("vf-local-release-assets-");
 
   try {
@@ -94,6 +104,7 @@ export async function generateLocalReleaseAssetManifest(
       const reactVersion = options.reactVersion ??
         await resolveProjectReactVersion({
           adapter: options.adapter,
+          reactPeers,
           projectDir: options.projectDir,
           config: options.config,
           dependencyPinningSource,

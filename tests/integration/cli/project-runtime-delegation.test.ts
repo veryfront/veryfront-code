@@ -168,7 +168,7 @@ describe("project runtime delegation", () => {
       await Deno.remove(join(f.project, "node_modules"));
       await Deno.writeTextFile(
         join(f.project, ".pnp.cjs"),
-        'if (module.parent?.id === "internal/preload") process.versions.pnp = "3"; const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => {}; exports.resolveToUnqualified = (name) => { if (name !== "veryfront") throw new Error("unexpected request"); return root; };',
+        'const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => { process.versions.pnp = "3"; }; exports.resolveToUnqualified = (name) => { if (name !== "veryfront") throw new Error("unexpected request"); return root; };',
       );
       await Deno.writeTextFile(
         join(f.project, "pnp-fixture.json"),
@@ -210,6 +210,40 @@ describe("project runtime delegation", () => {
         args: ["dev", "--project", f.project],
       });
       await Deno.writeTextFile(join(f.project, ".pnp.loader.mjs"), "export const = invalid;");
+      for (const args of [["deploy", "--json"], ["project", "runs", "list", "--ndjson"]]) {
+        const outputFile = join(f.root, "reports", `${args[0]}.json`);
+        const failed = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), ...args, "--output", outputFile],
+          cwd: f.project,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(failed.code, 1);
+        assertEquals(new TextDecoder().decode(failed.stderr), "");
+        const output = new TextDecoder().decode(failed.stdout);
+        assertEquals(JSON.parse(output).error.slug, "command-failed");
+        assertEquals(output.includes(f.root), false);
+        assertEquals(JSON.parse(await Deno.readTextFile(outputFile)), JSON.parse(output));
+      }
+    } finally {
+      await Deno.remove(f.root, { recursive: true });
+    }
+  });
+
+  it("sanitizes failures during the child PnP setup before CLI loading", async () => {
+    const f = await fixture(true);
+    try {
+      const store = join(f.project, "node_modules", "veryfront");
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.cjs"),
+        `if (process.argv[1]?.endsWith("veryfront.js") && process.execArgv.includes("--import")) throw new Error(__filename + " private preload failure"); exports.setup = () => {}; exports.resolveToUnqualified = () => ${
+          JSON.stringify(store)
+        };`,
+      );
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.loader.mjs"),
+        "export function resolve(s,c,n) { return n(s,c); }",
+      );
       for (const args of [["deploy", "--json"], ["project", "runs", "list", "--ndjson"]]) {
         const outputFile = join(f.root, "reports", `${args[0]}.json`);
         const failed = await new Deno.Command("node", {

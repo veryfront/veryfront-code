@@ -1,3 +1,6 @@
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -101,6 +104,9 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       );
 
       try {
+        const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(context.adapter)
+          ? captureLocalReactPeers()
+          : undefined;
         const dependencyContext = await captureBuildDependencyContext({
           projectDir: normalizedOptions.projectDir,
           adapter: context.adapter,
@@ -110,6 +116,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         const dependencySnapshot = dependencyContext.snapshot;
         const buildReactVersion = await resolveProjectReactVersion({
           adapter: context.adapter,
+          reactPeers,
           projectDir: normalizedOptions.projectDir,
           config: context.config,
           dependencyPinningSource: dependencyContext.source,
@@ -145,6 +152,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               dryRun,
               config: context.config,
               reactVersion: buildReactVersion,
+              reactPeers,
               dependencyPinningSource: dependencyContext.source,
               dependencyPinningSnapshot: dependencySnapshot,
             }),
@@ -187,6 +195,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               projectDir: normalizedOptions.projectDir,
               outputDir,
               renderer: context.renderer,
+              reactPeers,
               config: context.config,
               enablePrefetch,
               chunkManifest: splitResult.manifest,

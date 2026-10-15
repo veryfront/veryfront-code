@@ -1102,6 +1102,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 Object.freeze({
                   cacheKey: resolvedCacheKey,
                   dependencies: resolvedDependencies,
+                  configuredVersions: bundledClientBoundary.dependencyPinningConfiguredVersions,
                 }),
               );
             }

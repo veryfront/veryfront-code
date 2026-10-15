@@ -66,6 +66,7 @@ export interface SnippetRenderOptions {
   releaseId?: string;
   /** Canonical request-scoped dependency source supplied by server handlers. */
   dependencyPinningSource?: DependencyPinningSource;
+  /** Required original admitted source identifier for prepared module loaders. */
   filePath?: string;
   nonce?: string;
   /** Base URL for module server (e.g., http://localhost:3002) */
@@ -321,6 +322,10 @@ export function renderSnippet(
             "Snippet rendering requires a dedicated isolated project runtime or an explicit host grant",
         });
       }
+      const prepared = getRuntimeModuleLoader(adapter);
+      if (prepared && !options.filePath) {
+        throw new TypeError("Prepared snippet rendering requires an admitted filePath");
+      }
       logger.debug("Starting render", {
         contentLength: mdxContent.length,
         filePath: options.filePath,
@@ -351,7 +356,6 @@ export function renderSnippet(
             releaseId,
           );
         const projectId = dependencySource.projectId ?? options.projectId ?? options.projectDir;
-        const prepared = getRuntimeModuleLoader(adapter);
         const reactPeers = prepared
           ? undefined
           : options.reactPeers ?? ((isNode || isBun) ? captureLocalReactPeers() : undefined);

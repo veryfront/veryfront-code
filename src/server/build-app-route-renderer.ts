@@ -1,5 +1,8 @@
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
@@ -100,6 +103,7 @@ function getLayoutDirectoriesForPage(appRoot: string, pageFile: string): string[
  * Render an App Router route to HTML
  */
 interface RenderAppRouteArgs {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   routePath: string;
@@ -164,7 +168,7 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningConfiguredVersions,
   );
   const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
-    ? captureLocalReactPeers()
+    ? args.reactPeers ?? captureLocalReactPeers()
     : undefined;
   const snapshotReactVersion = await resolveProjectReactVersion({
     adapter: adapter,
