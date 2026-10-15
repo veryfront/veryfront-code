@@ -19,6 +19,20 @@ export interface AgUiInjectedToolLike {
   parameters?: unknown;
 }
 
+/** Resolve a source agent's authored selection to its current owner-visible catalog. */
+export function buildExplicitAgUiSourceTools(
+  agent: Agent,
+): Exclude<Agent["config"]["tools"], true> {
+  if (!agent.config.tools) return undefined;
+  if (agent.config.tools !== true) return { ...agent.config.tools };
+
+  const tools: Record<string, Tool | boolean> = {};
+  for (const [toolId, registryTool] of toolRegistry.getAll()) {
+    if (isToolVisibleTo(registryTool, { agentId: agent.id })) tools[toolId] = true;
+  }
+  return tools;
+}
+
 export function createInjectedAgUiTool(
   runId: string,
   tool: AgUiInjectedToolLike,
@@ -59,9 +73,8 @@ export function buildMergedAgUiTools(
   tools: AgUiInjectedToolLike[],
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Agent["config"]["tools"] {
-  const sourceToolNames = agent.config.tools && agent.config.tools !== true
-    ? new Set(Object.keys(agent.config.tools))
-    : new Set<string>();
+  const sourceTools = buildExplicitAgUiSourceTools(agent);
+  const sourceToolNames = new Set(Object.keys(sourceTools ?? {}));
   const injectedTools = Object.fromEntries(
     tools
       .filter((tool) => !sourceToolNames.has(tool.name))
@@ -71,22 +84,8 @@ export function buildMergedAgUiTools(
       ]),
   );
 
-  if (!agent.config.tools) {
+  if (!sourceTools) {
     return Object.keys(injectedTools).length > 0 ? injectedTools : undefined;
   }
-
-  if (agent.config.tools === true) {
-    const merged: Record<string, Tool | boolean> = {};
-    for (const [toolId, registryTool] of toolRegistry.getAll()) {
-      // Owner-aware: another agent's owned tool never enters this agent's
-      // AG-UI run config.
-      if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {
-        continue;
-      }
-      merged[toolId] = true;
-    }
-    return { ...merged, ...injectedTools };
-  }
-
-  return { ...agent.config.tools, ...injectedTools };
+  return { ...sourceTools, ...injectedTools };
 }

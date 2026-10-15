@@ -30,6 +30,7 @@ import {
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import type { ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import { buildExplicitAgUiSourceTools } from "./tool-shared.ts";
 
 /** @internal Trusted CLI setup, never read from a project's environment. */
 export interface ConnectedLocalRuntimeOptions {
@@ -420,6 +421,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               createEphemeralAgentWithRuntimeOptions({
                 ...getAgentExecutionConfig(agent.config),
                 id: agent.id,
+                tools: buildExplicitAgUiSourceTools(agent),
+                delegates: undefined,
               }, { resolveModelRuntime: resolver, preserveToolCatalog: true })
             );
           },
