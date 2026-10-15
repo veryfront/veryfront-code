@@ -469,6 +469,91 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  for (const selection of ["environment-on-main", "preview-on-main", "root-on-preview"] as const) {
+    it(`executes independent signed source ${selection} through the handler`, async () => {
+      const sourceEnvironmentId = "10000000-1000-4000-8000-100000000098";
+      const sourceBranchId = "10000000-1000-4000-8000-100000000006";
+      let loadedEnvironment: string | undefined;
+      let scopedEnvironment: string | undefined;
+      const handler = createTestAgentStreamHandler({
+        loadAgentSourceEnvironment: (ctx, _source, target) => {
+          loadedEnvironment = target.sourceTargetEnvironmentId ?? undefined;
+          scopedEnvironment = ctx.environmentId;
+          return Promise.resolve({});
+        },
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "accepted",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+              metadata: { finishReason: "stop" },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "accepted-message" }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-start", id: "accepted-text" }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "accepted-text",
+                    delta: "accepted",
+                  }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-end", id: "accepted-text" }),
+                );
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const project = selection === "root-on-preview"
+        ? {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: sourceBranchId,
+          sourceTargetBranchId: null,
+        }
+        : selection === "preview-on-main"
+        ? { runtimeTargetKind: "main_branch", sourceTargetBranchId: sourceBranchId }
+        : { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: sourceEnvironmentId };
+      const body = createAgentStreamRequestBody({
+        project,
+        credentials: { authToken: "source-reader-token" },
+        agentSource: selection === "environment-on-main"
+          ? { type: "environment", environmentName: "staging", releaseId: "release-selected" }
+          : { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertStringIncludes(await result.response.text(), "event: RunFinished");
+      if (selection === "environment-on-main") {
+        assertEquals(loadedEnvironment, sourceEnvironmentId);
+        assertEquals(scopedEnvironment, sourceEnvironmentId);
+      }
+    });
+  }
+
   it("accepts a non-main default branch only when it matches trusted proxy metadata", async () => {
     let discoveryCalls = 0;
     const handler = createTestAgentStreamHandler({

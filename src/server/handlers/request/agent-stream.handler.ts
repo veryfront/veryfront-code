@@ -181,6 +181,8 @@ type AgentSourceTargetIdentity = Pick<
   | "runtimeTargetEnvironmentId"
   | "runtimeTargetBranchId"
   | "executionEnvironmentId"
+  | "sourceTargetEnvironmentId"
+  | "sourceTargetBranchId"
 >;
 
 export type AgentSourceEnvironmentLoader = (
@@ -481,6 +483,19 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
  * control-plane invocation. Unbound branches and bare releases receive no
  * project variables. Named sources retain their exact release-bound target.
  */
+function sourceEnvironmentIdOf(target: AgentSourceTargetIdentity): string | null | undefined {
+  return target.sourceTargetEnvironmentId === undefined &&
+      target.runtimeTargetKind === "environment"
+    ? target.runtimeTargetEnvironmentId
+    : target.sourceTargetEnvironmentId;
+}
+
+function sourceBranchIdOf(target: AgentSourceTargetIdentity): string | null | undefined {
+  return target.sourceTargetBranchId === undefined && target.runtimeTargetKind === "preview_branch"
+    ? target.runtimeTargetBranchId
+    : target.sourceTargetBranchId;
+}
+
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
@@ -504,11 +519,8 @@ async function resolveAgentSourceEnvironment(
       projectId: ctx.projectId,
     });
   }
-  if (
-    targetIdentity.runtimeTargetKind !== "environment" ||
-    !targetIdentity.runtimeTargetEnvironmentId ||
-    targetIdentity.runtimeTargetBranchId
-  ) {
+  const sourceEnvironmentId = sourceEnvironmentIdOf(targetIdentity);
+  if (!sourceEnvironmentId) {
     throw INVALID_ARGUMENT.create({
       detail: "Named agent source requires an exact signed environment target",
     });
@@ -521,7 +533,7 @@ async function resolveAgentSourceEnvironment(
       projectId: ctx.projectId,
       token: apiAuthToken,
       environmentName: sourceContext.environmentName,
-      expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId,
+      expectedEnvironmentId: sourceEnvironmentId,
       expectedReleaseId: sourceContext.releaseId,
     },
     signal,
@@ -1076,12 +1088,14 @@ function assertAgentSourceMatchesHostedTarget(
 ): void {
   const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
   if (!fsWrapper.isMultiProjectMode?.()) return;
-  if (payload.runtimeTargetKind === "preview_branch") {
+  if (payload.agentSource.type !== "branch") return;
+  const sourceBranchId = sourceBranchIdOf(payload);
+  if (sourceBranchId) {
     if (
       payload.agentSource.type !== "branch" ||
       !ctx.branchId ||
       !ctx.branchName ||
-      payload.runtimeTargetBranchId !== ctx.branchId ||
+      sourceBranchId !== ctx.branchId ||
       payload.agentSource.branch !== ctx.branchName
     ) {
       throw PERMISSION_DENIED.create({
@@ -1092,8 +1106,7 @@ function assertAgentSourceMatchesHostedTarget(
   }
 
   if (
-    payload.runtimeTargetKind === "main_branch" &&
-    payload.agentSource.type === "branch" &&
+    !sourceBranchId &&
     (!ctx.defaultBranchName || payload.agentSource.branch !== ctx.defaultBranchName)
   ) {
     throw PERMISSION_DENIED.create({
@@ -1292,7 +1305,7 @@ export class AgentStreamHandler extends BaseHandler {
         // request header into the environment used for hosted evaluation.
         environmentId: payload.agentSource.type === "branch"
           ? payload.executionEnvironmentId
-          : payload.runtimeTargetEnvironmentId ?? undefined,
+          : sourceEnvironmentIdOf(payload) ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: sourceAuthToken }
           : ctx.requestContext,
@@ -1329,6 +1342,12 @@ export class AgentStreamHandler extends BaseHandler {
                   runtimeTargetEnvironmentId: payload.runtimeTargetEnvironmentId,
                   runtimeTargetBranchId: payload.runtimeTargetBranchId,
                   executionEnvironmentId: payload.executionEnvironmentId,
+                  ...(payload.sourceTargetEnvironmentId !== undefined
+                    ? { sourceTargetEnvironmentId: payload.sourceTargetEnvironmentId }
+                    : {}),
+                  ...(payload.sourceTargetBranchId !== undefined
+                    ? { sourceTargetBranchId: payload.sourceTargetBranchId }
+                    : {}),
                 },
                 sourceAuthToken,
                 req.signal,
