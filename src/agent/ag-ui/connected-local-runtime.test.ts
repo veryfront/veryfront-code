@@ -6,9 +6,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { createConnectedLocalRuntime } from "./connected-local-runtime.ts";
-import type { ExternalAgentWorkerClient } from "../service/external-worker-client.ts";
+import {
+  createExternalAgentWorkerClient,
+  type ExternalAgentWorkerClient,
+} from "../service/external-worker-client.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
@@ -18,6 +21,8 @@ import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/ca
 
 function fixture(
   options: {
+    trustedClaim?: boolean;
+    childAdmission?: () => Promise<Response>;
     lostResponseOnce?: string;
     abortOnPath?: string;
     controller?: AbortController;
@@ -103,16 +108,56 @@ function fixture(
         : Promise.resolve();
     },
   } as unknown as ExternalAgentWorkerClient;
+  const trustedClient = options.trustedClaim
+    ? createExternalAgentWorkerClient({
+      apiUrl: "http://localhost:4400",
+      authToken: "private",
+      fetch: (() =>
+        Promise.resolve(Response.json({
+          credentials: {
+            auth_token: "claim-invocation",
+            run_event_token: "claim-event",
+            run_terminal_token: `header.${
+              btoa(JSON.stringify({
+                runId: `run-${id}`,
+                canonicalRunId: "77777777-7777-4777-8777-777777777777",
+                tokenUse: "run_event_writer",
+                writerPurpose: "current_run_terminal",
+                dispatchNonce: "generation",
+              }))
+            }.signature`,
+          },
+          run: {
+            run_id: `run-${id}`,
+            conversation_id: "33333333-3333-4333-8333-333333333333",
+            message_id: "44444444-4444-4444-8444-444444444444",
+            project_id: "11111111-1111-4111-8111-111111111111",
+            agent_id: "assistant",
+            status: "running",
+            request_snapshot: null,
+            latest_event_id: 0,
+            latest_external_event_sequence: 0,
+            lease_owner: "worker",
+            lease_expires_at: null,
+            worker_session: null,
+          },
+        }))) as typeof fetch,
+    })
+    : undefined;
+  if (trustedClient) {
+    const { claimRun: _claimRun, ...methods } = client;
+    Object.assign(trustedClient, methods);
+  }
   const runtime = createConnectedLocalRuntime({
     apiBaseUrl: "http://localhost:4400",
     apiToken: "private",
-    projectId: "project",
+    projectId: options.trustedClaim ? "11111111-1111-4111-8111-111111111111" : "project",
     projectSlug: "sample",
     workerDisplayName: options.workerDisplayName,
     environmentId: "env",
     studioUrl: options.studioUrl ?? "http://localhost:3440",
   }, {
-    client,
+    client: trustedClient ?? client,
     append: async (events, sequence) => {
       markAppendStarted();
       await options.appendGate;
@@ -128,6 +173,9 @@ function fixture(
       const path = new URL(String(_url)).pathname;
       const body = JSON.parse(String(init?.body ?? "{}"));
       requests.push({ path, body, headers: new Headers(init?.headers) });
+      if (path === "/runs" && body.parent_run_id && options.childAdmission) {
+        return options.childAdmission();
+      }
       if (path === options.apiFailure?.path) {
         return Promise.resolve(
           options.apiFailure.invalidJson
@@ -157,7 +205,13 @@ function fixture(
       if (path === options.abortOnPath) options.controller?.abort();
       if (path === "/conversations") {
         id++;
-        return Promise.resolve(Response.json({ id: `conversation-${id}` }));
+        return Promise.resolve(
+          Response.json({
+            id: options.trustedClaim
+              ? "33333333-3333-4333-8333-333333333333"
+              : `conversation-${id}`,
+          }),
+        );
       }
       return Promise.resolve(Response.json({ id: `run-${id}` }));
     }) as typeof fetch,
@@ -226,6 +280,73 @@ describe("connected local execution", () => {
     } finally {
       release();
       await run.finish("failed");
+    }
+  });
+
+  it("replays child admission after a lost response without executing a terminal child again", async () => {
+    let attempts = 0;
+    const output = { text: "stored", toolCalls: 0, status: "completed" };
+    const f = fixture({
+      trustedClaim: true,
+      childAdmission: async () => {
+        if (++attempts === 1) throw new TypeError("child response lost");
+        return Response.json({
+          id: "22222222-2222-4222-8222-222222222222",
+          status: "completed",
+          output,
+          project_id: "11111111-1111-4111-8111-111111111111",
+          parent_run_id: "run-1",
+          target: { type: "agent", id: "child" },
+          conversation_id: "33333333-3333-4333-8333-333333333333",
+          output_message_id: "44444444-4444-4444-8444-444444444444",
+        }, { status: 202, headers: { "Cache-Control": "no-store" } });
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let executions = 0;
+    try {
+      await run.execute(async () => {
+        await observeAdmittedAgentToolCalls({
+          id: "message",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "child-call",
+            toolName: "invoke_agent",
+            args: { agent_id: "child" },
+          }],
+        });
+        const invoke = () =>
+          executeLocalChild({
+            agentId: "child",
+            input: "task",
+            toolName: "invoke_agent",
+            toolInput: { agent_id: "child" },
+            context: { toolCallId: "child-call" },
+            execute: async () => {
+              executions++;
+              return output;
+            },
+          });
+        await assertRejects(invoke, TypeError, "child response lost");
+        assertEquals(await invoke(), output);
+      });
+      const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
+      assertEquals(requests.length, 2);
+      assert(requests[0] && requests[1]);
+      assertEquals(
+        requests[0].headers.get("Idempotency-Key"),
+        requests[1].headers.get("Idempotency-Key"),
+      );
+      assertEquals(requests[1].headers.get("Authorization"), "Bearer claim-invocation");
+      assertEquals(executions, 0);
+    } finally {
+      await run.finish("completed");
     }
   });
 

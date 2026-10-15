@@ -39,7 +39,8 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
-function childResult(value: unknown): LocalChildResult {
+/** @internal Validate the result returned by durable local child execution. */
+export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
   if (
     !value || typeof value !== "object" || !("text" in value) ||
     typeof value.text !== "string" || !("toolCalls" in value) ||
@@ -229,7 +230,7 @@ export async function runInheritedLocalAgent(
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
                     }
-                    const output = childResult(delegatedResult.output);
+                    const output = readInheritedLocalChildResult(delegatedResult.output);
                     if (!completedTools.has(toolCallId)) {
                       completedTools.add(toolCallId);
                       await mirror.handleChunk({

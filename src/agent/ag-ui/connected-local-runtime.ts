@@ -1,5 +1,8 @@
 import { withLocalChildExecution } from "../composition/local-child-execution.ts";
-import { runInheritedLocalAgent } from "../composition/inherited-local-agent.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+} from "../composition/inherited-local-agent.ts";
 import {
   acceptWorkflowInheritedRunAdmission,
   hostedInheritedInferenceModelResolver,
@@ -500,6 +503,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                   }
                   const previous = childExecutions.get(toolCallId);
                   if (previous) return await previous;
+                  let admissionAccepted = false;
                   const execute = (async () => {
                     await streamMirror.flush();
                     const authority = readExternalAgentWorkerRunAuthority(client, claim!.run_id);
@@ -531,6 +535,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                       apiUrl: options.apiBaseUrl,
                       fetch: transport,
                     });
+                    admissionAccepted = true;
                     const result = await runInheritedLocalAgent(
                       delegated,
                       {
@@ -556,26 +561,17 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                       true,
                     );
                     if (!result.success) throw new Error(result.error ?? "Local child failed.");
-                    const output = result.output;
-                    if (
-                      !output || typeof output !== "object" || !("text" in output) ||
-                      typeof output.text !== "string" || !("toolCalls" in output) ||
-                      typeof output.toolCalls !== "number" || !("status" in output) ||
-                      typeof output.status !== "string"
-                    ) throw new Error("Local child result is invalid.");
-                    return {
-                      text: output.text,
-                      toolCalls: output.toolCalls,
-                      status: output.status,
-                      ...(Object.hasOwn(output, "object") && "object" in output
-                        ? { object: output.object }
-                        : {}),
-                    };
-                  })();
+                    return readInheritedLocalChildResult(result.output);
+                  })().finally(() => {
+                    if (!admissionAccepted && childExecutions.get(toolCallId) === execute) {
+                      childExecutions.delete(toolCallId);
+                    }
+                  });
                   childExecutions.set(toolCallId, execute);
                   return await execute;
                 },
                 async () => await operation(),
+                // wrapStream persists the parent stream; this scope only admits child tool calls.
                 async () => {},
                 async (id, name, input) => {
                   const agentId = input && typeof input === "object" && "agent_id" in input &&
