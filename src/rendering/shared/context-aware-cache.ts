@@ -6,6 +6,7 @@ import type { RenderResult } from "../orchestrator/types.ts";
 import {
   CACHE_ALIAS_EPOCH_KEY,
   CACHE_ALIAS_KEY_PREFIX,
+  CACHE_ALIAS_PROJECT_EPOCH_KEY,
   type CachePayload,
   type CacheStore,
 } from "../cache/types.ts";
@@ -88,6 +89,7 @@ export class ContextAwareCacheCoordinator {
   private readonly maxLegacyKeys: number;
   private legacyWriteBarrier: Promise<void> = Promise.resolve();
   private readonly aliasEpochKeys = new Set<string>();
+  private readonly aliasProjectEpochKeys = new Set<string>();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
@@ -114,7 +116,9 @@ export class ContextAwareCacheCoordinator {
     cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): Promise<ContextAwareCacheLookupResult> {
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
-    if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) {
+    if (
+      cacheKeyKind === "route" && isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix
+    ) {
       return Promise.resolve({ cacheKey, hit: false, status: "miss", lookupDurationMs: 0 });
     }
 
@@ -138,14 +142,19 @@ export class ContextAwareCacheCoordinator {
         }
 
         if (
-          cached.aliasEpoch !== undefined ||
-          (!this.store.deleteByPrefix && cacheKeyOverride &&
-            !isScopedOverride(cacheKeyOverride))
+          cached.aliasEpoch !== undefined || cached.aliasProjectEpoch !== undefined ||
+          (!this.store.deleteByPrefix && cacheKeyOverride)
         ) {
-          const epoch = await this.store.get(this.aliasEpochKey(ctx));
+          const [epoch, projectEpoch] = await Promise.all([
+            this.store.get(this.aliasEpochKey(ctx)),
+            this.store.get(this.aliasProjectEpochKey(ctx.projectId)),
+          ]);
           if (
             typeof cached.aliasEpoch !== "string" || cached.aliasEpoch !== epoch?.aliasEpoch ||
-            (epoch && this.isExpired(epoch))
+            (epoch && this.isExpired(epoch)) ||
+            typeof cached.aliasProjectEpoch !== "string" ||
+            cached.aliasProjectEpoch !== projectEpoch?.aliasEpoch ||
+            (projectEpoch && this.isExpired(projectEpoch))
           ) {
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("miss", lookupDurationMs);
@@ -278,7 +287,9 @@ export class ContextAwareCacheCoordinator {
     if (!result || result.stream || this.destroyed) return;
     // Scoped entries require store-level prefix deletion, including across
     // coordinators/restarts. An unsupported store remains usable for legacy keys.
-    if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) return;
+    if (
+      cacheKeyKind === "route" && isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix
+    ) return;
 
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
     const now = Date.now();
@@ -305,12 +316,14 @@ export class ContextAwareCacheCoordinator {
           this.legacyKeys.delete(oldest);
         }
       }
-      const aliasEpoch = !this.store.deleteByPrefix && cacheKeyOverride &&
-          !isScopedOverride(cacheKeyOverride)
+      const aliasEpoch = !this.store.deleteByPrefix && cacheKeyOverride
         ? await this.captureAliasEpoch(ctx)
         : undefined;
+      const aliasProjectEpoch = aliasEpoch
+        ? await this.captureAliasProjectEpoch(ctx.projectId)
+        : undefined;
       await this.store.set(cacheKey, {
-        ...(aliasEpoch ? { aliasEpoch } : {}),
+        ...(aliasEpoch ? { aliasEpoch, aliasProjectEpoch } : {}),
         result: cachedResult,
         ...(sealedHtml.placeholder === undefined
           ? {}
@@ -348,22 +361,31 @@ export class ContextAwareCacheCoordinator {
   }
 
   private captureAliasEpoch(ctx: RenderContext): Promise<string> {
-    return withAliasGeneration(this.aliasEpochKey(ctx), () => this.initializeAliasEpoch(ctx));
+    const key = this.aliasEpochKey(ctx);
+    return withAliasGeneration(key, () => this.initializeEpoch(key, this.aliasEpochKeys));
   }
 
-  private async initializeAliasEpoch(ctx: RenderContext): Promise<string> {
-    const key = this.aliasEpochKey(ctx);
+  private aliasProjectEpochKey(projectId: string): string {
+    return `${projectId}:${CACHE_ALIAS_PROJECT_EPOCH_KEY}`;
+  }
+
+  private captureAliasProjectEpoch(projectId: string): Promise<string> {
+    const key = this.aliasProjectEpochKey(projectId);
+    return withAliasGeneration(key, () => this.initializeEpoch(key, this.aliasProjectEpochKeys));
+  }
+
+  private async initializeEpoch(key: string, trackedKeys: Set<string>): Promise<string> {
     const existing = await this.store.get(key);
     const valid = typeof existing?.aliasEpoch === "string" && !this.isExpired(existing);
     const token = valid ? existing.aliasEpoch! : crypto.randomUUID();
-    if (!this.store.deleteByPrefix && !this.aliasEpochKeys.has(key)) {
-      while (this.aliasEpochKeys.size >= this.maxLegacyKeys) {
-        const oldest = this.aliasEpochKeys.values().next().value;
+    if (!this.store.deleteByPrefix && !trackedKeys.has(key)) {
+      while (trackedKeys.size >= this.maxLegacyKeys) {
+        const oldest = trackedKeys.values().next().value;
         if (oldest === undefined) break;
         await this.store.delete(oldest);
-        this.aliasEpochKeys.delete(oldest);
+        trackedKeys.delete(oldest);
       }
-      this.aliasEpochKeys.add(key);
+      trackedKeys.add(key);
     }
     if (!valid) {
       await this.store.set(key, {
@@ -421,6 +443,11 @@ export class ContextAwareCacheCoordinator {
         const results = await Promise.allSettled([
           this.deleteLegacyKeys((key) => key.startsWith(prefix)),
           this.deleteAliasEpochs((key) => key.startsWith(prefix)),
+          withAliasGeneration(this.aliasProjectEpochKey(projectId), async () => {
+            const key = this.aliasProjectEpochKey(projectId);
+            await this.store.delete(key);
+            this.aliasProjectEpochKeys.delete(key);
+          }),
         ]);
         const errors = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : []
@@ -509,6 +536,7 @@ export class ContextAwareCacheCoordinator {
       await this.store.clear();
       this.legacyKeys.clear();
       this.aliasEpochKeys.clear();
+      this.aliasProjectEpochKeys.clear();
     });
   }
 
@@ -518,6 +546,7 @@ export class ContextAwareCacheCoordinator {
       await this.store.destroy();
       this.legacyKeys.clear();
       this.aliasEpochKeys.clear();
+      this.aliasProjectEpochKeys.clear();
     });
   }
 

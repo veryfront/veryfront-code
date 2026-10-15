@@ -51,6 +51,13 @@ Registry versions, ranges and tags are supported. Package aliases, workspace
 or file/link sources, git references and tarball URLs are unsupported for this
 runtime pair because server and browser rendering must use the same package.
 
+React component SSR captures the installed peer graph for each render. Local
+TS/JS script pages use the runtime's native module loader and its process-lifetime
+dependency cache. Restart the server after replacing installed React packages;
+changing packages in a running process is unsupported for native script pages.
+Script execution does not use per-render peer snapshots. Adapters that provide
+a prepared module graph retain control of their loader.
+
 These commands add the dependency entries without scaffolding files. Add the
 four pieces below yourself. `veryfront init` writes all of them for you, see
 [Create project](./create-project.md).

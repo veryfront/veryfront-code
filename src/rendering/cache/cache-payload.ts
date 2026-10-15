@@ -905,6 +905,12 @@ function buildCachePayload(value: unknown): CachePayload {
     (typeof aliasEpoch !== "string" || !/^[a-f0-9-]{36}$/i.test(aliasEpoch))
   ) fail("aliasEpoch is invalid");
 
+  const aliasProjectEpoch = ownDataValue(value, "aliasProjectEpoch");
+  if (
+    aliasProjectEpoch !== undefined &&
+    (typeof aliasProjectEpoch !== "string" || !/^[a-f0-9-]{36}$/i.test(aliasProjectEpoch))
+  ) fail("aliasProjectEpoch is invalid");
+
   if (typeof html !== "string") fail("result.html must be a string");
   if (css !== undefined && typeof css !== "string") {
     fail("result.css must be a string when present");
@@ -989,6 +995,7 @@ function buildCachePayload(value: unknown): CachePayload {
     },
     ...(htmlNoncePlaceholder === undefined ? {} : { htmlNoncePlaceholder }),
     ...(aliasEpoch === undefined ? {} : { aliasEpoch: aliasEpoch as string }),
+    ...(aliasProjectEpoch === undefined ? {} : { aliasProjectEpoch: aliasProjectEpoch as string }),
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
@@ -1052,6 +1059,9 @@ export function serializeCachePayload(value: CachePayload): string {
       : { htmlNoncePlaceholder: snapshot.htmlNoncePlaceholder }),
     ...(encodedNodeMapEntries === undefined ? {} : { nodeMapEntries: encodedNodeMapEntries }),
     ...(snapshot.aliasEpoch === undefined ? {} : { aliasEpoch: snapshot.aliasEpoch }),
+    ...(snapshot.aliasProjectEpoch === undefined
+      ? {}
+      : { aliasProjectEpoch: snapshot.aliasProjectEpoch }),
     storedAt: snapshot.storedAt,
     ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),
     ...(snapshot.staleUntil === undefined ? {} : { staleUntil: snapshot.staleUntil }),

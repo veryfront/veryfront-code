@@ -10,8 +10,15 @@ import type { CachePayload, CacheStore } from "#veryfront/rendering/cache/types.
 import type { RenderOptions, RenderResult } from "#veryfront/rendering/orchestrator/types.ts";
 
 describe("Renderer React peer cache", () => {
-  for (const cacheKey of [undefined, "explicit-page"]) {
-    it(`isolates cached HTML and concurrent renders by peers with override ${cacheKey}`, async () => {
+  for (
+    const [cacheKey, prefixCapable] of [
+      [undefined, true],
+      ["explicit-page", true],
+      ["explicit-page", false],
+      ["pins:custom", false],
+    ] as const
+  ) {
+    it(`isolates cached HTML and concurrent renders by peers with override ${cacheKey} and prefix support ${prefixCapable}`, async () => {
       if (!isNode && !isBun) return;
       const data = new Map<string, CachePayload>();
       const store: CacheStore = {
@@ -40,6 +47,7 @@ describe("Renderer React peer cache", () => {
         },
         destroy: () => Promise.resolve(),
       };
+      if (!prefixCapable) Reflect.deleteProperty(store, "deleteByPrefix");
       const renderer = new Renderer({ cache: { store } });
       (renderer as unknown as { initialized: boolean }).initialized = true;
       let renders = 0;

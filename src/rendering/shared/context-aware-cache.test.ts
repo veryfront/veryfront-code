@@ -634,6 +634,64 @@ describe("rendering/shared/context-aware-cache", () => {
       );
     });
 
+    for (
+      const key of ["shared:react-runtime:custom", "pins:custom", "render-identity:hash-custom"]
+    ) {
+      it(`supports explicit scoped-looking alias ${key} without prefix deletion`, async () => {
+        const store = createInMemoryStore();
+        Reflect.deleteProperty(store, "deleteByPrefix");
+        const writer = new ContextAwareCacheCoordinator({ store });
+        const reader = new ContextAwareCacheCoordinator({ store: { ...store } });
+        const ctx = makeMockCtx();
+        const lookup = () => reader.checkCache("second", ctx, undefined, key, undefined, "alias");
+        await writer.persistResult(
+          { html: "shared", frontmatter: {}, stream: null },
+          "first",
+          ctx,
+          undefined,
+          key,
+          undefined,
+          "alias",
+        );
+        assertEquals((await lookup()).cachedResult?.html, "shared");
+        await reader.clearForContext(ctx);
+        assertEquals((await lookup()).hit, false);
+      });
+    }
+
+    it("invalidates aliases in every project context across independent coordinators", async () => {
+      const store = createInMemoryStore();
+      Reflect.deleteProperty(store, "deleteByPrefix");
+      const writer = new ContextAwareCacheCoordinator({ store });
+      const clearer = new ContextAwareCacheCoordinator({ store: { ...store } });
+      const ctx = makeMockCtx();
+      const otherContext = makeMockCtx({ cachePrefix: "proj-1:preview:branch-other" });
+      const otherProject = makeMockCtx({
+        projectId: "proj-2",
+        cachePrefix: "proj-2:production:release-1",
+      });
+      const result = { html: "old", frontmatter: {}, stream: null };
+      const lookup = (context: RenderContext, key = "shared") =>
+        writer.checkCache("page", context, undefined, key);
+      for (const context of [ctx, otherContext, otherProject]) {
+        await writer.persistResult(result, "page", context, undefined, "shared");
+        assertEquals((await lookup(context)).hit, true);
+      }
+      await clearer.clearForProject(ctx.projectId);
+      assertEquals((await lookup(ctx)).hit, false);
+      assertEquals((await lookup(otherContext)).hit, false);
+      assertEquals((await lookup(otherProject)).hit, true);
+      await writer.persistResult(result, "page", ctx, undefined, "fresh");
+      assertEquals((await lookup(ctx, "fresh")).hit, true);
+      assertEquals(
+        (await lookup(otherContext)).hit,
+        false,
+        "new writes must not resurrect an old context generation",
+      );
+      await clearer.clearForContext(ctx);
+      assertEquals((await lookup(otherProject)).hit, true);
+    });
+
     for (const prefixCapable of [false, true]) {
       it(`preserves explicit override sharing with prefix support ${prefixCapable}`, async () => {
         const store = createInMemoryStore();
