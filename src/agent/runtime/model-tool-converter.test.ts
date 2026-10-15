@@ -468,6 +468,25 @@ describe("model-tool-converter", () => {
     );
   });
 
+  it("preserves complete tool schemas for a Google-published model on an OpenAI gateway wire surface", () => {
+    const parameters = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { oneOf: [{ type: "string" }, { type: "null" }] },
+      },
+      required: ["query"],
+    };
+    const result = convertToolsToRuntimeTools(
+      [{ name: "tool_search", description: "Find a tool", parameters }] as never,
+      {
+        model: "veryfront-cloud/google/local-model",
+        wireSurface: "openai",
+      },
+    );
+    assertEquals(getRuntimeToolSchema(result?.tool_search), parameters);
+  });
+
   it("normalizes Moonshot-compatible runtime tool schemas", () => {
     const result = convertToolsToRuntimeTools([
       {
@@ -490,6 +509,7 @@ describe("model-tool-converter", () => {
       },
     ] as never, {
       model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      wireSurface: "openai",
     });
 
     const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;

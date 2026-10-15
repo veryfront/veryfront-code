@@ -243,6 +243,47 @@ describe("release asset build executor", () => {
     await stopEsbuild();
   });
 
+  it("uses prepared React authority for release browser transforms", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const selected: Array<string | undefined> = [];
+    const adapter = {
+      moduleLoader: {
+        importModule: () => Promise.resolve({ default: { version: "19.2.3" } }),
+      },
+    } as unknown as RuntimeAdapter;
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ], rec);
+    const input = {
+      ...baseInput(client, (source, _path, _dir, transformAdapter, options) => {
+        assertEquals(transformAdapter.moduleLoader, adapter.moduleLoader);
+        selected.push(options.reactVersion);
+        return Promise.resolve(source);
+      }),
+      adapter,
+      loadConfig: releaseConfigLoader({ react: { version: "^19.2.0" } }),
+    };
+    const result = await runReleaseAssetBuild(input, await tmp());
+    assertEquals(result.success, true, result.error);
+    assert(selected.length > 0);
+    assertEquals([...new Set(selected)], ["19.2.3"]);
+    selected.length = 0;
+    const rejectedRecord: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const rejected = await runReleaseAssetBuild({
+      ...input,
+      client: makeClient(
+        [{ path: "pages/index.tsx", content: "export default () => null;" }],
+        rejectedRecord,
+      ),
+      loadConfig: releaseConfigLoader({ react: { version: "19.2.4" } }),
+    }, await tmp());
+    assertEquals(rejected.success, false);
+    assertStringIncludes(rejected.error ?? "", "Prepared React runtime version");
+    assertEquals(selected, []);
+    assertEquals(rejectedRecord.manifest, null);
+    assertEquals(rejectedRecord.uploads, []);
+  });
+
   it("assembles a ready manifest from the module closure", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [

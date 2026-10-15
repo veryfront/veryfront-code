@@ -129,6 +129,29 @@ function options(overrides: Partial<HostedHttpResolverOptions> = {}): HostedHttp
 const signal = () => new AbortController().signal;
 
 describe("hosted HTTP resolver", () => {
+  it("orders resolutions by when authorization began, not when they finish", async () => {
+    using time = new FakeTime(1_000_000);
+    const stalled = Promise.withResolvers<Record<string, string>>();
+    const fake = fakeApi({
+      readEnvironment: (value) =>
+        value.releaseId === RELEASE_ID ? stalled.promise : Promise.resolve({ APP_MESSAGE: "new" }),
+    });
+    const resolve = createHostedHttpResolver(options({
+      api: fake.api,
+      lookupSourceImage: createHostedHttpSourceRecordLookup([
+        record(),
+        record({ release_id: OTHER_RELEASE_ID }),
+      ]),
+    }));
+    const earlier = resolve(authority, signal());
+    time.tick(5);
+    const later = await resolve({ ...authority, releaseId: OTHER_RELEASE_ID }, signal());
+    stalled.resolve({ APP_MESSAGE: "old" });
+    const finishedLast = await earlier;
+    assertEquals(finishedLast.session.request.requestedAt, 1_000_000);
+    assertEquals(later.session.request.requestedAt, 1_000_005);
+  });
+
   it("authorizes identity with the source token before reading project variables", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));

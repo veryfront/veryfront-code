@@ -53,6 +53,7 @@ export async function loadModuleFromSource(
         dependencyPinningSource,
         options?.dependencyPinningCacheKey,
         options?.dependencyPinningDependencies,
+        options?.dependencyPinningConfiguredVersions,
       );
       const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:")
         ? options?.moduleServerOrigin
@@ -67,10 +68,12 @@ export async function loadModuleFromSource(
           dev,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          reactPeers: options?.reactPeers,
           serverExternalPackages: options?.serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
           dependencyPinningSource,
           mode: options?.mode,
           signal: options?.signal,
@@ -90,6 +93,7 @@ export async function loadModuleFromSource(
         serverExternalPackages: options?.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
         dependencyPinningSource,
       };
 

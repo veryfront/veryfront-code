@@ -14,10 +14,11 @@ import {
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
+  readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
-  resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudProviderRouting,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
@@ -491,6 +492,12 @@ function openAIProviderName(model: ModelCallRuntimeMetadata): string {
 }
 
 function openAIProviderBucketNames(model: ModelCallRuntimeMetadata): readonly string[] {
+  // Match the Chat builder: a Cloud model built on the registry-backed
+  // compatible path reads the "openai-compatible" bucket, not the Cloud one.
+  const builderName = model.provider === "veryfront-cloud"
+    ? readVeryfrontCloudModelFacts(model)?.openAIChatProviderName
+    : undefined;
+  if (builderName !== undefined) return ["openai", builderName];
   const providerName = openAIProviderName(model);
   return providerName === "openai" ? ["openai-compatible", "openai"] : ["openai", providerName];
 }
@@ -1756,7 +1763,23 @@ function buildModelCallRequest(
   return objectKeys(request).length > 0 ? request : undefined;
 }
 
-/** Resolve the canonical provider recorded by the existing durable contract. */
+/**
+ * Served surface of a Veryfront Cloud model. A model built here carries its
+ * facts; a managed hosted proxy registers none, so its run scope's received
+ * catalog names the surface instead.
+ */
+function resolveServedSurface(model: ModelCallRuntimeMetadata): string | undefined {
+  const facts = readVeryfrontCloudModelFacts(model);
+  if (facts) return facts.surface;
+  if (model.provider !== "veryfront-cloud" || typeof model.modelId !== "string") {
+    return undefined;
+  }
+  const scopeKey = currentVeryfrontCloudCatalogScopeKey();
+  return scopeKey
+    ? readServedVeryfrontCloudCatalogModel(scopeKey, model.modelId)?.surface
+    : undefined;
+}
+
 /**
  * The wire protocol a model's request is built for. A Veryfront Cloud model
  * speaks the surface it settled on, so a newly served provider on the Anthropic
@@ -1764,11 +1787,39 @@ function buildModelCallRequest(
  * `google/*`. Other models are identified by their provider name.
  */
 function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
-  const surface = readVeryfrontCloudModelFacts(model)?.surface;
+  const surface = resolveServedSurface(model);
   if (surface === "anthropic" || surface === "google") return surface;
   return resolveModelCallProvider(model);
 }
 
+/**
+ * Thinking tokens an Anthropic budget adds on top of `maxOutputTokens`, or
+ * `undefined` when the effective budget is invalid. Adaptive thinking stays
+ * within `maxOutputTokens` and adds nothing.
+ */
+export function resolveAdditiveReasoningOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: Pick<ModelCallRequestSource, "reasoning"> & { providerOptions?: unknown },
+): number | undefined {
+  // The served surface decides the builder, so a custom provider on the
+  // Anthropic surface adds its thinking budget like `anthropic/*`.
+  if (resolveModelCallProtocol(model) !== "anthropic") return 0;
+  // Use the builder's own resolution, including the dispatched provider bucket.
+  if (options.reasoning?.enabled === true) {
+    return resolveAnthropicNeutralThinkingBudget(options.reasoning);
+  }
+  const source = options as ModelCallRequestSource;
+  const thinking = readProviderControl(model, source, "thinking")?.value;
+  if (
+    thinking && typeof thinking === "object" && !ArrayIsArray(thinking) &&
+    readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled"
+  ) {
+    return resolveAnthropicProviderThinkingBudget(model, source);
+  }
+  return 0;
+}
+
+/** Resolve the canonical provider recorded by the existing durable contract. */
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;
@@ -1805,17 +1856,14 @@ function suppressOpenAIFunctionToolReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): boolean {
-  // The capability is recorded for OpenAI's own models. Another provider on the
-  // same wire surface builds its request without it, so the recorded context
-  // must not apply it either.
-  if (resolveModelCallProvider(model) !== "openai" || model.provider !== "veryfront-cloud") {
-    return false;
-  }
-  const catalogId = `openai/${model.modelId}`;
+  // Every Cloud model on the Chat wire, OpenAI's own or a compatible provider,
+  // is built with the catalog's function-tool reasoning capability, so the
+  // recorded context applies the same capability.
+  const provider = resolveModelCallProvider(model);
+  if (provider === undefined || model.provider !== "veryfront-cloud") return false;
+  const catalogId = `${provider}/${model.modelId}`;
   const built = readVeryfrontCloudModelFacts(model);
-  const openAITransport = built
-    ? built.openAITransport
-    : resolveVeryfrontCloudOpenAITransport(catalogId);
+  const openAITransport = resolveOpenAIContextTransport(model, options);
   const reasoningWithFunctionTools = built
     ? built.openAIChatReasoningWithFunctionTools
     : resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId);
@@ -1840,6 +1888,20 @@ function suppressOpenAIFunctionToolReasoning(
     }
   }
   return false;
+}
+
+/**
+ * The native tool list an OpenAI builder sends in place of the neutral tools,
+ * when the selected native option bucket owns a `tools` value. That value,
+ * including `[]` or `undefined`, replaces the neutral list on the wire.
+ */
+export function resolveModelCallNativeTools(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): { readonly value: unknown } | undefined {
+  if (!usesOpenAIBuilder(model)) return undefined;
+  const providerOptions = openAIProviderOptions(model, options);
+  return ObjectHasOwn(providerOptions, "tools") ? { value: providerOptions.tools } : undefined;
 }
 
 function resolveOpenAINeutralReasoning(

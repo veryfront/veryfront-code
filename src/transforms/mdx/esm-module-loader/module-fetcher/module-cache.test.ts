@@ -10,6 +10,8 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { cacheModule } from "./module-cache.ts";
+import { getVersionedPathCacheKey } from "./cache-keys.ts";
+import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 
 const noopLog = {
   debug: () => {},
@@ -17,6 +19,65 @@ const noopLog = {
 } as never;
 
 describe("module-cache", () => {
+  it("writes the runtime-scoped key that validated lookups subsequently hit", async () => {
+    const directory = await makeTempDir({ prefix: "vf-runtime-scope-cache-" });
+    const paths = new Map<string, string>();
+    const path = "lib/value.ts";
+    const scope = "node:installed-peers";
+    try {
+      const cached = await cacheModule(
+        path,
+        "export const value = 1;",
+        directory,
+        paths,
+        noopLog,
+        "19.2.4",
+        "off",
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+      const key = getVersionedPathCacheKey(
+        path,
+        "19.2.4",
+        "off",
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+      assertEquals(
+        await readValidCachedModulePath({
+          normalizedPath: path,
+          pathCache: paths,
+          versionedKey: key,
+          log: noopLog,
+        }),
+        cached,
+      );
+      const foreignKey = getVersionedPathCacheKey(
+        path,
+        "19.2.4",
+        "off",
+        undefined,
+        undefined,
+        false,
+        "deno:installed-peers",
+      );
+      assertEquals(
+        await readValidCachedModulePath({
+          normalizedPath: path,
+          pathCache: paths,
+          versionedKey: foreignKey,
+          log: noopLog,
+        }),
+        null,
+      );
+    } finally {
+      await remove(directory, { recursive: true });
+    }
+  });
   it("adds a default export for filename-matched named component exports", async () => {
     const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-default-" });
     const projectDir = await makeTempDir({ prefix: "vf-module-cache-entry-" });

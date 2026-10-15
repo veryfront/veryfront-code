@@ -20,12 +20,23 @@ export const getContextCompactionEventPayloadSchema = defineSchema((v) =>
     type: v.literal(AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE),
     summary: getContextCompactionSummarySchema(),
     firstKeptEntryId: v.string().min(1),
+    preservedMessageIds: v.array(v.string().min(1)).max(1).optional(),
     tokensBefore: v.number().int().nonnegative(),
     tokensAfter: v.number().int().nonnegative(),
     tokenBudget: v.number().int().positive(),
     reserveTokens: v.number().int().nonnegative(),
     reason: v.enum(["context_window", "transport_body"]),
   }).superRefine((event, ctx) => {
+    if (
+      event.preservedMessageIds &&
+      new Set(event.preservedMessageIds).size !== event.preservedMessageIds.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "preservedMessageIds must contain unique identifiers",
+        path: ["preservedMessageIds"],
+      });
+    }
     const usableBudget = event.tokenBudget - event.reserveTokens;
     if (usableBudget <= 0) {
       ctx.addIssue({
@@ -125,41 +136,6 @@ function isUserMessage(message: AgentRuntimeMessage): boolean {
   return message.role === "user";
 }
 
-function getToolCallIds(message: AgentRuntimeMessage): string[] {
-  return message.parts.flatMap((part) =>
-    "toolCallId" in part && typeof part.toolCallId === "string" &&
-      part.type !== "tool-result"
-      ? [part.toolCallId]
-      : []
-  );
-}
-
-function getToolResultIds(message: AgentRuntimeMessage): string[] {
-  return message.parts.flatMap((part) =>
-    part.type === "tool-result" && typeof part.toolCallId === "string" ? [part.toolCallId] : []
-  );
-}
-
-function collectToolCallIds(messages: readonly AgentRuntimeMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const message of messages) {
-    for (const id of getToolCallIds(message)) {
-      ids.add(id);
-    }
-  }
-  return ids;
-}
-
-function collectToolResultIds(messages: readonly AgentRuntimeMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const message of messages) {
-    for (const id of getToolResultIds(message)) {
-      ids.add(id);
-    }
-  }
-  return ids;
-}
-
 function findLatestUserMessageIndex(messages: readonly AgentRuntimeMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -208,30 +184,39 @@ function expandTailForToolPairs(
   messages: readonly AgentRuntimeMessage[],
   initialStartIndex: number,
 ): number {
+  const pendingCalls = new Map<string, number[]>();
+  const pairs: { callIndexes: number[]; resultIndex: number }[] = [];
+  for (const [index, message] of messages.entries()) {
+    for (const part of message.parts) {
+      if (!("toolCallId" in part) || typeof part.toolCallId !== "string") continue;
+      if (part.type === "tool-result") {
+        const callIndexes = pendingCalls.get(part.toolCallId);
+        if (callIndexes) {
+          pairs.push({ callIndexes, resultIndex: index });
+          pendingCalls.delete(part.toolCallId);
+        }
+      } else {
+        const callIndexes = pendingCalls.get(part.toolCallId) ?? [];
+        callIndexes.push(index);
+        pendingCalls.set(part.toolCallId, callIndexes);
+      }
+    }
+  }
+
   let startIndex = initialStartIndex;
-  let changed = true;
-
-  while (changed) {
-    changed = false;
-    const tail = messages.slice(startIndex);
-    const tailCallIds = collectToolCallIds(tail);
-    const tailResultIds = collectToolResultIds(tail);
-
-    for (let index = startIndex - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (!message) {
-        continue;
-      }
-
-      const messageCallIds = getToolCallIds(message);
-      const messageResultIds = getToolResultIds(message);
-      const tailNeedsCall = messageCallIds.some((id) => tailResultIds.has(id));
-      const tailNeedsResult = messageResultIds.some((id) => tailCallIds.has(id));
-
-      if (tailNeedsCall || tailNeedsResult) {
-        startIndex = index;
-        changed = true;
-      }
+  // Consume results in reverse order so moving the boundary includes earlier dependencies.
+  // A completed provider identifier can be reused without linking unrelated calls.
+  for (let index = pairs.length - 1; index >= 0; index--) {
+    const pair = pairs[index];
+    if (!pair || pair.resultIndex < startIndex) continue;
+    if (pair.callIndexes.length > 1) {
+      throw new ContextCompactionError("Retained tool identifier has overlapping pending calls");
+    }
+    startIndex = Math.min(startIndex, pair.callIndexes[0] ?? pair.resultIndex);
+  }
+  for (const callIndexes of pendingCalls.values()) {
+    if (callIndexes.length > 1 && callIndexes.some((index) => index >= startIndex)) {
+      throw new ContextCompactionError("Retained tool identifier has overlapping pending calls");
     }
   }
 
@@ -401,17 +386,63 @@ export async function applyContextBudget(
     messages,
     initialTailStartIndex,
   );
-  const tailStartIndex = expandTailForDependencies(
+  let tailStartIndex = expandTailForDependencies(
     messages,
     conversationTailStartIndex,
     options.atomicMessageIds,
   );
-  const messagesToSummarize = messages.slice(0, tailStartIndex);
-  const retainedMessages = messages.slice(tailStartIndex);
-  const firstKeptEntryId = retainedMessages[0]?.id;
+  const latestUserIndex = findLatestUserMessageIndex(messages);
+  let preservedRequest: AgentRuntimeMessage | undefined;
+  const latestUserMessage = messages[latestUserIndex];
+  const requestHasRepeatedSegments = latestUserMessage &&
+    messages.some((message, index) =>
+      index !== latestUserIndex && message.id === latestUserMessage.id
+    );
+  const availableUserTurns = messages.filter(isUserMessage).length;
+  const effectiveMinimumRecentTurns = Math.min(options.minimumRecentTurns ?? 1, availableUserTurns);
+  // A long tool loop can belong to one user turn. Keeping that entire turn
+  // makes compaction ineffective; retain its request and a dependency-safe tail.
+  if (
+    effectiveMinimumRecentTurns === 1 &&
+    !requestHasRepeatedSegments &&
+    getMessageListTokens(messages.slice(tailStartIndex)) >=
+      usableBudget - (options.maxSummaryTokens ?? Math.min(2048, Math.floor(usableBudget / 4)))
+  ) {
+    let tailTokens = 0;
+    let boundedStart = messages.length - 1;
+    for (let index = messages.length - 1; index > latestUserIndex; index -= 1) {
+      tailTokens += getMessageTokens(messages[index]!);
+      boundedStart = index;
+      if (tailTokens >= options.recentTailTokens) break;
+    }
+    const boundedTailStart = expandTailForDependencies(
+      messages,
+      boundedStart,
+      options.atomicMessageIds,
+    );
+    if (boundedTailStart > latestUserIndex && messages[latestUserIndex]?.role === "user") {
+      tailStartIndex = boundedTailStart;
+      preservedRequest = messages[latestUserIndex];
+    }
+  }
+  const messagesToSummarize = messages.slice(0, tailStartIndex)
+    .filter((message) => message !== preservedRequest);
+  const retainedTail = messages.slice(tailStartIndex);
+  const retainedMessages = preservedRequest ? [preservedRequest, ...retainedTail] : retainedTail;
+  if (getMessageListTokens(retainedMessages) >= usableBudget) {
+    throw new ContextCompactionError("Context compaction result exceeded usable token budget");
+  }
+  const firstKeptEntryId = retainedTail[0]?.id;
 
   if (!firstKeptEntryId) {
     throw new ContextCompactionError("Context compaction could not select a retained tail");
+  }
+
+  if (
+    preservedRequest &&
+    messages.filter((message) => message.id === firstKeptEntryId).length !== 1
+  ) {
+    throw new ContextCompactionError("Context compaction retained tail anchor is ambiguous");
   }
 
   let summary: ContextCompactionSummary;
@@ -449,6 +480,7 @@ export async function applyContextBudget(
     type: AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
     summary,
     firstKeptEntryId,
+    ...(preservedRequest ? { preservedMessageIds: [preservedRequest.id] } : {}),
     tokensBefore,
     tokensAfter,
     tokenBudget: options.tokenBudget,

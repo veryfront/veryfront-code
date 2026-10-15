@@ -13,6 +13,14 @@ describe("Bun npm protocol resolution", () => {
     assertEquals(typeof BasicTracerProvider, "function");
   });
 
+  it("leaves dependency modules to Bun's native loader", () => {
+    assertEquals(bunPreloadRewriteFilter.test("/repo/node_modules/pkg/src/index.js"), false);
+    assertEquals(
+      bunPreloadRewriteFilter.test(String.raw`C:\repo\node_modules\pkg\src\index.js`),
+      false,
+    );
+  });
+
   it("leaves import-looking fixture text and comments unchanged", () => {
     const source = [
       'const fixture = `import value from "npm:fixture@1.0.0"`;',
@@ -57,6 +65,9 @@ describe("Bun npm protocol resolution", () => {
 
     for (
       const testPath of [
+        "/repo/scripts/lint/client-bundle-graph.ts",
+        String.raw`C:\repo\scripts\lint\client-bundle-graph.ts`,
+        "/repo/tests/integration/parser-helper.ts",
         "/repo/tests/bun/npm-protocol-resolution.test.ts",
         String.raw`C:\repo\tests\bun\npm-protocol-resolution.test.ts`,
         "/repo/extensions/fixtures/npm-protocol-resolution.test.ts",

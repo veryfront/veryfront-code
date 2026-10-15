@@ -168,9 +168,14 @@ async function matchesSourceSchema(
     if (!compiler) throw new TypeError("canonical-v1 needs compileJsonSchema support");
     validate = compiler({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      ...normalize(schema, documentId) as Record<string, unknown>,
+      allOf: [normalize(schema, documentId)],
       $defs: normalizedDefinitions,
-    } as JsonSchema);
+    } as JsonSchema, {
+      instanceLimits: {
+        maxSerializedBytes: CANONICAL_V1_MAX_MEMBER_BYTES,
+        maxStringBytes: CANONICAL_V1_MAX_STRING_BYTES,
+      },
+    });
     sourceValidators.set(schema, validate);
   }
   return (await validate(input)).success;

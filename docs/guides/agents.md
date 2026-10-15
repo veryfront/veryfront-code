@@ -180,6 +180,40 @@ denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preser
 the existing defaults above. Deferred inventories show up to 20 descriptions;
 `tool_search` also finds authorized tools omitted from that initial inventory.
 
+### Expose a startup tool set
+
+To expose a small startup set while leaving the rest of the catalog deferred,
+set `bootstrapTools` to up to 16 exact executable tool names. The selection does
+not grant access or replace the trusted skill loader. The runtime rejects names
+outside the authorized catalog, `tool_search`, and selections that exceed the
+model's schema limit. Per-step skill and execution restrictions still apply, so
+a startup tool removed by those restrictions is unavailable on that step. Other
+authorized tools remain discoverable. Omit `bootstrapTools` to keep the default
+startup set.
+
+```ts
+import { agent } from "veryfront/agent";
+import { tool } from "veryfront/tool";
+
+const readMarker = tool({
+  id: "read_marker",
+  description: "Read the current marker",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => ({ marker: "ready" }),
+});
+
+export default agent({
+  system: "Use recorded tool results to answer questions.",
+  tools: { read_marker: readMarker },
+  toolLoading: "deferred",
+  bootstrapTools: ["read_marker"],
+});
+```
+
+In Markdown agent definitions, use `bootstrap-tools` with the same list. In
+eager mode, all selected tools are already exposed; the startup selection does
+not make that mode deferred.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -204,6 +238,29 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
+For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
+child response text once while preserving summary metadata and the original
+durable result envelope.
+Both chat replay and text-generation requests use this normalization, including
+JSON-encoded persisted child results. A completed child with accepted structured
+`output` sends that value and lifecycle metadata to the provider, including JSON
+scalars and `null`. Its original
+prose stays in durable history, so intermediate trace descriptions cannot
+conflict with the accepted result. Completed child results keep root response
+hint instructions and metadata while omitting their suggested prose when accepted
+output or child response text is present. Successful local child summaries use
+the same hint cleanup. Both aliases require framework-owned result provenance;
+project-owned or unmarked historical results retain their original fields. Runtime-written ownership metadata restores unique child results on replay.
+Child projection runs before result-reference previews and sections are built;
+the original result remains in durable history.
+Failed children retain diagnostic prose.
+Distinct textual summaries and outputs retain their existing behavior.
+Result references limit inline payloads, not child generation or the total
+conversation size; reading every section can still grow model context.
+JSON-encoded child envelopes matching the projection rules above are decoded
+before replay; other encoded results retain their string representation. Raw
+output already contained in annotated response text is omitted from the provider
+projection.
 When storage is full, later oversized results become bounded preview-only
 payloads with `complete: false`, no reference, and
 `retrievalUnavailable.reason: "capacity_exceeded"`. Existing references remain
@@ -353,6 +410,28 @@ Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through
 `load_skill({ reference: { skillId, file } })` and does not execute skill
 scripts directly.
+
+For essential guidance at startup, set `bootstrapSkill` to one authorized skill
+ID. The framework loads that skill's root through its trusted skill loader before
+the first model call and records the load in the run history. This does not grant
+skill or tool permissions, and reference bodies remain deferred. The serialized
+root response, including its reference index, must fit within 16 KiB; an
+oversized root fails the run instead of being truncated. Keep the root focused on
+navigation and process, and put detailed guidance in references. The run fails
+before any model call when the agent has no authorized framework skill loader or
+the skill is not authorized. Omit `bootstrapSkill` to start without a preloaded
+skill. In Markdown agent definitions, use `bootstrap-skill`.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "planner",
+  system: "Plan the requested work.",
+  skills: ["planning"],
+  bootstrapSkill: "planning",
+});
+```
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -689,6 +768,8 @@ export default agent({
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                                                 |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                                           |
 | `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                                               |
+| `bootstrapTools`      | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                    |
+| `bootstrapSkill`      | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                            |
 | `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                             |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                     |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                                         |
@@ -724,6 +805,15 @@ Middleware can replace or edit messages, but changing a platform control result
 removes its trusted ownership. Internal clones preserve that ownership only when
 the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
 Caller-supplied result shapes never grant platform control authority.
+
+Child handoffs retain copied tool telemetry when the complete result fits the JSON
+resource limits. If telemetry exceeds those limits, the handoff replaces telemetry
+values with explicit truncation markers. If the trace entries still exceed the
+limits, `toolTelemetryOmitted` reports the number of omitted calls and results
+when that metadata fits. Otherwise, the handoff retains the admitted response
+without copied telemetry; raw child events retain the full trace.
+The accepted child response and raw child events remain unchanged. An oversized
+accepted response does not gain trusted ownership by dropping telemetry.
 
 For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or

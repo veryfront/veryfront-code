@@ -19,6 +19,8 @@ export interface RenderCacheKeyComposition {
   readonly addPagePrefix?: boolean;
   /** Theme suffix added by the context-aware render cache coordinator. */
   readonly colorScheme?: "light" | "dark";
+  /** Captured SSR runtime identity, including installed peer paths and versions. */
+  readonly reactRuntimeScope?: string;
 }
 
 export function isCanonicalDependencyPinningCacheKey(cacheKey: string): boolean {
@@ -69,11 +71,11 @@ function composeCompleteRenderCacheKey(
   return `${prefix ? `${prefix}:` : ""}${renderCacheKey}${suffix}`;
 }
 
-function addDependencyPinningVariant(renderCacheKey: string, cacheVariant: string): string {
+function addRenderCacheVariant(renderCacheKey: string, cacheVariant: string): string {
   const terminalTheme = TERMINAL_THEME_RE.exec(renderCacheKey)?.[0];
-  if (!terminalTheme) return `${renderCacheKey}:pins:${cacheVariant}`;
+  if (!terminalTheme) return `${renderCacheKey}:${cacheVariant}`;
 
-  return `${renderCacheKey.slice(0, -terminalTheme.length)}:pins:${cacheVariant}${terminalTheme}`;
+  return `${renderCacheKey.slice(0, -terminalTheme.length)}:${cacheVariant}${terminalTheme}`;
 }
 
 /**
@@ -101,7 +103,7 @@ export function buildDependencyPinningCacheVariant(
  * Add dependency identity to a render cache override while respecting the
  * complete distributed API key, including prefixes added after this function.
  *
- * Flag-off and invalid snapshot inputs return the legacy override unchanged.
+ * Without a captured runtime, flag-off and invalid snapshot inputs preserve the legacy override.
  * Oversized pin-on identities collapse to two domain-separated 64-bit hashes,
  * preserving a deterministic 128-bit identity without truncating either half.
  */
@@ -115,18 +117,24 @@ export function buildDependencyPinnedRenderCacheKey(
     dependencyPinningCacheKey,
     moduleServerOrigin,
   );
-  if (!cacheVariant) return legacyRenderCacheKey;
+  const renderVariant = [
+    cacheVariant ? `pins:${cacheVariant}` : undefined,
+    composition.reactRuntimeScope ? `react-runtime:${composition.reactRuntimeScope}` : undefined,
+  ].filter(Boolean).join(":");
+  if (!renderVariant) return legacyRenderCacheKey;
 
-  const readableKey = addDependencyPinningVariant(legacyRenderCacheKey, cacheVariant);
+  const readableKey = addRenderCacheVariant(legacyRenderCacheKey, renderVariant);
   if (isApiSafeCacheKey(composeCompleteRenderCacheKey(readableKey, composition))) {
     return readableKey;
   }
 
+  const identityVariant = composition.reactRuntimeScope ? renderVariant : cacheVariant!;
   const identity =
-    `${legacyRenderCacheKey.length}:${legacyRenderCacheKey}:${cacheVariant.length}:${cacheVariant}`;
+    `${legacyRenderCacheKey.length}:${legacyRenderCacheKey}:${identityVariant.length}:${identityVariant}`;
   const structuralPrefix = legacyRenderCacheKey.startsWith("page:") ? "page:" : "";
   const terminalTheme = TERMINAL_THEME_RE.exec(legacyRenderCacheKey)?.[0] ?? "";
-  const hashedKey = `${structuralPrefix}pins:hash-${
+  const hashNamespace = composition.reactRuntimeScope ? "render-identity" : "pins";
+  const hashedKey = `${structuralPrefix}${hashNamespace}:hash-${
     hashString(`dependency-render-cache:a:${identity}`)
   }-${hashString(`dependency-render-cache:b:${identity}`)}${terminalTheme}`;
   if (isApiSafeCacheKey(composeCompleteRenderCacheKey(hashedKey, composition))) {

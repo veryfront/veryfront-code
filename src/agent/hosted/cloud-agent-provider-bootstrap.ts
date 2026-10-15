@@ -28,6 +28,7 @@ import { snapshotOwnDeploymentArtifactOption } from "../service/deployment-artif
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
+import type { HostedProjectDefinitionBootstrapPolicy } from "./project-definition-bootstrap.ts";
 import {
   type AgentServicePathOption,
   resolveEnvironment,
@@ -66,6 +67,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
   hostToolPolicy?: HostedHostToolPolicy;
+  projectDefinitionBootstrap?: HostedProjectDefinitionBootstrapPolicy;
   hostedModelCallCapture?: boolean;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
@@ -226,6 +228,7 @@ export async function resolveNodeVeryfrontCloudAgentServiceOptions(
     mcpServers: options.mcpServers,
     forwardedConfigNamespace: options.forwardedConfigNamespace,
     hostToolPolicy: options.hostToolPolicy,
+    projectDefinitionBootstrap: options.projectDefinitionBootstrap,
     hostedModelCallCapture: options.hostedModelCallCapture,
     createRemoteToolSource: options.createRemoteToolSource,
     createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),

@@ -50,6 +50,7 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
     serverExternalPackages: ctx.serverExternalPackages,
     dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
     dependencyPinningDependencies: ctx.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: ctx.dependencyPinningConfiguredVersions,
     dependencyPinningSource: ctx.dependencyPinningSource,
     onDependencyResolutionObserved: (observation) => {
       observations.set(observation.packageName, observation);

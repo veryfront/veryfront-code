@@ -10,6 +10,7 @@ import {
 } from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
 
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -31,6 +32,7 @@ const failureStatus = {
   EMPTY_RESPONSE: 500,
   OVERLOADED_ERROR: 503,
   CONTEXT_LENGTH_EXCEEDED: 413,
+  AGENT_CONTEXT_WINDOW_EXCEEDED: 413,
   INSUFFICIENT_CREDITS: 402,
   RESOURCE_LIMIT_EXCEEDED: 402,
   RATE_LIMITED: 429,
@@ -66,6 +68,7 @@ export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
     "EMPTY_RESPONSE",
     "OVERLOADED_ERROR",
     "CONTEXT_LENGTH_EXCEEDED",
+    "AGENT_CONTEXT_WINDOW_EXCEEDED",
     "INSUFFICIENT_CREDITS",
     "RESOURCE_LIMIT_EXCEEDED",
     "RATE_LIMITED",
@@ -101,6 +104,8 @@ export class ExecutorAgentError extends VeryfrontError {
       ? AGENT_PROVIDER_AUTH_ERROR.message
       : code === PROVIDER_STREAM_PROTOCOL_ERROR.code
       ? PROVIDER_STREAM_PROTOCOL_ERROR.message
+      : code === "AGENT_CONTEXT_WINDOW_EXCEEDED"
+      ? AGENT_CONTEXT_WINDOW_EXCEEDED.title
       : code;
     const definition = defineError({
       slug: code.toLowerCase().replaceAll("_", "-"),

@@ -349,6 +349,7 @@ function servedCatalogModel(id: string, model: ModelRuntime) {
     reasoningMode: served.reasoningMode,
     transport: served.transport,
     reasoningBudgetTokens: served.reasoningBudgetTokens,
+    limit: served.limit ? { ...served.limit } : undefined,
     chatCompletionsReasoningWithFunctionTools: served.chatCompletionsReasoningWithFunctionTools,
     chatCompletionsConsecutiveSystemMessages: served.chatCompletionsConsecutiveSystemMessages,
   };

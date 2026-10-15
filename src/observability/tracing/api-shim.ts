@@ -33,6 +33,9 @@ import { runSyncWithContextFallback } from "./context-callback.ts";
 const IntrinsicObjectFreeze = Object.freeze;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicWeakMap = WeakMap;
+const IntrinsicWeakSet = WeakSet;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 
@@ -650,6 +653,20 @@ export const trace = {
   },
 };
 
+const observedSpanErrors = new IntrinsicWeakSet<object>();
+
+/** @internal Remember failures without reading provider-private span state. */
+export function observeSpanError(span: Span): void {
+  IntrinsicReflectApply(WeakSetPrototypeAdd, observedSpanErrors, [unwrapPublicSpan(span)]);
+}
+
+/** @internal Completion must never replace a failure already reported on this span. */
+export function hasObservedSpanError(span: Span): boolean {
+  return IntrinsicReflectApply(WeakSetPrototypeHas, observedSpanErrors, [
+    unwrapPublicSpan(span),
+  ]) as boolean;
+}
+
 const publicSpanFacades = new IntrinsicWeakMap<object, Span>();
 const publicSpanTargets = new IntrinsicWeakMap<object, Span>();
 const publicContextFacades = new IntrinsicWeakMap<object, Context>();
@@ -665,6 +682,7 @@ function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): 
 
 /** @internal Wrap a provider-owned span before returning it to project code. */
 export function createPublicSpan(providerSpan: Span): Span {
+  providerSpan = unwrapPublicSpan(providerSpan);
   rememberProjectSpan(providerSpan);
   const existing = weakMapGet(publicSpanFacades, providerSpan);
   if (existing) return existing;
@@ -687,6 +705,7 @@ export function createPublicSpan(providerSpan: Span): Span {
       return facade;
     },
     setStatus(status: { code: number; message?: string }): Span {
+      if (status.code === SpanStatusCode.ERROR) observeSpanError(providerSpan);
       IntrinsicReflectApply(setStatus, providerSpan, [status]);
       return facade;
     },

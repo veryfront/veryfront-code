@@ -66,6 +66,8 @@ export type HistoricalToolInputRetentionOptions = {
 
 /** Options accepted by prepare provider model messages from UI messages. */
 export interface PrepareProviderModelMessagesFromUiMessagesOptions {
+  /** Source identities supplied by a verified control-plane runtime envelope. */
+  trustedToolReplayMessageIds?: readonly string[];
   providerOwnedToolNames?: readonly string[];
   preserveProviderOwnedToolSourceMessageIds?: readonly string[];
   historicalToolInputRetention?: HistoricalToolInputRetentionOptions;

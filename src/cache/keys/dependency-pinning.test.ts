@@ -90,6 +90,29 @@ describe("dependency pinning cache variant", () => {
     assertNotEquals(first, second);
   });
 
+  it("bounds runtime-scoped keys and preserves theme and tenant isolation with pinning off", () => {
+    const composition = {
+      cachePrefix: "tenant:release",
+      addPagePrefix: true,
+      colorScheme: "dark" as const,
+    };
+    for (const legacy of ["page:/:theme-dark", "a".repeat(480)]) {
+      const first = buildDependencyPinnedRenderCacheKey(legacy, "off", undefined, {
+        ...composition,
+        reactRuntimeScope: "local-react:node:first",
+      });
+      const second = buildDependencyPinnedRenderCacheKey(legacy, "off", undefined, {
+        ...composition,
+        reactRuntimeScope: "local-react:node:second",
+      });
+      assertNotEquals(first, second);
+      const complete = `render:${composition.cachePrefix}:${first}:theme-dark`;
+      assert(complete.length <= 512);
+      assertMatch(complete, /^[a-zA-Z0-9_:.\-/]+$/);
+      if (legacy.endsWith(":theme-dark")) assert(first.endsWith(":theme-dark"));
+    }
+  });
+
   it("bounds the complete API render key without changing flag-off identity", () => {
     const legacyKey = "a".repeat(440);
     const options = {

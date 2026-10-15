@@ -157,77 +157,81 @@ describe("agent runtime model-call capture", () => {
     });
   });
 
-  it("retries a retryable provider stream failure before visible output with fresh capture", async () => {
-    const modelCallIds: string[] = [];
-    const dispatchCaptures: unknown[] = [];
-    const sink: AgentRunEventSink = (event) => {
-      if (!isModelCallContextEvent(event) || !event.modelCallId) return;
-      modelCallIds.push(event.modelCallId);
-      return {
-        eventId: `${9007199254740993n + BigInt(modelCallIds.length - 1)}`,
-        projectId,
-        runId,
-        modelCallId: event.modelCallId,
+  for (const failure of ["overload", "missing-finish"] as const) {
+    it(`retries ${failure} before visible output with fresh capture`, async () => {
+      const modelCallIds: string[] = [];
+      const dispatchCaptures: unknown[] = [];
+      const sink: AgentRunEventSink = (event) => {
+        if (!isModelCallContextEvent(event) || !event.modelCallId) return;
+        modelCallIds.push(event.modelCallId);
+        return {
+          eventId: `${9007199254740993n + BigInt(modelCallIds.length - 1)}`,
+          projectId,
+          runId,
+          modelCallId: event.modelCallId,
+        };
       };
-    };
-    const capability = createRuntimeObservationWriterCapability({
-      scope: { runId: localRunId, canonicalRunId: runId, projectId },
+      const capability = createRuntimeObservationWriterCapability({
+        scope: { runId: localRunId, canonicalRunId: runId, projectId },
+      });
+      bindRuntimeObservationWriterCapability(sink, capability);
+
+      let attempts = 0;
+      const model = registerVeryfrontCloudTestModel(
+        {
+          provider: "veryfront-cloud",
+          modelId: "veryfront-cloud/openai/gpt-overload-retry",
+          specificationVersion: "v3",
+          runtimeCapabilities: { streamRequiresFinish: failure === "missing-finish" },
+          doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+          doStream: () => {
+            attempts += 1;
+            dispatchCaptures.push(getCurrentVeryfrontCloudModelCallCapture());
+            if (attempts === 1) {
+              if (failure === "overload") throw overloadedProviderError();
+              return Promise.resolve({ stream: providerStream([]) });
+            }
+            return Promise.resolve({
+              stream: providerStream([
+                { type: "text-delta", text: "ok" },
+                { type: "finish", finishReason: "stop", totalUsage: {} },
+              ]),
+            });
+          },
+        } satisfies ModelRuntime,
+      );
+
+      const runtime = new AgentRuntime("model-call-capture-overload-retry", {
+        model: "veryfront-cloud/openai/gpt-overload-retry",
+        system: "Synthetic instructions",
+        maxSteps: 1,
+      }, {
+        resolveModelRuntime: () => model,
+      });
+
+      const stream = await runWithMandatoryRunEventSink(
+        sink,
+        () =>
+          runtime.stream([{
+            id: "synthetic-message",
+            role: "user",
+            parts: [{ type: "text", text: "Synthetic input" }],
+          }]),
+      );
+      const body = await readStreamBody(stream);
+
+      assertEquals(attempts, 2);
+      assertEquals(modelCallIds.length, 2);
+      assertEquals(modelCallIds[0] === modelCallIds[1], false);
+      assertEquals(dispatchCaptures, [
+        { eventId: "9007199254740993", projectId, runId, modelCallId: modelCallIds[0] },
+        { eventId: "9007199254740994", projectId, runId, modelCallId: modelCallIds[1] },
+      ]);
+      assertEquals(body.match(/\"type\":\"text-delta\"/g)?.length, 1);
+      assertEquals(body.includes("ok"), true);
+      assertEquals(body.includes("OVERLOADED_ERROR"), false);
     });
-    bindRuntimeObservationWriterCapability(sink, capability);
-
-    let attempts = 0;
-    const model = registerVeryfrontCloudTestModel(
-      {
-        provider: "veryfront-cloud",
-        modelId: "veryfront-cloud/openai/gpt-overload-retry",
-        specificationVersion: "v3",
-        doGenerate: () => Promise.reject(new Error("Unexpected generate")),
-        doStream: () => {
-          attempts += 1;
-          dispatchCaptures.push(getCurrentVeryfrontCloudModelCallCapture());
-          if (attempts === 1) {
-            throw overloadedProviderError();
-          }
-          return Promise.resolve({
-            stream: providerStream([
-              { type: "text-delta", text: "ok" },
-              { type: "finish", finishReason: "stop", totalUsage: {} },
-            ]),
-          });
-        },
-      } satisfies ModelRuntime,
-    );
-
-    const runtime = new AgentRuntime("model-call-capture-overload-retry", {
-      model: "veryfront-cloud/openai/gpt-overload-retry",
-      system: "Synthetic instructions",
-      maxSteps: 1,
-    }, {
-      resolveModelRuntime: () => model,
-    });
-
-    const stream = await runWithMandatoryRunEventSink(
-      sink,
-      () =>
-        runtime.stream([{
-          id: "synthetic-message",
-          role: "user",
-          parts: [{ type: "text", text: "Synthetic input" }],
-        }]),
-    );
-    const body = await readStreamBody(stream);
-
-    assertEquals(attempts, 2);
-    assertEquals(modelCallIds.length, 2);
-    assertEquals(modelCallIds[0] === modelCallIds[1], false);
-    assertEquals(dispatchCaptures, [
-      { eventId: "9007199254740993", projectId, runId, modelCallId: modelCallIds[0] },
-      { eventId: "9007199254740994", projectId, runId, modelCallId: modelCallIds[1] },
-    ]);
-    assertEquals(body.match(/\"type\":\"text-delta\"/g)?.length, 1);
-    assertEquals(body.includes("ok"), true);
-    assertEquals(body.includes("OVERLOADED_ERROR"), false);
-  });
+  }
 
   it("does not retry a retryable provider failure after text is visible", async () => {
     let attempts = 0;

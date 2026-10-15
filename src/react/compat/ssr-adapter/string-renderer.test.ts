@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import type { ReactDOMServer } from "./server-loader.ts";
 import {
   __injectReactDOMServerForTests,
@@ -153,8 +154,9 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
     assertEquals(staticOptions?.identifierPrefix, "static-vf");
   });
 
-  it("uses the selected React 18 context across bundles and suspended retries", async () => {
-    const React18 = await getProjectReact("18.3.1");
+  it("uses the selected React context across bundles and suspended retries", async () => {
+    const selectedVersion = resolveInstalledReactRange() ?? "18.3.1";
+    const React18 = await getProjectReact(selectedVersion);
     const copiedContextModule = await import(
       "../../server-render-context.ts?react18-context-copy"
     );
@@ -187,7 +189,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
         React18.createElement(SuspendedContextProbe),
       ),
       {
-        reactVersion: "18.3.1",
+        reactVersion: selectedVersion,
         renderContext: {
           nonce: "react-18-nonce",
           registerHeadPayload: () => "unused",

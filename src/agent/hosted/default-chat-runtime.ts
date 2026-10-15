@@ -1,3 +1,5 @@
+import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
+import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
@@ -16,6 +18,7 @@ import {
   runWithRequestContext as runWithProjectRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   currentVeryfrontCloudCatalogScopeKey,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -40,7 +43,12 @@ import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeLocalTool,
 } from "../runtime/local-tool.ts";
-import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
+import {
+  isVeryfrontCloudRuntimeModel,
+  type ProviderToolSchemaTarget,
+  resolveProviderToolSchemaTarget,
+  resolveRuntimeModel,
+} from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import {
@@ -83,6 +91,13 @@ import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/so
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+import {
+  appendProjectDefinitionBootstrap,
+  type HostedProjectDefinitionBootstrapPolicy,
+  projectDefinitionSelection,
+  readHostedProjectDefinitionBootstrap,
+} from "./project-definition-bootstrap.ts";
 
 const apply = Reflect.apply;
 const arraySome = Array.prototype.some;
@@ -189,6 +204,17 @@ export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
   /** Service-owned authorization ceiling applied to Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /**
+   * Experimental deployment-owned policy for a bounded project definition
+   * index. Ignored unless `projectDefinitionBootstrapEnabled` is true.
+   */
+  projectDefinitionBootstrap?: HostedProjectDefinitionBootstrapPolicy;
+  /**
+   * Experimental switch captured from the service environment at bootstrap
+   * (VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP="1"). Default off.
+   */
+  projectDefinitionBootstrapEnabled?: boolean;
+  projectDefinitionBootstrapSignal?: AbortSignal;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -251,6 +277,7 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
     providerNativeToolNames: readonly string[];
+    toolSchemaTarget: ProviderToolSchemaTarget;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -297,8 +324,11 @@ async function buildToolAssembly(
       : {}),
     allowedProviderToolNames: input.options.allowedProviderTools,
     toolLoading: input.options.toolLoading,
+    bootstrapTools: input.options.bootstrapTools,
     knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
+    toolSchemaTarget: input.toolSchemaTarget,
+    reservedToolSlots: getToolResultReaderReservedToolSlots(input.options.toolResultContext),
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -381,13 +411,32 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
+    ...(input.options.maxOutputTokensExplicit === false &&
+        input.options.maxOutputTokens !== undefined
+      ? { __vfMaxOutputTokensCeiling: input.options.maxOutputTokens }
+      : {}),
     ...(input.options.toolLoading !== undefined ? { toolLoading: input.options.toolLoading } : {}),
+    // Authored startup tools are already merged into the bootstrap names above.
+    // A form continuation resumes a turn whose startup load is already in
+    // history, and its tool assembly withholds every skill loader.
+    ...(input.options.bootstrapSkill !== undefined &&
+        input.taskContext.submittedFormInputResult === undefined
+      ? { bootstrapSkill: input.options.bootstrapSkill }
+      : {}),
     ...(input.options.toolResultContext !== undefined
       ? { toolResultContext: input.options.toolResultContext }
       : {}),
     ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
     __vfToolBootstrapNames: input.toolAssembly.modelVisibleToolNames,
+    ...(input.toolAssembly.toolSchemaTarget === undefined
+      ? {}
+      : { __vfToolSchemaTarget: input.toolAssembly.toolSchemaTarget }),
+    // Assembly consumed the authored startup tools; the runtime's provider
+    // capping pass (for example after exposing get_tool_result) must keep them.
+    ...(input.options.bootstrapTools !== undefined
+      ? { __vfRetainedBootstrapToolNames: input.options.bootstrapTools }
+      : {}),
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
@@ -501,19 +550,22 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
       return inheritRuntimeProviderSchemaHiddenTool(
         tool,
-        inheritTrustedHostToolProvenance(tool, {
-          ...tool,
-          execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
-            try {
-              return snapshotHostedToolResult(
-                await apply(execute, tool, [toolInput, context]),
-              );
-            } catch (error) {
-              if (preserveTrustedError) throw error;
-              throw new TypeErrorConstructor("Hosted project tool execution failed");
-            }
-          },
-        }),
+        inheritTrustedHostToolProvenance(
+          tool,
+          inheritFrameworkSkillLoader(tool, {
+            ...tool,
+            execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+              try {
+                return snapshotHostedToolResult(
+                  await apply(execute, tool, [toolInput, context]),
+                );
+              } catch (error) {
+                if (preserveTrustedError) throw error;
+                throw new TypeErrorConstructor("Hosted project tool execution failed");
+              }
+            },
+          }),
+        ),
       );
     },
   );
@@ -531,15 +583,18 @@ export function scopeHostedRuntimeTools(input: {
     (_toolName, tool) =>
       inheritRuntimeProviderSchemaHiddenTool(
         tool,
-        inheritTrustedHostToolProvenance(tool, {
-          ...tool,
-          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-            withoutHostedCredentials({
-              taskContext: input.taskContext,
-              cloudContext: input.cloudContext,
-              operation: () => apply(tool.execute, tool, [toolInput, context]),
-            }),
-        }),
+        inheritTrustedHostToolProvenance(
+          tool,
+          inheritFrameworkSkillLoader(tool, {
+            ...tool,
+            execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+              withoutHostedCredentials({
+                taskContext: input.taskContext,
+                cloudContext: input.cloudContext,
+                operation: () => apply(tool.execute, tool, [toolInput, context]),
+              }),
+          }),
+        ),
       ),
   );
 }
@@ -603,7 +658,7 @@ export async function createDefaultHostedChatRuntime(
       // A short model alias resolves through the served catalog. It is loaded
       // and read under the run's own credentials and project, the same scope
       // the run's later model reads use.
-      await runWithVeryfrontCloudContextAsync(
+      const catalogLoaded = await runWithVeryfrontCloudContextAsync(
         cloudContext,
         () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS }),
       );
@@ -629,13 +684,65 @@ export async function createDefaultHostedChatRuntime(
             hosted: isVeryfrontCloudRuntimeModel(modelId),
           }),
       );
+      // Preselection caps tools by the limit the run's model is converted with.
+      // The model settles against a fresh catalog: a load that timed out or
+      // answered from a stale entry still refreshes before dispatch, so
+      // preselection then assumes the strictest wire limit.
+      const toolSchemaTarget = runWithVeryfrontCloudContext(
+        cloudContext,
+        () =>
+          resolveProviderToolSchemaTarget(modelId, {
+            catalogSettled: catalogLoaded && canVeryfrontCloudCatalogRefuse(),
+          }),
+      );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext, cloudContext, providerNativeToolNames }),
+          () =>
+            buildToolAssembly({
+              ...input,
+              taskContext,
+              cloudContext,
+              providerNativeToolNames,
+              toolSchemaTarget,
+            }),
         );
+        const selection = projectDefinitionSelection(taskContext);
+        const lookupToolName = "veryfront__lookup_project_definitions";
+        const lookupToolGranted =
+          toolAssembly.trustedPlatformRemoteToolNames?.includes(lookupToolName) === true &&
+          toolAssembly.availableToolNames.includes(lookupToolName);
+        const definitionIndex = input.projectDefinitionBootstrap &&
+            input.projectDefinitionBootstrapEnabled === true && selection && lookupToolGranted &&
+            taskContext.projectId && taskContext.agentId
+          ? await readHostedProjectDefinitionBootstrap({
+            policy: input.projectDefinitionBootstrap,
+            projectId: taskContext.projectId,
+            agentId: taskContext.agentId,
+            ...(taskContext.runId === undefined ? {} : { runId: taskContext.runId }),
+            authToken: taskContext.authToken,
+            apiUrl: input.config.apiUrl,
+            selection,
+            signal: input.projectDefinitionBootstrapSignal ?? new AbortController().signal,
+          })
+          : null;
+        const definitionProjectId = taskContext.projectId;
+        const definitionAgentId = taskContext.agentId;
+        const effectiveToolAssembly = definitionIndex
+          ? (() => {
+            const system = appendProjectDefinitionBootstrap(
+              toolAssembly.systemMessages ?? toolAssembly.systemInstructions,
+              definitionIndex,
+            );
+            return {
+              ...toolAssembly,
+              systemMessages: system,
+              systemInstructions: flattenSystemInstructions(system),
+            };
+          })()
+          : toolAssembly;
         const refreshSystem = input.refreshSystem;
         const liveProjectSteering = input.options.liveProjectSteering;
         const runtimeAgent = runWithVeryfrontCloudContext(
@@ -645,14 +752,29 @@ export async function createDefaultHostedChatRuntime(
               runtimeAgentId: resolveRuntimeAgentId(taskContext.agentId),
               options: input.options,
               taskContext,
-              toolAssembly,
+              toolAssembly: effectiveToolAssembly,
               modelId,
               runtimeModelId,
               sourceIntegrationPolicy: input.sourceIntegrationPolicy,
               ...(refreshSystem && liveProjectSteering
                 ? {
-                  refreshSystem: () =>
-                    refreshSystem({ taskContext, liveProjectSteering, toolAssembly }),
+                  refreshSystem: async () => {
+                    const refreshed = await refreshSystem({
+                      taskContext,
+                      liveProjectSteering,
+                      toolAssembly: effectiveToolAssembly,
+                    });
+                    // Keep the index only while the run still targets the same source view.
+                    const currentSelection = projectDefinitionSelection(taskContext);
+                    return definitionIndex && taskContext.projectId === definitionProjectId &&
+                        taskContext.agentId === definitionAgentId && currentSelection &&
+                        selection &&
+                        currentSelection.sourceTargetKind === selection.sourceTargetKind &&
+                        currentSelection.targetBranchId === selection.targetBranchId &&
+                        currentSelection.targetEnvironmentId === selection.targetEnvironmentId
+                      ? appendProjectDefinitionBootstrap(refreshed, definitionIndex)
+                      : refreshed;
+                  },
                 }
                 : {}),
             }, runtimeOptions),
@@ -670,7 +792,9 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,
             projectSlug: taskContext.projectSlug,
-            maxOutputTokens: input.options.maxOutputTokens,
+            ...(input.options.maxOutputTokensExplicit === false
+              ? {}
+              : { maxOutputTokens: input.options.maxOutputTokens }),
             resolveProjectContext: () => ({
               ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),
               ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),

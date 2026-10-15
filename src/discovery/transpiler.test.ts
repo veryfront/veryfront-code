@@ -398,6 +398,43 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.value, "baseline");
     });
 
+    for (const specifier of ["../lib/hosted-independent.ts", "@/lib/hosted-independent.ts"]) {
+      it(`resolves hosted ${specifier} imports without depending on the process cwd`, async () => {
+        const files = {
+          "tools/hosted-independent.ts":
+            `import { value } from "${specifier}"; export default { value };`,
+          "lib/hosted-independent.ts": 'export { value } from "./nested/value.ts";',
+          "lib/nested/value.ts": 'export const value = "source-root";',
+        };
+        const context: FileDiscoveryContext = {
+          platform: "node",
+          fsAdapter: createMockAdapter(files, { projectDir: "/isolated/project-root" }),
+          baseDir: "",
+        };
+        const mod = await importModule("file://tools/hosted-independent.ts", context) as {
+          default: { value: string };
+        };
+        assertEquals(mod.default.value, "source-root");
+      });
+    }
+
+    it("preserves absolute virtual entry paths with an empty project baseDir", async () => {
+      const files = {
+        "/virtual/tools/absolute.ts":
+          'import { value } from "../lib/value.ts"; export default { value };',
+        "/virtual/lib/value.ts": 'export const value = "absolute-root";',
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files),
+        baseDir: "",
+      };
+      const mod = await importModule("file:///virtual/tools/absolute.ts", context) as {
+        default: { value: string };
+      };
+      assertEquals(mod.default.value, "absolute-root");
+    });
+
     it("should not serve a stale cached module when content changes at the same path", async () => {
       // The shared hosted runtime serves many projects and releases from one
       // process; the same relative path recurs across them. A path-only cache

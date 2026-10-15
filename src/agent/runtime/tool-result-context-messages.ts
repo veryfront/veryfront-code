@@ -1,6 +1,7 @@
 import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
-import type { ToolResultContext } from "./tool-result-context.ts";
+import type { ToolResultContext, ToolResultDisclosureInput } from "./tool-result-context.ts";
+import { createProviderToolResultOutput, isProviderChildToolResult } from "./message-adapter.ts";
 
 const hasOwn = Object.hasOwn;
 const SKIPPED_TOOL_RESULT_CONTEXT_TOOLS = new Set([
@@ -18,21 +19,39 @@ function isToolResultPart(part: MessagePart): part is ToolResultPart {
   return part.type === "tool-result" && "result" in part;
 }
 
+/** Whether a load_skill result is a skill reference file read rather than skill instructions. */
+export function isSkillReferenceToolResult(
+  part: Pick<ToolResultPart, "toolName" | "result">,
+): boolean {
+  if (part.toolName !== "load_skill" && part.toolName !== "veryfront__load_skill") return false;
+  const result = part.result;
+  // A failed load or a root skill body keeps its guidance inline.
+  return getToolResultError(result) === undefined &&
+    typeof readToolResultOwnDataProperty(result, "instructions") !== "string" &&
+    typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
+    typeof readToolResultOwnDataProperty(result, "file") === "string" &&
+    typeof readToolResultOwnDataProperty(result, "content") === "string";
+}
+
 function shouldSkipToolResult(
   part: Pick<ToolResultPart, "toolName" | "result">,
   skippedToolNames: ReadonlySet<string>,
 ): boolean {
-  if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
-    const result = part.result;
-    if (
-      typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
-      typeof readToolResultOwnDataProperty(result, "file") === "string" &&
-      typeof readToolResultOwnDataProperty(result, "content") === "string"
-    ) {
-      return false;
-    }
-  }
-  return skippedToolNames.has(part.toolName);
+  return skippedToolNames.has(part.toolName) && !isSkillReferenceToolResult(part);
+}
+
+/** Disclosure input whose model view matches the provider projection of delegated child results. */
+export function toolResultDisclosureInput(part: ToolResultPart): ToolResultDisclosureInput {
+  const childPart = { toolCallId: part.toolCallId, toolName: part.toolName, output: part.result };
+  return {
+    ...(isProviderChildToolResult(childPart, part)
+      ? { modelResult: createProviderToolResultOutput(childPart, part).value }
+      : {}),
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    result: part.result,
+    isError: getToolResultError(part.result) !== undefined,
+  };
 }
 
 function transformPartForToolResultContext(
@@ -44,12 +63,7 @@ function transformPartForToolResultContext(
     return part;
   }
 
-  const disclosure = context.discloseForModelContext({
-    toolCallId: part.toolCallId,
-    toolName: part.toolName,
-    result: part.result,
-    isError: getToolResultError(part.result) !== undefined,
-  });
+  const disclosure = context.discloseForModelContext(toolResultDisclosureInput(part));
   if (disclosure.kind === "inline") {
     return part;
   }

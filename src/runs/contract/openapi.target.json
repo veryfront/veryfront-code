@@ -1928,7 +1928,7 @@
     {
       "id": "D03",
       "status": "proposed",
-      "proposal": "DELETE requires owner-resource administrator access, terminal status, no direct child runs, and no retention hold; otherwise 409. Atomically remove the run, events, owned input requests/responses and run associations. Do not delete referenced files. Return 204 after commit, 404 for absent/inaccessible IDs. Delete descendants leaf-first; do not cancel execution implicitly."
+      "proposal": "DELETE requires owner-resource administrator access, terminal status, no direct child runs, and no retention hold; otherwise 409. Atomically remove the run, events, owned input requests/responses and run associations. Do not delete referenced files. Return 200 { ok: true } after commit, 404 for absent/inaccessible IDs. Delete descendants leaf-first; do not cancel execution implicitly."
     },
     {
       "id": "D04",
@@ -2865,7 +2865,7 @@
     "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+          "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRead"
         },
         {
           "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
@@ -4932,8 +4932,22 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Run, its events, and owned input requests deleted; referenced artifact files are retained."
+          "200": {
+            "description": "Run, its events, and owned input requests deleted; referenced artifact files are retained.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                },
+                "examples": {
+                  "deleted": {
+                    "value": {
+                      "ok": true
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid request or cursor",
@@ -5113,7 +5127,7 @@
         },
         "x-behavior": [
           "Only a terminal run without direct children or a retention hold can be deleted; administrator access is required.",
-          "204 confirms deletion of the run and its events."
+          "200 { ok: true } confirms deletion of the run and its events."
         ],
         "x-example-origin": "Synthetic examples for target contract review; not deployed responses.",
         "x-delivery-issue": {
@@ -5689,7 +5703,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "The run is not waiting on the supplied signal: only a signal matching the current wait is accepted. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7460,7 +7474,7 @@
         },
         "summary": "Append run events",
         "description": "Appends run events.",
-        "x-audience": "component-internal",
+        "x-audience": "external-public",
         "x-contract-status": "proposed",
         "x-source-operation": "POST /runs/{run_id}/events",
         "x-current-description": "Appends events produced by a runtime. Requires an event-writer token bound to the specified run. Supports runs with or without a conversation.",
@@ -9339,7 +9353,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "No waiting tool call is recorded and tool_call_id was not supplied, or a duplicate open run/tool-call request exists. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10754,7 +10768,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "The input request was already resolved differently (submission, cancellation and expiry compete atomically). A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11055,7 +11069,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "Only an open input request can be cancelled; an already resolved request returns 409 unless this is an identical idempotent replay. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11319,7 +11333,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "A running agent without project-bound dispatch stop authority returns 409 RUN_NOT_PAUSABLE. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11685,7 +11699,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11760,7 +11774,7 @@
         "x-contract-status": "proposed",
         "x-source-operation": null,
         "summary": "Finalize a run",
-        "description": "Finalizes a run with output or an error.",
+        "description": "Finalize a run.",
         "x-change-refs": [
           "C04",
           "C72",
@@ -12072,7 +12086,7 @@
         },
         "summary": "Send run heartbeat",
         "description": "Renews the run’s execution lease.",
-        "x-audience": "component-internal",
+        "x-audience": "external-public",
         "x-contract-status": "proposed",
         "x-source-operation": "POST /runs/{run_id}/detached-lease",
         "x-current-description": "Extends the current detached generation lease using an explicitly scoped runtime credential. Superseded or expired generations cannot renew.",
@@ -12314,7 +12328,7 @@
         },
         "summary": "Create run event token",
         "description": "Creates a run event token.",
-        "x-audience": "component-internal",
+        "x-audience": "external-public",
         "x-contract-status": "proposed",
         "x-source-operation": "POST /runs/{parent_run_id}/children/{child_run_id}/event-writer-token",
         "x-current-description": "Delegates an expiring event-writer credential from an authenticated parent runtime to its direct child run, scoped to the child run identity and project.",
@@ -13118,7 +13132,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13191,7 +13205,7 @@
           }
         },
         "summary": "Succeed a run",
-        "description": "Completes a run successfully.",
+        "description": "Succeed a run.",
         "x-use-case": "execution.succeed",
         "x-delivery-issue": "veryfront/veryfront-issue-inbox#2374",
         "x-audience": "external-public",
@@ -13404,7 +13418,7 @@
             }
           },
           "409": {
-            "description": "State conflict, stale execution generation, or idempotency mismatch",
+            "description": "The run is already terminal (conflicting terminal actions return 409) or the execution generation is stale. A changed payload with a reused Idempotency-Key also returns 409.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13477,7 +13491,7 @@
           }
         },
         "summary": "Fail a run",
-        "description": "Fails a run.",
+        "description": "Fail a run.",
         "x-use-case": "execution.fail",
         "x-delivery-issue": "veryfront/veryfront-issue-inbox#2374",
         "x-audience": "external-public",
@@ -13564,6 +13578,194 @@
           "id"
         ],
         "description": "Immediate authenticated initiator, recorded by the server; execution credentials identify their issuing service account, not the original caller."
+      },
+      "AgentAdmissionConfig": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "hosted",
+              "project",
+              "worker"
+            ],
+            "description": "Who executes the agent: `worker` hands the run to a registered agent worker that claims it, `project` runs the deployed project agent, `hosted` runs the Veryfront chat agent."
+          },
+          "composing_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who composed the triggering message."
+          },
+          "input_message_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Persisted user message that starts the run; defaults to the latest conversation message."
+          },
+          "implementation_kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "description": "Required for `worker`: the `implementation_kind` the agent worker registered with."
+          },
+          "worker_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_.:-]+$",
+            "description": "Pin the run to one registered worker by its `worker_key`; omit to let any matching worker claim it."
+          },
+          "client_run_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Deprecated. Send an `Idempotency-Key` header instead."
+          },
+          "source_target_kind": {
+            "type": "string",
+            "enum": [
+              "project",
+              "main_branch",
+              "environment",
+              "preview_branch"
+            ],
+            "description": "Worker source selection: project, main_branch, environment, or preview_branch."
+          },
+          "source_target_environment_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Environment UUID when `source_target_kind` is `environment`."
+          },
+          "source_target_branch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Preview branch UUID when `source_target_kind` is `preview_branch`."
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false,
+        "description": "Agent admission for an agent target with `conversation_id`. The conversation's latest message must be a persisted user message. Before durable queue admission, the prepared active user message and its run/conversation/input identity wrapper must fit 2 MiB of serialized UTF-8 JSON. Larger prepared requests fail with INVALID_INPUT before quota charging or dispatch and are never truncated. See https://veryfront.com/docs/cloud/connect-agent-runtime.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "worker"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "implementation_kind"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "source_target_environment_id",
+                "source_target_branch_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "anyOf": [
+                {
+                  "required": [
+                    "source_target_environment_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "source_target_branch_id"
+                  ]
+                }
+              ]
+            },
+            "then": {
+              "properties": {
+                "mode": {
+                  "const": "worker"
+                }
+              },
+              "required": [
+                "mode",
+                "source_target_kind"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_target_kind": {
+                  "enum": [
+                    "project",
+                    "main_branch"
+                  ]
+                }
+              },
+              "required": [
+                "source_target_kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "source_target_environment_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "source_target_branch_id"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_target_kind": {
+                  "const": "environment"
+                }
+              },
+              "required": [
+                "source_target_kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "source_target_environment_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_target_kind": {
+                  "const": "preview_branch"
+                }
+              },
+              "required": [
+                "source_target_kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "source_target_branch_id"
+              ]
+            }
+          }
+        ]
       },
       "AppendRunEventsRequest": {
         "type": "object",
@@ -13735,6 +13937,145 @@
             },
             "minItems": 1,
             "maxItems": 100
+          },
+          "runtime_observations": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "number",
+                "enum": [
+                  1
+                ],
+                "format": "double"
+              },
+              "observations": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "execution_entry"
+                          ]
+                        },
+                        "occurrence_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event_index": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 99,
+                          "format": "int64"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "occurrence_id",
+                        "event_index"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "step_started"
+                          ]
+                        },
+                        "step_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event_index": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 99,
+                          "format": "int64"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "step_id",
+                        "event_index"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "step_ended"
+                          ]
+                        },
+                        "step_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event_index": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 99,
+                          "format": "int64"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "step_id",
+                        "event_index"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "step_message"
+                          ]
+                        },
+                        "step_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "message_span_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event_index": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 99,
+                          "format": "int64"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "step_id",
+                        "message_span_id",
+                        "event_index"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "version",
+              "observations"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
@@ -13762,6 +14103,37 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "model_call_captures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "event_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "project_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "run_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "model_call_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "event_id",
+                "project_id",
+                "run_id",
+                "model_call_id"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -14332,7 +14704,7 @@
             "additionalProperties": {
               "description": "A JSON value."
             },
-            "description": "Definition-specific configuration; business keys retain their spelling on every transport."
+            "description": "Definition-specific configuration; business keys retain their spelling on every transport. Agent targets with `conversation_id` read `agent_admission` (AgentAdmissionConfig)."
           },
           "execution": {
             "$ref": "#/components/schemas/RunExecutionOptions",
@@ -14386,6 +14758,67 @@
                 "tool_call_id",
                 "node_id"
               ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "target": {
+                  "properties": {
+                    "type": {
+                      "const": "agent"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "config": {
+                  "required": [
+                    "agent_admission"
+                  ]
+                }
+              },
+              "required": [
+                "target",
+                "config"
+              ]
+            },
+            "then": {
+              "required": [
+                "conversation_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "target": {
+                  "properties": {
+                    "type": {
+                      "const": "agent"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              },
+              "required": [
+                "target",
+                "conversation_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "config": {
+                  "properties": {
+                    "agent_admission": {
+                      "$ref": "#/components/schemas/AgentAdmissionConfig"
+                    }
+                  }
+                }
+              }
             }
           }
         ]
@@ -14903,6 +15336,10 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 128
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name of the API key, revoked keys included; omitted when unknown."
               }
             },
             "required": [
@@ -15367,6 +15804,38 @@
               "start_mode": {
                 "type": "string",
                 "description": "Recorded execution start mode, when available."
+              },
+              "worker": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Agent worker ID."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Worker display name, omitted when the worker registered without one."
+                  },
+                  "worker_key": {
+                    "type": "string",
+                    "description": "Key the worker registered under, unique per project and kind; omitted when the worker is gone."
+                  },
+                  "implementation_kind": {
+                    "type": "string",
+                    "description": "Agent implementation the worker runs, such as codex; omitted when the worker is gone."
+                  },
+                  "claimed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the worker claimed the run."
+                  }
+                },
+                "required": [
+                  "id",
+                  "claimed_at"
+                ],
+                "description": "Agent worker that claimed and executed the run; present only on worker-executed runs."
               }
             },
             "description": "Resolved execution settings and diagnostics."
@@ -20590,7 +21059,7 @@
               "payload": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRead"
                   },
                   {
                     "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
@@ -23190,6 +23659,38 @@
               "start_mode": {
                 "type": "string",
                 "description": "Recorded execution start mode, when available."
+              },
+              "worker": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Agent worker ID."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Worker display name, omitted when the worker registered without one."
+                  },
+                  "worker_key": {
+                    "type": "string",
+                    "description": "Key the worker registered under, unique per project and kind; omitted when the worker is gone."
+                  },
+                  "implementation_kind": {
+                    "type": "string",
+                    "description": "Agent implementation the worker runs, such as codex; omitted when the worker is gone."
+                  },
+                  "claimed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the worker claimed the run."
+                  }
+                },
+                "required": [
+                  "id",
+                  "claimed_at"
+                ],
+                "description": "Agent worker that claimed and executed the run; present only on worker-executed runs."
               }
             },
             "description": "Resolved execution settings and diagnostics."
@@ -23623,7 +24124,8 @@
             "type": "string",
             "enum": [
               "schedule_concurrency_forbidden",
-              "schedule_fire_in_progress"
+              "schedule_fire_in_progress",
+              "schedule_run_limit_reached"
             ],
             "description": "Schedule admission refusal."
           },
@@ -27926,7 +28428,7 @@
               "payload": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayload"
+                    "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRead"
                   },
                   {
                     "$ref": "#/components/schemas/AgentRunModelCallContextRecordedPayloadRedacted"
@@ -30975,6 +31477,38 @@
               "start_mode": {
                 "type": "string",
                 "description": "Recorded execution start mode, when available."
+              },
+              "worker": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Agent worker ID."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Worker display name, omitted when the worker registered without one."
+                  },
+                  "worker_key": {
+                    "type": "string",
+                    "description": "Key the worker registered under, unique per project and kind; omitted when the worker is gone."
+                  },
+                  "implementation_kind": {
+                    "type": "string",
+                    "description": "Agent implementation the worker runs, such as codex; omitted when the worker is gone."
+                  },
+                  "claimed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the worker claimed the run."
+                  }
+                },
+                "required": [
+                  "id",
+                  "claimed_at"
+                ],
+                "description": "Agent worker that claimed and executed the run; present only on worker-executed runs."
               }
             },
             "description": "Resolved execution settings and diagnostics."
@@ -31366,6 +31900,887 @@
             "parent_run_id"
           ]
         }
+      },
+      "OkResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "AgentRunModelCallContextRecordedPayloadRead": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                  "AGENT_RUN_MODEL_CALL_CONTEXT"
+                ]
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelProvider": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "request": {
+                "type": "object",
+                "properties": {
+                  "maxOutputTokens": {
+                    "type": "number",
+                    "minimum": 0,
+                    "format": "double"
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "topP": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "topK": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "stopSequences": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "seed": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "presencePenalty": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "frequencyPenalty": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "parallelToolCalls": {
+                    "type": "boolean"
+                  },
+                  "reasoning": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "effort": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "max"
+                        ]
+                      },
+                      "budgetTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "format": "int64"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "system"
+                          ]
+                        },
+                        "content": {
+                          "type": "string"
+                        },
+                        "providerOptions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "cacheControl": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ephemeral"
+                                    ]
+                                  },
+                                  "ttl": {
+                                    "type": "string",
+                                    "enum": [
+                                      "5m",
+                                      "1h"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "cacheControl"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text"
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "text"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "image",
+                                      "file"
+                                    ]
+                                  },
+                                  "mediaType": {
+                                    "type": "string"
+                                  },
+                                  "url": {
+                                    "type": "string"
+                                  },
+                                  "filename": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "mediaType",
+                                  "url"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "assistant"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text"
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "text"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "tool-call"
+                                    ]
+                                  },
+                                  "toolCallId": {
+                                    "type": "string"
+                                  },
+                                  "toolName": {
+                                    "type": "string"
+                                  },
+                                  "input": {},
+                                  "providerExecuted": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "toolCallId",
+                                  "toolName",
+                                  "input"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "tool"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "tool-result"
+                                ]
+                              },
+                              "toolCallId": {
+                                "type": "string"
+                              },
+                              "toolName": {
+                                "type": "string"
+                              },
+                              "output": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "json"
+                                    ]
+                                  },
+                                  "value": {}
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "toolCallId",
+                              "toolName",
+                              "output"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "function"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "inputSchema": {}
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "inputSchema"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "provider"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "args": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "id",
+                        "args"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "elapsedMs": {
+                "type": "number",
+                "minimum": 0,
+                "format": "double"
+              },
+              "emittedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "format": "int64"
+              }
+            },
+            "required": [
+              "type",
+              "messages"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                  "AGENT_RUN_MODEL_CALL_CONTEXT"
+                ]
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelProvider": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "request": {
+                "type": "object",
+                "properties": {
+                  "maxOutputTokens": {
+                    "type": "number",
+                    "minimum": 0,
+                    "format": "double"
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "topP": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "topK": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "stopSequences": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "seed": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "presencePenalty": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "frequencyPenalty": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "parallelToolCalls": {
+                    "type": "boolean"
+                  },
+                  "reasoning": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "effort": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "max"
+                        ]
+                      },
+                      "budgetTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "format": "int64"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "system"
+                          ]
+                        },
+                        "content": {
+                          "type": "string"
+                        },
+                        "providerOptions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "cacheControl": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ephemeral"
+                                    ]
+                                  },
+                                  "ttl": {
+                                    "type": "string",
+                                    "enum": [
+                                      "5m",
+                                      "1h"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "cacheControl"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text"
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "text"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "image",
+                                      "file"
+                                    ]
+                                  },
+                                  "mediaType": {
+                                    "type": "string"
+                                  },
+                                  "url": {
+                                    "type": "string"
+                                  },
+                                  "filename": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "mediaType",
+                                  "url"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "assistant"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text"
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "text"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "tool-call"
+                                    ]
+                                  },
+                                  "toolCallId": {
+                                    "type": "string"
+                                  },
+                                  "toolName": {
+                                    "type": "string"
+                                  },
+                                  "input": {},
+                                  "providerExecuted": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "toolCallId",
+                                  "toolName",
+                                  "input"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "tool"
+                          ]
+                        },
+                        "content": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "tool-result"
+                                ]
+                              },
+                              "toolCallId": {
+                                "type": "string"
+                              },
+                              "toolName": {
+                                "type": "string"
+                              },
+                              "output": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "json"
+                                    ]
+                                  },
+                                  "value": {}
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "toolCallId",
+                              "toolName",
+                              "output"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "function"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "inputSchema": {}
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "inputSchema"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "provider"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "args": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "id",
+                        "args"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "elapsedMs": {
+                "type": "number",
+                "minimum": 0,
+                "format": "double"
+              },
+              "emittedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "format": "int64"
+              },
+              "modelCallId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "type",
+              "messages",
+              "modelCallId"
+            ],
+            "additionalProperties": false
+          }
+        ]
       },
       "AgentRunControlPlaneDispatchAcceptedPayloadRead": {
         "anyOf": [
@@ -32969,6 +34384,16 @@
                 "type": "string",
                 "minLength": 1
               },
+              "preservedMessageIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "maxItems": 1,
+                "description": "The source run’s exact active user input ID, or an empty array. Replay validates the source run binding.",
+                "uniqueItems": true
+              },
               "tokensBefore": {
                 "type": "integer",
                 "minimum": 0,
@@ -33329,6 +34754,9 @@
                     "type": "number",
                     "format": "double"
                   },
+                  "parallelToolCalls": {
+                    "type": "boolean"
+                  },
                   "reasoning": {
                     "type": "object",
                     "properties": {
@@ -33682,6 +35110,10 @@
                 "type": "integer",
                 "minimum": 0,
                 "format": "int64"
+              },
+              "modelCallId": {
+                "type": "string",
+                "format": "uuid"
               }
             },
             "required": [
@@ -35036,6 +36468,9 @@
                     "type": "number",
                     "format": "double"
                   },
+                  "parallelToolCalls": {
+                    "type": "boolean"
+                  },
                   "reasoning": {
                     "type": "object",
                     "properties": {
@@ -35389,6 +36824,10 @@
                 "type": "integer",
                 "minimum": 0,
                 "format": "int64"
+              },
+              "modelCallId": {
+                "type": "string",
+                "format": "uuid"
               }
             },
             "required": [
