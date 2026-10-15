@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
 } from "#veryfront/tool";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
@@ -1184,6 +1185,67 @@ describe("executor runtime preparation", () => {
       const events = await Array.fromAsync(await preparedStream(f));
       assertCleanCompletion(events);
       assertEquals(exposedTool, true);
+      assertEquals(executions, ["studio_suggestions"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("publishes and executes trusted Studio broker tools only under canonical names", async () => {
+    const visible: string[][] = [];
+    const executions: string[] = [];
+    let modelCalls = 0;
+    const studioSource = markTrustedPlatformSource<RemoteToolSource>({
+      id: "studio",
+      listTools: () => Promise.resolve([syntheticRemoteTool("studio_suggestions")]),
+      executeTool: (name) => {
+        executions.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const f = fixture({
+      config: {
+        tools: { veryfront__studio_suggestions: true },
+        toolLoading: "eager",
+        mcpServers: [{
+          id: "studio",
+          kind: "veryfront-studio",
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["veryfront__studio_suggestions"],
+        remoteToolSourceIds: ["studio"],
+      },
+      facades: {
+        remoteToolSources: new Map([["studio", studioSource]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible.push(
+              (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
+            );
+            const toolName = modelCalls === 0
+              ? "veryfront__studio_suggestions"
+              : modelCalls === 1
+              ? "studio_suggestions"
+              : undefined;
+            modelCalls++;
+            return finishStream(toolName);
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
+      assertEquals(
+        visible,
+        Array.from({ length: 3 }, () => [
+          "veryfront__studio_suggestions",
+        ]),
+      );
       assertEquals(executions, ["studio_suggestions"]);
     } finally {
       await f.owner.close();

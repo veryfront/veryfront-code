@@ -1305,7 +1305,7 @@ export function formatKnowledgeContext(results: RagSearchResult[]): string {
 
 /**
  * Search the local OKF knowledge manifest with the response shape of Veryfront
- * Cloud's `search_knowledge` operation. Two inputs differ from the hosted
+ * Cloud's `veryfront__search_knowledge` operation. Two inputs differ from the hosted
  * operation: `lookup_target` names one knowledge file (a path or `{ path }`)
  * rather than a source, and `limit` defaults to 8 rather than 6.
  */
@@ -1322,7 +1322,7 @@ export async function searchProjectKnowledge(
   return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
 }
 
-/** Create a local tool with the same id and response shape as hosted `search_knowledge`. */
+/** Create a project-authored knowledge tool with a configurable ID and hosted-compatible response shape. */
 export function createSearchKnowledgeTool(
   options: CreateSearchKnowledgeToolOptions = {},
 ): SearchKnowledgeTool {

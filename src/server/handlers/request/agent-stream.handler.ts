@@ -1,5 +1,6 @@
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
+  createLivePlatformMcpSource,
   createPlatformMcpCatalogSource,
   platformMcpLegacyName,
   withPlatformMcpPolicyAliases,
@@ -771,7 +772,9 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     agentId: input.agent.id,
     availableToolNames: input.availableToolNames,
   }).filter((toolName) =>
-    configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
+    configuredServers.some((server) =>
+      createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)).allows(toolName)
+    )
   );
 
   const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
@@ -796,9 +799,9 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     });
     if (!remoteConfig) continue;
     resolvedStudioSources.push({
-      policy: createMcpToolPolicyGate(server.toolPolicy),
+      policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createRemoteMCPToolSource(remoteConfig),
+      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig)),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;

@@ -43,6 +43,8 @@ const DEFAULT_ARTIFACT_TOOL_NAMES = ["create_file", "update_file"].flatMap(
 export const DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
   "studio_panel_control",
   "studio_suggestions",
+  "veryfront__studio_panel_control",
+  "veryfront__studio_suggestions",
   "form_input",
   "veryfront__form_input",
   "invoke_agent",

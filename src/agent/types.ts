@@ -324,12 +324,12 @@ export interface AgentConfig<TOutput = any> {
   onToolResult?: ToolExecutionResultHandler;
   /**
    * Select visible skill IDs or this agent's own skill short names advertised
-   * in this agent's system prompt and authorized for `load_skill`.
+   * in this agent's system prompt and authorized for `veryfront__load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
    * - string or string[]: select visible IDs, own short names, or glob patterns
    * - boolean map: positive grants minus exclusions; exclusions win
    * - empty selections, exclusion-only maps, or false: advertise no skills and do not authorize project or
-   *   configured skills for `load_skill`
+   *   configured skills for `veryfront__load_skill`
    *
    * Discovery happens at startup via discoverAll().
    */

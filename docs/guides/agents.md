@@ -65,9 +65,9 @@ capabilities beside it:
 agents/
   researcher/
     AGENT.md            # the agent definition (frontmatter + instructions)
-    SKILL.md            # the agent's own skill, loaded as load_skill("researcher")
+    SKILL.md            # the agent's own skill, loaded as veryfront__load_skill("researcher")
     skills/
-      cite/SKILL.md     # an extra skill, loaded as load_skill("researcher--cite")
+      cite/SKILL.md     # an extra skill, loaded as veryfront__load_skill("researcher--cite")
     tools/
       fetch-paper.ts    # a colocated tool, registered as "researcher--fetch-paper"
 ```
@@ -94,7 +94,7 @@ Research the question and cite every claim.
 
 - Omit `skills` or use `skills: true` to advertise and authorize every skill
   visible to the agent. Use `skills: []` to advertise none and to authorize no
-  project or configured skill for `load_skill`.
+  project or configured skill for `veryfront__load_skill`.
 - The difference between omitting `skills` and `skills: true` shows only when a
   project has no skills at all. An agent that omitted it gets no skill tools,
   because there is nothing for them to load. `skills: true` is a declaration,
@@ -115,7 +115,7 @@ Research the question and cite every claim.
   namespaces collide are reported as discovery errors.
   The same catalog metadata is used by local and hosted runtime paths. Hosted
   skill loading uses the catalog `sourcePath`, not a path reconstructed from the
-  namespaced id, so `load_skill("researcher--cite")` resolves to the actual
+  namespaced id, so `veryfront__load_skill("researcher--cite")` resolves to the actual
   colocated `SKILL.md`.
 
 ## Add tools
@@ -384,7 +384,7 @@ export default agent({
 
 Skills are reusable instruction packs discovered from your project's `skills/`
 directory. Agents with enabled skill access receive the visible skill catalog
-and `load_skill` automatically. Omitted `skills` uses the visible catalog when
+and `veryfront__load_skill` automatically. Omitted `skills` uses the visible catalog when
 one exists; `skills: false` and `skills: []` remove skill access.
 
 ```ts
@@ -403,12 +403,12 @@ export default agent({
 
 Use `skills: ["incident-response", "repo-maintainer"]` to advertise and
 authorize only those skills. Use `skills: []` to advertise no skills and to
-authorize none for `load_skill`. An explicit selector is an authorization
-boundary for `load_skill`, not just a prompt filter.
+authorize none for `veryfront__load_skill`. An explicit selector is an authorization
+boundary for `veryfront__load_skill`, not just a prompt filter.
 
-Local and project runtimes also expose `load_skill_reference` and
-`execute_skill_script`. Hosted chat reads an advertised reference through
-`load_skill({ reference: { skillId, file } })` and does not execute skill
+Local and project runtimes also expose `veryfront__load_skill_reference` and
+`veryfront__execute_skill_script`. Hosted chat reads an advertised reference through
+`veryfront__load_skill({ reference: { skillId, file } })` and does not execute skill
 scripts directly.
 
 For essential guidance at startup, set `bootstrapSkill` to one authorized skill
@@ -440,21 +440,21 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 
 When an agent uses a skill, the flow is:
 
-1. Call `load_skill({ load: { skillId } })` to load the skill instructions and policy.
-2. Read an advertised reference with `load_skill_reference(...)` on local and
-   project runtimes, or `load_skill({ reference: { skillId, file } })` in hosted
+1. Call `veryfront__load_skill({ load: { skillId } })` to load the skill instructions and policy.
+2. Read an advertised reference with `veryfront__load_skill_reference(...)` on local and
+   project runtimes, or `veryfront__load_skill({ reference: { skillId, file } })` in hosted
    chat.
 3. On local and project runtimes, optionally call
-   `execute_skill_script(...)` to run scripts from `scripts/`.
+   `veryfront__execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls. Loading a skill does not change which
    tools the run may call.
 
-A step may batch `load_skill` with other tool calls. The runtime runs the calls
-in the order the model emitted them. A successful `load_skill` changes only
+A step may batch `veryfront__load_skill` with other tool calls. The runtime runs the calls
+in the order the model emitted them. A successful `veryfront__load_skill` changes only
 which skill's instructions are loaded and which reference and script files
-`load_skill_reference` and `execute_skill_script` can reach for later calls.
+`veryfront__load_skill_reference` and `veryfront__execute_skill_script` can reach for later calls.
 Ordinary tools are unaffected, whether they were emitted before or after
-`load_skill`, and a failed `load_skill` does not block the rest of the batch.
+`veryfront__load_skill`, and a failed `veryfront__load_skill` does not block the rest of the batch.
 
 ## Skill script execution
 
@@ -556,7 +556,7 @@ const extractor = agent({
 ```
 
 `maxSteps: 1` stops the runtime from taking a second turn it has no use for.
-`skills: false` removes the `load_skill` family from the request in a project
+`skills: false` removes the `veryfront__load_skill` family from the request in a project
 that does have skills - an agent with one job should not be offered a catalog
 it will never open.
 

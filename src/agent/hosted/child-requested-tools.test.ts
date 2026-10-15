@@ -106,6 +106,11 @@ Deno.test("buildHostedChildToolDescription describes child agent usage", () => {
 Deno.test("DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES excludes UI-only tools", () => {
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_panel_control"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_suggestions"), true);
+  assertEquals(
+    DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__studio_panel_control"),
+    true,
+  );
+  assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__studio_suggestions"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("form_input"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__form_input"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("invoke_agent"), true);

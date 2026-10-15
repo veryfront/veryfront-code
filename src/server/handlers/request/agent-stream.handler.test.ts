@@ -2644,7 +2644,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 toolPolicy: { allow: ["studio_todo_write"] },
@@ -2704,8 +2704,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200, await result.response.clone().text());
-      assertEquals(capturedRemoteToolNames, ["studio_todo_write"]);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedRemoteToolNames, ["veryfront__studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2788,7 +2788,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       );
 
       assertEquals(result.response?.status, 200);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2885,7 +2885,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(requestCount, 2);
-      assertEquals(capturedAllowedRemoteTools, ["studio_panel_control", "studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, [
+        "veryfront__studio_panel_control",
+        "veryfront__studio_todo_write",
+      ]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");

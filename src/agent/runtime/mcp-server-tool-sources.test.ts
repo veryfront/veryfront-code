@@ -1160,9 +1160,9 @@ Deno.test("getRuntimeRemoteToolSources reuses injected Studio MCP source for exp
   assertEquals(sources, [studioSource]);
 });
 
-Deno.test("getRuntimeRemoteToolSources enforces policy on injected Studio MCP source", async () => {
+Deno.test("getRuntimeRemoteToolSources canonicalizes a trusted injected Studio source", async () => {
   const executeCalls: string[] = [];
-  const studioSource: RemoteToolSource = {
+  const studioSource = markTrustedPlatformSource<RemoteToolSource>({
     id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
     listTools: () =>
       Promise.resolve([
@@ -1181,7 +1181,7 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Studio MCP so
       executeCalls.push(toolName);
       return Promise.resolve({ ok: true });
     },
-  };
+  });
   const sources = getRuntimeRemoteToolSources(
     {
       system: "Use Studio tools.",
@@ -1194,13 +1194,18 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Studio MCP so
   );
 
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), [
-    "studio_open_project",
+    "veryfront__studio_open_project",
   ]);
-  await sources?.[0]?.executeTool("studio_open_project", {});
-  assertThrows(
-    () => sources![0]!.executeTool("studio_delete_project", {}),
+  await sources?.[0]?.executeTool("veryfront__studio_open_project", {});
+  await assertRejects(
+    () => sources![0]!.executeTool("studio_open_project", {}),
     Error,
-    'Tool "studio_delete_project" is not allowed for MCP server "studio-mcp"',
+    'Tool "studio_open_project" is not in the platform catalog',
+  );
+  await assertRejects(
+    () => sources![0]!.executeTool("veryfront__studio_delete_project", {}),
+    Error,
+    'Tool "veryfront__studio_delete_project" is not allowed for MCP server "studio-mcp"',
   );
   assertEquals(executeCalls, ["studio_open_project"]);
 });

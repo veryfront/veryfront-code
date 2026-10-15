@@ -58,7 +58,7 @@ authenticated conflict headers supply append cursors; an event writer credential
 does not grant event-read access. This cutover does not preserve the old standalone
 helper contract.
 
-Hosted `form_input` suspends through the API's durable checkpoint owner. The old
+Hosted `veryfront__form_input` suspends through the API's durable checkpoint owner. The old
 turn stops after its tool call is persisted; submission resumes a new turn with
 the stored private tool result. Public input reads remain redacted for password
 fields. Only one form can wait in an execution turn; a second concurrent form

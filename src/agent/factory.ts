@@ -135,7 +135,7 @@ const SKILL_TOOL_REGISTRATIONS = [
 /**
  * Projects a registered skill onto the runtime skill shape the shared skills
  * renderer consumes. Instructions stay empty: the call context advertises
- * skills, and `load_skill` delivers their bodies.
+ * skills, and `veryfront__load_skill` delivers their bodies.
  */
 function toRuntimeSkillDefinition(skill: Skill): RuntimeSkillDefinition {
   return {
@@ -733,8 +733,8 @@ let agentIdCounter = 0;
  * Names advertised to the model in the system-prompt tool inventory.
  *
  * `tools: true` authorizes the whole catalog but sends only the tools that make
- * the deferred catalog reachable: `veryfront__tool_search` finds schemas, `load_skill`
- * loads instructions, and `form_input` asks the user. Project tools are
+ * the deferred catalog reachable: `veryfront__tool_search` finds schemas, `veryfront__load_skill`
+ * loads instructions, and `veryfront__form_input` asks the user. Project tools are
  * deferred and are named by the runtime inventory instead.
  *
  * An explicit map advertises exactly what it authorizes, minus entries switched

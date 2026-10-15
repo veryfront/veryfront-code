@@ -416,7 +416,7 @@ Managed brokers can use `createManagedBrokerProjectState()` from
 `veryfront/agent/managed-broker` for project instructions and skill catalogs.
 The executor sends its effective tool selection on each steering refresh. The
 broker validates that selection against the installed grant before constructing
-instructions, and includes skills only when `load_skill` remains available.
+instructions, and includes skills only when `veryfront__load_skill` remains available.
 Refreshes without a tool selection omit the skill catalog.
 
 Managed broker ingress checks application strings and property names for known

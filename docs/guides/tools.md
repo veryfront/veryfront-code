@@ -107,9 +107,9 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 An explicit tool map authorizes only the selected tools and sends those schemas
 to the model immediately. Use `tools: true` for a broad authorized scope. The
-framework initially sends only the `load_skill` bootstrap schema when it is
+framework initially sends only the `veryfront__load_skill` bootstrap schema when it is
 authorized, plus `veryfront__tool_search`, then loads matching schemas for the next model
-step. `form_input` is authorized but deferred until it is needed. Omit `tools`
+step. `veryfront__form_input` is authorized but deferred until it is needed. Omit `tools`
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
 

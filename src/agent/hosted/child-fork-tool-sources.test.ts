@@ -173,7 +173,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
 
   assertEquals(Object.keys(result.forkTools), [
     "sleep",
-    "studio_open_project",
+    "veryfront__studio_open_project",
     "veryfront__update_file",
   ]);
   assertEquals(
@@ -189,7 +189,10 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     ],
   );
 
-  await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
+  assertEquals(result.forkTools.studio_open_project, undefined);
+  await result.forkTools.veryfront__studio_open_project?.execute?.({
+    project_reference: "project-two",
+  });
 
   assertEquals(switchedProjectIds, ["project-2"]);
   assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
@@ -400,7 +403,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces generic MCP tool po
   assertEquals(executed, ["search_docs"]);
 });
 
-Deno.test("prepareDefaultHostedChildForkToolSources enforces Studio MCP tool policy at listing and execution", async () => {
+Deno.test("prepareDefaultHostedChildForkToolSources publishes only canonical Studio tools and enforces policy", async () => {
   const executed: string[] = [];
   const studioPolicy = {
     allow: ["studio_open_project"],
@@ -443,11 +446,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces Studio MCP tool pol
     return;
   }
 
-  assertEquals(Object.keys(result.forkTools), ["studio_open_project"]);
+  assertEquals(Object.keys(result.forkTools), ["veryfront__studio_open_project"]);
+  assertEquals(result.forkTools.studio_open_project, undefined);
   assertEquals(result.forkTools.studio_delete_project, undefined);
   studioPolicy.allow = [];
   assertThrows(
-    () => result.forkTools.studio_open_project?.execute?.({}),
+    () => result.forkTools.veryfront__studio_open_project?.execute?.({}),
     Error,
     'Tool "studio_open_project" is not allowed for this MCP server',
   );
@@ -637,8 +641,8 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
   assertEquals(Object.keys(result.forkTools), [
     "bash",
     "sleep",
-    "studio_open_project",
     "veryfront__bash",
+    "veryfront__studio_open_project",
     "veryfront__update_file",
   ]);
   assertEquals(sandboxToolInputs.map((input) => [input.apiUrl, input.getProjectId?.()]), [
