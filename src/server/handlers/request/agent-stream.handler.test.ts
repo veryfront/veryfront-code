@@ -526,6 +526,175 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  for (const replacement of ["headers", "response", "strings", "constructors"] as const) {
+    it(`preserves managed SSE identity after project-mutated ${replacement}`, async () => {
+      const responseFields = ["status", "statusText", "headers", "body"] as const;
+      const responseDescriptors = responseFields.map((field) =>
+        [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
+      );
+      const headerFields = [
+        Symbol.iterator,
+        "get",
+        "set",
+        "has",
+        "entries",
+        "forEach",
+        "append",
+      ] as const;
+      const headerDescriptors = headerFields.map((field) =>
+        [field, Object.getOwnPropertyDescriptor(Headers.prototype, field)!] as const
+      );
+      const nativeResponse = Response;
+      const nativeHeaders = Headers;
+      const split = String.prototype.split;
+      const encode = globalThis.encodeURIComponent;
+      let poisonedCalls = 0;
+      const poison = () => {
+        poisonedCalls++;
+        throw new Error("project intrinsic invoked");
+      };
+      const identity = getServiceRuntimeIdentity();
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: () => {
+          if (replacement === "strings") {
+            Object.defineProperty(String.prototype, "split", {
+              configurable: true,
+              writable: true,
+              value: function (this: string, ...args: unknown[]) {
+                if (String(this) === "text/event-stream") return poison();
+                return Reflect.apply(split, this, args);
+              },
+            });
+            globalThis.encodeURIComponent = (value) =>
+              value === identity.name ? poison() : encode(value);
+          }
+          return createAgent("assistant-1");
+        },
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "assistant-1" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "hello" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+                controller.close();
+              },
+            }),
+        }),
+        resolveRuntimeOwnerInvokeUrl: async () => {
+          if (replacement === "headers") {
+            for (const [field, descriptor] of headerDescriptors) {
+              Object.defineProperty(Headers.prototype, field, { ...descriptor, value: poison });
+            }
+          }
+          if (replacement === "response") {
+            for (const [field, descriptor] of responseDescriptors) {
+              Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+            }
+          }
+          if (replacement === "constructors") {
+            globalThis.Response = new Proxy(nativeResponse, { construct: poison });
+            globalThis.Headers = new Proxy(nativeHeaders, { construct: poison });
+          }
+          return "http://10.0.0.7:20000/channels/invoke";
+        },
+      });
+      const body = createAgentStreamRequestBody();
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+      let result: Awaited<ReturnType<AgentStreamHandler["handle"]>>;
+      try {
+        result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+      } finally {
+        globalThis.Response = nativeResponse;
+        globalThis.Headers = nativeHeaders;
+        String.prototype.split = split;
+        globalThis.encodeURIComponent = encode;
+        for (const [field, descriptor] of headerDescriptors) {
+          Object.defineProperty(Headers.prototype, field, descriptor);
+        }
+        for (const [field, descriptor] of responseDescriptors) {
+          Object.defineProperty(Response.prototype, field, descriptor);
+        }
+      }
+      assertExists(result.response);
+      assertEquals(poisonedCalls, 0);
+      assertEquals(result.response.status, 200);
+      assertEquals(result.response.headers.get("content-type"), "text/event-stream");
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-name"), encode(identity.name));
+      assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+        "http://10.0.0.7:20000/channels/invoke",
+      );
+      const text = await result.response.text();
+      assertStringIncludes(text, "event: RunStarted");
+      assertStringIncludes(text, "event: RunFinished");
+    });
+  }
+
+  it("preserves the managed error response without attribution after project response getter replacement", async () => {
+    const fields = ["status", "statusText", "headers", "body"] as const;
+    const descriptors = fields.map((field) =>
+      [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
+    );
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls++;
+      throw new Error("project response getter invoked");
+    };
+    const failure = SERVICE_OVERLOADED.create({ detail: "Project setup failed" });
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => {
+        for (const [field, descriptor] of descriptors) {
+          Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+        }
+        throw failure;
+      },
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    let result: Awaited<ReturnType<AgentStreamHandler["handle"]>>;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+    } finally {
+      for (const [field, descriptor] of descriptors) {
+        Object.defineProperty(Response.prototype, field, descriptor);
+      }
+    }
+    assertExists(result.response);
+    assertEquals(poisonedCalls, 0);
+    assertEquals(result.response.status, 503);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), null);
+    assertEquals((await result.response.json()).status, 503);
+  });
+
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;

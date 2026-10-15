@@ -1,3 +1,4 @@
+import { buildResponseInit } from "#veryfront/agent/service/response-init.ts";
 import {
   getServiceRuntimeIdentity,
   RUNTIME_ID_HEADER,
@@ -194,6 +195,44 @@ const defaultDeps: AgentStreamHandlerDeps = {
 const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
 const IntrinsicReflectApply = Reflect.apply;
+const NativeResponse = Response;
+const NativeObjectPrototype = Object.prototype;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!
+  .get!;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)!.get!;
+const HeadersForEach = Headers.prototype.forEach;
+const HeadersAppend = Headers.prototype.append;
+const HeadersSet = Headers.prototype.set;
+const HeadersGet = Headers.prototype.get;
+const HeadersHas = Headers.prototype.has;
+const RegExpExec = RegExp.prototype.exec;
+const SseContentType = /^\s*text\/event-stream\s*(?:;|$)/i;
+
+function readResponseValue<T>(response: Response, getter: () => T): T {
+  return IntrinsicReflectApply(getter, response, []) as T;
+}
+
+function copyNativeResponse(target: Response): Response {
+  const init = buildResponseInit(
+    NativeObjectPrototype,
+    readResponseValue<number>(target, ResponseStatusGet),
+    readResponseValue<string>(target, ResponseStatusTextGet),
+  );
+  const result = new NativeResponse(
+    readResponseValue<ReadableStream<Uint8Array> | null>(target, ResponseBodyGet),
+    init,
+  );
+  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+  IntrinsicReflectApply(HeadersForEach, readResponseValue<Headers>(target, ResponseHeadersGet), [
+    (value: string, name: string) => IntrinsicReflectApply(HeadersAppend, headers, [name, value]),
+  ]);
+  return result;
+}
 const JsonParse = JSON.parse;
 const TrustedInternalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
 const TrustedInternalAgentStreamRequestParse = TrustedInternalAgentStreamRequestSchema.parse;
@@ -1107,28 +1146,25 @@ function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
 }
 
 function applyBuilderHeaders(target: Response, source: Headers): Response {
-  const headers = new Headers(target.headers);
-  for (const [key, value] of source.entries()) {
-    if (!headers.has(key)) {
-      headers.set(key, value);
-    }
-  }
-
-  return new Response(target.body, {
-    status: target.status,
-    statusText: target.statusText,
-    headers,
-  });
+  const result = copyNativeResponse(target);
+  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+  IntrinsicReflectApply(HeadersForEach, source, [
+    (value: string, key: string) => {
+      if (!IntrinsicReflectApply(HeadersHas, headers, [key])) {
+        IntrinsicReflectApply(HeadersSet, headers, [key, value]);
+      }
+    },
+  ]);
+  return result;
 }
 
 function setResponseHeader(target: Response, key: string, value: string): Response {
-  const headers = new Headers(target.headers);
-  headers.set(key, value);
-  return new Response(target.body, {
-    status: target.status,
-    statusText: target.statusText,
-    headers,
-  });
+  const result = copyNativeResponse(target);
+  IntrinsicReflectApply(HeadersSet, readResponseValue<Headers>(result, ResponseHeadersGet), [
+    key,
+    value,
+  ]);
+  return result;
 }
 
 function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
@@ -1224,6 +1260,7 @@ export class AgentStreamHandler extends BaseHandler {
       });
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
+      const runtimeNameHeader = encodeURIComponent(runtimeIdentity.name);
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
@@ -1552,9 +1589,18 @@ export class AgentStreamHandler extends BaseHandler {
                             : await runAgentStream();
                         let response = await executeStream();
                         if (
-                          response.status === 200 && response.body &&
-                          response.headers.get("content-type")?.split(";", 1)[0].trim()
-                              .toLowerCase() === "text/event-stream"
+                          readResponseValue<number>(response, ResponseStatusGet) === 200 &&
+                          readResponseValue<ReadableStream<Uint8Array> | null>(
+                            response,
+                            ResponseBodyGet,
+                          ) &&
+                          IntrinsicReflectApply(RegExpExec, SseContentType, [
+                              IntrinsicReflectApply(
+                                HeadersGet,
+                                readResponseValue<Headers>(response, ResponseHeadersGet),
+                                ["content-type"],
+                              ) ?? "",
+                            ]) !== null
                         ) {
                           response = setResponseHeader(
                             response,
@@ -1564,7 +1610,7 @@ export class AgentStreamHandler extends BaseHandler {
                           response = setResponseHeader(
                             response,
                             RUNTIME_NAME_HEADER,
-                            encodeURIComponent(runtimeIdentity.name),
+                            runtimeNameHeader,
                           );
                           response = setResponseHeader(
                             response,
@@ -1670,7 +1716,7 @@ export class AgentStreamHandler extends BaseHandler {
         const response = errorToResponse(error, new URL(req.url).pathname);
         // errorToResponse strips `detail` from 5xx bodies, so the log and the
         // reported event are the only places it survives.
-        if (response.status >= 500 && !replayed) {
+        if (readResponseValue<number>(response, ResponseStatusGet) >= 500 && !replayed) {
           const cause = describeErrorCause(error.cause);
           // A branch edit landing mid-request is retried by the control plane
           // on the next generation; only other 5xx failures are errors here.
@@ -1678,7 +1724,7 @@ export class AgentStreamHandler extends BaseHandler {
           log.call(logger, "Internal agent stream request failed", {
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
-            status: response.status,
+            status: readResponseValue<number>(response, ResponseStatusGet),
             slug: error.slug,
             category: error.category,
             detail: error.detail,
@@ -1688,7 +1734,7 @@ export class AgentStreamHandler extends BaseHandler {
           reportHandlerFailure(error, {
             boundary: "agent.stream.request",
             method: req.method,
-            status: response.status,
+            status: readResponseValue<number>(response, ResponseStatusGet),
             runId: safeRunId(req),
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
