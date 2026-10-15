@@ -287,7 +287,9 @@ describe("suite planning parity", () => {
         `${suite} must retain service attribution intrinsic coverage`,
       );
       assert(
-        plan.files.includes("tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts"),
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+        ),
         `${suite} must retain response cleanup intrinsic coverage`,
       );
     }
