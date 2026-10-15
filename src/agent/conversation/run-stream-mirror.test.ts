@@ -64,6 +64,38 @@ function createMockQueueController(initial?: {
 }
 
 describe("agent/conversation-run-stream-mirror", () => {
+  it("flushes pending output across a manual pause without enqueueing the transport marker", async () => {
+    const controller = createMockQueueController();
+    const mirror = createConversationRunStreamMirror({
+      queueController: controller,
+      immediateFlushEventCount: 100,
+      encoder: new ConversationRunEventEncoder(),
+    });
+    try {
+      mirror.handleStreamEvent({ type: "text-start", id: "msg-1" });
+      mirror.handleStreamEvent({ type: "data-veryfront.manual_pause", data: {} });
+      assertEquals(controller.enqueued.flat(), [{
+        type: "TEXT_MESSAGE_START",
+        messageId: "msg-1",
+        contentId: "text:0",
+        role: "assistant",
+      }]);
+      await mirror.flush();
+      assertEquals(controller.getSnapshot().pendingEventCount, 0);
+      mirror.handleStreamEvent({ type: "text-delta", id: "msg-1", delta: "resumed" });
+      await mirror.flush();
+      assertEquals(controller.enqueued.flat().at(-1), {
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: "msg-1",
+        contentId: "text:0",
+        delta: "resumed",
+      });
+      assertEquals(controller.getSnapshot().consecutiveFailures, 0);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
   it("encodes stream events before enqueueing them", () => {
     const controller = createMockQueueController();
     const mirror = createConversationRunStreamMirror({

@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Cache lookup phase for the SSR module loader.
  *
@@ -23,12 +24,14 @@ export function buildModuleTransformCacheVariant(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   dev?: boolean,
+  runtimeScope?: string,
 ): string | undefined {
   return getMdxModuleCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
     serverExternalPackages,
     dev,
+    runtimeScope,
   );
 }
 
@@ -42,6 +45,7 @@ export function getModuleCacheKey(
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  runtimeScope?: string,
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
@@ -56,6 +60,7 @@ export function getModuleCacheKey(
     moduleServerOrigin,
     serverExternalPackages,
     mode === "development",
+    runtimeScope,
   );
   return JSON.stringify(cacheVariant ? [...fields, cacheVariant, filePath] : [...fields, filePath]);
 }
@@ -75,6 +80,7 @@ export interface ResolveCachedModulePathInput {
   serverExternalPackages?: readonly string[];
   /** Compile mode of the artifacts this lookup may reuse. */
   dev?: boolean;
+  runtimeScope?: string;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -138,6 +144,7 @@ async function resolveMdxEsmCachedPath(
       input.moduleServerOrigin,
       input.serverExternalPackages,
       input.dev,
+      input.runtimeScope ?? await getSSRReactRuntimeCacheScope(),
     ),
   );
 

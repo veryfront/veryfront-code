@@ -1,3 +1,10 @@
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
 import { join } from "#veryfront/compat/path/index.ts";
@@ -386,7 +393,9 @@ export interface ModuleServerOptions {
 interface ModuleDependencyState {
   dependencyPinningCacheKey: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   reactVersion: string;
+  reactPeers?: LocalReactPeerSnapshot;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -463,21 +472,31 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const rememberedDependencySnapshot = requestedPinKey
         ? getRememberedDependencyPinningSnapshot(dependencySource, requestedPinKey)
         : undefined;
+      const reactPeers = isSSRModuleRequest(req, url, options) && (isNode || isBun) &&
+          !getRuntimeModuleLoader(adapter)
+        ? captureLocalReactPeers()
+        : undefined;
       let dependencyStatePromise: Promise<ModuleDependencyState | undefined> | undefined;
       const dependencyStateFromSnapshot = async (
         snapshot: DependencyPinningSnapshot,
       ): Promise<ModuleDependencyState> => {
         const dependencyPinningCacheKey = snapshot.cacheKey;
         const dependencyPinningDependencies = snapshot.dependencies;
+        const dependencyPinningConfiguredVersions = snapshot.configuredVersions;
         const snapshotReactVersion = await resolveProjectReactVersion({
+          adapter: adapter,
           projectDir,
           config,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
         });
         return {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
+          reactPeers,
           reactVersion: dependencyPinningCacheKey.startsWith("on:")
             ? snapshotReactVersion
             : explicitReactVersion ?? snapshotReactVersion,
@@ -548,7 +567,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
+          reactPeers,
         } = dependencyState;
 
         const { getCompiledSnippetAsync } = await import(
@@ -603,13 +624,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 : undefined,
               moduleServerOrigin: url.origin,
               reactVersion,
+              reactPeers,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
+              reactVersion,
+              reactPeers,
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
               projectDir,
@@ -682,7 +707,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
+          reactPeers,
         } = dependencyState;
 
         const projectRef = crossVersion === "latest"
@@ -735,13 +762,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 : browserCrossProjectModuleServerUrl,
               moduleServerOrigin: url.origin,
               reactVersion,
+              reactPeers,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
+              reactVersion,
+              reactPeers,
               crossProjectRef: projectRef,
               projectDir,
               projectId: effectiveProjectId,
@@ -1023,6 +1054,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               ? {
                 dependencyPinningCacheKey: dependencyState.dependencyPinningCacheKey,
                 dependencyPinningDependencies: dependencyState.dependencyPinningDependencies,
+                dependencyPinningConfiguredVersions:
+                  dependencyState.dependencyPinningConfiguredVersions,
               }
               : requestedPinKey
               ? { requestedDependencyPinningCacheKey: requestedPinKey }
@@ -1069,6 +1102,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 Object.freeze({
                   cacheKey: resolvedCacheKey,
                   dependencies: resolvedDependencies,
+                  configuredVersions: bundledClientBoundary.dependencyPinningConfiguredVersions,
                 }),
               );
             }
@@ -1109,7 +1143,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
+          reactPeers,
         } = dependencyState;
         releaseModuleResponseCacheKey = getReleaseModuleResponseCacheKey(dependencyState);
 
@@ -1167,8 +1203,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               moduleServerOrigin: url.origin,
               studioEmbed,
               reactVersion,
+              reactPeers,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             };
@@ -1189,6 +1227,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               isSSR,
               postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
               ssrRewriteOptions: {
+                reactVersion,
+                reactPeers,
                 projectSlug,
                 branch,
                 projectDir,

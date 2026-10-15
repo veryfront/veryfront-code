@@ -1,3 +1,9 @@
+// This checker also runs from the root source-test config, which has no tooling aliases.
+// deno-lint-ignore no-import-prefix
+import { parse } from "npm:@babel/parser@7.29.2";
+import { builtinModules } from "node:module";
+import { BROWSER_MODULE_REPLACEMENTS } from "../build/browser-safe-exports.mjs";
+
 /**
  * Static client-bundle import-graph analysis, shared by the fail-loud lint
  * (`audit-client-bundle.ts`) and its tests.
@@ -30,6 +36,9 @@ export type ReadModule = (
  * same-named project directory.
  */
 export const SERVER_ONLY_MODULE_PATTERNS: readonly RegExp[] = [
+  /^\/node:/,
+  /\/security\/application-auth\/identity\.ts$/,
+  /\/security\/application-auth\/trusted-proxy\.ts$/,
   /\/platform\/adapters\/runtime\/[^/]+\/(adapter|filesystem-adapter)\.ts$/,
   /\/platform\/adapters\/runtime\/shared\/node-filesystem-adapter\.ts$/,
   /\/platform\/adapters\/fs\/veryfront\//,
@@ -43,57 +52,39 @@ export const SERVER_ONLY_MODULE_PATTERNS: readonly RegExp[] = [
   /\/security\/sandbox\/(worker-pool|project-worker|worker-error-boundary|worker-script)\.ts$/,
 ];
 
-// Edges that actually ship code into the browser graph:
-//  - `import … from "x"` / `export … from "x"` — value imports and re-exports
-//    (`import type` / `export type` are erased and excluded);
-//  - `import "x"` — a bare side-effect import still evaluates the module.
-// A dynamic `import("x")` is lazy (parenthesised, no `from`, no trailing quote
-// after whitespace), so neither pattern matches it.
-// Group 1 is the binding clause, group 2 the specifier.
-const VALUE_FROM_RE =
-  /(?:^|\n)\s*(?:import|export)\s+(?!type\b)([^;'"]*?)\sfrom\s+["']([^"']+)["']/g;
-const SIDE_EFFECT_IMPORT_RE = /(?:^|\n)\s*import\s+["']([^"']+)["']/g;
-
-/**
- * True for a clause whose named bindings are *all* inline-`type` — e.g.
- * `{ type A }` or `{ type A as B, type C }`. Deno erases such a statement
- * whole, module specifier included (verified on 2.7.7: the target's top-level
- * side effects never run), so it ships nothing and must not become an edge.
- * A clause holding any value binding (`{ type A, open }`, `Default, { type A }`)
- * still ships and stays an edge.
- */
-function isTypeOnlyClause(clause: string): boolean {
-  const trimmed = clause.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
-  const bindings = trimmed.slice(1, -1).split(",").map((b) => b.trim()).filter(
-    (b) => b !== "",
-  );
-  // `type as value` imports a binding *named* `type` and renames it, so it
-  // ships and must stay an edge. Only `type X` and `type X as Y` are erased.
-  return bindings.length > 0 &&
-    bindings.every((b) => /^type\s+(?!as\s)/.test(b));
-}
-
 const textEncoder = new TextEncoder();
 
+/** Parse real module declarations; comments and documentation strings are not edges. */
 export function* staticSpecifiers(source: string): Generator<string> {
-  let match: RegExpExecArray | null;
-
-  // Fresh instances per call. These are generators, so two iterations can be
-  // interleaved by the caller; sharing a global regex would let one advance the
-  // other's `lastIndex` and skip specifiers in whichever source resumed second.
-  const valueFrom = new RegExp(VALUE_FROM_RE.source, VALUE_FROM_RE.flags);
-  const sideEffect = new RegExp(
-    SIDE_EFFECT_IMPORT_RE.source,
-    SIDE_EFFECT_IMPORT_RE.flags,
-  );
-
-  while ((match = valueFrom.exec(source)) !== null) {
-    if (match[2] && !isTypeOnlyClause(match[1] ?? "")) yield match[2];
-  }
-
-  while ((match = sideEffect.exec(source)) !== null) {
-    if (match[1]) yield match[1];
+  const ast = parse(source, {
+    sourceType: "module",
+    plugins: ["typescript", "jsx"],
+  });
+  for (const node of ast.program.body) {
+    if (node.type === "ImportDeclaration") {
+      if (node.importKind === "type") continue;
+      if (
+        node.specifiers.length &&
+        node.specifiers.every((specifier) =>
+          specifier.type === "ImportSpecifier" &&
+          specifier.importKind === "type"
+        )
+      ) continue;
+      yield node.source.value;
+    } else if (
+      node.type === "ExportNamedDeclaration" ||
+      node.type === "ExportAllDeclaration"
+    ) {
+      if (!node.source || node.exportKind === "type") continue;
+      if (
+        node.type === "ExportNamedDeclaration" && node.specifiers.length &&
+        node.specifiers.every((specifier) =>
+          specifier.type === "ExportSpecifier" &&
+          specifier.exportKind === "type"
+        )
+      ) continue;
+      yield node.source.value;
+    }
   }
 }
 
@@ -109,8 +100,9 @@ export function normalizePath(path: string): string {
 
 /**
  * Resolve a specifier to a repo-relative `src/...` path, or `null` when it is
- * external (npm/jsr/node/`react`) or a runtime-provided `veryfront/*` bare
+ * external (npm/jsr/`react`) or a runtime-provided `veryfront/*` bare
  * specifier the browser loads from the import map rather than the source tree.
+ * Node builtins remain graph nodes so the gate can reject them.
  */
 export function resolveSpecifier(
   spec: string,
@@ -133,12 +125,19 @@ export function resolveSpecifier(
       if (matches && key.length > bestKey.length) bestKey = key;
     }
     const mapped = importMap[bestKey];
-    if (!mapped) return null;
+    if (!mapped) {
+      throw new Error(
+        `Unresolved import-map specifier ${spec} from ${fromPath}`,
+      );
+    }
+    if (/^(?:npm|jsr|https?):/.test(mapped)) return null;
     return normalizePath(
       mapped.replace(/^\.\//, "") + spec.slice(bestKey.length),
     );
   }
-  // Bare specifier: react / node:* / npm:* / jsr:* / veryfront/* → external.
+  if (spec.startsWith("node:")) return spec;
+  if (builtinModules.includes(spec)) return `node:${spec}`;
+  // Third-party dependencies are checked by the packed npm browser build.
   return null;
 }
 
@@ -156,10 +155,21 @@ export async function collectClientGraph(
 
   while (queue.length > 0) {
     const { repoPath, via } = queue.shift()!;
-    const mod = await readModule(repoPath);
-    if (!mod || graph.has(mod.path)) continue;
+    const browserPath = BROWSER_MODULE_REPLACEMENTS[repoPath] ?? repoPath;
+    if (browserPath.startsWith("node:")) {
+      if (!graph.has(browserPath)) graph.set(browserPath, { via, bytes: 0 });
+      continue;
+    }
+    const mod = await readModule(browserPath);
+    if (!mod) {
+      throw new Error(
+        `Cannot verify browser module ${browserPath} imported by ${via}`,
+      );
+    }
+    if (graph.has(mod.path)) continue;
     graph.set(mod.path, { via, bytes: textEncoder.encode(mod.source).length });
 
+    if (mod.path.endsWith(".json")) continue;
     for (const specifier of staticSpecifiers(mod.source)) {
       const next = resolveSpecifier(specifier, mod.path, importMap);
       if (next) queue.push({ repoPath: next, via: mod.path });
@@ -209,12 +219,14 @@ export async function loadImportMap(
 
 export function createRealReader(rootUrl: URL): ReadModule {
   return async (repoPath) => {
-    const candidates = /\.[cm]?[jt]sx?$/.test(repoPath) ? [repoPath] : [
-      repoPath + ".ts",
-      repoPath + ".tsx",
-      repoPath + "/index.ts",
-      repoPath + "/index.tsx",
-    ];
+    const candidates = /\.(?:[cm]?[jt]sx?|json)$/.test(repoPath)
+      ? [repoPath]
+      : [
+        repoPath + ".ts",
+        repoPath + ".tsx",
+        repoPath + "/index.ts",
+        repoPath + "/index.tsx",
+      ];
     for (const candidate of candidates) {
       try {
         return {

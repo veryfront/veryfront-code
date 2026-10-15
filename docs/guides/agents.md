@@ -180,6 +180,40 @@ denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preser
 the existing defaults above. Deferred inventories show up to 20 descriptions;
 `tool_search` also finds authorized tools omitted from that initial inventory.
 
+### Expose a startup tool set
+
+To expose a small startup set while leaving the rest of the catalog deferred,
+set `bootstrapTools` to up to 16 exact executable tool names. The selection does
+not grant access or replace the trusted skill loader. The runtime rejects names
+outside the authorized catalog, `tool_search`, and selections that exceed the
+model's schema limit. Per-step skill and execution restrictions still apply, so
+a startup tool removed by those restrictions is unavailable on that step. Other
+authorized tools remain discoverable. Omit `bootstrapTools` to keep the default
+startup set.
+
+```ts
+import { agent } from "veryfront/agent";
+import { tool } from "veryfront/tool";
+
+const readMarker = tool({
+  id: "read_marker",
+  description: "Read the current marker",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => ({ marker: "ready" }),
+});
+
+export default agent({
+  system: "Use recorded tool results to answer questions.",
+  tools: { read_marker: readMarker },
+  toolLoading: "deferred",
+  bootstrapTools: ["read_marker"],
+});
+```
+
+In Markdown agent definitions, use `bootstrap-tools` with the same list. In
+eager mode, all selected tools are already exposed; the startup selection does
+not make that mode deferred.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -376,6 +410,28 @@ Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through
 `load_skill({ reference: { skillId, file } })` and does not execute skill
 scripts directly.
+
+For essential guidance at startup, set `bootstrapSkill` to one authorized skill
+ID. The framework loads that skill's root through its trusted skill loader before
+the first model call and records the load in the run history. This does not grant
+skill or tool permissions, and reference bodies remain deferred. The serialized
+root response, including its reference index, must fit within 16 KiB; an
+oversized root fails the run instead of being truncated. Keep the root focused on
+navigation and process, and put detailed guidance in references. The run fails
+before any model call when the agent has no authorized framework skill loader or
+the skill is not authorized. Omit `bootstrapSkill` to start without a preloaded
+skill. In Markdown agent definitions, use `bootstrap-skill`.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "planner",
+  system: "Plan the requested work.",
+  skills: ["planning"],
+  bootstrapSkill: "planning",
+});
+```
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -712,6 +768,8 @@ export default agent({
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                                                 |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                                           |
 | `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                                               |
+| `bootstrapTools`      | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                    |
+| `bootstrapSkill`      | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                            |
 | `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                             |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                     |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                                         |

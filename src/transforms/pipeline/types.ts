@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Transform pipeline types.
  *
@@ -45,6 +47,8 @@ export type TransformTarget = "ssr" | "browser";
  * Options passed to the transform pipeline.
  */
 export interface TransformOptions {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   /** Development mode (enables sourcemaps, disables minification) */
   dev?: boolean;
   /** Project identifier for caching */
@@ -81,6 +85,7 @@ export interface TransformOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal collector for unresolved dependency cache metadata. */
@@ -98,6 +103,7 @@ export interface TransformOptions {
  * Mutable - stages update ctx.code as they process.
  */
 export interface TransformContext {
+  reactPeers?: LocalReactPeerSnapshot;
   /** Import representation selected by the pipeline configuration. */
   ssrImports?: PipelineConfig["ssrImports"];
   /** Current code being transformed */
@@ -142,6 +148,7 @@ export interface TransformContext {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal collector for unresolved dependency cache metadata. */

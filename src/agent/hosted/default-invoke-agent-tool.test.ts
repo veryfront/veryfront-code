@@ -5,6 +5,7 @@ import {
   assert,
   assertEquals,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -28,6 +29,7 @@ import {
   type DefaultHostedInvokeAgentTraceAttributes,
   executeDefaultHostedInvokeAgentTool,
 } from "./default-invoke-agent-tool.ts";
+import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 const DURABLE_CONTEXT_FAILURE_TEXT =
@@ -494,6 +496,313 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
+function startRuntimeReturning(
+  text: string,
+  captured: { forkToolNames?: readonly string[]; toolNames?: string[]; started?: boolean },
+  options: { toolResult?: boolean; toolError?: boolean } = {},
+): NonNullable<
+  DefaultHostedInvokeAgentToolOptions<DefaultHostedInvokeAgentContext>["startRuntime"]
+> {
+  return (input) => {
+    captured.started = true;
+    captured.forkToolNames = input.forkToolNames;
+    captured.toolNames = Object.keys(input.forkTools ?? {});
+    return {
+      forkStreamAbortController: new AbortController(),
+      childRunMonitorAbortController: null,
+      childRunMonitorPromise: Promise.resolve(),
+      forkToolNames: [...(input.forkToolNames ?? [])],
+      streamResult: {
+        fullStream: (async function* () {
+          if (options.toolResult) {
+            yield {
+              type: "tool-call",
+              toolCallId: "write-1",
+              toolName: "create_file",
+              input: { path: "notes.md" },
+            } as const;
+            yield {
+              type: "tool-result",
+              toolCallId: "write-1",
+              toolName: "create_file",
+              input: { path: "notes.md" },
+              output: { ok: true },
+            } as const;
+          }
+          if (options.toolError) {
+            yield {
+              type: "tool-error",
+              toolCallId: "write-1",
+              toolName: "create_file",
+              input: { path: "notes.md" },
+              error: new Error("Connection reset after the file was written"),
+            } as const;
+          }
+          if (text) yield { type: "text-delta", text } as const;
+        })(),
+        steps: Promise.resolve([
+          { text, finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+        ]),
+        totalUsage: Promise.resolve(undefined),
+      },
+    };
+  };
+}
+
+function parentToolset() {
+  const definition = (description: string) => ({
+    description,
+    inputSchema: {},
+    execute: () => ({ ok: true }),
+  });
+  return {
+    load_skill: definition("Load a skill"),
+    get_agent_source: definition("Read an agent"),
+    create_file: definition("Create a file"),
+  };
+}
+
+it("default hosted invoke gives a tools: false child agent no callable tools", async () => {
+  const captured: { forkToolNames?: readonly string[]; toolNames?: string[] } = {};
+
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "You are Lifecycle Eval Triage. Do not use tools.",
+            toolNames: [],
+            deniedToolNames: ["load_skill", "veryfront__load_skill"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: parentToolset,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("Summary: a reply is needed.", captured),
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "lifecycle-eval-triage",
+    },
+    "lifecycle-eval-triage",
+    { toolCallId: "tool-call-tools-false" },
+  );
+
+  assertEquals("success" in result && result.success, true);
+  assertEquals(captured.forkToolNames ?? [], []);
+  assertEquals(captured.toolNames, []);
+});
+
+it("default hosted invoke reports an empty child completion as an explicit failure", async () => {
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({ system: "Answer briefly.", toolNames: [], availableSkillIds: [] }),
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("", {}),
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "lifecycle-eval-triage",
+      result_mode: "full",
+    },
+    "lifecycle-eval-triage",
+    { toolCallId: "tool-call-empty" },
+  );
+
+  assertEquals("success" in result && result.success, false);
+  assertEquals("terminalErrorCode" in result && result.terminalErrorCode, "CHILD_RESULT_EMPTY");
+  assertStringIncludes("error" in result ? String(result.error) : "", "without a final response");
+});
+
+it("default hosted invoke keeps a tool-only child completion successful", async () => {
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "Write the notes file.",
+            toolNames: ["create_file"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: parentToolset,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("", {}, { toolResult: true }),
+      },
+    }),
+    {
+      description: "write notes",
+      prompt: "Write notes.md.",
+      agent_id: "writer",
+    },
+    "writer",
+    { toolCallId: "tool-call-tool-only" },
+  );
+
+  assertEquals("success" in result && result.success, true);
+  assertEquals("terminalErrorCode" in result ? result.terminalErrorCode : undefined, undefined);
+});
+
+it("default hosted invoke does not report a child whose tool failed as an empty result", async () => {
+  // A side-effecting tool that throws may already have mutated state, so the
+  // parent must not see a retryable CHILD_RESULT_EMPTY and repeat the mutation.
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "Write the notes file.",
+            toolNames: ["create_file"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: parentToolset,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("", {}, { toolError: true }),
+      },
+    }),
+    {
+      description: "write notes",
+      prompt: "Write notes.md.",
+      agent_id: "writer",
+      result_mode: "full",
+    },
+    "writer",
+    { toolCallId: "tool-call-tool-error" },
+  );
+
+  assertEquals(
+    "terminalErrorCode" in result ? result.terminalErrorCode : undefined,
+    undefined,
+  );
+  assertEquals("success" in result && result.success, true);
+});
+
+it("default hosted invoke rejects a model override outside the child's allowed models", async () => {
+  const captured: { started?: boolean } = {};
+  const options = createTestOptions({
+    enableDurableInvokeAgent: false,
+    config: { mcpServers: [] },
+    options: {
+      resolveChildAgentExecutionConfig: () =>
+        Promise.resolve({
+          system: "Answer briefly.",
+          toolNames: [],
+          availableSkillIds: [],
+          allowedModels: ["anthropic/claude-sonnet-4-6"],
+        }),
+      buildGlobalTools: parentToolset,
+      createAgentServiceSandboxTools: () =>
+        Promise.resolve({
+          tools: {},
+          sandbox: {} as never,
+          closeSandbox: () => Promise.resolve(),
+        }),
+      startRuntime: startRuntimeReturning("Done.", captured),
+    },
+  });
+  const result = await executeDefaultHostedInvokeAgentTool(
+    options,
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "triage",
+      model: "openai/gpt-5.4",
+    },
+    "triage",
+    { toolCallId: "tool-call-model-denied" },
+  );
+
+  assertEquals("success" in result && result.success, false);
+  assertEquals(
+    "terminalErrorCode" in result && result.terminalErrorCode,
+    "CHILD_AGENT_MODEL_NOT_ALLOWED",
+  );
+  assertEquals(captured.started, undefined);
+
+  const allowed = await executeDefaultHostedInvokeAgentTool(
+    options,
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "triage",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    "triage",
+    { toolCallId: "tool-call-model-allowed" },
+  );
+  assertEquals("success" in allowed && allowed.success, true);
+  assertEquals(captured.started, true);
+});
+
+it("default hosted invoke reports an unknown child agent to the parent without running it", async () => {
+  const captured: { started?: boolean } = {};
+  let lookupSignal: AbortSignal | undefined;
+  const parentAbort = new AbortController();
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: (_childAgentId, _projectId, lookup) => {
+          lookupSignal = lookup?.abortSignal;
+          return Promise.reject(
+            new HostedChildAgentResolutionError(
+              "CHILD_AGENT_NOT_FOUND",
+              'Agent "triage-typo" was not found in project "project-1".',
+            ),
+          );
+        },
+        buildGlobalTools: parentToolset,
+        startRuntime: startRuntimeReturning("should not run", captured),
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "triage-typo",
+    },
+    "triage-typo",
+    { toolCallId: "tool-call-missing", abortSignal: parentAbort.signal },
+  );
+
+  assertEquals(captured.started, undefined);
+  assertStrictEquals(lookupSignal, parentAbort.signal);
+  assertEquals("terminalErrorCode" in result && result.terminalErrorCode, "CHILD_AGENT_NOT_FOUND");
+  assertStringIncludes("text" in result ? String(result.text) : "", "was not found");
+});
+
 it("default hosted invoke prunes unavailable optional Studio child tools before selection", async () => {
   let capturedForkToolNames: readonly string[] | undefined;
   let started = false;
@@ -733,6 +1042,41 @@ it("executeDefaultHostedInvokeAgentTool returns durable context failure before l
   assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "security-reviewer");
   assertEquals(traceAttributes.at(-1)?.["tool.name"], "invoke_agent");
   assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-1");
+});
+
+it("durable invoke admits the child before resolving its mutable saved definition", async () => {
+  // A retry of a finished child must reach durable admission (and its terminal
+  // replay) even when the saved agent has since been deleted.
+  let resolutions = 0;
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      options: {
+        resolveChildAgentExecutionConfig: () => {
+          resolutions++;
+          return Promise.reject(
+            new HostedChildAgentResolutionError(
+              "CHILD_AGENT_NOT_FOUND",
+              'Agent "deleted-agent" was not found in project "project-123".',
+            ),
+          );
+        },
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      context: {},
+      agent_id: "deleted-agent",
+    },
+    "deleted-agent",
+    { toolCallId: "tool-call-retry" },
+  );
+
+  assertEquals(resolutions, 0);
+  assertEquals(
+    "terminalErrorCode" in result && result.terminalErrorCode,
+    "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
+  );
 });
 
 it("fixed delegates require durable execution even when legacy durable delegation is disabled", async () => {
@@ -1091,6 +1435,30 @@ it("child denials apply to both platform spellings without denying a colliding p
       denied === "update_file" ? "veryfront__update_file" : "update_file",
     ]);
   }
+});
+
+it("provider-only bindings never select a same-name host or MCP tool", () => {
+  const mcpTool = { description: "MCP web_fetch", shortName: "web_fetch" };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutProviderOnlyForkTools({
+    ok: true,
+    forkTools: { web_fetch: { description: "Host" }, mcp__crm__web_fetch: mcpTool, other: {} },
+  } as never, ["web_fetch"]);
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["other"]);
+});
+
+it("provider-only bindings keep an explicitly selected qualified tool with the same short name", () => {
+  const mcpTool = { description: "MCP web_fetch", shortName: "web_fetch" };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutProviderOnlyForkTools(
+    {
+      ok: true,
+      forkTools: { web_fetch: { description: "Host" }, mcp__crm__web_fetch: mcpTool, other: {} },
+    } as never,
+    ["web_fetch"],
+    ["web_fetch", "mcp__crm__web_fetch"],
+  );
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["mcp__crm__web_fetch", "other"]);
 });
 
 it("child denials preserve an explicitly selected platform loader alias", () => {

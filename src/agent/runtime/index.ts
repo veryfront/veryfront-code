@@ -22,7 +22,6 @@ import {
   admitTerminalDispatch,
   createTerminalRunControl,
   isTerminalRunControlError,
-  isTerminalRunToolName,
   terminalCompletionResponse,
   terminalDispatchRecord,
   terminalReceiptPersistenceFailure,
@@ -70,6 +69,7 @@ import {
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
@@ -93,7 +93,11 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import {
+  CONFIG_INVALID,
+  DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
+  isVeryfrontError,
+} from "#veryfront/errors";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -154,7 +158,6 @@ import {
   getTurnMessageValidator,
   getTurnProviderRequestValidator,
   markStatefulTurn,
-  type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -214,6 +217,15 @@ import {
 } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import {
+  resolveRuntimeSkillBootstrapId,
+  validateRuntimeSkillBootstrapResult,
+} from "./skill-bootstrap.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  prepareFrameworkSkillBootstrap,
+  runWithFrameworkSkillBootstrap,
+} from "#veryfront/skill/loader-provenance.ts";
+import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
@@ -235,6 +247,7 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
+  getRuntimeToolSchemaTarget,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   type ProviderReplayInvokeAgentToolCall,
@@ -433,6 +446,22 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { createToolResultContext, type ToolResultContext } from "./tool-result-context.ts";
 import { createModelToolResultContextMessages } from "./tool-result-context-messages.ts";
+import {
+  enforceProviderRequestBudget,
+  inspectProviderRequestBudget,
+  memoizeRequestBudgetInspection,
+  type ServedRequestLimit,
+} from "./final-request-budget.ts";
+import { projectHistoricalToolResultsForBudget } from "./aggregate-tool-result-projection.ts";
+import { fitDeferredToolSchemasToBudget } from "./deferred-schema-budget.ts";
+import { resolveAdditiveReasoningOutputTokens } from "#veryfront/runtime/model-call-context-request.ts";
+import {
+  currentVeryfrontCloudCatalogScopeKey,
+  isVeryfrontCloudCatalogLoadedForScope,
+  readServedVeryfrontCloudCatalogModel,
+  readVeryfrontCloudModelFacts,
+  type VeryfrontCloudSurfaceId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import {
   createToolResultReadDefinition,
@@ -465,6 +494,9 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const IntrinsicURL = URL;
 const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
+/** Replacement sets that carried the configured skill loader, so startup can still use it. */
+const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
+
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "load_skill",
   "load_skill_reference",
@@ -2109,6 +2141,26 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
     !intrinsicArraySome(plan.authorized, (tool) => tool.name === toolName);
 }
 
+/**
+ * The model and wire surface whose provider tool rules apply this step. A
+ * built Veryfront Cloud model's own facts win; a model runtime without them
+ * (an executor proxy) uses the target trusted preparation resolved only for
+ * the same effective model. Per-request overrides keep their own provider rules.
+ */
+function resolveStepToolSchemaOptions(
+  config: AgentConfig,
+  languageModel: ModelRuntime,
+  effectiveModel: string,
+): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
+  const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
+  if (surface !== undefined) return { wireSurface: surface };
+  const target = getRuntimeToolSchemaTarget(config);
+  if (target?.model === undefined || target.model !== effectiveModel) return {};
+  return target.wireSurface === undefined
+    ? { toolSchemaModel: target.model }
+    : { toolSchemaModel: target.model, wireSurface: target.wireSurface };
+}
+
 function hasToolResultContextEnabled(
   config: Pick<AgentConfig, "toolResultContext">,
 ): boolean {
@@ -2169,8 +2221,265 @@ function withToolResultReaderTool(
   return visible;
 }
 
+// Reserve the reader's slot whenever references can be created: a result
+// produced later in the step still makes the reader required at conversion.
+function getToolResultReaderReservedSlots(context: ToolResultContext | undefined): number {
+  return context === undefined ? 0 : 1;
+}
+
 function getRequiredToolResultReaderNames(exposeReader: boolean): readonly string[] | undefined {
   return exposeReader ? [GET_TOOL_RESULT_TOOL_NAME] : undefined;
+}
+
+/** Names provider schema capping must keep: the result reader and authored startup tools. */
+function getRequiredRuntimeToolNames(
+  exposeReader: boolean,
+  bootstrapToolNames: readonly string[],
+): readonly string[] | undefined {
+  const reader = getRequiredToolResultReaderNames(exposeReader);
+  if (bootstrapToolNames.length === 0) return reader;
+  return reader === undefined ? bootstrapToolNames : [...reader, ...bootstrapToolNames];
+}
+
+/** Internal admission boundary: external validators never receive preparation callbacks. */
+type TurnProviderRequestAdmission = (
+  system: AgentSystem,
+  messages: Message[],
+  preparation?: {
+    /** Prepare durable state; false means no dispatch or pause was accepted. */
+    beforeAcceptance?: () => Promise<void | boolean>;
+    /** Validate a pause preview without accepting a provider request. */
+    deferAcceptance?: boolean;
+  },
+) => Promise<void>;
+
+type RuntimeStepRequestInput = {
+  messages: Message[];
+  plan: ToolExposurePlan;
+  toolResultContext: ToolResultContext | undefined;
+  supportsToolCalling: boolean;
+  agentWriteFinalResponseToolGuardEnabled: boolean;
+  providerTools: Parameters<typeof filterVisibleProviderTools>[0];
+  model: string;
+  languageModel: ModelRuntime;
+  /** Provider tool-schema rules for this step's model and wire surface. */
+  toolSchemaOptions: ReturnType<typeof resolveStepToolSchemaOptions>;
+  baseSystemPrompt: Parameters<typeof synchronizeRuntimeToolInventory>[0];
+  integrationToolDiscovery: Parameters<typeof withIntegrationToolDiscoveryStatus>[1];
+  runRuntimeContext: Parameters<typeof withAgentRunRuntimeContext>[1];
+  /** Authored startup tools provider schema capping must keep. */
+  bootstrapToolNames: readonly string[];
+};
+
+/** Assemble the exact provider request one model step would send for a plan and messages. */
+function assembleRuntimeStepRequest(input: RuntimeStepRequestInput) {
+  const exposeToolResultReader = canExposeToolResultReader({
+    plan: input.plan,
+    context: input.toolResultContext,
+  });
+  const tools = withToolResultReaderTool(input.plan.visible, exposeToolResultReader);
+  const visibleToolNames = collectVisibleToolNames(tools);
+  const stepProviderTools = input.supportsToolCalling &&
+      !input.agentWriteFinalResponseToolGuardEnabled
+    ? filterVisibleProviderTools(input.providerTools, visibleToolNames)
+    : [];
+  const runtimeTools = convertToolsToRuntimeTools(tools, {
+    model: input.model,
+    ...input.toolSchemaOptions,
+    providerTools: stepProviderTools,
+    requiredToolNames: getRequiredRuntimeToolNames(
+      exposeToolResultReader,
+      input.bootstrapToolNames,
+    ),
+  });
+  const systemPrompt = withIntegrationToolDiscoveryStatus(
+    synchronizeRuntimeToolInventory(
+      input.baseSystemPrompt,
+      runtimeTools,
+      input.agentWriteFinalResponseToolGuardEnabled
+        ? filterPrivateArray(
+          input.plan.deferred,
+          (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
+        )
+        : [],
+    ),
+    input.integrationToolDiscovery,
+  );
+  return {
+    tools,
+    runtimeTools,
+    systemPrompt,
+    providerSystemPrompt: withAgentRunRuntimeContext(systemPrompt, input.runRuntimeContext),
+    // A server-local runtime fetches attachments from this machine, where a
+    // loopback or private-network URL resolves; only a remote provider needs
+    // the URL to be reachable from the internet.
+    providerMessages: convertToTextGenerationRuntimeRequestMessages(input.messages, {
+      requireInternetReachableAttachments: !isLocalModelRuntime(input.languageModel),
+    }),
+  };
+}
+
+/**
+ * Served token limits for a Veryfront Cloud model, when its served catalog
+ * declares them. A model built here names its own catalog; a managed hosted
+ * proxy registers no facts, so it reads the catalog its run scope carries.
+ */
+function readServedModelLimit(
+  languageModel: ModelRuntime,
+  model: string,
+): ServedRequestLimit | undefined {
+  const facts = readVeryfrontCloudModelFacts(languageModel);
+  const catalogScopeKey = facts
+    ? facts.catalogScopeKey
+    : languageModel.provider === "veryfront-cloud"
+    ? currentVeryfrontCloudCatalogScopeKey()
+    : undefined;
+  if (catalogScopeKey === undefined) return facts?.servedLimit;
+  // A settled model keeps the limit it was built with, so a bounded catalog
+  // cache evicting its scope cannot turn the budget check off.
+  return isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey)
+    ? readServedVeryfrontCloudCatalogModel(catalogScopeKey, model)?.limit
+    : facts?.servedLimit;
+}
+
+/**
+ * Whether a turn on this model needs transactional admission for the served
+ * request budget. It does when the served catalog declares any limit, since
+ * either an output or a context ceiling can reject the request before
+ * dispatch, and, conservatively, while that catalog has not loaded yet, since
+ * a limit may still arrive. A loaded catalog without a limit can never reject
+ * a request on size, so the turn keeps the cheaper, concurrent
+ * non-transactional path.
+ */
+function requiresServedModelAdmission(languageModel: ModelRuntime, model: string): boolean {
+  const facts = readVeryfrontCloudModelFacts(languageModel);
+  if (!facts && languageModel.provider !== "veryfront-cloud") return false;
+  if (readServedModelLimit(languageModel, model) !== undefined) return true;
+  const catalogScopeKey = facts ? facts.catalogScopeKey : currentVeryfrontCloudCatalogScopeKey();
+  return catalogScopeKey !== undefined && !isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey);
+}
+
+/**
+ * Turns admitted on the non-transactional path because their served catalog
+ * declared no limit when the turn started. Such a turn has already committed
+ * its input, so a limit that a concurrent catalog refresh adds mid-turn must
+ * not reject it: that rejection could not roll the input back. The admission
+ * snapshot (no limit) holds for the whole turn; the next turn reads the
+ * refreshed catalog and is admitted transactionally.
+ */
+const unlimitedServedAdmissions = new WeakSet<TurnProviderRequestAdmission>();
+
+function admitWithoutServedLimit(admission: TurnProviderRequestAdmission): void {
+  unlimitedServedAdmissions.add(admission);
+}
+
+/**
+ * Fit one step's request to the served context window before dispatch: first
+ * project old tool results to retrievable references, then unload previously
+ * loaded deferred schemas. Source history and authorization stay unchanged.
+ */
+async function fitRuntimeStepRequestToServedBudget(input: {
+  sourceMessages: Message[];
+  modelMessages: Message[];
+  plan: ToolExposurePlan;
+  assembleRequest: (
+    messages: Message[],
+    plan?: ToolExposurePlan,
+  ) => ReturnType<typeof assembleRuntimeStepRequest>;
+  toolResultContext: ToolResultContext | undefined;
+  supportsToolCalling: boolean;
+  deferredToolLoading: boolean;
+  languageModel: ModelRuntime;
+  model: string;
+  reasoning: unknown;
+  providerOptions: unknown;
+  responseFormat: unknown;
+  requestedOutputTokens: number;
+  explicitOutputTokens: boolean;
+  additionalOutputTokens: number;
+  toolExposureState: ToolExposureState;
+  persistToolExposureCheckpoint: Parameters<
+    typeof persistToolExposureCheckpointBeforeContinuation
+  >[0]["persist"];
+  requireToolExposureCheckpointPersistence: boolean;
+  /** The turn's provider admission, whose served-limit snapshot applies. */
+  turnAdmission: TurnProviderRequestAdmission;
+}): Promise<{
+  modelMessages: Message[];
+  plan: ToolExposurePlan;
+  servedLimit: ServedRequestLimit | undefined;
+  /**
+   * Apply and checkpoint schema evictions. Call only once the request has
+   * passed final enforcement and provider-request validation, so a rejected
+   * turn keeps its previously loaded tools for a corrected retry.
+   */
+  commitToolExposure: () => Promise<void>;
+}> {
+  const servedLimit = unlimitedServedAdmissions.has(input.turnAdmission)
+    ? undefined
+    : readServedModelLimit(input.languageModel, input.model);
+  let modelMessages = input.modelMessages;
+  let plan = input.plan;
+  let commitToolExposure = async () => {};
+  if (servedLimit?.context === undefined) {
+    return { modelMessages, plan, servedLimit, commitToolExposure };
+  }
+  const inspect = memoizeRequestBudgetInspection((
+    messages: Message[],
+    candidatePlan: ToolExposurePlan,
+  ) => {
+    const request = input.assembleRequest(messages, candidatePlan);
+    // Inspect the effective wire request, so native provider controls decide
+    // whether compaction is needed, exactly as final enforcement does.
+    return inspectProviderRequestBudget({
+      model: input.languageModel,
+      ...(input.reasoning === undefined ? {} : { reasoning: input.reasoning }),
+      ...(input.providerOptions === undefined ? {} : { providerOptions: input.providerOptions }),
+      system: request.providerSystemPrompt,
+      messages: request.providerMessages,
+      tools: request.runtimeTools,
+      responseFormat: input.responseFormat,
+      limit: servedLimit,
+      requestedOutputTokens: input.requestedOutputTokens,
+      explicitOutputTokens: input.explicitOutputTokens,
+      additionalOutputTokens: input.additionalOutputTokens,
+    });
+  }, () => (input.toolResultContext?.size ?? 0) > 0);
+  if (input.supportsToolCalling && input.toolResultContext) {
+    modelMessages = projectHistoricalToolResultsForBudget({
+      sourceMessages: input.sourceMessages,
+      modelMessages,
+      context: input.toolResultContext,
+      inspect: (messages) => inspect(messages, plan),
+    });
+  }
+  if (input.deferredToolLoading) {
+    const fitted = fitDeferredToolSchemasToBudget({
+      plan,
+      sourceMessages: input.sourceMessages,
+      inspect: (candidatePlan) => inspect(modelMessages, candidatePlan),
+    });
+    plan = fitted.plan;
+    // Keep loaded schemas when the request still cannot fit: final enforcement
+    // rejects it, and a smaller retry must not lose previously loaded tools.
+    if (fitted.evictedNames.length > 0 && inspect(modelMessages, plan).fits) {
+      commitToolExposure = async () => {
+        await persistToolExposureCheckpointBeforeContinuation({
+          checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, {
+            loadedToolNames: fitted.plan.loadedToolNames,
+          }),
+          persist: input.persistToolExposureCheckpoint,
+          required: input.requireToolExposureCheckpointPersistence,
+        });
+        // Publish the in-memory exposure only after its durable checkpoint exists.
+        input.toolExposureState.loadedToolNames.clear();
+        for (const name of fitted.plan.loadedToolNames) {
+          input.toolExposureState.loadedToolNames.add(name);
+        }
+      };
+    }
+  }
+  return { modelMessages, plan, servedLimit, commitToolExposure };
 }
 
 function shouldHandleToolResultRead(input: {
@@ -2536,6 +2845,93 @@ function createRuntimeFrameworkLocalTools(config: AgentConfig): Record<string, T
   return knowledgeTool === undefined ? undefined : { search_knowledge: knowledgeTool };
 }
 
+/**
+ * Load the authored startup skill through the trusted framework loader before
+ * the first model call. The call and its result are recorded like a normal
+ * load so the active skill policy and history stay consistent.
+ */
+async function executeStartupSkill(input: {
+  agentId: string;
+  skillId: string;
+  authorized: readonly ToolDefinition[];
+  messages: Message[];
+  persistMessage: (message: Message) => Promise<void>;
+  skillState: AgentLoopSkillState;
+  toolCalls: ToolCall[];
+  onToolCall?: (toolCall: ToolCall) => void;
+  resolveLoader: (toolName: string) => unknown;
+  execute: (
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    admittedTurn: AdmittedToolTurn,
+  ) => Promise<unknown>;
+}): Promise<void> {
+  const definition = filterPrivateArray(
+    input.authorized,
+    (entry) => isLoadSkillToolName(entry.name) && hasTrustedPlatformPolicyToolDefinition(entry),
+  )[0];
+  const loader = definition ? input.resolveLoader(definition.name) : undefined;
+  // Both loader shapes accept the canonical ID, while the runtime loader only
+  // authorizes canonical IDs, so execution and validation use the same one.
+  const skillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
+  const args = definition ? prepareFrameworkSkillBootstrap(loader, skillId) : undefined;
+  if (!definition || !args) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapSkill requires an authorized framework skill loader",
+    });
+  }
+  const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
+  const message: Message = {
+    id: generateMessageId(),
+    role: "assistant",
+    parts: [{
+      type: `tool-${definition.name}`,
+      toolCallId,
+      toolName: definition.name,
+      args,
+    }],
+  };
+  const admittedTurn = snapshotAdmittedToolTurn(message, input.messages.length);
+  pushPrivateArray(input.messages, message);
+  await input.persistMessage(message);
+  const toolCall: ToolCall = { id: toolCallId, name: definition.name, args, status: "executing" };
+  pushPrivateArray(input.toolCalls, toolCall);
+  const startTime = Date.now();
+  let result: unknown;
+  try {
+    // An observer failure settles the persisted call like an execution failure.
+    input.onToolCall?.(toolCall);
+    result = await runWithFrameworkSkillBootstrap(
+      loader,
+      () => input.execute(definition.name, toolCallId, args, admittedTurn),
+    );
+    validateRuntimeSkillBootstrapResult(result, skillId);
+  } catch (error) {
+    toolCall.status = "error";
+    toolCall.error = "Startup skill preparation failed";
+    toolCall.executionTime = Date.now() - startTime;
+    const failed = createToolErrorMessage(toolCallId, definition.name, toolCall.error);
+    pushPrivateArray(input.messages, failed);
+    await input.persistMessage(failed);
+    throw error;
+  }
+  toolCall.status = "completed";
+  toolCall.result = result;
+  toolCall.executionTime = Date.now() - startTime;
+  const resultMessage = createPolicyAwareToolResultMessage(
+    toolCallId,
+    definition.name,
+    result,
+    definition,
+    false,
+    true,
+  );
+  pushPrivateArray(input.messages, resultMessage);
+  await input.persistMessage(resultMessage);
+  input.skillState.applySuccessfulResult(result);
+}
+
 async function traceConfiguredToolExecution(input: {
   mode: "generate" | "stream";
   agentId: string;
@@ -2834,6 +3230,16 @@ export function streamWithAgentRuntimeDispatch(
   return getAgentRuntimeDispatch(runtime).stream(...args);
 }
 
+/**
+ * Whether a caller's output-token override is honored. The override is floored
+ * to whole tokens, so invalid overrides (below one after flooring, NaN,
+ * infinite) fall back to the configured default and are therefore not an
+ * explicit output request.
+ */
+function isMaxOutputTokensOverride(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1;
+}
+
 /** Implement agent runtime. */
 export class AgentRuntime {
   #manualPause: AgentManualPause | undefined;
@@ -2923,6 +3329,7 @@ export class AgentRuntime {
     inputMessages: Message[],
     context?: AgentContext,
     abortSignal?: AbortSignal,
+    transactionalAdmission = false,
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
@@ -2940,12 +3347,10 @@ export class AgentRuntime {
     // stored chain; callers still observe the rejection through the returned
     // promise.
     //
-    // Only a turn that actually runs a cross-turn validator is queued. Without
-    // one there is nothing to serialize: the write no longer depends on the
-    // history read, so a stateless agent (no `memory` config, where
-    // `createAgentMemory(undefined)` persists nothing) and every agent without
-    // the security middleware keep the pre-existing concurrency, and one slow
-    // memory backend cannot hold up unrelated concurrent turns.
+    // Stateful validation and provider admission both stage writes until the
+    // request can be accepted. Keep these transactions ordered. Stateless agents
+    // and direct-provider turns without transactional admission retain their
+    // existing concurrency.
     //
     // Keep the queue until the entire turn finalizes: every provider step can
     // reject the caller input, and overlapping rollback snapshots can restore
@@ -2953,10 +3358,10 @@ export class AgentRuntime {
     // turns on one runtime instance, including time spent awaiting tools.
     if (
       this.memory instanceof NoMemory || !context ||
-      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
-        !getTurnMessageProjectionValidator(context)
+      !transactionalAdmission && !getTurnMessageValidator(context) &&
+        !getTurnProviderRequestValidator(context) && !getTurnMessageProjectionValidator(context)
     ) {
-      return this.#commitTurnMessages(inputMessages, context);
+      return this.#commitTurnMessages(inputMessages, context, transactionalAdmission);
     }
 
     const leaveLineage = enterSerializedTurn(this);
@@ -2964,7 +3369,11 @@ export class AgentRuntime {
     const task = chainPrivatePromise(awaitAbortable(predecessor, abortSignal), async () => {
       try {
         throwIfAborted(abortSignal);
-        const prepared = await this.#commitTurnMessages(inputMessages, context);
+        const prepared = await this.#commitTurnMessages(
+          inputMessages,
+          context,
+          transactionalAdmission,
+        );
         return {
           ...prepared,
           commit: async () => {
@@ -3003,6 +3412,7 @@ export class AgentRuntime {
     inputMessages: Message[],
     context: AgentContext,
     abortSignal?: AbortSignal,
+    servedModelAdmission = false,
   ): {
     persisted: boolean;
     persist: () => Promise<Message[]>;
@@ -3011,9 +3421,12 @@ export class AgentRuntime {
     commit: () => Promise<void>;
     finalize: () => Promise<void>;
     validationState: () => "pending" | "accepted" | "rejected";
-    validateProviderRequest: TurnProviderRequestValidator;
+    validateProviderRequest: TurnProviderRequestAdmission;
   } {
     if (!(this.memory instanceof NoMemory)) markStatefulTurn(context);
+    const transactionalAdmission = servedModelAdmission || this.#manualPause !== undefined ||
+      getRuntimeToolExposureCheckpointPersister(this.config) !== undefined ||
+      isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
     // Memoized on the first call: persistence now runs inside the middleware
     // continuation, so a middleware that invokes `next()` more than once (a
     // retry or fallback wrapper) would otherwise write this turn's input to
@@ -3061,6 +3474,7 @@ export class AgentRuntime {
           resolveValidatedTurnInput(context.input, inputMessages),
           context,
           abortSignal,
+          transactionalAdmission,
         );
         return chainPrivatePromise(transaction, ({ messages }) => messages);
       },
@@ -3094,7 +3508,11 @@ export class AgentRuntime {
       },
       finalize: () => validationState === "accepted" ? commit() : rollback(),
       validationState: () => validationState,
-      validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
+      validateProviderRequest: async (
+        providerSystem: AgentSystem,
+        messages: Message[],
+        preparation?: Parameters<TurnProviderRequestAdmission>[2],
+      ) => {
         if (rejection) throw rejection.error;
         try {
           await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
@@ -3104,7 +3522,19 @@ export class AgentRuntime {
           await rollback();
           throw rejection.error;
         }
-        validationState = "accepted";
+        let accept: void | boolean;
+        try {
+          accept = await preparation?.beforeAcceptance?.();
+        } catch (error) {
+          // A later step can fail after an earlier request was dispatched. Keep
+          // that accepted history, but roll back an undispatched first request.
+          if (validationState === "accepted") throw error;
+          rejection = { error: terminalReceiptPersistenceFailure(error, abortSignal) };
+          validationState = "rejected";
+          await rollback();
+          throw rejection.error;
+        }
+        if (!preparation?.deferAcceptance && accept !== false) validationState = "accepted";
         // Keep validated stateful turns serialized until finalization. An
         // overlapping rollback could otherwise restore another rejected turn.
       },
@@ -3115,6 +3545,7 @@ export class AgentRuntime {
   async #commitTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
+    transactionalAdmission = false,
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
@@ -3144,7 +3575,8 @@ export class AgentRuntime {
     const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
     const validateProviderRequest = context && getTurnProviderRequestValidator(context);
     let memoryTransaction =
-      validateTurnMessages || validateProjectedMessages || validateProviderRequest
+      transactionalAdmission || validateTurnMessages || validateProjectedMessages ||
+        validateProviderRequest
         ? await beginMemoryTransaction(this.memory)
         : undefined;
     let turnMemory = memoryTransaction ?? this.memory;
@@ -3152,7 +3584,10 @@ export class AgentRuntime {
     let history: Message[] = [];
     let persisted: Message[];
     try {
-      if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
+      if (
+        transactionalAdmission || validateTurnMessages || validateProjectedMessages ||
+        validateProviderRequest
+      ) {
         history = await turnMemory.getMessages();
         restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
         if (history.length > 0) validated = concatPrivateArrays(history, committedInputMessages);
@@ -3350,8 +3785,15 @@ export class AgentRuntime {
     }
 
     const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    let retainedLoader = false;
     for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
       if (tools[toolName]) {
+        // A replacement that already carries a trusted framework loader keeps
+        // startup available, exactly like one this helper inserts.
+        if (
+          isLoadSkillToolName(toolName) && hasTrustedHostToolProvenance(tools[toolName]) &&
+          prepareFrameworkSkillBootstrap(tools[toolName], toolName) !== undefined
+        ) retainedLoader = true;
         continue;
       }
       const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {
@@ -3359,8 +3801,10 @@ export class AgentRuntime {
       });
       if (configuredTool) {
         tools[toolName] = configuredTool;
+        if (isLoadSkillToolName(toolName)) retainedLoader = true;
       }
     }
+    if (retainedLoader) replacementsRetainingSkillLoader.set(tools, true);
     return tools;
   }
 
@@ -3470,11 +3914,19 @@ export class AgentRuntime {
         // validated again. A middleware that answers without calling `next()`
         // (a cache hit) still accepted the turn, so persistence runs after the
         // chain resolves when the continuation never reached it.
+        // Decide served-limit admission once, from one catalog snapshot, and
+        // keep that decision for the whole turn (see admitWithoutServedLimit).
+        const servedAdmission = requiresServedModelAdmission(
+          transport.languageModel,
+          resolveRuntimeModel(resolvedModelString),
+        );
         const turnPersistence = this.createTurnPersistence(
           inputMessages,
           agentContext,
           abortSignal,
+          servedAdmission,
         );
+        if (!servedAdmission) admitWithoutServedLimit(turnPersistence.validateProviderRequest);
 
         const chain = new MiddlewareChain(this.config.middleware);
         let response: AgentResponse;
@@ -3693,11 +4145,19 @@ export class AgentRuntime {
       // a later, benign turn. A middleware that answers without calling `next()`
       // (a cache hit) still accepted the turn, so persistence runs after the
       // chain resolves when the continuation never reached it.
+      // Decide served-limit admission once, from one catalog snapshot, and
+      // keep that decision for the whole turn (see admitWithoutServedLimit).
+      const servedAdmission = requiresServedModelAdmission(
+        transport.languageModel,
+        resolveRuntimeModel(transport.resolvedModelString),
+      );
       const turnPersistence = this.createTurnPersistence(
         inputMessages,
         agentContext,
         streamAbortSignal,
+        servedAdmission,
       );
+      if (!servedAdmission) admitWithoutServedLimit(turnPersistence.validateProviderRequest);
 
       // Deferring persistence into the stream body moved the memory calls past
       // the point where the route can still return a 5xx, so probe the memory
@@ -3946,7 +4406,7 @@ export class AgentRuntime {
   async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
-    validateProviderRequest: TurnProviderRequestValidator,
+    validateProviderRequest: TurnProviderRequestAdmission,
     persistMessage: (message: Message) => Promise<void>,
     prepareTerminalDispatch: () => Promise<void>,
     toolContextBase: ToolExecutionContext | undefined,
@@ -4012,6 +4472,7 @@ export class AgentRuntime {
           ...runConfig,
           tools: runtimeToolsConfig,
           skills: undefined,
+          bootstrapTools: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
@@ -4050,6 +4511,12 @@ export class AgentRuntime {
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
       let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
+      // A submitted form continues a turn whose startup already ran, and the
+      // post-form skill policy forbids loading or switching skill bodies.
+      // Replacements suppress startup unless they retain the configured loader.
+      let startupSkillLoaded =
+        (hasToolReplacements && replacementsRetainingSkillLoader.get(toolReplacements) !== true) ||
+        this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -4068,6 +4535,8 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+          reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -4077,10 +4546,14 @@ export class AgentRuntime {
           unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
           unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
           supportsToolCalling,
+          includeStartupAuthorizedTools: !startupSkillLoaded,
           messages: currentMessages,
           mode: "generate",
           modelRuntime: languageModel,
           providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+          // The authorization catalog is independent of whether the model can
+          // call tools; only the model-visible provider tools are withheld.
+          authorizedProviderToolNames: providerTools,
           providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
             ? providerTools
             : [],
@@ -4102,86 +4575,166 @@ export class AgentRuntime {
         const toolContext = preparedStep.toolContext;
         // Keep this snapshot fixed while calls from the same provider response execute.
         const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
-        const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+        let effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
           ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
             reloadable: runtimeStepToolLoading.mode === "deferred",
           })
           : preparedStep.toolExposurePlan;
+        if (!startupSkillLoaded) {
+          await executeStartupSkill({
+            agentId: this.id,
+            skillId: this.config.bootstrapSkill!,
+            authorized: preparedStep.startupAuthorizedTools,
+            messages: currentMessages,
+            persistMessage,
+            skillState,
+            toolCalls,
+            resolveLoader: (name) =>
+              resolveConfiguredTool(runtimeToolsConfig, name, { agentId: this.id }),
+            execute: async (toolName, toolCallId, args, admittedTurn) => {
+              const context = applicationExecutionContext(toolContext);
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName,
+                toolCallId,
+                args,
+                admittedTurn,
+                owner: currentMessages,
+                prepareTerminalDispatch,
+                toolsConfig: runtimeToolsConfig,
+                context,
+                allowedRemoteToolNames,
+                remoteToolSources,
+                sourceIntegrationPolicy,
+                frameworkLocalTools,
+              });
+              await this.notifyToolResult({
+                mode: "generate",
+                toolName,
+                toolCallId,
+                input: args,
+                result,
+                context,
+              });
+              return result;
+            },
+          });
+          startupSkillLoaded = true;
+          // Refresh the active skill policy without consuming a model step.
+          step--;
+          continue;
+        }
         assertToolResultReaderNameAvailable({
           plan: effectiveToolExposurePlan,
           context: toolResultContext,
         });
-        const modelMessages = toolResultContext
-          ? createModelToolResultContextMessages(currentMessages, toolResultContext)
-          : currentMessages;
-        const exposeToolResultReader = canExposeToolResultReader({
-          plan: effectiveToolExposurePlan,
-          context: toolResultContext,
-        });
-        const tools = withToolResultReaderTool(
-          effectiveToolExposurePlan.visible,
-          exposeToolResultReader,
+        const baseSystemPrompt = currentSystemPrompt;
+        const assembleRequest = (
+          messages: Message[],
+          plan: ToolExposurePlan = effectiveToolExposurePlan,
+        ) =>
+          assembleRuntimeStepRequest({
+            messages,
+            plan,
+            toolResultContext,
+            supportsToolCalling,
+            agentWriteFinalResponseToolGuardEnabled,
+            providerTools,
+            model: effectiveModel,
+            languageModel,
+            toolSchemaOptions: resolveStepToolSchemaOptions(
+              this.config,
+              languageModel,
+              effectiveModel,
+            ),
+            baseSystemPrompt,
+            integrationToolDiscovery: preparedStep.integrationToolDiscovery,
+            runRuntimeContext,
+            bootstrapToolNames: preparedStep.configuredBootstrapToolNames,
+          });
+        const requestedOutputTokens = this.resolveMaxOutputTokens(
+          effectiveModel,
+          maxOutputTokensOverride,
         );
+        // An invalid thinking budget is left for the provider path to reject.
+        const additionalOutputTokens = resolveAdditiveReasoningOutputTokens(languageModel, {
+          reasoning,
+          providerOptions,
+        }) ?? 0;
+        const fittedRequest = await fitRuntimeStepRequestToServedBudget({
+          sourceMessages: currentMessages,
+          modelMessages: toolResultContext
+            ? createModelToolResultContextMessages(currentMessages, toolResultContext)
+            : currentMessages,
+          plan: effectiveToolExposurePlan,
+          assembleRequest,
+          toolResultContext,
+          supportsToolCalling,
+          deferredToolLoading: runtimeStepToolLoading.mode === "deferred",
+          languageModel,
+          model: effectiveModel,
+          reasoning,
+          providerOptions,
+          responseFormat: outputSchema?.responseFormat,
+          requestedOutputTokens,
+          explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+          additionalOutputTokens,
+          toolExposureState,
+          persistToolExposureCheckpoint,
+          requireToolExposureCheckpointPersistence,
+          turnAdmission: validateProviderRequest,
+        });
+        const modelMessages = fittedRequest.modelMessages;
+        effectiveToolExposurePlan = fittedRequest.plan;
+        const request = assembleRequest(modelMessages);
+        currentSystemPrompt = request.systemPrompt;
+        const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
         setSpanAttributes(loopSpan, {
           "tool.loading.mode": runtimeStepToolLoading.mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
-          "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+          "tool.catalog.deferred_count": effectiveToolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const visibleToolNames = collectVisibleToolNames(tools);
-        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-          ? filterVisibleProviderTools(providerTools, visibleToolNames)
-          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
           providerOptions,
-        );
-        const runtimeTools = convertToolsToRuntimeTools(tools, {
-          model: effectiveModel,
-          providerTools: stepProviderTools,
-          requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
-        });
-        currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-          synchronizeRuntimeToolInventory(
-            currentSystemPrompt,
-            runtimeTools,
-            agentWriteFinalResponseToolGuardEnabled
-              ? filterPrivateArray(
-                effectiveToolExposurePlan.deferred,
-                (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
-              )
-              : [],
-          ),
-          preparedStep.integrationToolDiscovery,
         );
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          const providerSystemPrompt = withAgentRunRuntimeContext(
-            currentSystemPrompt,
-            runRuntimeContext,
-          );
+          // Reject an over-budget request before the turn is accepted, so a
+          // rejected input is rolled back instead of committed to memory.
+          const { maxOutputTokens } = enforceProviderRequestBudget({
+            model: languageModel,
+            ...(reasoning === undefined ? {} : { reasoning }),
+            ...(providerOptions === undefined ? {} : { providerOptions }),
+            system: providerSystemPrompt,
+            messages: providerMessages,
+            tools: runtimeTools,
+            responseFormat: outputSchema?.responseFormat,
+            limit: fittedRequest.servedLimit,
+            requestedOutputTokens,
+            explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+            additionalOutputTokens,
+          });
           await validateProviderRequest(
             providerSystemPrompt,
             modelMessages,
+            { beforeAcceptance: fittedRequest.commitToolExposure },
           );
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
-            messages: convertToTextGenerationRuntimeRequestMessages(modelMessages, {
-              // A server-local runtime fetches attachments from this machine,
-              // where a loopback or private-network URL resolves; only a remote
-              // provider needs the URL to be reachable from the internet.
-              requireInternetReachableAttachments: !isLocalModelRuntime(languageModel),
-            }),
+            messages: providerMessages,
             tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
-            maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
+            maxOutputTokens,
             ...(temperature === undefined ? {} : { temperature }),
             ...(this.config.parallelToolCalls === undefined
               ? {}
@@ -4912,7 +5465,7 @@ export class AgentRuntime {
   async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
-    validateProviderRequest: TurnProviderRequestValidator,
+    validateProviderRequest: TurnProviderRequestAdmission,
     persistMessage: (message: Message) => Promise<void>,
     prepareTerminalDispatch: () => Promise<void>,
     controller: ReadableStreamDefaultController,
@@ -5033,6 +5586,9 @@ export class AgentRuntime {
     let interruptedLocalToolBatchRecoveryStep = checkpoint?.interruptedLocalToolBatchRecoveryStep;
     let interruptedLocalToolBatchRecoveryText = checkpoint?.interruptedLocalToolBatchRecoveryText;
     let resumeToolCallExecuted = checkpoint?.resumeToolCallExecuted ?? false;
+    // A pause can precede startup preparation; checkpoint existence is not completion.
+    let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
+      this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
     const pauseAtBoundary = async (nextStep: number) => {
       if (!this.#manualPause) return;
@@ -5049,6 +5605,7 @@ export class AgentRuntime {
           completed: completedWithinStepBudget,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
           recoveredEmptyResponse,
+          startupSkillLoaded,
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
@@ -5086,12 +5643,24 @@ export class AgentRuntime {
         );
         throw agentManualPauseBoundary();
       }
-      if (await this.#manualPause.acknowledge(saved)) throw agentManualPauseBoundary();
+      let acknowledged = false;
+      await validateProviderRequest(
+        withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+        currentMessages,
+        {
+          beforeAcceptance: async () => {
+            acknowledged = await this.#manualPause!.acknowledge(saved);
+            return acknowledged;
+          },
+        },
+      );
+      if (acknowledged) throw agentManualPauseBoundary();
     };
     if (this.#manualPause) {
       await validateProviderRequest(
         withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
         currentMessages,
+        { deferAcceptance: true },
       );
       if (checkpoint) {
         const persistedIds = createPrivateSet(mapPrivateArray(messages, (message) => message.id));
@@ -5110,22 +5679,6 @@ export class AgentRuntime {
       step++
     ) {
       throwIfAborted(abortSignal);
-      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
-      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
-        ? crypto.randomUUID()
-        : undefined;
-      sendSSE(controller, encoder, {
-        type: "step-start",
-        ...(runtimeObservationStepId
-          ? {
-            privateRuntimeObservation: {
-              version: 1,
-              kind: "step_started",
-              stepId: runtimeObservationStepId,
-            },
-          }
-          : {}),
-      });
       const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
       const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
@@ -5138,6 +5691,8 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+        reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -5147,10 +5702,12 @@ export class AgentRuntime {
         unavailableOptionalRemoteToolNames: unavailableOptionalRemoteTools.names,
         unavailableOptionalRemoteToolPrefixes: unavailableOptionalRemoteTools.prefixes,
         supportsToolCalling,
+        includeStartupAuthorizedTools: !startupSkillLoaded,
         messages: currentMessages,
         mode: "stream",
         modelRuntime: languageModel,
         providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+        authorizedProviderToolNames: providerTools,
         providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
           ? providerTools
           : [],
@@ -5171,26 +5728,82 @@ export class AgentRuntime {
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+      let effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
         ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
           reloadable: toolLoadingResolution.mode === "deferred",
         })
         : preparedStep.toolExposurePlan;
+      if (!startupSkillLoaded) {
+        await executeStartupSkill({
+          agentId: this.id,
+          skillId: this.config.bootstrapSkill!,
+          authorized: preparedStep.startupAuthorizedTools,
+          messages: currentMessages,
+          persistMessage,
+          skillState,
+          toolCalls,
+          onToolCall: callbacks?.onToolCall,
+          resolveLoader: (name) =>
+            resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
+          execute: async (toolName, toolCallId, args, admittedTurn) => {
+            const context = applicationExecutionContext(toolContext);
+            const result = await traceConfiguredToolExecution({
+              mode: "stream",
+              agentId: this.id,
+              toolName,
+              toolCallId,
+              args,
+              admittedTurn,
+              owner: currentMessages,
+              prepareTerminalDispatch,
+              toolsConfig: this.config.tools,
+              context,
+              allowedRemoteToolNames,
+              remoteToolSources,
+              sourceIntegrationPolicy,
+              frameworkLocalTools,
+            });
+            await this.notifyToolResult({
+              mode: "stream",
+              toolName,
+              toolCallId,
+              input: args,
+              result,
+              context,
+            });
+            return result;
+          },
+        });
+        startupSkillLoaded = true;
+        // A pause requested while the loader ran must hold before the first
+        // provider call; the checkpoint records the completed startup load.
+        await pauseAtBoundary(step);
+        // Refresh the active skill policy without consuming a model step.
+        step--;
+        continue;
+      }
+      const runtimeObservationStepId = runtimeObservationsEnabled ? crypto.randomUUID() : undefined;
+      const runtimeObservationMessageSpanId = runtimeObservationStepId !== undefined
+        ? crypto.randomUUID()
+        : undefined;
+      sendSSE(controller, encoder, {
+        type: "step-start",
+        ...(runtimeObservationStepId
+          ? {
+            privateRuntimeObservation: {
+              version: 1,
+              kind: "step_started",
+              stepId: runtimeObservationStepId,
+            },
+          }
+          : {}),
+      });
       assertToolResultReaderNameAvailable({
         plan: effectiveToolExposurePlan,
         context: toolResultContext,
       });
 
       if (!resumeToolCallExecuted && this.#resumeToolCall) {
-        // A resumed finalize can terminate before any provider call. Validate
-        // the staged turn first so accepted terminal results commit and
-        // rejected turns roll back without dispatching the parked action.
-        if (isTerminalRunToolName(this.#resumeToolCall.name)) {
-          await validateProviderRequest(
-            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
-            currentMessages,
-          );
-        }
         const resumeToolCall = this.#resumeToolCall;
         resumeToolCallExecuted = true;
         const inputText = privateJsonStringify(resumeToolCall.input);
@@ -5257,6 +5870,7 @@ export class AgentRuntime {
             slicePrivateArray(currentMessages, 0, admittedTurn.start),
           ),
         );
+        let resumeAdmissionRejection: { error: unknown } | undefined;
         try {
           // The trusted parked call was already exposed in the prior segment.
           // Recheck current authorization without requiring its lost step visibility.
@@ -5286,6 +5900,18 @@ export class AgentRuntime {
             resolveConfiguredTool(this.config.tools, resumeToolCall.name, { agentId: this.id }) ??
               undefined,
           );
+          // Resuming a trusted parked tool is a real dispatch even before the
+          // next provider request. Validate before its effect, then retain that
+          // accepted history if later provider preparation fails.
+          try {
+            await validateProviderRequest(
+              withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+              currentMessages,
+            );
+          } catch (error) {
+            resumeAdmissionRejection = { error };
+            throw error;
+          }
           callbacks?.onToolCall?.(toolCall);
           const startTime = Date.now();
           const result = await runWithToolCallOccurrenceDispatch(
@@ -5349,6 +5975,9 @@ export class AgentRuntime {
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
         } catch (error) {
+          // A turn admission rejection belongs to the request, not the tool:
+          // surface it as the request error instead of a tool-output-error.
+          if (resumeAdmissionRejection?.error === error) throw error;
           await this.recordTerminalToolResult(
             error,
             toolCall,
@@ -5372,48 +6001,75 @@ export class AgentRuntime {
 
       // Include the parked result delivered to this request, but exclude new same-step results.
       const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
-      const modelMessages = toolResultContext
-        ? createModelToolResultContextMessages(currentMessages, toolResultContext)
-        : currentMessages;
-      const exposeToolResultReader = canExposeToolResultReader({
-        plan: effectiveToolExposurePlan,
-        context: toolResultContext,
-      });
-      const tools = withToolResultReaderTool(
-        effectiveToolExposurePlan.visible,
-        exposeToolResultReader,
+      const baseSystemPrompt = currentSystemPrompt;
+      const assembleRequest = (
+        messages: Message[],
+        plan: ToolExposurePlan = effectiveToolExposurePlan,
+      ) =>
+        assembleRuntimeStepRequest({
+          messages,
+          plan,
+          toolResultContext,
+          supportsToolCalling,
+          agentWriteFinalResponseToolGuardEnabled,
+          providerTools,
+          model: effectiveModel,
+          languageModel,
+          toolSchemaOptions: resolveStepToolSchemaOptions(
+            this.config,
+            languageModel,
+            effectiveModel,
+          ),
+          baseSystemPrompt,
+          integrationToolDiscovery: preparedStep.integrationToolDiscovery,
+          runRuntimeContext,
+          bootstrapToolNames: preparedStep.configuredBootstrapToolNames,
+        });
+      const requestedOutputTokens = this.resolveMaxOutputTokens(
+        effectiveModel,
+        maxOutputTokensOverride,
       );
+      // An invalid thinking budget is left for the provider path to reject.
+      const additionalOutputTokens = resolveAdditiveReasoningOutputTokens(languageModel, {
+        reasoning,
+        providerOptions,
+      }) ?? 0;
+      const fittedRequest = await fitRuntimeStepRequestToServedBudget({
+        sourceMessages: currentMessages,
+        modelMessages: toolResultContext
+          ? createModelToolResultContextMessages(currentMessages, toolResultContext)
+          : currentMessages,
+        plan: effectiveToolExposurePlan,
+        assembleRequest,
+        toolResultContext,
+        supportsToolCalling,
+        deferredToolLoading: toolLoadingResolution.mode === "deferred",
+        languageModel,
+        model: effectiveModel,
+        reasoning,
+        providerOptions,
+        responseFormat: outputSchema?.responseFormat,
+        requestedOutputTokens,
+        explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+        additionalOutputTokens,
+        toolExposureState,
+        persistToolExposureCheckpoint,
+        requireToolExposureCheckpointPersistence,
+        turnAdmission: validateProviderRequest,
+      });
+      const modelMessages = fittedRequest.modelMessages;
+      effectiveToolExposurePlan = fittedRequest.plan;
+      const request = assembleRequest(modelMessages);
+      currentSystemPrompt = request.systemPrompt;
+      const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
       setOtelActiveSpanAttributes({
         "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
         "tool.loading.provenance": toolLoadingResolution.provenance,
         "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
         "tool.catalog.visible_count": tools.length,
-        "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+        "tool.catalog.deferred_count": effectiveToolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const visibleToolNames = collectVisibleToolNames(tools);
-      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-        ? filterVisibleProviderTools(providerTools, visibleToolNames)
-        : [];
-
-      const runtimeTools = convertToolsToRuntimeTools(tools, {
-        model: effectiveModel,
-        providerTools: stepProviderTools,
-        requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
-      });
-      currentSystemPrompt = withIntegrationToolDiscoveryStatus(
-        synchronizeRuntimeToolInventory(
-          currentSystemPrompt,
-          runtimeTools,
-          agentWriteFinalResponseToolGuardEnabled
-            ? filterPrivateArray(
-              effectiveToolExposurePlan.deferred,
-              (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
-            )
-            : [],
-        ),
-        preparedStep.integrationToolDiscovery,
-      );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
       const acceptedRuntimeToolNames = collectAcceptedRuntimeToolNames(
         runtimeTools,
@@ -5424,25 +6080,29 @@ export class AgentRuntime {
         temperatureModelString ?? effectiveModel,
         providerOptions,
       );
-      const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
-      const providerSystemPrompt = withAgentRunRuntimeContext(
-        currentSystemPrompt,
-        runRuntimeContext,
-      );
+      // Reject an over-budget request before the turn is accepted, so a
+      // rejected input is rolled back instead of committed to memory.
+      const { maxOutputTokens } = enforceProviderRequestBudget({
+        model: languageModel,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        ...(providerOptions === undefined ? {} : { providerOptions }),
+        system: providerSystemPrompt,
+        messages: providerMessages,
+        tools: runtimeTools,
+        responseFormat: outputSchema?.responseFormat,
+        limit: fittedRequest.servedLimit,
+        requestedOutputTokens,
+        explicitOutputTokens: isMaxOutputTokensOverride(maxOutputTokensOverride),
+        additionalOutputTokens,
+      });
       await validateProviderRequest(
         providerSystemPrompt,
         modelMessages,
+        { beforeAcceptance: fittedRequest.commitToolExposure },
       );
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
-      const providerMessages = convertToTextGenerationRuntimeRequestMessages(
-        modelMessages,
-        // A server-local runtime fetches attachments from this machine,
-        // where a loopback or private-network URL resolves; only a remote
-        // provider needs the URL to be reachable from the internet.
-        { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
-      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamTextForObservedAgentRuntime({
           model: streamModel,
@@ -6790,11 +7450,7 @@ export class AgentRuntime {
   }
 
   private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {
-    if (
-      typeof maxOutputTokensOverride === "number" &&
-      Number.isFinite(maxOutputTokensOverride) &&
-      maxOutputTokensOverride > 0
-    ) {
+    if (isMaxOutputTokensOverride(maxOutputTokensOverride)) {
       return Math.floor(maxOutputTokensOverride);
     }
 
@@ -6804,9 +7460,13 @@ export class AgentRuntime {
     const memoryMaxTokens = this.config.memory?.enabled === false
       ? undefined
       : this.config.memory?.maxTokens;
-    return memoryMaxTokens ??
+    const defaultOutputTokens = memoryMaxTokens ??
       (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
       DEFAULT_MAX_TOKENS;
+    const ceiling = (this.config as RuntimeToolFilterConfig).__vfMaxOutputTokensCeiling;
+    return isMaxOutputTokensOverride(ceiling)
+      ? Math.min(defaultOutputTokens, Math.floor(ceiling))
+      : defaultOutputTokens;
   }
 
   /**

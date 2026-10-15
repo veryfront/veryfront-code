@@ -218,6 +218,7 @@ export async function createAgentRuntime(
     runtimeOptions,
     resolveVeryfrontCloudChatStreamWatchdogOptions().idleTimeoutMs ??
       DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+    (message, metadata) => context.infrastructure.logger.warn(message, metadata),
   );
   // Delegated child runtimes inherit the same budgets through private authority.
   bindHostedChildModelStreamTimeouts(options, hostedRuntimeOptions?.modelStreamTimeouts);
@@ -245,6 +246,9 @@ export async function createAgentRuntime(
         createDefaultHostedChatRuntime({
           options,
           hostToolPolicy: context.options.hostToolPolicy,
+          projectDefinitionBootstrap: context.options.projectDefinitionBootstrap,
+          projectDefinitionBootstrapEnabled: context.projectDefinitionBootstrapEnabled,
+          projectDefinitionBootstrapSignal: resolveHostedRequestPreparationSignal(),
           sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
           config: {
             apiUrl: config.VERYFRONT_API_URL,

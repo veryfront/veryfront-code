@@ -1,3 +1,6 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
 import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
@@ -16,11 +19,15 @@ import { setupSSRGlobals } from "./ssr-globals.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   normalizeReactVersion,
+  resolveProjectReactDeclaration,
   resolveProjectReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
-import type { ReactServerRuntime } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  type ReactServerRuntime,
+  resolveSSRRuntime,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
@@ -108,6 +115,7 @@ function attachAllReady<T extends ReadableStream<Uint8Array>>(
 }
 
 export interface SSRRenderOptions {
+  reactPeers?: LocalReactPeerSnapshot;
   mode: string;
   wantsStream: boolean;
   /** Realm-local renderer modules owned by the selected artifact generation. */
@@ -119,6 +127,7 @@ export interface SSRRenderOptions {
   debugMode?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Maximum UTF-8 bytes retained when the result must be buffered. */
   maxBufferedBytes?: number;
 }
@@ -132,7 +141,6 @@ export class SSRRenderer {
   private readonly mode: string;
   private readonly projectDir?: string;
   private readonly config?: VeryfrontConfig;
-  private reactVersionPromise: Promise<string> | null = null;
   private resolvedReactVersion: string | null = null;
 
   constructor(
@@ -145,11 +153,12 @@ export class SSRRenderer {
     this.mode = mode;
     this.projectDir = projectDir;
     this.config = config;
-
     const legacyVersions = config?.client?.cdn?.versions;
     const configuredVersion = config?.react?.version ??
       (legacyVersions && legacyVersions !== "auto" ? legacyVersions.react : undefined);
     if (configuredVersion) {
+      // Preserve early version metadata without selecting host peers. Rendering
+      // resolves the actual graph lazily, including caller-supplied runtimes.
       this.resolvedReactVersion = normalizeReactVersion(stripSemverRange(configuredVersion));
     }
   }
@@ -157,26 +166,27 @@ export class SSRRenderer {
   private async getReactVersion(
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return await resolveProjectReactVersion({
+        adapter: this.adapter,
         projectDir: this.projectDir,
         config: this.config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions,
       });
     }
 
-    if (this.resolvedReactVersion) return this.resolvedReactVersion;
-
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    this.resolvedReactVersion = await resolveProjectReactVersion({
+      adapter: this.adapter,
       projectDir: this.projectDir,
       config: this.config,
     });
-    this.resolvedReactVersion = await this.reactVersionPromise;
     return this.resolvedReactVersion;
   }
 
@@ -186,10 +196,35 @@ export class SSRRenderer {
   ): Promise<SSRRenderResult> {
     setupSSRGlobals();
 
-    const reactVersion = await this.getReactVersion(
-      options.dependencyPinningCacheKey,
-      options.dependencyPinningDependencies,
-    );
+    let reactVersion: string;
+    let reactRuntime = options.reactRuntime;
+    if (reactRuntime || options.reactPeers || getRuntimeModuleLoader(this.adapter)) {
+      const requestedVersion = await resolveProjectReactDeclaration({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
+      });
+      const runtime = await resolveSSRRuntime({
+        reactRuntime,
+        reactVersion: requestedVersion,
+        renderContext: options.renderContext,
+        reactPeers: options.reactPeers,
+      }, this.adapter);
+      if (!runtime.react) {
+        throw RENDER_ERROR.create({ detail: "Prepared React runtime is unavailable" });
+      }
+      reactRuntime = { react: runtime.react, server: runtime.server };
+      reactVersion = runtime.react.version;
+      this.resolvedReactVersion = reactVersion;
+    } else {
+      reactVersion = await this.getReactVersion(
+        options.dependencyPinningCacheKey,
+        options.dependencyPinningDependencies,
+        options.dependencyPinningConfiguredVersions,
+      );
+    }
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
     const maxBufferedBytes = options.maxBufferedBytes ?? SSR_MAX_BUFFERED_BYTES;
@@ -223,7 +258,7 @@ export class SSRRenderer {
             nonce: options.nonce,
             renderContext: options.renderContext,
             reactVersion,
-            reactRuntime: options.reactRuntime,
+            reactRuntime,
           }, this.adapter),
         {
           "ssr.method": "string",
@@ -248,7 +283,7 @@ export class SSRRenderer {
           nonce: options.nonce,
           renderContext: options.renderContext,
           reactVersion,
-          reactRuntime: options.reactRuntime,
+          reactRuntime,
         }, this.adapter),
       {
         "ssr.method": "streaming",

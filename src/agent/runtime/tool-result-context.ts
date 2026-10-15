@@ -480,20 +480,22 @@ function createPreviewOnlyPayload(input: {
   };
 }
 
+class ToolResultContextCapacityError extends RangeError {
+  constructor(
+    message: string,
+    readonly detail: string,
+  ) {
+    super(message);
+  }
+}
+
 function capacityDetail(error: unknown): string | undefined {
-  if (!(error instanceof RangeError)) {
-    return undefined;
-  }
-  if (error.message.includes("per-result storage limit")) {
-    return "per-result storage limit exceeded";
-  }
-  if (error.message.includes("stored result limit exceeded")) {
-    return "stored result limit exceeded";
-  }
-  if (error.message.includes("total storage limit exceeded")) {
-    return "total storage limit exceeded";
-  }
-  return undefined;
+  return error instanceof ToolResultContextCapacityError ? error.detail : undefined;
+}
+
+/** @internal Distinguish expected retention capacity failures from other errors. */
+export function isToolResultContextCapacityError(error: unknown): boolean {
+  return capacityDetail(error) !== undefined;
 }
 
 export class ToolResultContext {
@@ -517,10 +519,34 @@ export class ToolResultContext {
   }
 
   disclose(input: ToolResultDisclosureInput): ToolResultDisclosure {
+    return this.#disclose(input, false);
+  }
+
+  /** Retain an exact historical result for a model-only reference. Capacity errors propagate. */
+  discloseReference(
+    input: ToolResultDisclosureInput,
+    options: { readonly previewBytes?: number } = {},
+  ): ReferencedToolResultDisclosure {
+    const disclosure = this.#disclose(input, true, options.previewBytes);
+    if (disclosure.kind !== "reference") {
+      throw new Error("Forced tool result disclosure did not create a reference");
+    }
+    return disclosure;
+  }
+
+  #disclose(
+    input: ToolResultDisclosureInput,
+    forceReference: boolean,
+    requestedPreviewBytes?: number,
+  ): ToolResultDisclosure {
+    const previewBytes = requestedPreviewBytes === undefined ? this.#limits.previewBytes : Math.min(
+      positiveInteger("previewBytes", requestedPreviewBytes, this.#limits.previewBytes),
+      this.#limits.previewBytes,
+    );
     const modelResult = hasOwn(input, "modelResult") ? input.modelResult : input.result;
     const serialized = safeSerializedResult(modelResult);
     const length = byteLength(serialized);
-    if (length <= this.#limits.maxInlineBytes) {
+    if (!forceReference && length <= this.#limits.maxInlineBytes) {
       return {
         kind: "inline",
         modelResult,
@@ -533,7 +559,7 @@ export class ToolResultContext {
     if (existing) {
       return {
         kind: "reference",
-        modelResult: createReferencePayload(existing, this.#limits.previewBytes),
+        modelResult: createReferencePayload(existing, previewBytes),
         originalResult: input.result,
         byteLength: existing.byteLength,
       };
@@ -550,7 +576,7 @@ export class ToolResultContext {
     });
     return {
       kind: "reference",
-      modelResult: createReferencePayload(record, this.#limits.previewBytes),
+      modelResult: createReferencePayload(record, previewBytes),
       originalResult: input.result,
       byteLength: length,
     };
@@ -745,17 +771,37 @@ export class ToolResultContext {
 
   #ensureCapacity(byteLength: number): void {
     if (byteLength > MAX_STORED_RESULT_BYTES) {
-      throw new RangeError("Tool result exceeds the per-result storage limit");
+      throw new ToolResultContextCapacityError(
+        "Tool result exceeds the per-result storage limit",
+        "per-result storage limit exceeded",
+      );
     }
     if (this.#records.size >= this.#limits.maxStoredResults) {
-      throw new RangeError("Tool result context stored result limit exceeded");
+      throw new ToolResultContextCapacityError(
+        "Tool result context stored result limit exceeded",
+        "stored result limit exceeded",
+      );
     }
     if (this.#totalStoredBytes + byteLength > MAX_TOTAL_STORED_BYTES) {
-      throw new RangeError("Tool result context total storage limit exceeded");
+      throw new ToolResultContextCapacityError(
+        "Tool result context total storage limit exceeded",
+        "total storage limit exceeded",
+      );
     }
   }
 }
 
 export function createToolResultContext(options: ToolResultContextOptions = {}): ToolResultContext {
   return new ToolResultContext(options);
+}
+
+/**
+ * Tool-limit slots to keep for the framework `get_tool_result` reader, which
+ * the runtime appends after tool selection whenever tool-result context is on.
+ */
+export function getToolResultReaderReservedToolSlots(toolResultContext: unknown): number {
+  return toolResultContext === true ||
+      (typeof toolResultContext === "object" && toolResultContext !== null)
+    ? 1
+    : 0;
 }

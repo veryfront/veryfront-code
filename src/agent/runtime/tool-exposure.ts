@@ -988,6 +988,31 @@ export function createToolSearchDefinition(): ToolDefinition {
   };
 }
 
+/**
+ * Bound an eager step's schemas by the provider limit left after any slots the
+ * runtime reserves, so a schema it appends later never displaces one the step
+ * advertised. Bootstrap tools are kept first; the original order is kept.
+ */
+function capEagerVisibleTools(
+  visible: ToolDefinition[],
+  maxVisibleTools: number | undefined,
+  bootstrapToolNames: ReadonlySet<string> | undefined,
+): ToolDefinition[] {
+  if (maxVisibleTools === undefined || visible.length <= maxVisibleTools) return visible;
+  const keptNames = createPrivateSet<string>();
+  let kept = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let index = 0; index < visible.length && kept < maxVisibleTools; index++) {
+      const tool = visible[index]!;
+      const isBootstrap = bootstrapToolNames !== undefined && setHas(bootstrapToolNames, tool.name);
+      if ((pass === 0) !== isBootstrap || setHas(keptNames, tool.name)) continue;
+      ReflectApply(SetAdd, keptNames, [tool.name]);
+      kept += 1;
+    }
+  }
+  return filterPrivateArray(visible, (tool) => setHas(keptNames, tool.name));
+}
+
 /** Plan the schemas visible to the model for the current step. */
 export function createToolExposurePlan(input: {
   authorized: readonly ToolDefinition[];
@@ -1004,7 +1029,11 @@ export function createToolExposurePlan(input: {
   if (input.mode === "eager") {
     return {
       authorized,
-      visible: filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      visible: capEagerVisibleTools(
+        filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+        input.maxVisibleTools,
+        input.bootstrapToolNames,
+      ),
       deferred: [],
       loadedToolNames: input.state.loadedToolNames,
     };

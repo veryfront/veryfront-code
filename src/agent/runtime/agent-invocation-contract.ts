@@ -8,6 +8,8 @@ import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-exte
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
 import { MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES } from "#veryfront/security/credential-limits.ts";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "./agent-delegation-names.ts";
 
 ensureBuiltinSchemaValidator();
 
@@ -401,6 +403,19 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
   }).strict();
 });
 
+/**
+ * Runtime overrides forwarded in `forwardedProps.runtimeOverrides`. Hosted
+ * preparation re-exports this as `getHostedChatRuntimeOverridesSchema`.
+ */
+export const getRuntimeAgentRuntimeOverridesSchema = defineSchema((v) =>
+  v.object({
+    allowedTools: v.array(v.string().min(1)).max(100).optional(),
+    thinking: v.union([v.literal(false), v.number().int().positive()]).optional(),
+    maxSteps: v.number().int().positive().optional(),
+    maxOutputTokens: v.number().int().positive().optional(),
+  }).strip()
+);
+
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
@@ -489,24 +504,445 @@ const trustedRuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchem
 const TrustedRuntimeAgentRunInvocationParse = trustedRuntimeAgentRunInvocationSchema.parse;
 const TrustedRuntimeAgentRunInvocationSafeParse = trustedRuntimeAgentRunInvocationSchema.safeParse;
 
+const ObjectHasOwn = Object.hasOwn;
+const ObjectKeys = Object.keys;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectCreate = Object.create;
+const ArrayIsArray = Array.isArray;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const IntrinsicSet = Set;
+const SetPrototypeHas = Set.prototype.has;
+const SetPrototypeAdd = Set.prototype.add;
+const MALFORMED = Symbol("malformed");
+
+/**
+ * Host and platform tool names a provider-native tool may never claim under
+ * deny-all. Hosted preparation shares one `allowedTools` list between host and
+ * provider tools, so a provider name that matches one of these would re-grant
+ * the host capability (`invoke_agent` through legacy delegation, knowledge
+ * search, a configured delegate, the skill loader, ...).
+ *
+ * `web_fetch` is reserved too: when the selected model has no native fetch
+ * support, hosted preparation satisfies a granted `web_fetch` provider tool
+ * with the framework's local host `web_fetch` fallback, which would make a
+ * callable host tool available despite deny-all.
+ */
+const DENY_ALL_RESERVED_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "invoke_agent",
+  "load_skill",
+  "form_input",
+  "tool_search",
+  "search_knowledge",
+  "web_fetch",
+]);
+const DENY_ALL_RESERVED_HOST_TOOL_PREFIXES: readonly string[] = [
+  "veryfront__",
+  AGENT_DELEGATE_TOOL_PREFIX,
+];
+
+/** Runtime override keys that supply remote tool sources; deny-all drops them. */
+const DENY_ALL_DISCARDED_RUNTIME_OVERRIDE_KEYS: readonly string[] = [
+  "integrationToolDefinitions",
+  "serverResolvedIntegrationTools",
+];
+
+// Validators for values the deny-all mapping replaces or discards, captured
+// before project code can mutate the materialized schema instances.
+const trustedDenyAllAgentConfigSchema = getRuntimeAgentMarkdownDefinitionSchema();
+const TrustedDenyAllAgentConfigSafeParse = trustedDenyAllAgentConfigSchema.safeParse;
+const trustedDenyAllInjectedToolsSchema = defineSchema((v) =>
+  v.array(getRuntimeAgentToolSchema()).max(50)
+)();
+const TrustedDenyAllInjectedToolsSafeParse = trustedDenyAllInjectedToolsSchema.safeParse;
+const trustedDenyAllRuntimeOverridesSchema = getRuntimeAgentRuntimeOverridesSchema();
+const TrustedDenyAllRuntimeOverridesSafeParse = trustedDenyAllRuntimeOverridesSchema.safeParse;
+
+function trustedSafeParseSucceeds(
+  parse: (value: unknown) => { success: boolean },
+  schema: unknown,
+  value: unknown,
+): boolean {
+  return IntrinsicReflectApply(parse, schema, [value]).success === true;
+}
+
+/** Records and arrays the deny-all mapping reads from or writes to. */
+type OwnDataContainer = Record<string, unknown> | readonly unknown[];
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !ArrayIsArray(value);
+}
+
+function readOwn(source: OwnDataContainer, key: string | number): unknown {
+  if (!ObjectHasOwn(source, key)) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+/**
+ * Define an own data property without invoking inherited setters. Used for
+ * both record keys and generated array elements: plain `[]`/`{}` assignment
+ * would run an `Object.prototype`/`Array.prototype` setter instead.
+ */
+function defineOwnData(target: OwnDataContainer, key: string | number, value: unknown): void {
+  // A null-prototype descriptor: inherited `get`/`set` cannot leak into it.
+  const descriptor = ObjectCreate(null) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.writable = true;
+  descriptor.enumerable = true;
+  descriptor.configurable = true;
+  ObjectDefineProperty(target, key, descriptor);
+}
+
+function appendOwn<T>(target: T[], value: T): void {
+  defineOwnData(target, target.length, value);
+}
+
+/** A record with no prototype: inherited properties can never be read from it. */
+function createNullPrototypeRecord(): Record<string, unknown> {
+  return ObjectCreate(null) as Record<string, unknown>;
+}
+
+/**
+ * Copy own data properties without re-reading accessors (they are dropped).
+ * The copy has a null prototype, so an omitted key cannot reappear through an
+ * inherited `Object.prototype` getter when the schema reads known fields.
+ */
+function copyOwnDataRecord(
+  source: Record<string, unknown>,
+  omit: readonly string[] = [],
+): Record<string, unknown> {
+  const copy = createNullPrototypeRecord();
+  const keys = ObjectKeys(source);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    let omitted = false;
+    for (let omitIndex = 0; omitIndex < omit.length; omitIndex++) {
+      if (omit[omitIndex] === key) omitted = true;
+    }
+    if (omitted) continue;
+    const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
+    if (descriptor && "value" in descriptor) defineOwnData(copy, key, descriptor.value);
+  }
+  return copy;
+}
+
+function copyStringArray(entries: readonly string[]): string[] {
+  const copy: string[] = [];
+  for (let index = 0; index < entries.length; index++) appendOwn(copy, entries[index]!);
+  return copy;
+}
+
+/** Read an own string array; a present value that is not one is MALFORMED. */
+function readOwnStrictStringArray(
+  source: Record<string, unknown>,
+  key: string,
+): string[] | undefined | typeof MALFORMED {
+  if (!ObjectHasOwn(source, key)) return undefined;
+  const value = readOwn(source, key);
+  if (!ArrayIsArray(value)) return MALFORMED;
+  const entries: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = readOwn(value, index);
+    if (typeof entry !== "string") return MALFORMED;
+    appendOwn(entries, entry);
+  }
+  return entries;
+}
+
+function readOwnStringArray(source: Record<string, unknown>, key: string): string[] | undefined {
+  const value = readOwn(source, key);
+  if (!ArrayIsArray(value)) return undefined;
+  const entries: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = readOwn(value, index);
+    if (typeof entry === "string") appendOwn(entries, entry);
+  }
+  return entries;
+}
+
+/** Build a membership set with captured intrinsics (constant-time lookups). */
+function createStringSet(entries: readonly string[]): Set<string> {
+  const set = new IntrinsicSet<string>();
+  for (let index = 0; index < entries.length; index++) {
+    IntrinsicReflectApply(SetPrototypeAdd, set, [entries[index]]);
+  }
+  return set;
+}
+
+function setHas(set: ReadonlySet<string>, candidate: string): boolean {
+  return IntrinsicReflectApply(SetPrototypeHas, set, [candidate]) === true;
+}
+
+function setAdd(set: Set<string>, candidate: string): void {
+  IntrinsicReflectApply(SetPrototypeAdd, set, [candidate]);
+}
+
+function isReservedHostToolName(toolName: string): boolean {
+  if (setHas(DENY_ALL_RESERVED_HOST_TOOL_NAMES, toolName)) return true;
+  for (let index = 0; index < DENY_ALL_RESERVED_HOST_TOOL_PREFIXES.length; index++) {
+    if (
+      IntrinsicReflectApply(StringPrototypeStartsWith, toolName, [
+        DENY_ALL_RESERVED_HOST_TOOL_PREFIXES[index],
+      ])
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+type DenyAllNormalization = { value: unknown; denyAll: boolean };
+
+/**
+ * Map an authored deny-all (`agentConfig.tools: false`) to the runtime wire
+ * shape: `tools: []` plus an explicit `runtimeOverrides.allowedTools` that
+ * admits only the agent's own provider-native tools, narrowed by any caller
+ * allowlist. This is the same mapping the control plane applies before
+ * dispatch. The explicit allowlist stops hosted preparation from adding
+ * runtime-essential tools (`load_skill`, `tool_search`, `invoke_agent`,
+ * `form_input`), so a deny-all agent exposes no callable host tools.
+ *
+ * Caller-injected top-level `tools`, the agent's `mcpServers`, and forwarded
+ * integration tool definitions are cleared: the agent-stream path keeps any
+ * merged or remote tool whose name is in `toolAllowlist`, so such a tool named
+ * like a provider tool would otherwise stay callable under deny-all.
+ *
+ * Fails closed: every value the mapping replaces or discards (the agent
+ * config's `bootstrapTools`, `bootstrapSkill`, `skills`, the injected `tools`,
+ * and the caller's runtime overrides) is validated first with the same schema
+ * the invocation contract applies; an invalid value is left in place so the
+ * invocation schema rejects it. The result is parsed with a deny-all schema
+ * that also requires the generated `runtimeOverrides` to validate (at most 100
+ * deduplicated names). Provider tool names that collide with host or platform
+ * tool names are dropped from the allowlist with a warning, so they can never
+ * re-grant the host tool.
+ *
+ * `bootstrapTools` and `bootstrapSkill` are dropped: both run through callable
+ * tools (a startup skill is a synthetic `load_skill` call), which deny-all
+ * forbids. Every other value passes through unchanged.
+ */
+function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNormalization {
+  if (!isPlainRecord(value)) return { value, denyAll: false };
+  const agentConfig = readOwn(value, "agentConfig");
+  if (!isPlainRecord(agentConfig) || readOwn(agentConfig, "tools") !== false) {
+    return { value, denyAll: false };
+  }
+
+  const normalized = copyOwnDataRecord(value);
+  // Validate the authored config (with the deny-all selector expressed as the
+  // equivalent empty selector) before any field is discarded. A config that
+  // fails keeps `tools: false`, which the invocation schema always rejects:
+  // the schema strips unknown fields before its size refinement, so leaving
+  // only the invalid fields in place would not reliably fail closed.
+  const validationAgentConfig = copyOwnDataRecord(agentConfig);
+  defineOwnData(validationAgentConfig, "tools", []);
+  if (
+    !trustedSafeParseSucceeds(
+      TrustedDenyAllAgentConfigSafeParse,
+      trustedDenyAllAgentConfigSchema,
+      validationAgentConfig,
+    ) || !isWithinJsonSizeLimit(validationAgentConfig, MAX_AGENT_CONFIG_BYTES)
+  ) {
+    defineOwnData(normalized, "agentConfig", copyOwnDataRecord(agentConfig));
+    return { value: normalized, denyAll: true };
+  }
+  // Deny-all forbids the skill loader, so no skill is selectable either; an
+  // empty selection keeps ingress paths that preserve skill runtime tools
+  // under a non-empty allowlist from re-adding them.
+  const normalizedAgentConfig = copyOwnDataRecord(agentConfig, [
+    "bootstrapTools",
+    "bootstrapSkill",
+  ]);
+  defineOwnData(normalizedAgentConfig, "tools", []);
+  defineOwnData(normalizedAgentConfig, "skills", []);
+  // Remote tool sources are callable tools too. An explicit empty server list
+  // stops MCP and inherited first-party sources from materializing a tool
+  // whose name collides with an allowlisted provider-native tool.
+  defineOwnData(normalizedAgentConfig, "mcpServers", []);
+  // The tool-result context appends the framework `get_tool_result` reader
+  // after the allowlists apply, which would re-grant a callable host tool.
+  defineOwnData(normalizedAgentConfig, "toolResultContext", false);
+  // Deferred loading synthesizes a callable `tool_search` host tool for any
+  // deferred provider tool after the allowlists apply; force eager loading.
+  defineOwnData(normalizedAgentConfig, "toolLoading", "eager");
+  defineOwnData(normalized, "agentConfig", normalizedAgentConfig);
+
+  // Deny-all exposes no caller-injected tools either. A malformed value is
+  // left in place for the invocation schema to reject.
+  if (ObjectHasOwn(value, "tools")) {
+    const injectedTools = readOwn(value, "tools");
+    if (
+      injectedTools !== undefined &&
+      !trustedSafeParseSucceeds(
+        TrustedDenyAllInjectedToolsSafeParse,
+        trustedDenyAllInjectedToolsSchema,
+        injectedTools,
+      )
+    ) {
+      return { value: normalized, denyAll: true };
+    }
+  }
+  defineOwnData(normalized, "tools", []);
+
+  const forwardedProps = readOwn(value, "forwardedProps");
+  if (
+    forwardedProps !== undefined &&
+    (!isPlainRecord(forwardedProps) ||
+      !isWithinJsonSizeLimit(forwardedProps, MAX_FORWARDED_PROPS_BYTES))
+  ) {
+    // Leave malformed or oversized caller data for the invocation schema to
+    // reject; the size cap applies before any field is discarded or replaced.
+    return { value: normalized, denyAll: true };
+  }
+  const forwardedRecord = forwardedProps === undefined
+    ? createNullPrototypeRecord()
+    : copyOwnDataRecord(forwardedProps);
+  defineOwnData(normalized, "forwardedProps", forwardedRecord);
+  const runtimeOverrides = readOwn(forwardedRecord, "runtimeOverrides");
+  if (runtimeOverrides !== undefined && !isPlainRecord(runtimeOverrides)) {
+    // A non-record override fails the deny-all override validation below.
+    return { value: normalized, denyAll: true };
+  }
+  // Forwarded integration tools are remote tool sources as well; deny-all
+  // drops them so none can claim an allowlisted provider-native name.
+  const runtimeOverridesRecord = runtimeOverrides === undefined
+    ? createNullPrototypeRecord()
+    : copyOwnDataRecord(runtimeOverrides, DENY_ALL_DISCARDED_RUNTIME_OVERRIDE_KEYS);
+  defineOwnData(forwardedRecord, "runtimeOverrides", runtimeOverridesRecord);
+  // A present but malformed caller restriction is left in place so the
+  // deny-all schema rejects it; it never reads as "no restriction". The
+  // caller's `allowedTools` must satisfy the shared override contract (at
+  // most 100 non-empty names) before it is intersected and overwritten.
+  if (
+    !trustedSafeParseSucceeds(
+      TrustedDenyAllRuntimeOverridesSafeParse,
+      trustedDenyAllRuntimeOverridesSchema,
+      runtimeOverridesRecord,
+    )
+  ) {
+    return { value: normalized, denyAll: true };
+  }
+  const callerAllowedTools = readOwnStrictStringArray(runtimeOverridesRecord, "allowedTools");
+  const callerToolAllowlist = readOwnStrictStringArray(runtimeOverridesRecord, "toolAllowlist");
+  if (callerAllowedTools === MALFORMED || callerToolAllowlist === MALFORMED) {
+    return { value: normalized, denyAll: true };
+  }
+
+  // Constant-time membership keeps the intersection linear in its inputs.
+  const callerAllowedToolSet = callerAllowedTools === undefined
+    ? undefined
+    : createStringSet(callerAllowedTools);
+  const callerToolAllowlistSet = callerToolAllowlist === undefined
+    ? undefined
+    : createStringSet(callerToolAllowlist);
+  const providerTools = readOwnStringArray(agentConfig, "providerTools") ?? [];
+  const allowedTools: string[] = [];
+  const seenToolNames = new IntrinsicSet<string>();
+  const droppedReservedNames: string[] = [];
+  for (let index = 0; index < providerTools.length; index++) {
+    const toolName = providerTools[index]!;
+    if (setHas(seenToolNames, toolName)) continue;
+    setAdd(seenToolNames, toolName);
+    if (isReservedHostToolName(toolName)) {
+      appendOwn(droppedReservedNames, toolName);
+      continue;
+    }
+    if (callerAllowedToolSet !== undefined && !setHas(callerAllowedToolSet, toolName)) continue;
+    if (callerToolAllowlistSet !== undefined && !setHas(callerToolAllowlistSet, toolName)) {
+      continue;
+    }
+    appendOwn(allowedTools, toolName);
+  }
+  if (droppedReservedNames.length > 0) {
+    agentLogger.warn(
+      "Deny-all agent provider tools collide with host tool names; dropping them",
+      { agentId: readOwn(agentConfig, "id"), droppedToolNames: droppedReservedNames },
+    );
+  }
+
+  // Hosted preparation restricts through `allowedTools`; the agent-stream path
+  // treats `allowedTools` as additive and restricts through `toolAllowlist`
+  // (which also caps provider-native and caller-supplied tools). Set both.
+  defineOwnData(runtimeOverridesRecord, "allowedTools", allowedTools);
+  defineOwnData(runtimeOverridesRecord, "toolAllowlist", copyStringArray(allowedTools));
+  return { value: normalized, denyAll: true };
+}
+
+/**
+ * Deny-all depends on the generated `runtimeOverrides.allowedTools` surviving
+ * hosted override parsing; an override that fails it would be ignored and the
+ * runtime-essential tools restored. Reject such invocations here instead.
+ */
+const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
+  getRuntimeAgentRunInvocationSchema().superRefine((input, ctx) => {
+    const runtimeOverrides = input.forwardedProps?.runtimeOverrides;
+    // Captured parser: replacing the live schema method after module load
+    // cannot approve an invalid generated override.
+    const parsed = IntrinsicReflectApply(
+      TrustedDenyAllRuntimeOverridesSafeParse,
+      trustedDenyAllRuntimeOverridesSchema,
+      [runtimeOverrides],
+    );
+    const toolAllowlist = isPlainRecord(runtimeOverrides)
+      ? readOwnStrictStringArray(runtimeOverrides, "toolAllowlist")
+      : MALFORMED;
+    if (
+      !parsed.success || parsed.data.allowedTools === undefined ||
+      toolAllowlist === undefined || toolAllowlist === MALFORMED
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "tools: false requires valid forwardedProps.runtimeOverrides (at most 100 provider tools, valid overrides); refusing to run without the deny-all allowlist",
+        path: ["forwardedProps", "runtimeOverrides"],
+      });
+    }
+  })
+);
+const trustedDenyAllRuntimeAgentRunInvocationSchema = getDenyAllRuntimeAgentRunInvocationSchema();
+const TrustedDenyAllRuntimeAgentRunInvocationParse =
+  trustedDenyAllRuntimeAgentRunInvocationSchema.parse;
+const TrustedDenyAllRuntimeAgentRunInvocationSafeParse =
+  trustedDenyAllRuntimeAgentRunInvocationSchema.safeParse;
+
+/**
+ * Trusted ingress parse. Unlike `getRuntimeAgentRunInvocationSchema()`, which
+ * rejects `agentConfig.tools: false`, this accepts an authored deny-all and
+ * maps it to the runtime wire shape (see the deny-all normalizer above).
+ */
 export function parseRuntimeAgentRunInvocationValue(
   value: unknown,
 ): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
-  return IntrinsicReflectApply(
-    TrustedRuntimeAgentRunInvocationParse,
-    trustedRuntimeAgentRunInvocationSchema,
-    [value],
-  );
+  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(value);
+  return normalized.denyAll
+    ? IntrinsicReflectApply(
+      TrustedDenyAllRuntimeAgentRunInvocationParse,
+      trustedDenyAllRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    )
+    : IntrinsicReflectApply(
+      TrustedRuntimeAgentRunInvocationParse,
+      trustedRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    );
 }
 
 export function safeParseRuntimeAgentRunInvocationValue(
   value: unknown,
 ): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse> {
-  return IntrinsicReflectApply(
-    TrustedRuntimeAgentRunInvocationSafeParse,
-    trustedRuntimeAgentRunInvocationSchema,
-    [value],
-  );
+  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(value);
+  return normalized.denyAll
+    ? IntrinsicReflectApply(
+      TrustedDenyAllRuntimeAgentRunInvocationSafeParse,
+      trustedDenyAllRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    )
+    : IntrinsicReflectApply(
+      TrustedRuntimeAgentRunInvocationSafeParse,
+      trustedRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    );
 }
 
 /** Schema for runtime agent run invocation.

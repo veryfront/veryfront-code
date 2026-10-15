@@ -51,6 +51,9 @@ const toolAccessRules = new Map<string, VeryfrontApiToolAccessRule>([
   // The API still lists the deprecated create_invite tool. Gate it like its replacement so a
   // hidden create_invite action cannot leak through the alias. Inert once the API drops it.
   ["create_invite", { family: "collaboration", action: "create_invite" }],
+  ["delete_project_member", { family: "collaboration", action: "delete_member" }],
+  // The API keeps the deprecated delete_member tool as an alias. Gate it like its replacement so a
+  // hidden delete_member action cannot leak through either name.
   ["delete_member", { family: "collaboration", action: "delete_member" }],
   ["create_server", { family: "runtime", action: "create_server" }],
   ["delete_server", { family: "runtime", action: "delete_server" }],

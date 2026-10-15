@@ -40,6 +40,15 @@ export const AGENT_EMPTY_RESPONSE = defineError({
   suggestion: "Retry the request or choose a different model",
 });
 
+/** An assembled request estimate or output request exceeds a served limit. */
+export const AGENT_CONTEXT_WINDOW_EXCEEDED = defineError({
+  slug: "agent-context-window-exceeded",
+  category: "AGENT",
+  status: 413,
+  title: "Agent request exceeds a served model limit",
+  suggestion: "Reduce the request or compact eligible conversation history before retrying",
+});
+
 export const ORCHESTRATION_ERROR = defineError({
   slug: "orchestration-error",
   category: "AGENT",
@@ -232,6 +241,7 @@ export const AGENT_REGISTRY = {
   "agent-timeout": AGENT_TIMEOUT,
   "agent-intent-error": AGENT_INTENT_ERROR,
   "agent-empty-response": AGENT_EMPTY_RESPONSE,
+  "agent-context-window-exceeded": AGENT_CONTEXT_WINDOW_EXCEEDED,
   "orchestration-error": ORCHESTRATION_ERROR,
   "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
   "tool-id-conflict": TOOL_ID_CONFLICT,

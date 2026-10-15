@@ -14,6 +14,8 @@ import {
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
+  readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -1761,7 +1763,23 @@ function buildModelCallRequest(
   return objectKeys(request).length > 0 ? request : undefined;
 }
 
-/** Resolve the canonical provider recorded by the existing durable contract. */
+/**
+ * Served surface of a Veryfront Cloud model. A model built here carries its
+ * facts; a managed hosted proxy registers none, so its run scope's received
+ * catalog names the surface instead.
+ */
+function resolveServedSurface(model: ModelCallRuntimeMetadata): string | undefined {
+  const facts = readVeryfrontCloudModelFacts(model);
+  if (facts) return facts.surface;
+  if (model.provider !== "veryfront-cloud" || typeof model.modelId !== "string") {
+    return undefined;
+  }
+  const scopeKey = currentVeryfrontCloudCatalogScopeKey();
+  return scopeKey
+    ? readServedVeryfrontCloudCatalogModel(scopeKey, model.modelId)?.surface
+    : undefined;
+}
+
 /**
  * The wire protocol a model's request is built for. A Veryfront Cloud model
  * speaks the surface it settled on, so a newly served provider on the Anthropic
@@ -1769,11 +1787,39 @@ function buildModelCallRequest(
  * `google/*`. Other models are identified by their provider name.
  */
 function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
-  const surface = readVeryfrontCloudModelFacts(model)?.surface;
+  const surface = resolveServedSurface(model);
   if (surface === "anthropic" || surface === "google") return surface;
   return resolveModelCallProvider(model);
 }
 
+/**
+ * Thinking tokens an Anthropic budget adds on top of `maxOutputTokens`, or
+ * `undefined` when the effective budget is invalid. Adaptive thinking stays
+ * within `maxOutputTokens` and adds nothing.
+ */
+export function resolveAdditiveReasoningOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: Pick<ModelCallRequestSource, "reasoning"> & { providerOptions?: unknown },
+): number | undefined {
+  // The served surface decides the builder, so a custom provider on the
+  // Anthropic surface adds its thinking budget like `anthropic/*`.
+  if (resolveModelCallProtocol(model) !== "anthropic") return 0;
+  // Use the builder's own resolution, including the dispatched provider bucket.
+  if (options.reasoning?.enabled === true) {
+    return resolveAnthropicNeutralThinkingBudget(options.reasoning);
+  }
+  const source = options as ModelCallRequestSource;
+  const thinking = readProviderControl(model, source, "thinking")?.value;
+  if (
+    thinking && typeof thinking === "object" && !ArrayIsArray(thinking) &&
+    readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled"
+  ) {
+    return resolveAnthropicProviderThinkingBudget(model, source);
+  }
+  return 0;
+}
+
+/** Resolve the canonical provider recorded by the existing durable contract. */
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;
@@ -1842,6 +1888,20 @@ function suppressOpenAIFunctionToolReasoning(
     }
   }
   return false;
+}
+
+/**
+ * The native tool list an OpenAI builder sends in place of the neutral tools,
+ * when the selected native option bucket owns a `tools` value. That value,
+ * including `[]` or `undefined`, replaces the neutral list on the wire.
+ */
+export function resolveModelCallNativeTools(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): { readonly value: unknown } | undefined {
+  if (!usesOpenAIBuilder(model)) return undefined;
+  const providerOptions = openAIProviderOptions(model, options);
+  return ObjectHasOwn(providerOptions, "tools") ? { value: providerOptions.tools } : undefined;
 }
 
 function resolveOpenAINeutralReasoning(

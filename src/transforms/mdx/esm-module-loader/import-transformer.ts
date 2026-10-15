@@ -1,3 +1,6 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Import Transformer
  *
@@ -212,8 +215,11 @@ export async function rewriteProjectAliasImports(code: string): Promise<string> 
  * This ensures the same React instance as react-dom-server.
  * For Deno, getLocalReactPaths() returns an empty object, so this is a no-op.
  */
-export async function transformReactToLocalPaths(code: string): Promise<string> {
-  const localPaths = getLocalReactPaths();
+export async function transformReactToLocalPaths(
+  code: string,
+  peers?: LocalReactPeerSnapshot,
+): Promise<string> {
+  const localPaths = peers?.paths ?? getLocalReactPaths({ fresh: true });
   if (IntrinsicObjectKeys(localPaths).length === 0) return code;
 
   return await replaceSpecifiers(code, (specifier) => localPaths[specifier] || null);
@@ -259,6 +265,7 @@ export interface MdxRootDependencyRewriteOptions {
   reactVersion: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   serverExternalPackages?: readonly string[];
   onDependencyResolutionObserved?: (
@@ -330,6 +337,7 @@ export async function rewriteMdxRootDependencyImports(
     reactVersion: options.reactVersion,
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     dependencyPinningSource: options.dependencyPinningSource,
     serverExternalPackages: options.serverExternalPackages,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
@@ -580,7 +588,9 @@ export async function transformJsxImports(
   adapter: ESMLoaderContext["adapter"],
   esmCacheDir: string,
   projectDir?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<string> {
+  const peerScope = reactPeers ? await getSSRReactRuntimeCacheScope(reactPeers) : undefined;
   const { transform } = await import("veryfront/extensions/bundler");
 
   const importsToProcess: Array<{
@@ -656,7 +666,10 @@ export async function transformJsxImports(
       const sourceCode = await readJsxImportSource(filePath, adapter, projectDir);
       if (sourceCode === undefined) return null;
 
-      const transformedFileName = buildMdxJsxCacheFileName(filePath, sourceCode);
+      const transformedFileName = buildMdxJsxCacheFileName(
+        filePath,
+        peerScope ? `${sourceCode}\0${peerScope}` : sourceCode,
+      );
       const transformedPath = join(esmCacheDir, transformedFileName);
 
       // Verification and the served mark run under the artifact's lock — the
@@ -722,6 +735,7 @@ export async function transformJsxImports(
       // Framework files from the npm package contain relative dnt imports that resolve
       // incorrectly when cached to a different directory.
       transformed = await rewriteDntImports(transformed, filePath);
+      if (reactPeers) transformed = await transformReactToLocalPaths(transformed, reactPeers);
 
       await withJsxArtifactWriteCapacity(
         esmCacheDir,

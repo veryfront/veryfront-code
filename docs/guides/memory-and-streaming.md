@@ -111,11 +111,16 @@ out of callback-based audit logs. The violation type and reason remain available
 
 ### Custom memory transactions
 
-When transactional input validation is enabled, your custom `Memory` backend
-must implement `beginTransaction(): Promise<MemoryTransaction>`. Veryfront rejects
+When transactional input validation or provider admission is enabled, your custom
+`Memory` backend must implement `beginTransaction(): Promise<MemoryTransaction>`.
+Provider admission includes hosted models with served catalog limits, tool-exposure
+checkpoint persistence, and manual pause support. Input stays staged until the
+request passes validation and its exposure checkpoint is persisted, or a pause is
+acknowledged. A pre-dispatch failure rolls back the staged input. Veryfront rejects
 an unsupported backend before writing input. Configured conversation, buffer,
-summary, and stateless memory need no changes. Without transactional validators,
-the existing custom-memory interface still works.
+summary, and stateless memory need no changes. Direct-provider turns without these
+admission requirements or transactional validators retain the existing custom-memory
+interface.
 
 Import the `Memory` and `MemoryTransaction` types from `veryfront/agent`. Your
 transaction must provide these methods:

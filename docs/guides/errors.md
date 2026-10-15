@@ -813,6 +813,13 @@ Assistant completed without producing a response.
 - **HTTP status:** 500
 - **What to do:** Retry the request or choose a different model
 
+### agent-context-window-exceeded
+
+Agent request exceeds a served model limit.
+
+- **HTTP status:** 413
+- **What to do:** Reduce the request or compact eligible conversation history before retrying
+
 ### orchestration-error
 
 Multi-agent orchestration error.

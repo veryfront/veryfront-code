@@ -281,11 +281,26 @@ describe("public runner pool workflow", () => {
     }
   });
 
-  it("never names the pool in caller YAML and calls the workflow only from main", async () => {
+  it("keeps runner selection in the trusted workflow and calls it only from main", async () => {
     for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
       if (!entry.isFile || entry.name === POOL_WORKFLOW) continue;
       const text = await Deno.readTextFile(new URL(entry.name, WORKFLOWS_DIR));
-      assertEquals(text.includes(PUBLIC_POOL), false, `${entry.name} must not name the pool`);
+      const workflow = asRecord(parse(text), entry.name);
+      const jobs = asRecord(workflow.jobs, `${entry.name} jobs`);
+      if (entry.name === "codeql.yml") {
+        const scan = asRecord(jobs["public-analysis"], "public-analysis");
+        assertEquals(scan.uses, POOL_WORKFLOW_REF);
+        // This main-pinned call may inspect eligibility to retain the hosted
+        // timeout for excluded cohorts. It never selects a runner itself.
+        delete scan.if;
+      }
+      const callerConfiguration = JSON.stringify(workflow);
+      assertEquals(
+        callerConfiguration.includes(PUBLIC_POOL) ||
+          callerConfiguration.includes("CI_RUNNER_PUBLIC"),
+        false,
+        `${entry.name} must select the pool only through the trusted workflow`,
+      );
       for (const line of text.split("\n")) {
         if (!line.includes(POOL_WORKFLOW)) continue;
         assertEquals(

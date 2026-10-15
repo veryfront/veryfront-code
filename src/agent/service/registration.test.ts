@@ -1446,10 +1446,14 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
   it("times out a hung re-registration so persistent failures still escalate", async () => {
     using time = new FakeTime();
     let registrationAborts = 0;
+    const started = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+    const settled = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+    let failures = 0;
     const script = scriptedHeartbeatFetch([404], {
       registrationResponse: (attempt, signal) => {
         if (attempt === 1) return jsonResponse(serviceResponse);
         assert(signal, "re-registration requests must carry a bounded abort signal");
+        started[attempt - 2]?.resolve();
         return new Promise<Response>((_resolve, reject) => {
           signal.addEventListener("abort", () => {
             registrationAborts++;
@@ -1460,14 +1464,35 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
     });
     const log = recordingLogger();
     const lifecycle = await createAgentServiceRegistrationLifecycle(
-      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 20, logger: log.logger }),
+      lifecycleOptions(script.fetch, {
+        heartbeatIntervalMs: 20,
+        logger: {
+          ...log.logger,
+          warn(message, metadata) {
+            log.logger.warn(message, metadata);
+            if (message === "Agent service heartbeat failed") settled[failures++]?.resolve();
+          },
+          error(message, metadata) {
+            log.logger.error(message, metadata);
+            if (message === "Agent service heartbeat failing persistently") {
+              settled[failures++]?.resolve();
+            }
+          },
+        },
+      }),
     );
 
-    for (let step = 0; step < 10 && log.errors.length === 0; step++) {
-      await time.tickAsync(5_020);
-      await time.tickAsync(0);
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await time.tickAsync(20);
+        // Wait for real async request preparation before advancing fake time.
+        await started[attempt]!.promise;
+        await time.tickAsync(5_000);
+        await settled[attempt]!.promise;
+      }
+    } finally {
+      lifecycle.stop();
     }
-    lifecycle.stop();
 
     assertEquals(registrationAborts, 3, "each hung recovery must time out before escalation");
     assertEquals(

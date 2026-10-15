@@ -31,8 +31,9 @@ concurrency:
 jobs:
   # Enable only after this workflow and the pool's codeql job are on main.
   # The called workflow is the runner group's trusted, main-pinned definition.
+  # Only eligible public runs use the 18m scan; other cohorts keep hosted 25m analysis.
   public-analysis:
-    if: ${{ (vars.CI_CODEQL_PUBLIC == 'enabled' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.public_pool == true)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.repository == 'veryfront/veryfront-code' && vars.CI_RUNNER_PUBLIC == 'veryfront-public' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.public_pool == true) || (vars.CI_CODEQL_PUBLIC == 'enabled' && (github.event_name == 'merge_group' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')))) }}
     name: Public CodeQL analysis
     permissions:
       contents: read

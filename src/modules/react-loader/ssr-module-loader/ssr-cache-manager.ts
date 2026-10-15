@@ -80,7 +80,7 @@ export class SSRCacheManager {
     return this.cachedConfigHash;
   }
 
-  getCacheKey(filePath: string): string {
+  getCacheKey(filePath: string, runtimeScope?: string): string {
     if (!this.options.contentSourceId) {
       throw INVALID_ARGUMENT.create({
         detail:
@@ -94,7 +94,9 @@ export class SSRCacheManager {
     return buildSSRModuleCacheKey(
       RUNTIME_VERSION,
       this.options.projectId,
-      `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}${
+        runtimeScope === undefined ? "" : `:react-runtime:${runtimeScope}`
+      }`,
     );
   }
 

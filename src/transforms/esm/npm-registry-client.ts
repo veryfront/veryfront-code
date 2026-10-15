@@ -1,3 +1,4 @@
+export { isExactSemver } from "#veryfront/platform/compat/semver.ts";
 /**
  * Platform dependency-resolution scheduler.
  *
@@ -31,14 +32,6 @@ const stringTrim = String.prototype.trim;
 function isBlank(value: string | undefined): boolean {
   return value === undefined || (applyIntrinsic(stringTrim, value, []) as string) === "";
 }
-const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
-const SEMVER_PRERELEASE_IDENTIFIER =
-  `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
-const SEMVER_PRERELEASE = `${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*`;
-const SEMVER_BUILD_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
-const EXACT_SEMVER_RE = new RegExp(
-  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE})?(?:\\+${SEMVER_BUILD_IDENTIFIER})?$`,
-);
 /**
  * Best-effort platform resolver attempts, keyed by project/package/declaration.
  * A short retry window deduplicates repeated transforms while still allowing a
@@ -185,11 +178,6 @@ function pruneExpiredPlatformResolutionAttempts(now: number): void {
       platformResolutionAttempts.delete(key);
     }
   }
-}
-
-/** True when the string is a bare three-part semver version (no range prefix). */
-export function isExactSemver(s: string): boolean {
-  return EXACT_SEMVER_RE.test(s);
 }
 
 /**

@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Component Page Handling (TSX/JSX files)
  */
@@ -49,9 +51,11 @@ interface BundleComponentForClientDeps {
       moduleServerUrl?: string;
       moduleServerOrigin?: string;
       reactVersion?: string;
+      reactPeers?: LocalReactPeerSnapshot;
       serverExternalPackages?: readonly string[];
       dependencyPinningCacheKey?: string;
       dependencyPinningDependencies?: Readonly<Record<string, string>>;
+      dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
       dependencyPinningSource?: DependencyPinningSourceInput;
     },
   ) => Promise<string>;
@@ -129,10 +133,12 @@ export async function handleComponentPage(
     contentSourceId?: string;
     /** React version for transforms (from project config) */
     reactVersion?: string;
+    reactPeers?: LocalReactPeerSnapshot;
     /** Request-scoped dependency-pinning state used by transform caches. */
     dependencyPinningCacheKey?: string;
     /** Immutable package map paired with dependencyPinningCacheKey. */
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
     /** Bare npm package roots that the runtime resolves without bundling. */
@@ -168,6 +174,7 @@ export async function handleComponentPage(
         options?.dependencyPinningSource,
         options?.serverExternalPackages,
         dev,
+        options?.dependencyPinningConfiguredVersions,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
@@ -184,9 +191,11 @@ export async function handleComponentPage(
         ssr: true,
         contentSourceId: options?.contentSourceId,
         reactVersion: options?.reactVersion,
+        reactPeers: options?.reactPeers,
         serverExternalPackages: options?.serverExternalPackages,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: options?.dependencyPinningSource,
         mode: options?.environment,
         signal: options?.signal,
@@ -202,7 +211,7 @@ export async function handleComponentPage(
       );
     }
 
-    const React = await getProjectReact(options?.reactVersion, adapter);
+    const React = await getProjectReact(options?.reactVersion, adapter, options?.reactPeers);
     const pageElement = React.createElement(
       PageComponent,
       options?.props ?? {},
@@ -249,6 +258,7 @@ export async function bundleComponentForClient(
    * inline sourcemap that discloses the project source.
    */
   dev = false,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
@@ -285,6 +295,7 @@ export async function bundleComponentForClient(
           serverExternalPackages,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           dependencyPinningSource,
         });
 

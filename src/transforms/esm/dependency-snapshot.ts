@@ -31,6 +31,9 @@ export interface DependencyPinningSnapshot {
   }>;
 }
 
+/** Captured version declarations and effective pins bound into a snapshot key. */
+export type CapturedDependencyConfiguration = DependencyPinningSnapshot["configuredVersions"];
+
 function ownValue(value: Record<string, unknown>, key: string): unknown {
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
@@ -112,6 +115,8 @@ export function applyConfiguredDependencyOverrides(
   configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
 ): Record<string, string> {
   const effective = copyRecord(dependencies) as Record<string, string>;
+  // Host consumers retain the immutable effective pin. Prepared runtimes
+  // receive the authenticated authored declaration separately.
   if (configuredVersions?.react) effective.react = configuredVersions.react.effective;
   if (configuredVersions?.veryfront) effective.veryfront = configuredVersions.veryfront.effective;
   return effective;

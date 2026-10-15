@@ -559,6 +559,16 @@ it("tool search misses when a common verb is the only match in a realistic catal
   );
 });
 
+it("tool_search parameters are authored without root combinators", () => {
+  // OpenAI rejects root combinators; the definition itself must not rely on a
+  // provider sanitizer to remove them.
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  assertEquals(parameters.type, "object");
+  for (const key of ["oneOf", "anyOf", "allOf", "not", "enum"]) {
+    assertEquals(Object.hasOwn(parameters, key), false, `root ${key}`);
+  }
+});
+
 it("tool_search parameters have no root combinator for any provider profile", () => {
   const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
   for (
@@ -570,7 +580,7 @@ it("tool_search parameters have no root combinator for any provider profile", ()
     ]
   ) {
     const sanitized = sanitizeProviderToolSchema(parameters, { model }) as Record<string, unknown>;
-    for (const key of ["oneOf", "anyOf", "allOf"]) {
+    for (const key of ["oneOf", "anyOf", "allOf", "not", "enum"]) {
       assertEquals(Object.hasOwn(sanitized, key), false, `${model} root ${key}`);
     }
     assertEquals(sanitized.type, "object");
@@ -1806,4 +1816,21 @@ it("does not load an unrelated local action for a missing canonical query", () =
   });
   assertEquals(result.matches, []);
   assertEquals([...state.loadedToolNames], []);
+});
+
+it("tool exposure caps eager schemas at the visible limit, keeping bootstrap tools first", () => {
+  const plan = createToolExposurePlan({
+    authorized: [
+      definition("alpha", "Alpha"),
+      definition("beta", "Beta"),
+      definition("load_skill", "Load skill"),
+    ],
+    mode: "eager",
+    state: createToolExposureState(),
+    bootstrapToolNames: new Set(["load_skill"]),
+    maxVisibleTools: 2,
+  });
+
+  assertEquals(plan.visible.map((tool) => tool.name), ["alpha", "load_skill"]);
+  assertEquals(plan.deferred, []);
 });

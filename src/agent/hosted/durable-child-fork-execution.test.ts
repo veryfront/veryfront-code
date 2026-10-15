@@ -101,6 +101,9 @@ function runForkWithInjectedLifecycle(input: {
   onLifecycleFinalized?: Parameters<
     typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
   >[0]["onLifecycleFinalized"];
+  prepareAdmittedExecution?: Parameters<
+    typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+  >[0]["prepareAdmittedExecution"];
 }): Promise<DurableChildResult> {
   const capability = createHostedRunEventWriterCapability({
     apiUrl: API_URL,
@@ -148,6 +151,7 @@ function runForkWithInjectedLifecycle(input: {
         buildSuccessResult: (success) => ({ status: "completed", success }),
         buildReplayedSuccessResult: (success) => ({ status: "completed", success }),
         onLifecycleFinalized: input.onLifecycleFinalized,
+        prepareAdmittedExecution: input.prepareAdmittedExecution,
         runtime: {
           bootstrapChildRun: () =>
             Promise.resolve(
@@ -205,6 +209,70 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       assertEquals(result.status, "completed");
     });
   }
+
+  it("finalizes an admitted child as failed when its execution inputs cannot be resolved", async () => {
+    const failed: unknown[] = [];
+    let lifecycleCalls = 0;
+    const result = await runForkWithInjectedLifecycle({
+      createLifecycleAdapter: () => ({
+        failed: (state) => {
+          failed.push(state);
+          return Promise.resolve();
+        },
+      }),
+      prepareAdmittedExecution: () =>
+        Promise.resolve({
+          terminalErrorCode: "CHILD_AGENT_NOT_FOUND",
+          terminalErrorMessage: "Agent was deleted.",
+        }),
+      runLifecycle: () => {
+        lifecycleCalls++;
+        throw new Error("Must not execute a child without its definition");
+      },
+      buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+    });
+
+    assertEquals(lifecycleCalls, 0);
+    assertEquals(failed, [{
+      status: "failed",
+      terminalErrorCode: "CHILD_AGENT_NOT_FOUND",
+      terminalErrorMessage: "Agent was deleted.",
+    }]);
+    assertEquals(result.status, "terminal_failed");
+    if (result.status !== "terminal_failed") throw new Error("Expected terminal failure");
+    assertEquals(result.failure.terminalErrorCode, "CHILD_AGENT_NOT_FOUND");
+    assertEquals(result.failure.identifiers.childRunId, INJECTED_CHILD_IDENTIFIERS.childRunId);
+  });
+
+  it("runs an admitted child with its prepared execution inputs", async () => {
+    const models: unknown[] = [];
+    const localResult = baseSuccessResult();
+    const result = await runForkWithInjectedLifecycle({
+      createLifecycleAdapter: ({ model }) => {
+        models.push(model);
+        return {};
+      },
+      prepareAdmittedExecution: () =>
+        Promise.resolve({
+          forkInput: { description: "Inspect logs", prompt: "Find logs", model: "haiku" },
+        }),
+      runLifecycle: () =>
+        Promise.resolve({
+          status: "completed" as const,
+          result: localResult,
+          snapshot: buildChildRunExecutionSnapshot(localResult),
+          terminalState: {
+            status: "completed" as const,
+            terminalErrorCode: null,
+            terminalErrorMessage: null,
+          },
+        }),
+      buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+    });
+
+    assertEquals(result.status, "completed");
+    assertEquals(models, ["resolved-haiku"]);
+  });
 
   it("builds standard hosted invoke failure, terminal failure, and success results", () => {
     const identifiers = {
@@ -1787,8 +1855,17 @@ for (
     const replay = { ...INJECTED_CHILD_IDENTIFIERS, status: run.status };
     transferHostedTerminalAuthority(run, replay);
     let lifecycleCalls = 0;
+    let preparations = 0;
     const result = await runForkWithInjectedLifecycle({
       replay,
+      // The saved definition may be gone by now; replay must not consult it.
+      prepareAdmittedExecution: () => {
+        preparations++;
+        return Promise.resolve({
+          terminalErrorCode: "CHILD_AGENT_NOT_FOUND",
+          terminalErrorMessage: "deleted",
+        });
+      },
       runLifecycle: () => {
         lifecycleCalls++;
         throw new Error("Must not execute or finalize a completed child");
@@ -1796,6 +1873,7 @@ for (
       buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
     });
     assertEquals(lifecycleCalls, 0);
+    assertEquals(preparations, 0);
     assertEquals(requests, 1);
     if (terminal.status === "completed") {
       assertEquals(result.status, "completed");

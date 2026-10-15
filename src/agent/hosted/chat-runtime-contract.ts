@@ -141,6 +141,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   parallelToolCalls?: boolean;
   maxSteps?: number;
   maxOutputTokens?: number;
+  /**
+   * @internal False when `maxOutputTokens` is the grant's allowance rather than
+   * a caller request, so the runtime caps implicit output instead of reserving it.
+   */
+  maxOutputTokensExplicit?: boolean;
   allowedTools?: string[];
   /**
    * Tool names the agent configuration denied explicitly (`false` entries).
@@ -156,6 +161,10 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   allowedProviderTools?: string[];
   /** Authored tool schema loading mode. Request overrides cannot set this. */
   toolLoading?: AgentConfig["toolLoading"];
+  /** Authored exact startup tool schemas. Request overrides cannot set this. */
+  bootstrapTools?: AgentConfig["bootstrapTools"];
+  /** Authored startup skill. Request overrides cannot set this. */
+  bootstrapSkill?: AgentConfig["bootstrapSkill"];
   /** Authored model-visible tool result context budget. Request overrides cannot set this. */
   toolResultContext?: AgentConfig["toolResultContext"];
   /** Authored framework knowledge selection. Request overrides cannot set this. */

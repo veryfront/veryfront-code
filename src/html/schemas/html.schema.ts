@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
@@ -13,6 +15,26 @@ export const getClientModuleStrategySchema = defineSchema((v) => v.enum(["fs", "
 export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
   v.object({
     mode: v.enum(["development", "production"]),
+    // Internal server capability; excluded by the separate hydration schema.
+    reactPeers: v.custom<LocalReactPeerSnapshot>((value) => {
+      if (value === null || typeof value !== "object") return false;
+      return ["roots", "paths", "versions"].every((key) => {
+        const map = Reflect.get(value, key);
+        return map !== null && typeof map === "object" &&
+          Object.values(map).every((entry) => typeof entry === "string");
+      });
+    }).optional(),
+    // Opaque server-side capability. The separate hydration schema excludes it.
+    adapter: v.custom<RuntimeAdapter>((value) => {
+      if (value === null || typeof value !== "object") return false;
+      return typeof Reflect.get(value, "id") === "string" &&
+        typeof Reflect.get(value, "name") === "string" &&
+        typeof Reflect.get(value, "serve") === "function" &&
+        ["capabilities", "fs", "env", "server"].every((key) => {
+          const field = Reflect.get(value, key);
+          return field !== null && typeof field === "object";
+        });
+    }).optional(),
     // deno-lint-ignore no-explicit-any -- VeryfrontConfig is complex, use any
     config: v.any(), // VeryfrontConfig is complex, use any
     importMap: v.record(v.string(), v.string()).optional(),
@@ -64,6 +86,10 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     forceProductionScripts: v.boolean().optional(),
     dependencyPinningCacheKey: v.string().optional(),
     dependencyPinningDependencies: v.record(v.string(), v.string()).optional(),
+    dependencyPinningConfiguredVersions: v.object({
+      react: v.object({ declaration: v.string(), effective: v.string() }).optional(),
+      veryfront: v.object({ declaration: v.string(), effective: v.string() }).optional(),
+    }).optional(),
   })
 );
 

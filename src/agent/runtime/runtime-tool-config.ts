@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
@@ -14,6 +15,7 @@ import {
   type ToolExposureCheckpoint,
 } from "./tool-exposure.ts";
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
+import type { ProviderToolSchemaTarget } from "./model-resolution.ts";
 
 const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
@@ -115,8 +117,17 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfToolLoadingMode?: RuntimeToolLoadingMode;
   __vfToolBootstrapNames?: readonly string[];
+  /** Tool schema target trusted preparation resolved from the run's served catalog. */
+  __vfToolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Authored startup tools a host already merged; provider capping must retain them. */
+  __vfRetainedBootstrapToolNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
+  /**
+   * Output allowance a trusted host grants when the caller requested none. It
+   * caps the implicit default and stays implicit in the request budget.
+   */
+  __vfMaxOutputTokensCeiling?: number;
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */
@@ -188,6 +199,39 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
   return snapshotStringArray(raw) ?? [];
 }
 
+/** Maximum number of authored startup tool schemas. */
+export const MAX_CONFIGURED_BOOTSTRAP_TOOLS = 16;
+
+/** Snapshot an authored startup selection without widening its tool authorization. */
+export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  const names = ArrayIsArray(value) && value.length <= MAX_CONFIGURED_BOOTSTRAP_TOOLS
+    ? snapshotStringArray(value)
+    : undefined;
+  if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools must contain at most 16 exact tool names",
+    });
+  }
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (
+      name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
+    ) {
+      throw CONFIG_INVALID.create({
+        detail: "bootstrapTools requires exact executable tool names, excluding tool_search",
+      });
+    }
+  }
+  return names;
+}
+
+/** Host-merged authored startup tools that provider schema capping must retain. */
+export function getRuntimeRetainedBootstrapToolNames(config: AgentConfig): readonly string[] {
+  return snapshotStringArray((config as RuntimeToolFilterConfig).__vfRetainedBootstrapToolNames) ??
+    [];
+}
+
 export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {
   const raw = (config as RuntimeToolFilterConfig).__vfToolBootstrapNames;
   const names = snapshotStringArray(raw);
@@ -199,6 +243,21 @@ export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<s
     if (name !== undefined) reflectApply(SetAdd, bootstrapNames, [name]);
   }
   return bootstrapNames;
+}
+
+/**
+ * Return the tool schema target trusted preparation resolved for the run, for
+ * a model whose runtime carries no Veryfront Cloud facts of its own.
+ */
+export function getRuntimeToolSchemaTarget(
+  config: AgentConfig,
+): ProviderToolSchemaTarget | undefined {
+  const raw = (config as RuntimeToolFilterConfig).__vfToolSchemaTarget;
+  if (raw === null || typeof raw !== "object") return undefined;
+  const model: unknown = raw.model;
+  const wireSurface: unknown = raw.wireSurface;
+  if (typeof model !== "string" || model.length === 0) return undefined;
+  return typeof wireSurface === "string" ? { model, wireSurface } : { model };
 }
 
 /** Return trusted run-scoped source policy; malformed internal state fails closed. */

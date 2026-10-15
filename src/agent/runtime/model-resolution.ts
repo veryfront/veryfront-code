@@ -12,7 +12,9 @@ import {
   isServedVeryfrontCloudProvider,
   isSupportedMistralModelId,
   resolveServedVeryfrontCloudAlias,
+  resolveVeryfrontCloudModelSurface,
   resolveVeryfrontCloudProviderId,
+  type VeryfrontCloudSurfaceId,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -353,4 +355,35 @@ export function isVeryfrontCloudRuntimeModel(model?: string): boolean {
   } catch {
     return true;
   }
+}
+
+/** The model ID and gateway wire surface the runtime converts tool schemas for. */
+export interface ProviderToolSchemaTarget {
+  model?: string;
+  wireSurface?: VeryfrontCloudSurfaceId;
+}
+
+/**
+ * Resolve the runtime model ID for `model` and, for a Veryfront Cloud route,
+ * the wire surface its served routing names. Call it in the run's catalog
+ * scope: that is the scope a model built for the run reads its facts from, so
+ * tool preselection applies the same provider limits as tool conversion.
+ */
+export function resolveProviderToolSchemaTarget(
+  model?: string,
+  options: { catalogSettled?: boolean } = {},
+): ProviderToolSchemaTarget {
+  let runtimeModel: string;
+  try {
+    runtimeModel = resolveRuntimeModel(model);
+  } catch {
+    return model === undefined ? {} : { model };
+  }
+  if (!runtimeModel.startsWith("veryfront-cloud/")) return { model: runtimeModel };
+  // Before the run's catalog loads, the surface is a protocol default the
+  // model may still leave: assume the OpenAI wire, whose tool limit is the
+  // strictest any surface applies.
+  if (options.catalogSettled === false) return { model: runtimeModel, wireSurface: "openai" };
+  const wireSurface = resolveVeryfrontCloudModelSurface(runtimeModel);
+  return wireSurface === undefined ? { model: runtimeModel } : { model: runtimeModel, wireSurface };
 }

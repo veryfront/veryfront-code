@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
 import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
@@ -13,6 +14,7 @@ import {
   getRuntimeToolBootstrapNames,
   getRuntimeToolExposureCheckpoint,
   resolveRuntimeToolLoading,
+  snapshotConfiguredToolBootstrapNames,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -424,4 +426,30 @@ describe("agent/runtime-tool-config", () => {
       );
     });
   });
+});
+
+it("authored bootstrap selection is bounded, copied, and excludes tool_search", () => {
+  assertEquals(snapshotConfiguredToolBootstrapNames(undefined), []);
+  const names = ["get_run"];
+  const snapshot = snapshotConfiguredToolBootstrapNames(names);
+  names[0] = "mutated";
+  assertEquals(snapshot, ["get_run"]);
+  const malformedSelections: unknown[] = [
+    null,
+    true,
+    "get_run",
+    [""],
+    ["tool_search"],
+    ["x".repeat(513)],
+    ["get_run", 3],
+    Array(17).fill("get_run"),
+  ];
+  for (const malformed of malformedSelections) {
+    const error = assertThrows(
+      () => snapshotConfiguredToolBootstrapNames(malformed),
+      VeryfrontError,
+      "bootstrapTools",
+    );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
+  }
 });

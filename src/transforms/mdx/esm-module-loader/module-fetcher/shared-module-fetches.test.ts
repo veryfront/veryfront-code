@@ -50,10 +50,10 @@ describe("shared module fetches", () => {
   });
 
   describe("getSharedModuleFetchKey", () => {
-    it("is stable for the same entry and inputs", () => {
+    it("is stable for the same entry and inputs", async () => {
       assertEquals(
-        getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
-        getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
+        await getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
+        await getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
       );
     });
 
@@ -72,18 +72,18 @@ describe("shared module fetches", () => {
         ["local project flag", { isLocalProject: true }],
       ] as const
     ) {
-      it(`differs by ${name}`, () => {
+      it(`differs by ${name}`, async () => {
         assertNotEquals(
-          getSharedModuleFetchKey(context(overrides), "_vf_modules/page.js"),
-          getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
+          await getSharedModuleFetchKey(context(overrides), "_vf_modules/page.js"),
+          await getSharedModuleFetchKey(context(), "_vf_modules/page.js"),
         );
       });
     }
 
-    it("differs by entry path", () => {
+    it("differs by entry path", async () => {
       assertNotEquals(
-        getSharedModuleFetchKey(context(), "_vf_modules/a.js"),
-        getSharedModuleFetchKey(context(), "_vf_modules/b.js"),
+        await getSharedModuleFetchKey(context(), "_vf_modules/a.js"),
+        await getSharedModuleFetchKey(context(), "_vf_modules/b.js"),
       );
     });
   });

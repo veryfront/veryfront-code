@@ -1,3 +1,5 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * SSR Module Loader Types
  *
@@ -23,12 +25,14 @@ export interface SSRModuleLoaderOptions {
   contentSourceId?: string;
   /** React version for transforms (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Bare npm package roots that the runtime resolves without bundling. */
   serverExternalPackages?: readonly string[];
   /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features */
