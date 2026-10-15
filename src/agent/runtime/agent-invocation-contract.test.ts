@@ -13,6 +13,10 @@ import {
   type RuntimeAgentControlPlaneStreamRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
+import {
+  parseRuntimeAgentRunInvocationValue,
+  safeParseRuntimeAgentRunInvocationValue,
+} from "./agent-invocation-contract.ts";
 import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -681,6 +685,74 @@ describe("agent/runtime-agent-invocation-contract", () => {
       skills: ["support-triage"],
       tools: ["search_knowledge", "get_file"],
     });
+  });
+
+  it("maps an authored deny-all agent config to an empty selector with a provider-only allowlist", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Runs without host tools.",
+        instructions: "Answer directly.",
+        skills: ["support-triage"],
+        tools: false,
+        providerTools: ["web_search", "code_execution"],
+        bootstrapTools: ["load_skill"],
+        bootstrapSkill: "support-triage",
+      },
+      forwardedProps: {
+        activeChatId: "chat_123",
+        runtimeOverrides: { allowedTools: ["studio_focus_component", "web_search"] },
+      },
+    }));
+
+    assertEquals(parsed.agentConfig?.tools, []);
+    assertEquals(parsed.agentConfig?.providerTools, ["web_search", "code_execution"]);
+    assertEquals(parsed.agentConfig?.skills, ["support-triage"]);
+    assertEquals(parsed.agentConfig?.bootstrapTools, undefined);
+    assertEquals(parsed.agentConfig?.bootstrapSkill, undefined);
+    assertEquals(parsed.forwardedProps, {
+      activeChatId: "chat_123",
+      runtimeOverrides: { allowedTools: ["web_search"] },
+    });
+  });
+
+  it("gives a deny-all agent without provider tools an explicit empty allowlist", () => {
+    const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Runs without host tools.",
+        instructions: "Answer directly.",
+        tools: false,
+      },
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.success, true);
+    if (!parsed.success) return;
+    assertEquals(parsed.data.agentConfig?.tools, []);
+    assertEquals(parsed.data.forwardedProps, { runtimeOverrides: { allowedTools: [] } });
+  });
+
+  it("leaves non-deny agent tool selections unchanged", () => {
+    const selections: Array<true | string[]> = [[], ["get_file"], true];
+    for (const tools of selections) {
+      const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: {
+          id: "builder",
+          name: "Builder",
+          description: "Builds with project skills.",
+          instructions: "Use project skills.",
+          tools,
+          bootstrapSkill: "support-triage",
+        },
+      }));
+
+      assertEquals(parsed.agentConfig?.tools, tools);
+      assertEquals(parsed.agentConfig?.bootstrapSkill, "support-triage");
+      assertEquals(parsed.forwardedProps, { activeChatId: "chat_123" });
+    }
   });
 
   it("rejects request-scoped agent config for a different agent", () => {

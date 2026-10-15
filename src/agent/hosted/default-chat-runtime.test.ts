@@ -53,6 +53,8 @@ import {
   scopeHostedRuntimeTools,
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
+import { buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation } from "./chat-request.ts";
+import { parseRuntimeAgentRunInvocationValue } from "../runtime/agent-invocation-contract.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
@@ -2004,6 +2006,155 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
     }
   } finally {
     await toolRegistryInternal.clearAll();
+  }
+});
+
+Deno.test("hosted main agent with tools: false exposes no callable tools", async () => {
+  const testApiOrigin = "https://93.184.216.34";
+  const cases: Array<{
+    name: string;
+    agentConfig: Record<string, unknown>;
+    expectedToolNames: string[];
+  }> = [
+    { name: "deny-all", agentConfig: { tools: false }, expectedToolNames: [] },
+    {
+      name: "deny-all with selected skills and startup tools",
+      agentConfig: {
+        tools: false,
+        skills: ["deploy"],
+        toolLoading: "deferred",
+        bootstrapTools: ["load_skill"],
+        bootstrapSkill: "deploy",
+        knowledge: true,
+      },
+      expectedToolNames: [],
+    },
+    // An empty positive selector is not deny-all: it keeps runtime essentials.
+    {
+      name: "empty selector",
+      agentConfig: { tools: [] },
+      expectedToolNames: ["invoke_agent", "load_skill"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    let capturedProviderBody: Record<string, unknown> | undefined;
+    const invocation = parseRuntimeAgentRunInvocationValue({
+      run: {
+        agentServiceId: "1-runtime-provider",
+        agentId: "agent-1",
+        conversationId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_root_1",
+        messageId: "10000000-1000-4000-8000-100000000002",
+        inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+        requestedByUserId: "10000000-1000-4000-8000-100000000004",
+        project: {
+          projectId: "10000000-1000-4000-8000-100000000005",
+          projectSlug: "demo-project",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+        },
+        validatedClaims: {
+          subject: "10000000-1000-4000-8000-100000000004",
+          projectId: "10000000-1000-4000-8000-100000000005",
+          projectSlug: "demo-project",
+          scopes: ["agent:run"],
+        },
+      },
+      agentSource: { type: "branch", branch: "main" },
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Hosted agent",
+        instructions: "Base instructions",
+        skills: true,
+        ...testCase.agentConfig,
+      },
+    });
+    assertExists(invocation.agentConfig);
+    const prepared = await prepareHostedChatRuntimeCreationOptions({
+      request: {
+        agentId: "agent-1",
+        userId: "user-1",
+        authToken: "token-1",
+        messages: [],
+        validatedContext: { projectId: "project-1", branchId: null },
+        projectId: "project-1",
+        conversationId: undefined,
+        parentRunId: undefined,
+        upstreamParentConversationId: undefined,
+        upstreamParentRunId: undefined,
+        spawnedFromToolCallId: undefined,
+        model: "anthropic/claude-sonnet-4-6",
+        allowDelegation: undefined,
+        forwardedProps: buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(invocation),
+        runtimeOverrides: undefined,
+        durableRootRun: undefined,
+        persistLatestUserMessageBeforeDurableRun: false,
+      },
+      agentConfig: invocation.agentConfig,
+      projectId: "project-1",
+      authToken: "token-1",
+      resolveModelId: (modelId) => modelId,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project instructions",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy the project",
+            instructions: "Deploy the project safely.",
+            allowedTools: [],
+          }],
+        }),
+      buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    });
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: { ...prepared.creationOptions, userId: "user-1" },
+      config: { apiUrl: testApiOrigin, apiMcpUrl: `${testApiOrigin}/mcp` },
+      buildLocalTools: () =>
+        markTrustedHostToolSet({
+          form_input: localTool("Ask the user"),
+          invoke_agent: localTool("Invoke an agent"),
+          load_skill: localTool("Load skill"),
+          sleep: localTool("Sleep"),
+          web_fetch: localTool("Fetch a page"),
+        }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    try {
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          if (/\/ai\/(?:gateway|anthropic|v1)\//.test(new URL(request.url).pathname)) {
+            capturedProviderBody = await request.clone().json();
+          }
+          return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
+        },
+        async () => {
+          const stream = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of stream.toUIMessageStream()) {
+            // Consume the first provider turn.
+          }
+        },
+      );
+
+      assertExists(capturedProviderBody, testCase.name);
+      const toolNames = ((capturedProviderBody.tools ?? []) as Array<{ name: string }>)
+        .map((tool) => tool.name);
+      assertEquals(toolNames, testCase.expectedToolNames, testCase.name);
+      if (testCase.expectedToolNames.length === 0) {
+        assertEquals(JSON.stringify(capturedProviderBody).includes("<available_skills>"), false);
+      }
+    } finally {
+      await runtime.cleanup();
+    }
   }
 });
 

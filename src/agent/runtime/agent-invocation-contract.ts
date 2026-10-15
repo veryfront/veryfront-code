@@ -479,13 +479,80 @@ const trustedRuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchem
 const TrustedRuntimeAgentRunInvocationParse = trustedRuntimeAgentRunInvocationSchema.parse;
 const TrustedRuntimeAgentRunInvocationSafeParse = trustedRuntimeAgentRunInvocationSchema.safeParse;
 
+const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !ArrayIsArray(value);
+}
+
+function readOwn(source: Record<string, unknown>, key: string): unknown {
+  if (!ObjectHasOwn(source, key)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function readOwnStringArray(source: Record<string, unknown>, key: string): string[] | undefined {
+  const value = readOwn(source, key);
+  if (!ArrayIsArray(value)) return undefined;
+  const entries: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry: unknown = value[index];
+    if (typeof entry === "string") entries[entries.length] = entry;
+  }
+  return entries;
+}
+
+/**
+ * Map an authored deny-all (`agentConfig.tools: false`) to the runtime wire
+ * shape: `tools: []` plus an explicit `runtimeOverrides.allowedTools` that
+ * admits only the agent's own provider-native tools, narrowed by any caller
+ * allowlist. This is the same mapping the control plane applies before
+ * dispatch. The explicit allowlist stops hosted preparation from adding
+ * runtime-essential tools (`load_skill`, `tool_search`, `invoke_agent`,
+ * `form_input`), so a deny-all agent exposes no callable host tools.
+ *
+ * `bootstrapTools` and `bootstrapSkill` are dropped: both run through callable
+ * tools (a startup skill is a synthetic `load_skill` call), which deny-all
+ * forbids. Every other value passes through unchanged.
+ */
+function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): unknown {
+  if (!isPlainRecord(value)) return value;
+  const agentConfig = readOwn(value, "agentConfig");
+  if (!isPlainRecord(agentConfig) || readOwn(agentConfig, "tools") !== false) return value;
+
+  const providerTools = readOwnStringArray(agentConfig, "providerTools") ?? [];
+  const forwardedProps = readOwn(value, "forwardedProps");
+  const forwardedRecord = isPlainRecord(forwardedProps) ? forwardedProps : {};
+  const runtimeOverrides = readOwn(forwardedRecord, "runtimeOverrides");
+  const runtimeOverridesRecord = isPlainRecord(runtimeOverrides) ? runtimeOverrides : {};
+  const callerAllowedTools = readOwnStringArray(runtimeOverridesRecord, "allowedTools");
+  const allowedTools = callerAllowedTools === undefined
+    ? [...providerTools]
+    : providerTools.filter((toolName) => callerAllowedTools.includes(toolName));
+
+  const {
+    bootstrapTools: _bootstrapTools,
+    bootstrapSkill: _bootstrapSkill,
+    ...retainedAgentConfig
+  } = agentConfig;
+  return {
+    ...value,
+    agentConfig: { ...retainedAgentConfig, tools: [] },
+    forwardedProps: {
+      ...forwardedRecord,
+      runtimeOverrides: { ...runtimeOverridesRecord, allowedTools },
+    },
+  };
+}
+
 export function parseRuntimeAgentRunInvocationValue(
   value: unknown,
 ): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
   return IntrinsicReflectApply(
     TrustedRuntimeAgentRunInvocationParse,
     trustedRuntimeAgentRunInvocationSchema,
-    [value],
+    [normalizeDenyAllRuntimeAgentInvocationValue(value)],
   );
 }
 
@@ -495,7 +562,7 @@ export function safeParseRuntimeAgentRunInvocationValue(
   return IntrinsicReflectApply(
     TrustedRuntimeAgentRunInvocationSafeParse,
     trustedRuntimeAgentRunInvocationSchema,
-    [value],
+    [normalizeDenyAllRuntimeAgentInvocationValue(value)],
   );
 }
 
