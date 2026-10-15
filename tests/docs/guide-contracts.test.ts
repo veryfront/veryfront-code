@@ -352,7 +352,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "npm create veryfront@latest support-agent",
-      "npx veryfront@latest login",
+      "browser sign-in prompt when needed",
+      "new or existing cloud project",
       "npx veryfront@latest push",
       "Veryfront Cloud AI Gateway",
       "npm run eval -- assistant",

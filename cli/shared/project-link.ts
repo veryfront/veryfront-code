@@ -198,11 +198,18 @@ export async function saveSharedProjectAssociation(
       `${JSON.stringify({ ...existing, projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
     );
     await Deno.rename(temporary, path);
-  } finally {
+  } catch (error) {
     try {
       await Deno.remove(temporary);
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+    } catch (cleanupError) {
+      if (!isNotFoundError(cleanupError)) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Could not save the project association or remove its temporary file.",
+          { cause: error },
+        );
+      }
     }
+    throw error;
   }
 }

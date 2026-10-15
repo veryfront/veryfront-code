@@ -37,7 +37,7 @@ import { advertisesCloudGateway, listInferenceOptions } from "./inference-status
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
-import { connectedDevApiBaseUrl, prepareConnectedDev } from "./connected-dev.ts";
+import { connectedDevApiBaseUrl, prepareConnectedDev, stopDevServices } from "./connected-dev.ts";
 import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
 import {
   readProjectLinkForControlPlane,
@@ -454,9 +454,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         try {
           keyboardHandler?.stop();
           shutdownController.abort();
-          await disposeConnectedRuntime?.();
-          await mcpServer?.stop();
-          await devServer?.stop();
+          await stopDevServices([
+            () => disposeConnectedRuntime?.(),
+            () => mcpServer?.stop(),
+            () => devServer?.stop(),
+          ]);
         } catch {
           // ignore
         } finally {
@@ -495,8 +497,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       );
       if (connectedTarget) {
         if (preflightIdentity) console.log(`  ${dim("Account")} ${authStatus(preflightIdentity)}`);
-        console.log(`  ${dim("Project")} ${brand(connectedTarget.projectSlug)}`);
-        console.log(`  ${dim("Environment")} ${brand(connectedTarget.environmentName)} (shared)`);
+        console.log(`  ${dim("Cloud project")} ${brand(connectedTarget.projectSlug)}`);
+        console.log(
+          `  ${dim("Cloud environment")} ${brand(connectedTarget.environmentName)} (shared)`,
+        );
         console.log(`  ${dim("API")} ${runtimeAuth.apiBaseUrl}`);
         const studioBase = displayOptions.studioUrl ??
           `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`;

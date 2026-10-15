@@ -14,6 +14,10 @@ and evaluation, then deploy the same source to Veryfront Cloud.
 
 You do not need a model-provider API key for this tutorial.
 
+Your **local project** contains the files and code on your machine. A **cloud
+project** provides Veryfront services and stores runs and events. Linking them
+keeps code execution local while using the cloud project's services.
+
 ## Create the app
 
 ```bash
@@ -21,17 +25,19 @@ npm create veryfront@latest support-agent -- --template ai-agent
 cd support-agent
 ```
 
-## Select a Cloud project
+## Select a cloud project
 
-During scaffolding, select a new or existing Veryfront project. Follow the
-browser sign-in prompt when needed. You can skip this step and select a project
+During scaffolding, answer **Yes** to **Use Veryfront Cloud?** Then choose a
+new or existing cloud project by selecting **Create a new cloud project** or
+**Use an existing cloud project**. Follow the browser sign-in prompt when needed.
+Answer **No** to continue with the local project. You can link a cloud project
 when you run `npm run dev`.
 
-The project association is saved in `veryfront.json` without credentials.
-Commit that file so teammates can reuse the association after cloning. Each
+The link to the cloud project is saved in `veryfront.json` without credentials.
+Commit that file so teammates can reuse the cloud project after cloning. Each
 teammate signs in with their own account.
 
-A project pulled from Studio already has an association:
+A local project pulled from Studio is already linked to its cloud project:
 
 ```bash
 npx veryfront@latest pull <PROJECT_SLUG>
@@ -43,7 +49,7 @@ npx veryfront@latest pull <PROJECT_SLUG>
 npm run dev
 ```
 
-The CLI prints the selected project, shared environment, local runtime and
+The CLI prints the selected cloud project, shared cloud environment, local runtime and
 service URLs. The default environment is `preview`. To select another existing
 environment, run:
 

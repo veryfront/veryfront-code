@@ -22,7 +22,7 @@ cd support-agent
 The starter contains an assistant agent, `calculator.ts` tool, chat page,
 AG-UI route, and smoke eval.
 
-Skip the optional Cloud project selection to follow this direct-provider
+Answer **No** to **Use Veryfront Cloud?** to follow this direct-provider
 tutorial. To use Veryfront inference and inspect local runs in Studio without
 a provider API key, follow the [Cloud quickstart](./cloud-quickstart.md).
 

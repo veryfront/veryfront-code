@@ -1,3 +1,4 @@
+import { normalizeText } from "#veryfront/utils/logger/core.ts";
 import { createRenewingLocalModel } from "./connected-local-model.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
 import { readExternalAgentWorkerRunAuthority } from "../service/external-worker-client.ts";
@@ -219,9 +220,15 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             throw new Error("Veryfront returned a claim for a different local run.");
           }
         }
+        const url = new URL(
+          `/projects/${encodeURIComponent(options.projectSlug)}`,
+          options.studioUrl,
+        );
+        url.searchParams.set("panels", "runs");
+        url.searchParams.set("runs", `edit:${accepted.id}`);
         const startedAt = Date.now();
         const timestamp = () => `${new Date().toISOString().slice(11, 19)}Z`;
-        const agentLabel = input.agentId.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 128);
+        const agentLabel = normalizeText(input.agentId).slice(0, 128);
         const controller = new AbortController();
         let finalization: Promise<void> | undefined;
         let finishing = false;
@@ -270,34 +277,38 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           leaseFailed = true;
           controller.abort(new Error(message));
         };
+        let renewal: Promise<void> | undefined;
         const renew = setInterval(() => {
-          client.renewLease({
+          if (finishing || renewal) return;
+          renewal = client.renewLease({
             workerId: registered.id,
             runId: claim.run_id,
             leaseDurationSeconds: 60,
           }).then((lease) => {
             if (!lease) failLease("Veryfront local run lease expired.");
-          }).catch(() => failLease("Veryfront local run lease renewal failed."));
+          }).catch(() => failLease("Veryfront local run lease renewal failed.")).finally(() => {
+            renewal = undefined;
+          });
         }, 20_000);
         const abort = () => {
           controller.abort(input.signal.reason);
           void finish("cancelled").catch(() => {});
         };
-        async function finish(status: TerminalStatus) {
-          if (leaseFailed) status = "failed";
+        const finish = async (status: TerminalStatus) => {
           if (finalization) return await finalization;
           finishing = true;
           return await (finalization ??= (async () => {
             clearInterval(renew);
             input.signal.removeEventListener("abort", abort);
             if (status !== "completed") controller.abort();
+            await renewal;
             let appendError: unknown;
             try {
               await appendTail;
             } catch (error) {
               appendError = error;
             }
-            const terminalStatus = appendError ? "failed" : status;
+            const terminalStatus = appendError || leaseFailed ? "failed" : status;
             try {
               await client.completeRun({
                 runId: claim!.run_id,
@@ -326,7 +337,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               active.delete(run);
             }
           })());
-        }
+        };
         const run: ConnectedLocalRun = {
           runId: accepted.id,
           conversationId,
@@ -454,12 +465,6 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         active.add(run);
         input.signal.addEventListener("abort", abort, { once: true });
         if (input.signal.aborted) abort();
-        const url = new URL(
-          `/projects/${encodeURIComponent(options.projectSlug)}`,
-          options.studioUrl,
-        );
-        url.searchParams.set("panels", "runs");
-        url.searchParams.set("runs", `edit:${accepted.id}`);
         log(
           `${timestamp()} ${agentLabel} started ${accepted.id} (runtime ${workerKey}, environment ${
             options.environmentName ?? options.environmentId ?? "main"

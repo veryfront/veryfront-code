@@ -29,3 +29,16 @@ export async function prepareConnectedDev(
 export function connectedDevApiBaseUrl(apiBaseUrl?: string): string {
   return apiBaseUrl ?? DEFAULT_API_URL;
 }
+
+/** Release every owned service even if one cleanup fails. */
+export async function stopDevServices(cleanups: Array<() => void | Promise<void>>): Promise<void> {
+  const results = await Promise.allSettled(
+    cleanups.map((cleanup) => Promise.resolve().then(cleanup)),
+  );
+  const errors = results.filter((result): result is PromiseRejectedResult =>
+    result.status === "rejected"
+  ).map((result) => result.reason);
+  if (errors.length) {
+    throw new AggregateError(errors, "Some local development services could not stop cleanly.");
+  }
+}

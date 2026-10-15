@@ -5,18 +5,25 @@ import { reserveProjectSlug } from "./reserve-slug.ts";
 import { select } from "../utils/terminal-select.ts";
 
 /** Associate source without publishing it; credentials remain in the login store. */
-export async function chooseCloudProject(projectDir: string): Promise<void> {
-  const mode = await select("Use Veryfront Cloud?", [
-    { value: "new", label: "Create a new project" },
-    { value: "existing", label: "Use an existing project" },
-    { value: "skip", label: "Continue locally" },
+export async function chooseCloudProject(
+  projectDir: string,
+  prompt: typeof select = select,
+): Promise<void> {
+  const useCloud = await prompt("Use Veryfront Cloud?", [
+    { value: "yes", label: "Yes" },
+    { value: "no", label: "No" },
   ], 0);
-  if (!mode || mode === "skip") {
+  if (useCloud !== "yes") {
     console.log(
-      "  Cloud inference and Studio runs require a linked project. Run veryfront push whenever you are ready.",
+      "  Your local project is ready. Cloud inference and Studio runs require a linked cloud project. Run veryfront push whenever you are ready.",
     );
     return;
   }
+  const mode = await prompt("Choose a cloud project:", [
+    { value: "new", label: "Create a new cloud project" },
+    { value: "existing", label: "Use an existing cloud project" },
+  ], 0);
+  if (!mode) return;
 
   const config = await resolveConfigWithAuthNoModule(projectDir, {
     ...getEnvironmentConfig(),
@@ -47,10 +54,10 @@ export async function chooseCloudProject(projectDir: string): Promise<void> {
       cursor = response.page_info?.next;
     } while (cursor);
     if (!projects.length) {
-      throw new Error("No Veryfront projects found. Run veryfront push to create one.");
+      throw new Error("No cloud projects found. Run veryfront push to create one.");
     }
-    const id = await select(
-      "Choose a project:",
+    const id = await prompt(
+      "Select a cloud project:",
       projects.map((entry) => ({
         value: entry.id,
         label: entry.name ?? entry.slug,
@@ -62,5 +69,7 @@ export async function chooseCloudProject(projectDir: string): Promise<void> {
     project = projects.find((entry) => entry.id === id)!;
   }
   await persistProjectLink(projectDir, config, project);
-  console.log(`  ✓ Linked to ${project.slug}. Source stays local until veryfront push.`);
+  console.log(
+    `  ✓ Linked local project to cloud project ${project.slug}. Source stays local until veryfront push.`,
+  );
 }

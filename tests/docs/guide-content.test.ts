@@ -348,7 +348,6 @@ describe("guide content contracts", () => {
     for (
       const step of [
         "npm create veryfront@latest support-agent -- --template ai-agent",
-        "npx veryfront@latest login",
         "npx veryfront@latest push",
         "npm run dev",
         "npm run eval -- assistant",
@@ -358,6 +357,10 @@ describe("guide content contracts", () => {
       assertStringIncludes(quickstart, step);
     }
     assertStringIncludes(quickstart, "Veryfront Cloud AI Gateway");
+    assertStringIncludes(quickstart, "browser sign-in prompt when needed");
+    assertStringIncludes(quickstart, "new or existing cloud project");
+    assertStringIncludes(quickstart, "npx veryfront@latest pull <PROJECT_SLUG>");
+    assertStringIncludes(quickstart, "Studio link printed beside the run ID");
     assertStringIncludes(quickstart, "protected by default");
     assertStringIncludes(quickstart, "## Verify it worked");
 

@@ -1719,7 +1719,6 @@ describe("Guide: cloud-quickstart.md", () => {
     for (
       const command of [
         "npm create veryfront@latest support-agent -- --template ai-agent",
-        "npx veryfront@latest login",
         "npx veryfront@latest push",
         "npm run dev",
         "npm run eval -- assistant",
@@ -1728,6 +1727,8 @@ describe("Guide: cloud-quickstart.md", () => {
     ) {
       assertStringIncludes(guide, command);
     }
+    assertStringIncludes(guide, "browser sign-in prompt when needed");
+    assertStringIncludes(guide, "new or existing cloud project");
   });
 });
 

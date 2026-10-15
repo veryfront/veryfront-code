@@ -68,3 +68,26 @@ it("excludes proxy projects from local Cloud admission", async () => {
     undefined,
   );
 });
+
+it("stops MCP and dev servers even when connected runtime disposal rejects", async () => {
+  const { stopDevServices } = await import("./connected-dev.ts");
+  const stopped: string[] = [];
+  const failure = new Error("runtime disposal rejected");
+  let caught: unknown;
+  try {
+    await stopDevServices([
+      () => Promise.reject(failure),
+      () => {
+        stopped.push("mcp");
+      },
+      () => {
+        stopped.push("dev");
+      },
+    ]);
+  } catch (error) {
+    caught = error;
+  }
+  assertEquals(stopped, ["mcp", "dev"]);
+  assertEquals(caught instanceof AggregateError, true);
+  assertEquals((caught as AggregateError).errors, [failure]);
+});

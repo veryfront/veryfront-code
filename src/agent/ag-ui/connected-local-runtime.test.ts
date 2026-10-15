@@ -12,6 +12,8 @@ function fixture(
     appendGate?: Promise<void>;
     appendFailure?: boolean;
     renewOutcome?: "missing" | "error";
+    renew?: () => Promise<unknown>;
+    studioUrl?: string;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -39,7 +41,9 @@ function fixture(
         },
       ),
     renewLease: () =>
-      options.renewOutcome === "error"
+      options.renew
+        ? options.renew()
+        : options.renewOutcome === "error"
         ? Promise.reject(new Error("API offline"))
         : Promise.resolve(options.renewOutcome === "missing" ? null : {}),
     appendRunEvents: (input: { events: unknown[] }) => {
@@ -57,7 +61,7 @@ function fixture(
     projectId: "project",
     projectSlug: "sample",
     environmentId: "env",
-    studioUrl: "http://localhost:3440",
+    studioUrl: options.studioUrl ?? "http://localhost:3440",
   }, {
     client,
     append: async (events, sequence) => {
@@ -244,6 +248,57 @@ describe("connected local execution", () => {
       assertEquals(f.completed, ["failed"]);
     });
   }
+  for (const outcome of ["missing", "error"] as const) {
+    it(`waits for in-flight ${outcome} renewal before successful finalization`, async () => {
+      using time = new FakeTime();
+      let resolveRenewal!: (value: unknown) => void;
+      let rejectRenewal!: (error: unknown) => void;
+      const pending = new Promise<unknown>((resolve, reject) => {
+        resolveRenewal = resolve;
+        rejectRenewal = reject;
+      });
+      const f = fixture({ renew: () => pending });
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      await time.tickAsync(20_000);
+      const terminal = run.finish("completed");
+      await Promise.resolve();
+      assertEquals(f.completed, []);
+      if (outcome === "missing") resolveRenewal(null);
+      else rejectRenewal(new Error("API offline"));
+      await terminal;
+      assertEquals(f.completed, ["failed"]);
+      assertEquals(f.logs.some((line) => line.includes("assistant completed")), false);
+    });
+  }
+  it("cleans accepted execution before allocating timers for an invalid Studio URL", async () => {
+    using time = new FakeTime();
+    let renewals = 0;
+    const f = fixture({
+      studioUrl: "not-a-url",
+      renew: async () => {
+        renewals++;
+        return {};
+      },
+    });
+    await assertRejects(() =>
+      f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      })
+    );
+    assertEquals(f.requests.some((request) => request.path === "/runs/run-1/cancel"), true);
+    await time.tickAsync(40_000);
+    assertEquals(renewals, 0);
+    await f.runtime.dispose();
+    assertEquals(f.completed, []);
+  });
   it("cancels canonical execution on disconnect", async () => {
     const f = fixture();
     const controller = new AbortController();
