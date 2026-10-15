@@ -560,3 +560,63 @@ it("hosted preparation detects nested startup call mutation without changing sou
   );
   assertEquals((messages[1]!.parts[0] as { args: unknown }).args, { load: { skillId } });
 });
+
+it("hosted startup preserves canonical source history across synchronous resolver outcomes", () => {
+  for (
+    const outcome of [undefined, null, "", "Resolved instructions", "throw", "mutate"] as const
+  ) {
+    const skillId = "child--process";
+    const result = markTrustedPlatformPolicyToolResultPart({
+      type: "tool-result" as const,
+      toolCallId: "startup",
+      toolName: "load_skill",
+      result: { skillId, instructions: "# Canonical root", references: [], scripts: [] },
+    });
+    const messages: Message[] = [
+      { id: "user", role: "user", parts: [{ type: "text", text: "Process fixture" }] },
+      {
+        id: "call",
+        role: "assistant",
+        parts: [{
+          type: "tool-load_skill",
+          toolCallId: "startup",
+          toolName: "load_skill",
+          args: { load: { skillId } },
+        }],
+      },
+      { id: "result", role: "tool", parts: [result] },
+    ];
+    const before = JSON.stringify(messages);
+    const prepare = () =>
+      prepareHostedChildForkRuntimeStepMessages({
+        messages,
+        bootstrapSkill: skillId,
+        forkToolNames: ["load_skill"],
+        buildInstructions: () => "Original instructions",
+        resolveSystem: ({ compactedMessages }) => {
+          if (outcome === "throw") throw new Error("Resolver failed");
+          if (outcome === "mutate") {
+            for (const message of compactedMessages) {
+              if (message.role !== "tool" || !Array.isArray(message.content)) continue;
+              for (const part of message.content) {
+                if (part.type === "tool-result" && part.output.type === "json") {
+                  (part.output.value as Record<string, unknown>).instructions = "Changed root";
+                }
+              }
+            }
+            return null;
+          }
+          return outcome;
+        },
+      });
+    if (outcome === "throw" || outcome === "mutate") {
+      assertThrows(prepare);
+    } else {
+      const prepared = prepare();
+      assertEquals(prepared.system, outcome ?? "Original instructions");
+      assertEquals(hydrateActiveSkillStateFromMessages(prepared.messages).activeSkillId, skillId);
+    }
+    assertEquals(JSON.stringify(messages), before);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(result), true);
+  }
+});

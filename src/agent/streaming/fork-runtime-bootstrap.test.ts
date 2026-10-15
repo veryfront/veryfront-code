@@ -91,6 +91,62 @@ Deno.test("a hosted child loads its configured canonical skill before the first 
       assertEquals(loads, 1);
     }
   });
+  await t.step("resolver return values cannot bypass the final message budget", async () => {
+    for (const returnedSystem of [null, undefined, "", "Follow the child skill."]) {
+      const blockedModel = scriptedModel([{ text: "Must not infer" }], { only: "stream" });
+      const blocked = startAgentRuntimeForkWithHostTools({
+        ...input,
+        createModelRuntimeResolver: () => () => blockedModel,
+        prepareStep: (step) =>
+          prepareHostedChildForkRuntimeStepMessages({
+            ...step,
+            bootstrapSkill: skillId,
+            resolveSystem: ({ compactedMessages }) => {
+              const user = compactedMessages.find((message) => message.role === "user");
+              if (user) user.content = "Oversized message. ".repeat(60_000);
+              return returnedSystem;
+            },
+          }),
+      }).streamResult;
+      Promise.resolve(blocked.steps).catch(() => {});
+      Promise.resolve(blocked.totalUsage).catch(() => {});
+      let failure: unknown;
+      try {
+        for await (const _part of blocked.fullStream) { /* Drain actual fork events. */ }
+      } catch (error) {
+        failure = error;
+      }
+      assertEquals(failure instanceof Error, true);
+      assertEquals(blockedModel.callCount, 0);
+      assertEquals(loads, 1);
+    }
+  });
+  await t.step("a resolver throw fails before inference", async () => {
+    const blockedModel = scriptedModel([{ text: "Must not infer" }], { only: "stream" });
+    const blocked = startAgentRuntimeForkWithHostTools({
+      ...input,
+      createModelRuntimeResolver: () => () => blockedModel,
+      prepareStep: (step) =>
+        prepareHostedChildForkRuntimeStepMessages({
+          ...step,
+          bootstrapSkill: skillId,
+          resolveSystem: () => {
+            throw new Error("Resolver failure");
+          },
+        }),
+    }).streamResult;
+    Promise.resolve(blocked.steps).catch(() => {});
+    Promise.resolve(blocked.totalUsage).catch(() => {});
+    let failure: unknown;
+    try {
+      for await (const _part of blocked.fullStream) { /* Drain actual fork events. */ }
+    } catch (error) {
+      failure = error;
+    }
+    assertEquals(failure instanceof Error, true);
+    assertEquals(blockedModel.callCount, 0);
+    assertEquals(loads, 1);
+  });
   await t.step("the compatibility wrapper applies startup or fails before inference", async () => {
     for (const enabled of [true, false]) {
       let prompt = "";

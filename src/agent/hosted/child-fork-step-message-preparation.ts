@@ -290,7 +290,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
   });
 
   const finalSystem = resolvedSystem ?? currentInstructions;
-  if (resolvedSystem != null && input.bootstrapSkill !== undefined) {
+  if (input.resolveSystem !== undefined && input.bootstrapSkill !== undefined) {
     compactedMessages = compactForStep(
       compactedMessages,
       estimateOverhead(
