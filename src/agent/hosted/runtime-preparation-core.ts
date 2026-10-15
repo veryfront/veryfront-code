@@ -893,6 +893,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           grant.maxSteps,
         ),
         maxOutputTokens,
+        maxOutputTokensExplicit: request.maxOutputTokens !== undefined,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds,
@@ -1055,7 +1056,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
               ...(execution.kind === "canonical"
                 ? { runId: execution.runId, conversationId: execution.conversationId }
                 : {}),
-              maxOutputTokens: options.maxOutputTokens,
+              ...(options.maxOutputTokensExplicit === false
+                ? {}
+                : { maxOutputTokens: options.maxOutputTokens }),
               ...(catalogContext
                 ? {
                   runStream: <T>(operation: () => Promise<T>) =>

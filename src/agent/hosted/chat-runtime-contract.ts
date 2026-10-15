@@ -138,6 +138,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   parallelToolCalls?: boolean;
   maxSteps?: number;
   maxOutputTokens?: number;
+  /**
+   * @internal False when `maxOutputTokens` is the grant's allowance rather than
+   * a caller request, so the runtime caps implicit output instead of reserving it.
+   */
+  maxOutputTokensExplicit?: boolean;
   allowedTools?: string[];
   /**
    * Tool names the agent configuration denied explicitly (`false` entries).

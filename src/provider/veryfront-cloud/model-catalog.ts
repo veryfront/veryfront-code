@@ -297,6 +297,16 @@ export function isVeryfrontCloudCatalogLoaded(): boolean {
 }
 
 /**
+ * @internal Whether a served catalog has loaded for a model's own catalog
+ * scope, whatever scope the ambient request carries.
+ */
+export function isVeryfrontCloudCatalogLoadedForScope(
+  scopeKey: VeryfrontCloudCatalogScopeKey,
+): boolean {
+  return withVeryfrontCloudCatalogScope(scopeKey, () => loadedCatalog() !== undefined);
+}
+
+/**
  * Whether the served catalog loaded for the current scope serves any model of
  * this provider, under any provider spelling it uses. False before it loads.
  */
@@ -619,6 +629,12 @@ export interface VeryfrontCloudModelFacts {
    * differs from the default Cloud name: the registry-backed compatible path.
    */
   readonly openAIChatProviderName?: "openai-compatible";
+  /**
+   * Token limits the served catalog declared for this model when it was last
+   * read, kept so a request budget still applies after the bounded catalog
+   * cache evicts this model's scope.
+   */
+  readonly servedLimit?: { readonly context?: number; readonly output?: number };
 }
 
 const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();

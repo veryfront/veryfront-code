@@ -197,6 +197,40 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       assertEquals(readServedVeryfrontCloudCatalogModel(key, "anthropic/unlisted"), undefined);
     });
 
+    it("retains only valid served token limits in the requesting scope", () => {
+      const keyA = veryfrontCloudCatalogScopeKey(projectA);
+      const keyB = veryfrontCloudCatalogScopeKey(projectB);
+      const modelId = "mistral/ministral-local";
+      __setVeryfrontCloudCatalogForScopeForTests(
+        projectA,
+        payload([
+          row(modelId, { capabilities: { limit: { context: 16384, output: 4096 } } }),
+          row("mistral/invalid-local", {
+            capabilities: { limit: { context: -1, output: "4096" } },
+          }),
+        ]),
+      );
+      __setVeryfrontCloudCatalogForScopeForTests(
+        projectB,
+        payload([
+          row(modelId, { capabilities: { limit: { context: 32768, output: 8192 } } }),
+        ]),
+      );
+      assertEquals(readServedVeryfrontCloudCatalogModel(keyA, modelId)?.limit, {
+        context: 16384,
+        output: 4096,
+      });
+      assertEquals(readServedVeryfrontCloudCatalogModel(keyB, modelId)?.limit, {
+        context: 32768,
+        output: 8192,
+      });
+      assertEquals(
+        readServedVeryfrontCloudCatalogModel(keyA, "mistral/invalid-local")?.limit,
+        undefined,
+      );
+      assertEquals(readServedVeryfrontCloudCatalogModel(keyA, "mistral/unknown")?.limit, undefined);
+    });
+
     it("keeps google-ai-studio as Google when a loaded catalog lists no Google model", () => {
       __setVeryfrontCloudCatalogForTests(payload([
         row("openai/gpt-x", { surface: "openai", operations: ["chat-completions"] }),
