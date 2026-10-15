@@ -571,7 +571,7 @@ export class ToolResultContext {
       originalResult: input.result,
       ...(input.isError === true ? { isError: true } : {}),
       serialized,
-      json: typeof input.result !== "string" && serialized !== "undefined",
+      json: typeof modelResult !== "string" && serialized !== "undefined",
       byteLength: length,
     });
     return {

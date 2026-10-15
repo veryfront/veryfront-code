@@ -615,6 +615,23 @@ describe("agent runtime tool result context", () => {
 });
 
 describe("agent runtime tool result paging", () => {
+  it("selects structured model projections while retaining an original text result", () => {
+    const context = createToolResultContext();
+    const modelResult = { status: "completed", output: { detail: "child output" } };
+    const originalResult = JSON.stringify(modelResult);
+    const disclosure = context.discloseReference({
+      toolCallId: "child-call",
+      toolName: "invoke_agent",
+      result: originalResult,
+      modelResult,
+    });
+    assertEquals(disclosure.originalResult, originalResult);
+    assertEquals(
+      context.read({ ref: disclosure.modelResult.ref, pointer: "/output" }).text,
+      JSON.stringify(modelResult.output),
+    );
+  });
+
   async function compileReadSchema() {
     const { createZodAdapter } = await import("../../../extensions/ext-schema-zod/src/adapter.ts");
     const compile = createZodAdapter().compileJsonSchema;
