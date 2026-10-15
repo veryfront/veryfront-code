@@ -708,12 +708,12 @@ describe("agent/runtime-agent-invocation-contract", () => {
 
     assertEquals(parsed.agentConfig?.tools, []);
     assertEquals(parsed.agentConfig?.providerTools, ["web_search", "code_execution"]);
-    assertEquals(parsed.agentConfig?.skills, ["support-triage"]);
+    assertEquals(parsed.agentConfig?.skills, []);
     assertEquals(parsed.agentConfig?.bootstrapTools, undefined);
     assertEquals(parsed.agentConfig?.bootstrapSkill, undefined);
     assertEquals(parsed.forwardedProps, {
       activeChatId: "chat_123",
-      runtimeOverrides: { allowedTools: ["web_search"] },
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
     });
   });
 
@@ -732,7 +732,9 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.success, true);
     if (!parsed.success) return;
     assertEquals(parsed.data.agentConfig?.tools, []);
-    assertEquals(parsed.data.forwardedProps, { runtimeOverrides: { allowedTools: [] } });
+    assertEquals(parsed.data.forwardedProps, {
+      runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
+    });
   });
 
   function denyAllConfig(extra: Record<string, unknown> = {}) {
@@ -766,7 +768,9 @@ describe("agent/runtime-agent-invocation-contract", () => {
       forwardedProps: undefined,
     }));
 
-    assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: ["web_search"] } });
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
   });
 
   it("fails closed when a deny-all invocation carries an invalid sibling override", () => {
@@ -816,7 +820,9 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
 
     assertEquals(parsed.agentConfig?.tools, []);
-    assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: ["web_search"] } });
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
   });
 
   it("intersects deny-all allowlists without consulting mutable array prototypes", () => {
@@ -833,11 +839,39 @@ describe("agent/runtime-agent-invocation-contract", () => {
         agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
         forwardedProps: { runtimeOverrides: { allowedTools: [] } },
       }));
-      assertEquals(parsed.forwardedProps, { runtimeOverrides: { allowedTools: [] } });
+      assertEquals(parsed.forwardedProps, {
+        runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
+      });
     } finally {
       Array.prototype.filter = originalFilter;
       Array.prototype.includes = originalIncludes;
     }
+  });
+
+  it("rejects malformed caller allowlists on a deny-all invocation", () => {
+    const malformed: Array<Record<string, unknown>> = [
+      { allowedTools: "none" },
+      { allowedTools: ["web_search", 1] },
+      { toolAllowlist: "none" },
+      { toolAllowlist: [null] },
+    ];
+    for (const runtimeOverrides of malformed) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("restricts agent-stream runs through toolAllowlist and narrows by a caller toolAllowlist", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search", "code_execution"] }),
+      forwardedProps: { runtimeOverrides: { toolAllowlist: ["code_execution", "get_file"] } },
+    }));
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["code_execution"], toolAllowlist: ["code_execution"] },
+    });
   });
 
   it("leaves non-deny agent tool selections unchanged", () => {

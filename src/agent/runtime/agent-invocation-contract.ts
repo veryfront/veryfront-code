@@ -545,9 +545,47 @@ function copyOwnDataRecord(
     }
     if (omitted) continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-    if (descriptor && "value" in descriptor) copy[key] = descriptor.value;
+    if (descriptor && "value" in descriptor) defineOwnData(copy, key, descriptor.value);
   }
   return copy;
+}
+
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectCreate = Object.create;
+const MALFORMED = Symbol("malformed");
+
+/** Define an own data property without invoking inherited setters. */
+function defineOwnData(target: Record<string, unknown>, key: string, value: unknown): void {
+  // A null-prototype descriptor: inherited `get`/`set` cannot leak into it.
+  const descriptor = ObjectCreate(null) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.writable = true;
+  descriptor.enumerable = true;
+  descriptor.configurable = true;
+  ObjectDefineProperty(target, key, descriptor);
+}
+
+function copyStringArray(entries: readonly string[]): string[] {
+  const copy: string[] = [];
+  for (let index = 0; index < entries.length; index++) copy[copy.length] = entries[index]!;
+  return copy;
+}
+
+/** Read an own string array; a present value that is not one is MALFORMED. */
+function readOwnStrictStringArray(
+  source: Record<string, unknown>,
+  key: string,
+): string[] | undefined | typeof MALFORMED {
+  if (!ObjectHasOwn(source, key)) return undefined;
+  const value = readOwn(source, key);
+  if (!ArrayIsArray(value)) return MALFORMED;
+  const entries: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry: unknown = value[index];
+    if (typeof entry !== "string") return MALFORMED;
+    entries[entries.length] = entry;
+  }
+  return entries;
 }
 
 function readOwnStringArray(source: Record<string, unknown>, key: string): string[] | undefined {
@@ -616,10 +654,16 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   }
 
   const normalized = copyOwnDataRecord(value);
-  normalized.agentConfig = {
-    ...copyOwnDataRecord(agentConfig, ["bootstrapTools", "bootstrapSkill"]),
-    tools: [],
-  };
+  // Deny-all forbids the skill loader, so no skill is selectable either; an
+  // empty selection keeps ingress paths that preserve skill runtime tools
+  // under a non-empty allowlist from re-adding them.
+  const normalizedAgentConfig = copyOwnDataRecord(agentConfig, [
+    "bootstrapTools",
+    "bootstrapSkill",
+  ]);
+  defineOwnData(normalizedAgentConfig, "tools", []);
+  defineOwnData(normalizedAgentConfig, "skills", []);
+  defineOwnData(normalized, "agentConfig", normalizedAgentConfig);
 
   const forwardedProps = readOwn(value, "forwardedProps");
   if (forwardedProps !== undefined && !isPlainRecord(forwardedProps)) {
@@ -627,16 +671,23 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     return { value: normalized, denyAll: true };
   }
   const forwardedRecord = forwardedProps === undefined ? {} : copyOwnDataRecord(forwardedProps);
+  defineOwnData(normalized, "forwardedProps", forwardedRecord);
   const runtimeOverrides = readOwn(forwardedRecord, "runtimeOverrides");
   if (runtimeOverrides !== undefined && !isPlainRecord(runtimeOverrides)) {
     // A non-record override fails the deny-all override validation below.
-    normalized.forwardedProps = forwardedRecord;
     return { value: normalized, denyAll: true };
   }
   const runtimeOverridesRecord = runtimeOverrides === undefined
     ? {}
     : copyOwnDataRecord(runtimeOverrides);
-  const callerAllowedTools = readOwnStringArray(runtimeOverridesRecord, "allowedTools");
+  defineOwnData(forwardedRecord, "runtimeOverrides", runtimeOverridesRecord);
+  // A present but malformed caller restriction is left in place so the
+  // deny-all schema rejects it; it never reads as "no restriction".
+  const callerAllowedTools = readOwnStrictStringArray(runtimeOverridesRecord, "allowedTools");
+  const callerToolAllowlist = readOwnStrictStringArray(runtimeOverridesRecord, "toolAllowlist");
+  if (callerAllowedTools === MALFORMED || callerToolAllowlist === MALFORMED) {
+    return { value: normalized, denyAll: true };
+  }
 
   const providerTools = readOwnStringArray(agentConfig, "providerTools") ?? [];
   const allowedTools: string[] = [];
@@ -653,6 +704,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     if (callerAllowedTools !== undefined && !containsString(callerAllowedTools, toolName)) {
       continue;
     }
+    if (callerToolAllowlist !== undefined && !containsString(callerToolAllowlist, toolName)) {
+      continue;
+    }
     allowedTools[allowedTools.length] = toolName;
   }
   if (droppedReservedNames.length > 0) {
@@ -662,9 +716,11 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     );
   }
 
-  runtimeOverridesRecord.allowedTools = allowedTools;
-  forwardedRecord.runtimeOverrides = runtimeOverridesRecord;
-  normalized.forwardedProps = forwardedRecord;
+  // Hosted preparation restricts through `allowedTools`; the agent-stream path
+  // treats `allowedTools` as additive and restricts through `toolAllowlist`
+  // (which also caps provider-native and caller-supplied tools). Set both.
+  defineOwnData(runtimeOverridesRecord, "allowedTools", allowedTools);
+  defineOwnData(runtimeOverridesRecord, "toolAllowlist", copyStringArray(allowedTools));
   return { value: normalized, denyAll: true };
 }
 
@@ -677,7 +733,13 @@ const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
   getRuntimeAgentRunInvocationSchema().superRefine((input, ctx) => {
     const runtimeOverrides = input.forwardedProps?.runtimeOverrides;
     const parsed = getRuntimeAgentRuntimeOverridesSchema().safeParse(runtimeOverrides);
-    if (!parsed.success || parsed.data.allowedTools === undefined) {
+    const toolAllowlist = isPlainRecord(runtimeOverrides)
+      ? readOwnStrictStringArray(runtimeOverrides, "toolAllowlist")
+      : MALFORMED;
+    if (
+      !parsed.success || parsed.data.allowedTools === undefined ||
+      toolAllowlist === undefined || toolAllowlist === MALFORMED
+    ) {
       ctx.addIssue({
         code: "custom",
         message:
