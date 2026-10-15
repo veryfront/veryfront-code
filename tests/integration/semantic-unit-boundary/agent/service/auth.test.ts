@@ -6,6 +6,7 @@ import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-
 import { startHostedChildForkRuntimeWithHostTools } from "#veryfront/agent/hosted/child-fork-runtime-start.ts";
 import { runAgentRuntimeForkStep } from "#veryfront/agent/streaming/fork-runtime-stream.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -1059,7 +1060,7 @@ describe("agent/agent-service-auth", () => {
       latestExternalEventSequence: 0,
     };
     transferHostedTerminalAuthority(child, identifiers);
-    const model: ModelRuntime = {
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
       provider: "fixture",
       modelId: "fixture/hosted-dependency",
       doGenerate: async () => {
