@@ -570,6 +570,70 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(deletedKeys.every((k) => k.includes("test-slug")), true);
     });
 
+    for (const operation of ["clearSlug", "clearForContext"] as const) {
+      it(`invalidates derived route keys across coordinators using ${operation}`, async () => {
+        const store = createInMemoryStore();
+        Reflect.deleteProperty(store, "deleteByPrefix");
+        const writer = new ContextAwareCacheCoordinator({ store });
+        const clearer = new ContextAwareCacheCoordinator({ store: { ...store } });
+        const ctx = makeMockCtx();
+        const lookup = () =>
+          writer.checkCache("/data", ctx, undefined, "/data?q=1", undefined, "route");
+        await writer.persistResult(
+          { html: "old query", frontmatter: {}, stream: null },
+          "/data",
+          ctx,
+          undefined,
+          "/data?q=1",
+          undefined,
+          "route",
+        );
+        assertEquals((await lookup()).hit, true);
+        if (operation === "clearSlug") await clearer.clearSlug("/data", ctx);
+        else await clearer.clearForContext(ctx);
+        assertEquals((await lookup()).hit, false);
+      });
+    }
+
+    it("distinguishes derived route keys from explicit scoped aliases", async () => {
+      const cache = new ContextAwareCacheCoordinator({ store: createInMemoryStore() });
+      const ctx = makeMockCtx();
+      await cache.persistResult(
+        { html: "route result", frontmatter: {}, stream: null },
+        "route",
+        ctx,
+        undefined,
+        "route",
+        undefined,
+        "route",
+      );
+      assertEquals((await cache.checkCache("route", ctx)).cachedResult?.html, "route result");
+      await cache.persistResult(
+        { html: "shared result", frontmatter: {}, stream: null },
+        "first",
+        ctx,
+        undefined,
+        "render-identity:hash-shared",
+        undefined,
+        "alias",
+      );
+      assertEquals(
+        (await cache.checkCache(
+          "second",
+          ctx,
+          undefined,
+          "render-identity:hash-shared",
+          undefined,
+          "alias",
+        )).cachedResult?.html,
+        "shared result",
+      );
+      assertEquals(
+        (await cache.checkCache("second", ctx, undefined, "render-identity:hash-shared")).hit,
+        false,
+      );
+    });
+
     for (const prefixCapable of [false, true]) {
       it(`preserves explicit override sharing with prefix support ${prefixCapable}`, async () => {
         const store = createInMemoryStore();

@@ -111,8 +111,9 @@ export class ContextAwareCacheCoordinator {
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
     nonce?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): Promise<ContextAwareCacheLookupResult> {
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
     if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) {
       return Promise.resolve({ cacheKey, hit: false, status: "miss", lookupDurationMs: 0 });
     }
@@ -138,7 +139,8 @@ export class ContextAwareCacheCoordinator {
 
         if (
           cached.aliasEpoch !== undefined ||
-          (!this.store.deleteByPrefix && cacheKeyOverride && !isScopedOverride(cacheKeyOverride))
+          (!this.store.deleteByPrefix && cacheKeyOverride &&
+            !isScopedOverride(cacheKeyOverride))
         ) {
           const epoch = await this.store.get(this.aliasEpochKey(ctx));
           if (
@@ -271,13 +273,14 @@ export class ContextAwareCacheCoordinator {
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
     nonce?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): Promise<void> {
     if (!result || result.stream || this.destroyed) return;
     // Scoped entries require store-level prefix deletion, including across
     // coordinators/restarts. An unsupported store remains usable for legacy keys.
     if (isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix) return;
 
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
     const now = Date.now();
 
     const cachedResult = this.cloneResult(result);
@@ -302,10 +305,10 @@ export class ContextAwareCacheCoordinator {
           this.legacyKeys.delete(oldest);
         }
       }
-      const aliasEpoch =
-        !this.store.deleteByPrefix && cacheKeyOverride && !isScopedOverride(cacheKeyOverride)
-          ? await this.captureAliasEpoch(ctx)
-          : undefined;
+      const aliasEpoch = !this.store.deleteByPrefix && cacheKeyOverride &&
+          !isScopedOverride(cacheKeyOverride)
+        ? await this.captureAliasEpoch(ctx)
+        : undefined;
       await this.store.set(cacheKey, {
         ...(aliasEpoch ? { aliasEpoch } : {}),
         result: cachedResult,
@@ -530,11 +533,12 @@ export class ContextAwareCacheCoordinator {
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): string {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
     if (
-      isScopedOverride(cacheKeyOverride)
+      isScopedOverride(cacheKeyOverride) && cacheKeyKind === "route"
     ) {
       const identity = `${cacheKeyOverride}:${colorScheme ?? "default"}`;
       const digest = `${hashString(`render-variant:a:${identity}`)}-${
@@ -547,7 +551,7 @@ export class ContextAwareCacheCoordinator {
     const themedKey = themeKey && !/:theme-(light|dark)$/.test(contentKey)
       ? `${contentKey}${themeKey}`
       : contentKey;
-    if (cacheKeyOverride) {
+    if (cacheKeyOverride && cacheKeyKind === "alias") {
       const digest = `${hashString(`render-alias:a:${themedKey}`)}-${
         hashString(`render-alias:b:${themedKey}`)
       }`;

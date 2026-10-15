@@ -465,6 +465,7 @@ export class Renderer {
             effectiveOptions?.colorScheme,
             cacheKey,
             effectiveOptions?.nonce,
+            effectiveOptions.cacheKey ? "alias" : "route",
           )
           : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
@@ -1120,7 +1121,11 @@ export class Renderer {
         });
       }
 
-      const services = this.createServicesForContext(ctx, options?.colorScheme);
+      const services = this.createServicesForContext(
+        ctx,
+        options?.colorScheme,
+        options?.cacheKey ? "alias" : "route",
+      );
       const renderAbortController = new AbortController();
       const request = cacheKey !== null && options?.request
         ? new Request(options.request, { signal: renderAbortController.signal })
@@ -1187,6 +1192,7 @@ export class Renderer {
           options?.colorScheme,
           cacheKey,
           options?.nonce,
+          options?.cacheKey ? "alias" : "route",
         );
       }
 
@@ -1407,6 +1413,7 @@ export class Renderer {
   private createServicesForContext(
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    cacheKeyKind: "route" | "alias" = "route",
   ): { pipeline: RenderPipeline } {
     const shared = getSharedServices();
 
@@ -1469,7 +1476,14 @@ export class Renderer {
 
     const pipelineCacheCoordinator = {
       checkCache: async (slug: string, cacheKey?: string, nonce?: string) => {
-        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey, nonce);
+        const result = await this.cache.checkCache(
+          slug,
+          ctx,
+          colorScheme,
+          cacheKey,
+          nonce,
+          cacheKeyKind,
+        );
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
@@ -1485,7 +1499,15 @@ export class Renderer {
         cacheKey?: string,
         nonce?: string,
       ) => {
-        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey, nonce);
+        await this.cache.persistResult(
+          result,
+          slug,
+          ctx,
+          colorScheme,
+          cacheKey,
+          nonce,
+          cacheKeyKind,
+        );
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),

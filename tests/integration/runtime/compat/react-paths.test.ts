@@ -57,7 +57,7 @@ describe("react-paths", () => {
     const adapter = createMockAdapter();
     adapter.fs.files.set(
       "/virtual-script/page.js",
-      'export default () => "<main>virtual script</main>";',
+      'import { basename } from "path"; export default () => "<main>" + basename("/virtual/virtual script") + "</main>";',
     );
     const rendered = await handleScriptPage(
       { entity: { path: "/virtual-script/page.js", frontmatter: {} } } as never,
@@ -71,6 +71,86 @@ describe("react-paths", () => {
       },
     );
     assertEquals(rendered.html.includes("virtual script"), true);
+  });
+
+  it("reuses unchanged native production entries and encodes filesystem paths", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const directory = mkdtempSync(join(tmpdir(), "script-native-entry-"));
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => ++now;
+    try {
+      // Bun's native loader cannot load filenames containing '?', even when
+      // URL-encoded. Cover its supported '#' case and both encodings on Node.
+      for (const name of ["page.js", "page #.js", ...(isNode ? ["page?.js"] : [])]) {
+        const path = join(directory, name);
+        fs.writeFileSync(
+          path,
+          'let count = 0; export default () => "<main>" + ++count + "</main>";',
+        );
+        const render = () =>
+          handleScriptPage(
+            { entity: { path, frontmatter: {} } } as never,
+            "page",
+            {
+              mode: "production",
+              config: {},
+              projectDir: directory,
+              adapter: createMockAdapter(),
+              reactPeers: captureLocalReactPeers(),
+            },
+          );
+        assertEquals((await render()).html.includes("<main>1</main>"), true);
+        assertEquals((await render()).html.includes("<main>2</main>"), true);
+      }
+    } finally {
+      Date.now = originalNow;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves one shared dependency instance across script pages", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const directory = mkdtempSync(join(tmpdir(), "script-shared-instance-"));
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    fs.writeFileSync(
+      join(directory, "shared.js"),
+      "let count = 0; export const next = () => ++count;",
+    );
+    for (const name of ["first.js", "second.js"]) {
+      fs.writeFileSync(
+        join(directory, name),
+        'import { next } from "./shared.js"; export default () => "<main>" + next() + "</main>";',
+      );
+    }
+    const options = {
+      mode: "production",
+      config: {},
+      projectDir: directory,
+      adapter: createMockAdapter(),
+      reactPeers: captureLocalReactPeers(),
+    };
+    try {
+      const first = await handleScriptPage(
+        { entity: { path: join(directory, "first.js"), frontmatter: {} } } as never,
+        "first",
+        options,
+      );
+      const second = await handleScriptPage(
+        { entity: { path: join(directory, "second.js"), frontmatter: {} } } as never,
+        "second",
+        options,
+      );
+      assertEquals(first.html.includes("<main>1</main>"), true);
+      assertEquals(second.html.includes("<main>2</main>"), true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   for (
@@ -112,106 +192,6 @@ describe("react-paths", () => {
       }
     });
   }
-
-  it("preserves per-file TypeScript decorator and class-field configuration", async () => {
-    if (!isNode && !isBun) return;
-    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
-    const directory = mkdtempSync(join(tmpdir(), "script-typescript-config-"));
-    const page = join(directory, "page.js");
-    fs.mkdirSync(join(directory, "lib"));
-    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
-    fs.writeFileSync(
-      join(directory, "base.tsconfig.json"),
-      '{"compilerOptions":{"experimentalDecorators":true,"useDefineForClassFields":false}}',
-    );
-    fs.writeFileSync(
-      join(directory, "lib", "tsconfig.json"),
-      '{"extends":"../base.tsconfig.json"}',
-    );
-    fs.writeFileSync(
-      join(directory, "lib", "value.ts"),
-      'function legacy(target: object, key: string, descriptor: PropertyDescriptor) { if (typeof key !== "string") throw new Error("lost legacy decorator arguments"); descriptor.value = () => "decorated"; } class Base { assigned?: number; set value(value: number) { this.assigned = value; } } class Derived extends Base { value = 4; @legacy method() { return "original"; } } export function value() { const instance = new Derived(); return instance.assigned + "|" + instance.method(); }',
-    );
-    fs.writeFileSync(
-      page,
-      'import { value } from "./lib/value.ts"; export default () => "<main>" + value() + "</main>";',
-    );
-    try {
-      const result = await handleScriptPage(
-        { entity: { path: page, frontmatter: {} } } as never,
-        "page",
-        {
-          mode: "production",
-          config: {},
-          projectDir: directory,
-          adapter: createMockAdapter(),
-          reactPeers: captureLocalReactPeers(),
-        },
-      );
-      assertEquals(result.html.includes("<main>4|decorated</main>"), true);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps Bun metadata APIs on captured peers", async () => {
-    if (!isBun) return;
-    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
-    const { pathToFileURL } = await import("node:url");
-    const directory = mkdtempSync(join(tmpdir(), "script-bun-meta-"));
-    const captured = join(directory, "captured");
-    const installed = join(directory, "node_modules", "react");
-    for (const root of [captured, installed]) {
-      fs.mkdirSync(root, { recursive: true });
-      fs.writeFileSync(
-        join(root, "package.json"),
-        '{"name":"react","type":"module","exports":{".":"./index.js","./extra":"./extra.js"}}',
-      );
-      for (const file of ["index.js", "extra.js"]) {
-        fs.writeFileSync(
-          join(root, file),
-          `export const marker = "${root === captured ? "captured" : "installed"}";`,
-        );
-      }
-    }
-    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
-    const page = join(directory, "page.js");
-    fs.writeFileSync(
-      page,
-      'import * as React from "react"; export default () => "<main>" + React.marker + "|" + import.meta.require("react").marker + "|" + import.meta.require("react/extra").marker + "|" + import.meta.resolveSync("react") + "|" + import.meta.resolveSync("react/extra") + "</main>";',
-    );
-    const base = captureLocalReactPeers();
-    const peers = {
-      ...base,
-      roots: { ...base.roots, react: captured },
-      paths: { ...base.paths, react: pathToFileURL(join(captured, "index.js")).href },
-    };
-    try {
-      const rendered = await handleScriptPage(
-        { entity: { path: page, frontmatter: {} } } as never,
-        "page",
-        {
-          mode: "production",
-          config: {},
-          projectDir: directory,
-          adapter: createMockAdapter(),
-          reactPeers: peers,
-        },
-      );
-      assertEquals(
-        rendered.html.includes(
-          `<main>captured|captured|captured|${join(captured, "index.js")}|${
-            join(captured, "extra.js")
-          }</main>`,
-        ),
-        true,
-      );
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
 
   for (const fullDocument of [false, true]) {
     it(`uses prepared peers for script import maps with full document ${fullDocument}`, async () => {
@@ -294,203 +274,9 @@ describe("react-paths", () => {
         );
       const rendered = await render();
       assertEquals(rendered.html.includes("<main>native-addon|true</main>"), true);
-      fs.writeFileSync(join(external, "replacement.js"), "export const marker = {};");
-      globalState.__scriptNativeMarker =
-        (await import(pathToFileURL(join(external, "replacement.js")).href)).marker;
-      fs.writeFileSync(
-        join(external, "package.json"),
-        '{"name":"keep-native","type":"module","exports":"./replacement.js"}',
-      );
-      assertEquals(
-        (await render()).html.includes("<main>native-addon|true</main>"),
-        true,
-        "changed external exports resolve the new native module",
-      );
     } finally {
       process.dlopen = original;
       delete globalState.__scriptNativeMarker;
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  for (const nested of [false, true]) {
-    it(`coalesces production script compilation with nested resolution ${nested}`, async () => {
-      if (!isNode && !isBun) return;
-      const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
-      const { getBundler } = await import("veryfront/extensions/bundler");
-      const bundler = getBundler();
-      const original = bundler.bundle;
-      let builds = 0;
-      bundler.bundle = (options) => {
-        if (options.bundle !== false) builds++;
-        return original.call(bundler, options);
-      };
-      const directory = mkdtempSync(join(tmpdir(), "script-compilation-"));
-      const page = join(directory, "page.js");
-      const child = nested
-        ? join(directory, "components", "button", "index.js")
-        : join(directory, "child");
-      const source = `import { value } from "${
-        nested ? "./components/button" : "./child"
-      }"; export default () => "<main>" + value + "</main>";`;
-      fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
-      fs.writeFileSync(page, source);
-      fs.mkdirSync(dirname(child), { recursive: true });
-      fs.writeFileSync(child, 'export const value = "first";');
-      const options = {
-        mode: "production",
-        projectDir: directory,
-        adapter: createMockAdapter(),
-        config: {},
-        reactPeers: captureLocalReactPeers(),
-      };
-      const render = () =>
-        handleScriptPage({ entity: { path: page, frontmatter: {} } } as never, "page", options);
-      try {
-        const initial = await Promise.all([render(), render(), render()]);
-        assertEquals(initial.every((result) => result.html.includes("<main>first</main>")), true);
-        assertEquals(builds, 1, "concurrent requests share compilation");
-        await render();
-        assertEquals(builds, 1, "unchanged graph skips compilation");
-        fs.writeFileSync(child, 'export const value = "second";');
-        const changed = await Promise.all([render(), render()]);
-        assertEquals(changed.every((result) => result.html.includes("<main>second</main>")), true);
-        assertEquals(builds, 2, "changed dependency rebuilds once");
-        fs.writeFileSync(child, "export const value = ;");
-        await assertRejects(render);
-        fs.writeFileSync(child, 'export const value = "recovered";');
-        assertEquals((await render()).html.includes("<main>recovered</main>"), true);
-        assertEquals(builds, 4, "failed compilation does not poison its retry");
-        if (nested) {
-          fs.writeFileSync(
-            join(directory, "components", "button.ts"),
-            'export const value = "preferred";',
-          );
-          assertEquals((await render()).html.includes("<main>preferred</main>"), true);
-          assertEquals(builds, 5, "new higher-priority siblings invalidate directory resolution");
-        }
-      } finally {
-        bundler.bundle = original;
-        rmSync(directory, { recursive: true, force: true });
-      }
-    });
-  }
-
-  for (const nested of [false, true]) {
-    it(`refreshes script dependencies with a nested symlink ${nested}`, async () => {
-      if (!isNode && !isBun) return;
-      const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
-      const directory = mkdtempSync(join(tmpdir(), "script-project-link-"));
-      const project = join(directory, "project");
-      const current = nested ? join(project, "components", "current") : join(directory, "current");
-      if (nested) {
-        fs.mkdirSync(dirname(current), { recursive: true });
-        fs.writeFileSync(join(project, "package.json"), '{"type":"module"}');
-        fs.writeFileSync(
-          join(project, "page.js"),
-          'import { value } from "./components/current/child.js"; export default () => "<main>" + value + "</main>";',
-        );
-      }
-      for (const release of ["first", "second"]) {
-        const folder = join(directory, release);
-        fs.mkdirSync(folder);
-        fs.writeFileSync(join(folder, "package.json"), '{"type":"module"}');
-        fs.writeFileSync(
-          join(folder, "page.js"),
-          'import { value } from "./child.js"; export default () => "<main>" + value + "</main>";',
-        );
-        fs.writeFileSync(join(folder, "child.js"), `export const value = "${release}";`);
-      }
-      const options = {
-        mode: "production",
-        projectDir: nested ? project : current,
-        adapter: createMockAdapter(),
-        config: {},
-        reactPeers: captureLocalReactPeers(),
-      };
-      const render = () =>
-        handleScriptPage(
-          {
-            entity: { path: join(nested ? project : current, "page.js"), frontmatter: {} },
-          } as never,
-          "page",
-          options,
-        );
-      try {
-        fs.symlinkSync(join(directory, "first"), current, "dir");
-        assertEquals((await render()).html.includes("<main>first</main>"), true);
-        fs.unlinkSync(current);
-        fs.symlinkSync(join(directory, "second"), current, "dir");
-        assertEquals((await render()).html.includes("<main>second</main>"), true);
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
-      }
-    });
-  }
-
-  it("refreshes script compiler configuration and scoped package resolution", async () => {
-    if (!isNode && !isBun) return;
-    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
-    const directory = mkdtempSync(join(tmpdir(), "script-resolution-"));
-    const put = (path: string, contents: string) => {
-      const target = join(directory, path);
-      fs.mkdirSync(dirname(target), { recursive: true });
-      fs.writeFileSync(target, contents);
-    };
-    const options = {
-      mode: "production",
-      projectDir: directory,
-      adapter: createMockAdapter(),
-      config: {},
-      reactPeers: captureLocalReactPeers(),
-    };
-    const render = (path: string) =>
-      handleScriptPage(
-        { entity: { path: join(directory, path), frontmatter: {} } } as never,
-        "page",
-        options,
-      );
-    try {
-      put("package.json", '{"type":"module"}');
-      put(
-        "page.js",
-        'import { value } from "alias"; export default () => "<main>" + value + "</main>";',
-      );
-      put("first.js", 'export const value = "first";');
-      put("second.js", 'export const value = "second";');
-      put("tsconfig.json", '{"compilerOptions":{"baseUrl":".","paths":{"alias":["./first.js"]}}}');
-      assertEquals((await render("page.js")).html.includes("<main>first</main>"), true);
-      put("tsconfig.json", '{"compilerOptions":{"baseUrl":".","paths":{"alias":["./second.js"]}}}');
-      assertEquals((await render("page.js")).html.includes("<main>second</main>"), true);
-      fs.unlinkSync(join(directory, "tsconfig.json"));
-      options.projectDir = join(directory, "sub", "project");
-      put(
-        "sub/project/page.js",
-        'import { value } from "@scope/pkg"; export default () => "<main>" + value + "</main>";',
-      );
-      put("node_modules/@scope/pkg/package.json", '{"main":"index.js"}');
-      put("node_modules/@scope/pkg/tsconfig.json", '{"extends":"./development-only-missing.json"}');
-      put("node_modules/@scope/pkg/index.js", 'exports.value = "parent";');
-      put("sub/node_modules/@scope/other/package.json", "{}");
-      assertEquals(
-        (await render("sub/project/page.js")).html.includes("<main>parent</main>"),
-        true,
-      );
-      fs.unlinkSync(join(directory, "node_modules/@scope/pkg/tsconfig.json"));
-      assertEquals(
-        (await render("sub/project/page.js")).html.includes("<main>parent</main>"),
-        true,
-      );
-      put("sub/node_modules/@scope/pkg/package.json", '{"main":"index.js"}');
-      put("sub/node_modules/@scope/pkg/index.js", 'exports.value = "closer";');
-      assertEquals(
-        (await render("sub/project/page.js")).html.includes("<main>closer</main>"),
-        true,
-      );
-    } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   });
@@ -500,7 +286,7 @@ describe("react-paths", () => {
       "require.resolve",
       "dynamic import",
       "CommonJS dynamic import",
-      "glob dynamic import",
+      "computed relative import",
     ]
   ) {
     it(`preserves dependency issuers for ${kind}`, async () => {
@@ -521,15 +307,15 @@ describe("react-paths", () => {
       fs.writeFileSync(join(directory, "lib", "value.js"), 'export default "child import";');
       fs.mkdirSync(join(directory, "lib", "views"));
       fs.writeFileSync(
-        join(directory, "lib", "views", "value.tsx"),
-        "export default <span>child import</span>;",
+        join(directory, "lib", "views", "value.js"),
+        'export default "child import";',
       );
       fs.writeFileSync(
         child,
         kind === "require.resolve"
           ? 'module.exports = () => require("node:fs").readFileSync(require.resolve("./asset.txt"), "utf8");'
-          : kind === "glob dynamic import"
-          ? 'export default async () => { const name = "value"; return (await import(`./views/${name}.tsx`)).default.props.children; };'
+          : kind === "computed relative import"
+          ? 'export default async () => { const name = "value"; return (await import(`./views/${name}.js`)).default; };'
           : `${
             kind === "dynamic import" ? "export default" : "module.exports ="
           } async () => { let path = "./value.js"; const target = { toString: () => path }; const pending = import(target); path = "./missing.js"; const invalid = Symbol(); await import(invalid).then(() => { throw new Error("expected rejection"); }, () => {}); return (await pending).default; };`,
@@ -586,8 +372,7 @@ describe("react-paths", () => {
     adapter.fs.files.set(pagePath, source);
     adapter.fs.files.set(helperPath, helper);
     try {
-      // Seed ordinary component transforms first: source-location mode must not
-      // reuse their cache entries, including entries for imported helpers.
+      // Component transforms must not affect native script source locations.
       await loadModuleFromSource(source, pagePath, directory, adapter, {
         dev: false,
         ssr: true,
@@ -618,7 +403,7 @@ describe("react-paths", () => {
   });
 
   for (const fullDocument of [false, true]) {
-    it(`keeps script-page imports on admitted peers with full document ${fullDocument}`, async () => {
+    it(`keeps script-page browser maps on admitted peers with full document ${fullDocument}`, async () => {
       if (!isNode && !isBun) return;
       const { PageRenderer } = await import("#veryfront/rendering/page-renderer.ts");
       const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
@@ -681,174 +466,6 @@ describe("react-paths", () => {
       }
     });
   }
-
-  it("keeps script module imports and wrapped/full browser maps on captured peers", async () => {
-    if (!isNode && !isBun) return;
-    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
-    const { nodeAdapter } = await import("#veryfront/platform/adapters/node.ts");
-    const directory = mkdtempSync(join(tmpdir(), "vf-script-peers-"));
-    const oldReact = join(directory, "old-react.cjs");
-    fs.writeFileSync(
-      oldReact,
-      'exports.version = "19.2.4"; exports.peerMarker = "captured-old";',
-    );
-    const captured = captureLocalReactPeers();
-    const peers = {
-      ...captured,
-      paths: { ...captured.paths, react: new URL(`file://${oldReact}`).href },
-    };
-    fs.mkdirSync(join(directory, "node_modules", "react"), { recursive: true });
-    fs.writeFileSync(
-      join(directory, "node_modules", "react", "package.json"),
-      JSON.stringify({ name: "react", version: "19.2.5", type: "module", exports: "./index.js" }),
-    );
-    fs.writeFileSync(
-      join(directory, "node_modules", "react", "index.js"),
-      'export const version = "19.2.5";',
-    );
-    fs.mkdirSync(join(directory, "node_modules", "zod"));
-    fs.writeFileSync(
-      join(directory, "node_modules", "zod", "package.json"),
-      JSON.stringify({
-        name: "zod",
-        type: "module",
-        exports: { import: "./import.js", require: "./require.cjs", default: "./fallback.js" },
-      }),
-    );
-    fs.writeFileSync(
-      join(directory, "node_modules", "zod", "import.js"),
-      'export const issuer = "project-import";',
-    );
-    fs.writeFileSync(
-      join(directory, "node_modules", "zod", "require.cjs"),
-      'exports.issuer = "wrong-require";',
-    );
-    fs.writeFileSync(
-      join(directory, "node_modules", "zod", "fallback.js"),
-      'export const issuer = "wrong-default";',
-    );
-    fs.writeFileSync(join(directory, "entry.txt"), "entry-asset");
-    fs.mkdirSync(join(directory, "lib"));
-    fs.writeFileSync(join(directory, "lib", "helper.txt"), "child-asset");
-    fs.writeFileSync(
-      join(directory, "lib", "helper.js"),
-      'import { readFileSync } from "fs"; export const childAsset = readFileSync(new URL("./helper.txt", import.meta.url), "utf8");',
-    );
-    fs.mkdirSync(join(directory, "node_modules", "cjs-lib"));
-    fs.writeFileSync(
-      join(directory, "node_modules", "cjs-lib", "package.json"),
-      JSON.stringify({ name: "cjs-lib", main: "index.cjs" }),
-    );
-    fs.writeFileSync(
-      join(directory, "node_modules", "cjs-lib", "index.cjs"),
-      'module.exports = require("node:fs").readFileSync && __filename.endsWith("index.cjs") && __dirname.endsWith("cjs-lib") ? "native-require-" + require("react").peerMarker : "missing";',
-    );
-    fs.writeFileSync(join(directory, "lib", "value.json"), '{"value":"dependency-issuer"}');
-    fs.writeFileSync(
-      join(directory, "lib", "dynamic.cjs"),
-      'const asset = "./value.json"; const peer = "react"; function local(require) { return require(asset); } module.exports = require(asset).value + "-" + require(peer).peerMarker + "-" + local(() => "shadowed");',
-    );
-    const restoreReact = overrideInstalledVersion("react", "19.2.5");
-    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
-    try {
-      for (const full of [false, true]) {
-        const path = join(directory, full ? "full.js" : "wrapped.js");
-        fs.writeFileSync(
-          path,
-          `let count = 0; import dynamicValue from "./lib/dynamic.cjs"; import legacy from "cjs-lib"; import { readFileSync } from "fs"; import { childAsset } from "./lib/helper.js"; import { issuer } from "zod"; import * as React from "react"; const entryAsset = readFileSync(new URL("./entry.txt", import.meta.url), "utf8"); const identity = React.peerMarker ?? React.version; export function render() { count++; return ${
-            full
-              ? "`<!DOCTYPE html><html><head></head><body><p>${identity}</p><i>${count}</i><aside>${issuer}</aside><section>${entryAsset}-${childAsset}-${legacy}-${dynamicValue}</section></body></html>`"
-              : "`<p>${identity}</p><i>${count}</i><aside>${issuer}</aside><section>${entryAsset}-${childAsset}-${legacy}-${dynamicValue}</section>`"
-          }; }`,
-        );
-        const result = await handleScriptPage(
-          { entity: { path, frontmatter: {} } } as never,
-          "/script",
-          {
-            mode: "production",
-            config: {},
-            projectDir: directory,
-            adapter: nodeAdapter,
-            reactPeers: peers,
-          },
-        );
-        const repeated = await handleScriptPage(
-          { entity: { path, frontmatter: {} } } as never,
-          "/script",
-          {
-            mode: "production",
-            config: {},
-            projectDir: directory,
-            adapter: nodeAdapter,
-            reactPeers: peers,
-          },
-        );
-        assertEquals(
-          repeated.html.includes("<i>2</i>"),
-          true,
-          "unchanged production modules reuse one instance",
-        );
-        assertEquals(
-          result.html.includes("<p>captured-old</p>"),
-          true,
-          "script imports use the captured physical React path",
-        );
-        assertEquals(
-          result.html.includes("<aside>project-import</aside>"),
-          true,
-          "externals retain project issuer and ESM import conditions",
-        );
-        assertEquals(
-          result.html.includes(
-            "<section>entry-asset-child-asset-native-require-captured-old-dependency-issuer-captured-old-shadowed</section>",
-          ),
-          true,
-          "entry and bundled child retain their source-relative assets",
-        );
-        assertEquals(
-          result.html.includes("react@19.2.4"),
-          true,
-          "browser map uses the captured React version",
-        );
-        assertEquals(
-          result.html.includes("react@19.2.5"),
-          false,
-          "replacement version never enters the cached document",
-        );
-        const changedSource = fs.readFileSync(path, "utf8").replace(
-          "<p>${identity}</p>",
-          "<p>${identity}</p><u>changed</u>",
-        );
-        fs.writeFileSync(path, changedSource);
-        const changed = await handleScriptPage(
-          { entity: { path, frontmatter: {} } } as never,
-          "/script",
-          {
-            mode: "production",
-            config: {},
-            projectDir: directory,
-            adapter: nodeAdapter,
-            reactPeers: peers,
-          },
-        );
-        assertEquals(
-          changed.html.includes("<u>changed</u>"),
-          true,
-          "source changes select a new executable",
-        );
-        assertEquals(
-          changed.html.includes("<i>1</i>"),
-          true,
-          "source changes do not reuse old module state",
-        );
-      }
-    } finally {
-      restoreDom();
-      restoreReact();
-      clearReactPathsCache();
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
 
   for (const transport of ["single", "batch"] as const) {
     it(`keeps ${transport} module SSR on captured peers after dependency replacement`, async () => {

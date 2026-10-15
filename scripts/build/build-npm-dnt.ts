@@ -11,7 +11,6 @@
  *   deno run -A scripts/build-npm-dnt.ts
  */
 
-import { copyNpmRuntimeAssets } from "./npm-runtime-assets.ts";
 import { build, emptyDir } from "#dnt";
 import { finalizeNpmWorkerEntrypoints, NPM_WORKER_ENTRYPOINT } from "./npm-worker-entrypoints.ts";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
@@ -332,8 +331,6 @@ await build({
 
 		// Templates are embedded in a compressed generated module bundled by dnt.
 		// No need to copy template files separately
-
-		await copyNpmRuntimeAssets("./npm");
 
 		// Copy bin wrapper
 		await Deno.mkdir("./npm/bin", { recursive: true });

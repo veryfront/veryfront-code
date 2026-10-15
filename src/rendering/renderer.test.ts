@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { ContextAwareCacheCoordinator } from "./shared/context-aware-cache.ts";
 import {
   assertEquals,
   assertRejects,
@@ -1369,7 +1370,12 @@ describe("Renderer release asset cache isolation", () => {
       signal: requestAbort.signal,
     });
     const requestCacheKey = "/data?filter=recent";
-    const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
+    const cacheKey = (await new ContextAwareCacheCoordinator({ store }).checkCache(
+      "/data",
+      ctx,
+      undefined,
+      requestCacheKey,
+    )).cacheKey;
     store.data.set(cacheKey, {
       result: {
         html: "<html>stale data render</html>",

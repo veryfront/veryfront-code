@@ -96,6 +96,17 @@ describe("Renderer React peer cache", () => {
         });
         assertEquals(cached.html, b.html);
         assertEquals(renders, 2);
+        const otherRoute = await renderer.renderPage("/other", ctx, {
+          reactPeers: second,
+          cacheKey,
+          releaseAssetManifest: null,
+        });
+        assertEquals(otherRoute.html, b.html);
+        assertEquals(
+          renders,
+          cacheKey ? 2 : 3,
+          "explicit aliases share across routes while derived keys remain route-owned",
+        );
         const fresh = await renderer.renderPage("/fresh", ctx, { releaseAssetManifest: null });
         assertEquals(
           fresh.html,
