@@ -197,6 +197,10 @@ jobs:
             tests/integration/observability/project-http-lifecycle.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
