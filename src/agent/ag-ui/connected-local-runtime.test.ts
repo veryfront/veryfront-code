@@ -24,6 +24,7 @@ function fixture(
     studioUrl?: string;
     apiFailure?: { path: string; status: number; detail?: string; invalidJson?: boolean };
     registerFailureOnce?: boolean;
+    registerGate?: Promise<void>;
     completeFailure?: boolean;
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
@@ -47,7 +48,7 @@ function fixture(
       if (options.registerFailureOnce && registrations === 1) {
         return Promise.reject(new Error("registration offline"));
       }
-      return Promise.resolve({ id: "worker" });
+      return Promise.resolve(options.registerGate).then(() => ({ id: "worker" }));
     },
     heartbeatWorker: () => Promise.resolve({}),
     claimRun: (input: { canonicalRunId?: string }) =>
@@ -821,6 +822,53 @@ describe("connected local execution", () => {
     releaseDelayed();
     await assertRejects(() => disposal, Error, "first finalization failed");
     assertEquals(delayedFinished, true);
+  });
+  it("drains in-flight admission and rejects new admissions during disposal", async () => {
+    let release!: () => void;
+    const registerGate = new Promise<void>((resolve) => release = resolve);
+    const f = fixture({ registerGate });
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    };
+    const admission = f.runtime.admit(input);
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = f.runtime.dispose().then(() => disposed = true);
+    await Promise.resolve();
+    assertEquals(disposed, false);
+    release();
+    const run = await admission;
+    await disposal;
+    assertEquals(run.signal.aborted, true);
+    assertEquals(f.completed, ["cancelled"]);
+    await assertRejects(() => f.runtime.admit(input), Error, "closed");
+    assertEquals(f.registeredWorkers.length, 1);
+  });
+  it("cancels upstream when failure finalization also rejects", async () => {
+    const f = fixture({ completeFailure: true });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"error"}\n\n'));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assertRejects(() => new Response(run.wrapStream(body)).text());
+    assertEquals(cancelled, true);
+    assertEquals(body.locked, false);
+    assertEquals(f.completed, ["failed"]);
+    await f.runtime.dispose();
   });
   it("records explicit model errors as failed execution", async () => {
     const f = fixture();
