@@ -1279,6 +1279,30 @@ describe("invoke_agent child request budget", () => {
     assertEquals(model.callCount, 0);
   });
 
+  it("budgets an explicit override the builder clamps down to the model maximum", () => {
+    const model = { provider: "anthropic", modelId: "claude-haiku-4-5" };
+    for (const reasoning of [undefined, { enabled: true, budgetTokens: 4_096 }]) {
+      const input = {
+        model,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        system: "Plan",
+        messages: [{ role: "user", content: "Answer." }],
+        limit: { context: 200_000, output: 64_000 },
+        requestedOutputTokens: 100_000,
+        explicitOutputTokens: true,
+      };
+      const admitted = enforceProviderRequestBudget(input);
+      assertEquals(admitted.maxOutputTokens, 64_000);
+      const wire = buildModelCallContextRequest(model, {
+        ...(reasoning === undefined ? {} : { reasoning }),
+        maxOutputTokens: admitted.maxOutputTokens,
+      });
+      assertEquals(wire?.maxOutputTokens, 64_000);
+      // The clamped wire value still has to fit the window.
+      assertThrows(() => enforceProviderRequestBudget({ ...input, limit: { context: 60_000 } }));
+    }
+  });
+
   it("accounts for Anthropic output clamping at the actual explicit request", () => {
     const model = { provider: "anthropic", modelId: "claude-haiku-4-5" };
     const reasoning = { enabled: true, budgetTokens: 4_096 };

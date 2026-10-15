@@ -192,9 +192,21 @@ function resolveEffectiveBudget(
   const explicitOutput = budget.explicitOutputTokens === true
     ? wireOutputTokens(probe(budget.requestedOutputTokens)?.maxOutputTokens)
     : undefined;
+  // A builder that clamps the explicit request below what was asked sends the
+  // clamped value, so that wire value is the output to reserve and check.
+  if (explicitOutput !== undefined && explicitOutput < budget.requestedOutputTokens) {
+    return {
+      budget: {
+        ...budget,
+        responseFormat,
+        requestedOutputTokens: explicitOutput,
+        additionalOutputTokens: 0,
+      },
+    };
+  }
   const additionalOutputTokens = explicitOutput === undefined
     ? Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional)
-    : Math.max(0, explicitOutput - budget.requestedOutputTokens);
+    : explicitOutput - budget.requestedOutputTokens;
   return {
     budget: {
       ...budget,
