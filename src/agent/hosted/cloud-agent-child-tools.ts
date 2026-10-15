@@ -135,6 +135,13 @@ export type ChildRunContext =
   >
   & {
     clientProfile?: RuntimeClientProfile | null;
+    /**
+     * The project this deployment's locally discovered agents belong to. It is
+     * captured before any `project_reference` switch mutates `projectId`, and
+     * child contexts inherit it, so a same-ID agent in another project never
+     * resolves to this deployment's local definition, tools, or credentials.
+     */
+    deploymentProjectId?: string | null;
   };
 
 /**
@@ -464,7 +471,13 @@ export async function resolveHostedChildAgentExecutionConfig(
   // A locally discovered agent ships with this deployment, so its tools are
   // this deployment's tools. Any other agent is read from the API and never
   // receives them (see `localHostTools`).
-  const isLocallyDiscovered = getProjectAgentRuntime(context).agents.has(childAgentId);
+  // The ID alone is not enough: another project may save an agent with the
+  // same ID, and that agent must be read from the API for the target project.
+  const deploymentProjectId = taskContext.deploymentProjectId === undefined
+    ? taskContext.projectId
+    : taskContext.deploymentProjectId;
+  const isLocallyDiscovered = Boolean(projectId) && projectId === deploymentProjectId &&
+    getProjectAgentRuntime(context).agents.has(childAgentId);
   let agentConfig: HostedProjectAgentDefinition;
   if (isLocallyDiscovered) {
     agentConfig = await resolveAgentConfig(context, childAgentId);
@@ -540,12 +553,27 @@ export async function resolveHostedChildAgentExecutionConfig(
   };
 }
 
+/**
+ * Pins the deployment project identity on a root run context before any
+ * `project_reference` switch can rewrite `projectId`. Child contexts spread
+ * their parent context, so they inherit the pinned value unchanged.
+ */
+function bindHostedDeploymentProjectId(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  runContext: ChildRunContext,
+): void {
+  if (runContext.deploymentProjectId !== undefined) return;
+  runContext.deploymentProjectId = context.infrastructure.getConfig().VERYFRONT_PROJECT_ID ??
+    (runContext.projectId || null);
+}
+
 /** Creates the invoke_agent tool for the given child context. */
 export function createInvokeAgentTool(
   context: NodeVeryfrontCloudAgentServiceContext,
   childContext: ChildRunContext,
   options?: { requireDurable?: boolean },
 ) {
+  bindHostedDeploymentProjectId(context, childContext);
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
     getConfig: () => getInvokeAgentConfig(context),

@@ -499,7 +499,7 @@ it("default hosted invoke resolves and runs configured child against the target 
 function startRuntimeReturning(
   text: string,
   captured: { forkToolNames?: readonly string[]; toolNames?: string[]; started?: boolean },
-  options: { toolResult?: boolean } = {},
+  options: { toolResult?: boolean; toolError?: boolean } = {},
 ): NonNullable<
   DefaultHostedInvokeAgentToolOptions<DefaultHostedInvokeAgentContext>["startRuntime"]
 > {
@@ -527,6 +527,15 @@ function startRuntimeReturning(
               toolName: "create_file",
               input: { path: "notes.md" },
               output: { ok: true },
+            } as const;
+          }
+          if (options.toolError) {
+            yield {
+              type: "tool-error",
+              toolCallId: "write-1",
+              toolName: "create_file",
+              input: { path: "notes.md" },
+              error: new Error("Connection reset after the file was written"),
             } as const;
           }
           if (text) yield { type: "text-delta", text } as const;
@@ -657,6 +666,47 @@ it("default hosted invoke keeps a tool-only child completion successful", async 
 
   assertEquals("success" in result && result.success, true);
   assertEquals("terminalErrorCode" in result ? result.terminalErrorCode : undefined, undefined);
+});
+
+it("default hosted invoke does not report a child whose tool failed as an empty result", async () => {
+  // A side-effecting tool that throws may already have mutated state, so the
+  // parent must not see a retryable CHILD_RESULT_EMPTY and repeat the mutation.
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "Write the notes file.",
+            toolNames: ["create_file"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: parentToolset,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("", {}, { toolError: true }),
+      },
+    }),
+    {
+      description: "write notes",
+      prompt: "Write notes.md.",
+      agent_id: "writer",
+      result_mode: "full",
+    },
+    "writer",
+    { toolCallId: "tool-call-tool-error" },
+  );
+
+  assertEquals(
+    "terminalErrorCode" in result ? result.terminalErrorCode : undefined,
+    undefined,
+  );
+  assertEquals("success" in result && result.success, true);
 });
 
 it("default hosted invoke rejects a model override outside the child's allowed models", async () => {
@@ -992,6 +1042,41 @@ it("executeDefaultHostedInvokeAgentTool returns durable context failure before l
   assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "security-reviewer");
   assertEquals(traceAttributes.at(-1)?.["tool.name"], "invoke_agent");
   assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-1");
+});
+
+it("durable invoke admits the child before resolving its mutable saved definition", async () => {
+  // A retry of a finished child must reach durable admission (and its terminal
+  // replay) even when the saved agent has since been deleted.
+  let resolutions = 0;
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      options: {
+        resolveChildAgentExecutionConfig: () => {
+          resolutions++;
+          return Promise.reject(
+            new HostedChildAgentResolutionError(
+              "CHILD_AGENT_NOT_FOUND",
+              'Agent "deleted-agent" was not found in project "project-123".',
+            ),
+          );
+        },
+      },
+    }),
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      context: {},
+      agent_id: "deleted-agent",
+    },
+    "deleted-agent",
+    { toolCallId: "tool-call-retry" },
+  );
+
+  assertEquals(resolutions, 0);
+  assertEquals(
+    "terminalErrorCode" in result && result.terminalErrorCode,
+    "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
+  );
 });
 
 it("fixed delegates require durable execution even when legacy durable delegation is disabled", async () => {

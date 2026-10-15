@@ -866,39 +866,45 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
       };
     }
     let childConfig: DefaultHostedChildAgentExecutionConfig | undefined;
-    try {
-      childConfig = await options.resolveChildAgentExecutionConfig?.(
-        childAgentId,
-        targetProjectId,
-        { abortSignal },
-      );
-    } catch (error) {
-      // A missing or unreadable target agent is reported to the parent as a
-      // terminal child failure; the child never runs without its definition.
-      if (!(error instanceof HostedChildAgentResolutionError)) throw error;
-      return buildHostedDurableChildInvokeFailureResult({
-        terminalErrorCode: error.code,
-        terminalErrorMessage: error.message,
-      });
-    }
-    if (
-      resolvedInput.model !== undefined &&
-      !isHostedChildModelAllowed(
-        childConfig?.allowedModels,
-        resolvedInput.model,
-        options.resolveModelId,
-      )
-    ) {
-      return buildHostedDurableChildInvokeFailureResult({
-        terminalErrorCode: hostedChildAgentResolutionErrorCodes.modelNotAllowed,
-        terminalErrorMessage:
-          `Agent "${childAgentId}" does not allow model "${resolvedInput.model}". ` +
-          `Allowed models: ${childConfig?.allowedModels?.join(", ")}. No child agent was run.`,
-      });
-    }
+    let forkInput = resolvedInput;
+    // The saved agent definition is mutable: resolve it only when this call
+    // will actually run the child. A durable retry replays its terminal
+    // receipt first, so a since-deleted agent or narrowed model allowlist
+    // cannot turn a finished child into a new failure.
+    const resolveChildExecution = async (): Promise<
+      { terminalErrorCode: string; terminalErrorMessage: string } | null
+    > => {
+      try {
+        childConfig = await options.resolveChildAgentExecutionConfig?.(
+          childAgentId,
+          targetProjectId,
+          { abortSignal },
+        );
+      } catch (error) {
+        // A missing or unreadable target agent is reported to the parent as a
+        // terminal child failure; the child never runs without its definition.
+        if (!(error instanceof HostedChildAgentResolutionError)) throw error;
+        return { terminalErrorCode: error.code, terminalErrorMessage: error.message };
+      }
+      if (
+        resolvedInput.model !== undefined &&
+        !isHostedChildModelAllowed(
+          childConfig?.allowedModels,
+          resolvedInput.model,
+          options.resolveModelId,
+        )
+      ) {
+        return {
+          terminalErrorCode: hostedChildAgentResolutionErrorCodes.modelNotAllowed,
+          terminalErrorMessage:
+            `Agent "${childAgentId}" does not allow model "${resolvedInput.model}". ` +
+            `Allowed models: ${childConfig?.allowedModels?.join(", ")}. No child agent was run.`,
+        };
+      }
+      forkInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
+      return null;
+    };
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-    const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
-    const forkInput = configuredInput;
     const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
       traceBase: {
         conversationId: options.context.conversationId,
@@ -941,6 +947,8 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
     durableInvokeRecorder.annotate();
 
     if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
+      const resolutionFailure = await resolveChildExecution();
+      if (resolutionFailure) return buildHostedDurableChildInvokeFailureResult(resolutionFailure);
       return executeHostedLocalChildInvoke({
         forkInput,
         abortSignal,
@@ -987,6 +995,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
           "invoke_agent requires durable conversation context when durable child runs are enabled.",
         setupFailedCode: DURABLE_INVOKE_SETUP_FAILED,
         executionFailedCode: "INVOKE_AGENT_FAILED",
+        prepareAdmittedExecution: async () => (await resolveChildExecution()) ?? { forkInput },
         executeLocal: executeLocalInvoke,
         getExecutionSnapshot: () => executionSnapshot,
         buildContextUnavailableResult: (message) => {

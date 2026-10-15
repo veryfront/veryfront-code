@@ -275,11 +275,15 @@ export async function finalizeHostedChildForkCompletion(input: {
     return buildChildRunFailureResult(common, errorMessage);
   }
 
-  if (finalText.trim().length === 0 && input.toolResults.length === 0) {
-    // A completion with no text and no tool results carries no answer and no
+  if (
+    finalText.trim().length === 0 && input.toolResults.length === 0 &&
+    input.toolCalls.length === 0
+  ) {
+    // A completion with no text and no tool activity carries no answer and no
     // side effects. Report it explicitly so the parent cannot present an
-    // invented reply as the child's result. A tool-only child (its work is in
-    // its tool results) still succeeds, so its side effects are never retried.
+    // invented reply as the child's result. A child that called any tool,
+    // including one that failed, may have side effects, so it still succeeds
+    // and its work is never retried as a retryable empty result.
     input.writeLog?.(
       buildHostedChildEmptyResultLog({
         description: input.description,
@@ -537,6 +541,13 @@ export async function handleHostedChildForkStreamPart(input: {
     await input.closeDurableMirrorReasoning();
     await input.closeDurableMirrorText();
     shouldSeparateNextTextBlock = finalText.length > 0;
+    // A failed tool call may still have mutated state before it threw, so it
+    // counts as observed work: completion must not report it as empty.
+    appendMissingChildRunToolCalls(input.toolCalls, [{
+      toolName: part.toolName,
+      toolCallId: part.toolCallId,
+      input: snapshotChildTelemetry(summarizeChildRunResultValue(part.input)),
+    }]);
     input.logger?.warn?.("Child fork tool error", {
       conversationId: input.conversationId,
       toolCallId: part.toolCallId,

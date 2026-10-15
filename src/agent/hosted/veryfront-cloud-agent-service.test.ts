@@ -1990,10 +1990,12 @@ Deno.test("hosted child execution config resolves steering against the target pr
       trace: (_name: string, operation: () => unknown) => operation(),
     } as never,
     {
+      // The deployment's own project after the parent switched away and back.
       authToken: "token-1",
-      projectId: "source-project",
-      branchId: "source-branch",
+      projectId: "target-project",
+      branchId: null,
       agentId: "orchestrator",
+      deploymentProjectId: "target-project",
     },
     "extraction-agent",
     "target-project",
@@ -2182,6 +2184,97 @@ Deno.test("hosted child execution config never grants local host tools to an API
   } finally {
     toolRegistryInternal.delete("project_secret_tool");
   }
+});
+
+Deno.test("hosted child execution config reads a same-ID agent in another project from the API", async () => {
+  const lookups: string[] = [];
+  const localAgent = {
+    id: "lifecycle-eval-triage",
+    name: "Local triage",
+    description: "This deployment's own agent",
+    instructions: "LOCAL DEPLOYMENT INSTRUCTIONS",
+    system: "LOCAL DEPLOYMENT INSTRUCTIONS",
+    tools: true,
+  };
+  const config = await withMockFetch(
+    (request) => {
+      const url = new URL(request instanceof Request ? request.url : String(request));
+      lookups.push(url.pathname);
+      return Promise.resolve(Response.json(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown));
+    },
+    () =>
+      veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
+        {
+          options: { mcpServers: [] },
+          infrastructure: { getConfig: () => ({ VERYFRONT_API_URL: "https://api.example.com" }) },
+          discoveryResult: { agents: new Map([["lifecycle-eval-triage", null]]) },
+          agentConfigs: new Map([["lifecycle-eval-triage", localAgent]]),
+          projectSteeringByAgentId: new Map([["lifecycle-eval-triage", {
+            getProjectInstructions: () => Promise.resolve(""),
+            getSkillsConfig: () => Promise.resolve([]),
+          }]]),
+          trace: (_name: string, operation: () => unknown) => operation(),
+        } as never,
+        {
+          // project_reference already switched the parent context to the target.
+          authToken: "token-1",
+          projectId: "target-project",
+          branchId: null,
+          agentId: "veryfront",
+          deploymentProjectId: "deployment-project",
+        },
+        "lifecycle-eval-triage",
+        "target-project",
+      ),
+  );
+
+  assertEquals(lookups, ["/projects/target-project/agents/lifecycle-eval-triage"]);
+  assert(config);
+  assertEquals(config.localHostTools, undefined);
+  assertEquals(config.toolNames, []);
+  assert(!systemIncludes(config.system, "LOCAL DEPLOYMENT INSTRUCTIONS"));
+});
+
+Deno.test("hosted invoke_agent pins the deployment project before a project switch", () => {
+  const context = {
+    options: {},
+    infrastructure: { getConfig: () => ({ VERYFRONT_API_URL: "https://api.example.com" }) },
+  } as never;
+  const taskContext: Parameters<typeof createInvokeAgentTool>[1] = {
+    authToken: "token-1",
+    projectId: "deployment-project",
+    branchId: null,
+    agentId: "veryfront",
+  };
+  createInvokeAgentTool(context, taskContext);
+  taskContext.projectId = "target-project";
+  createInvokeAgentTool(context, taskContext);
+  assertEquals(taskContext.deploymentProjectId, "deployment-project");
+
+  const childContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    taskContext,
+    "child-agent",
+    undefined,
+  );
+  assertEquals(childContext.projectId, "target-project");
+  assertEquals(childContext.deploymentProjectId, "deployment-project");
+
+  const configured: Parameters<typeof createInvokeAgentTool>[1] = {
+    authToken: "token-1",
+    projectId: "request-project",
+    branchId: null,
+    agentId: "veryfront",
+  };
+  createInvokeAgentTool({
+    options: {},
+    infrastructure: {
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.com",
+        VERYFRONT_PROJECT_ID: "configured-project",
+      }),
+    },
+  } as never, configured);
+  assertEquals(configured.deploymentProjectId, "configured-project");
 });
 
 Deno.test("hosted child execution config fails closed for an environment-target lookup", async () => {
