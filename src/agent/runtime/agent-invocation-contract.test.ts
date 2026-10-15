@@ -902,6 +902,14 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.success, false);
   });
 
+  it("forces eager tool loading for a deny-all agent", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search"], toolLoading: "deferred" }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(parsed.agentConfig?.toolLoading, "eager");
+  });
+
   it("disables the tool-result reader for a deny-all agent", () => {
     const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
       agentConfig: denyAllConfig({

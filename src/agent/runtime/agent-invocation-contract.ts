@@ -753,6 +753,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // The tool-result context appends the framework `get_tool_result` reader
   // after the allowlists apply, which would re-grant a callable host tool.
   defineOwnData(normalizedAgentConfig, "toolResultContext", false);
+  // Deferred loading synthesizes a callable `tool_search` host tool for any
+  // deferred provider tool after the allowlists apply; force eager loading.
+  defineOwnData(normalizedAgentConfig, "toolLoading", "eager");
   defineOwnData(normalized, "agentConfig", normalizedAgentConfig);
 
   // Deny-all exposes no caller-injected tools either. A malformed value is
