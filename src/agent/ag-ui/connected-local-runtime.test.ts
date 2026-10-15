@@ -19,6 +19,7 @@ function fixture(
     claimNull?: boolean;
     requireExactClaim?: boolean;
     appendGate?: Promise<void>;
+    appendDelayMs?: number;
     appendFailure?: boolean;
     renewOutcome?: "missing" | "error";
     renew?: () => Promise<unknown>;
@@ -98,6 +99,9 @@ function fixture(
     append: async (events, sequence) => {
       markAppendStarted();
       await options.appendGate;
+      if (options.appendDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.appendDelayMs));
+      }
       if (options.appendFailure) throw new Error("event append failed");
       sequences.push(sequence);
       batches.push(events);
@@ -405,7 +409,7 @@ describe("connected local execution", () => {
     );
     await f.runtime.dispose();
   });
-  it("admits the selected project/environment and persists before forwarding output", async () => {
+  it("admits the selected project/environment and persists before completing output", async () => {
     const f = fixture();
     const run = await f.runtime.admit({
       agentId: "assistant",
@@ -548,7 +552,6 @@ describe("connected local execution", () => {
       new ReadableStream({
         start(c) {
           c.enqueue(new TextEncoder().encode('data: {"type":"text-delta","delta":"hello"}\n\n'));
-          c.close();
         },
       }),
     );
@@ -783,7 +786,44 @@ describe("connected local execution", () => {
     );
     assertEquals(f.logs.some((line) => line.includes("Could not cancel local run run-1")), true);
   });
-  it("fails persistence before forwarding output and releases active execution", async () => {
+  it("batches deltas without waiting for each Cloud append and drains before completion", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => release = resolve);
+    const f = fixture({ appendGate: gate, appendDelayMs: 10 });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (let i = 0; i < 100; i++) {
+          c.enqueue(new TextEncoder().encode('data: {"type":"text-delta","delta":"x"}\n\n'));
+        }
+        c.enqueue(new TextEncoder().encode('data: {"type":"message-finish"}\n\n'));
+        c.close();
+      },
+    });
+    const reader = run.wrapStream(body).getReader();
+    const first = reader.read();
+    let timeout!: ReturnType<typeof setTimeout>;
+    const forwarded = await Promise.race([
+      first.then(() => true),
+      new Promise<boolean>((resolve) => timeout = setTimeout(() => resolve(false), 100)),
+    ]);
+    clearTimeout(timeout);
+    assertEquals(f.completed, []);
+    release();
+    await first;
+    while (!(await reader.read()).done) { /* drain */ }
+    assertEquals(forwarded, true);
+    assertEquals(f.batches.length < 10, true);
+    assertEquals(f.batches.every((batch) => batch.length <= 64), true);
+    assertEquals(f.completed, ["completed"]);
+    await f.runtime.dispose();
+  });
+  it("fails persistence before completing output and releases active execution", async () => {
     const f = fixture({ appendFailure: true });
     const run = await f.runtime.admit({
       agentId: "assistant",
