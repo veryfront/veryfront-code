@@ -11,6 +11,7 @@ import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
   readVeryfrontApiResponse,
+  successfulResponseProtocolError,
   type TransportRequestInit,
   type VeryfrontApiTransport,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
@@ -219,7 +220,17 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
       onResponse: async (response, responseInit, url, signal) => {
         if (response.ok) headers = response.headers;
         const route = routeOf(operationId);
-        if (response.ok && (route.stream || route.binary)) return response;
+        if (response.ok && route.stream) return response;
+        // Read the artifact here, under the attempt's timeout, abort signal and retry policy.
+        if (response.ok && route.binary) {
+          return await readBlob(
+            response,
+            responseInit.maxResponseBytes ?? options.maxResponseBytes ??
+              DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+            url,
+            signal,
+          );
+        }
         try {
           return await readVeryfrontApiResponse(response, responseInit, url, signal);
         } catch (error) {
@@ -295,11 +306,7 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
   }
 
   const readRunArtifact = async (input: RunsArtifactInput, options: RunsCallOptions = {}) =>
-    await readBlob(
-      await send("readRunArtifact", input, options) as Response,
-      options.maxResponseBytes ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
-      options.signal,
-    );
+    await send("readRunArtifact", input, options) as Blob;
 
   const methods: Record<string, unknown> = { paginate, readRunArtifact };
   for (const [operationId, route] of Object.entries(RUNS_OPERATIONS)) {
@@ -364,14 +371,21 @@ function buildRequest(
   };
 }
 
-/** Read a binary success body into a `Blob`, failing closed once it exceeds `limit` bytes. */
-async function readBlob(response: Response, limit: number, signal?: AbortSignal): Promise<Blob> {
+/**
+ * Read a binary success body into a `Blob`, failing closed once it exceeds `limit` bytes.
+ * An abort of `signal` (attempt timeout or caller) cancels a pending read and rejects.
+ */
+async function readBlob(
+  response: Response,
+  limit: number,
+  url: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
   const tooLarge = () =>
-    API_CLIENT_ERROR.create({
-      detail: `readRunArtifact returned an artifact over ${limit} bytes`,
-      status: 502,
-      context: { operationId: "readRunArtifact" },
-    });
+    successfulResponseProtocolError(
+      `readRunArtifact returned an artifact over ${limit} bytes`,
+      url,
+    );
   const declared = response.headers.get("content-length");
   if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) {
     void response.body?.cancel().catch(() => {});
@@ -379,13 +393,17 @@ async function readBlob(response: Response, limit: number, signal?: AbortSignal)
   }
   const type = response.headers.get("content-type") ?? "";
   if (!response.body) return new Blob([], { type });
+  signal?.throwIfAborted();
   const reader = response.body.getReader();
+  // Cancelling the reader settles a pending read, which then rethrows the abort reason.
+  const cancelOnAbort = () => void reader.cancel(signal?.reason).catch(() => {});
+  signal?.addEventListener("abort", cancelOnAbort, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     while (true) {
-      signal?.throwIfAborted();
       const { done, value } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
       size += value.byteLength;
       if (size > limit) throw tooLarge();
@@ -394,6 +412,8 @@ async function readBlob(response: Response, limit: number, signal?: AbortSignal)
   } catch (error) {
     void reader.cancel().catch(() => {});
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancelOnAbort);
   }
   return new Blob(chunks as BlobPart[], { type });
 }

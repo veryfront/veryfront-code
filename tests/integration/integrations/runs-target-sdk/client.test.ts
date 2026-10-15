@@ -21,6 +21,8 @@ import {
   RUNS_OPERATION_FIXTURES,
 } from "#veryfront/runs/target/client.test-helpers.ts";
 import { RUNS_OPERATIONS } from "#veryfront/runs/target/operations.ts";
+import { createCanonicalVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 type Schemas = components["schemas"];
 type Expect<T extends true> = T;
@@ -139,6 +141,50 @@ function streamResponse(chunks: string[]): Response {
     },
   });
   return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+/** An SDK over a canonical transport that retries `maxRetries` times with a per-attempt timeout. */
+function retryingSdkWith(responses: Response[], maxRetries: number, timeoutMs: number) {
+  const queue = [...responses];
+  let requests = 0;
+  const canonical = createCanonicalVeryfrontApiTransport(BASE_URL, () => "user-token", {
+    maxRetries,
+    initialDelay: 0,
+    maxDelay: 0,
+  });
+  const sdk = createRunsSdk({
+    transport: {
+      request: (path, init) =>
+        withMockFetch(() => {
+          requests++;
+          const response = queue.shift();
+          return response ? Promise.resolve(response) : Promise.reject(new Error("no response"));
+        }, () => canonical.request(path, { ...init, timeoutMs })),
+    },
+  });
+  return { sdk, requests: () => requests };
+}
+
+/** A body that sends `bytes` and then neither closes nor errors. */
+function stalledBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+    },
+  });
+}
+
+/** Rejects with "hung" when `promise` has not settled within `ms`, so a hang fails the test. */
+async function settlesWithin<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("hung")), ms);
+  });
+  try {
+    return await Promise.race([promise, hung]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 describe("Runs target SDK", () => {
@@ -615,6 +661,66 @@ describe("Runs target SDK", () => {
     assertEquals(streamed.status, 502);
     const declared = await rejection(() => sdk.readRunArtifact(input, { maxResponseBytes: 6 }));
     assertEquals(declared.status, 502);
+  });
+
+  it("times out a run artifact body that stalls after the headers", async () => {
+    const { sdk, requests } = retryingSdkWith(
+      [new Response(stalledBody(new Uint8Array([1, 2])))],
+      0,
+      20,
+    );
+    const error = await settlesWithin(
+      rejection(() => sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "slow" } })),
+      2_000,
+    );
+    assert(error instanceof VeryfrontError);
+    assertEquals(requests(), 1);
+  });
+
+  it("rejects a pending run artifact read when the caller aborts", async () => {
+    const { sdk } = retryingSdkWith([new Response(stalledBody(new Uint8Array([1])))], 0, 60_000);
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+    const download = sdk.readRunArtifact(
+      { path: { run_id: RUN_ID, artifact_id: "slow" } },
+      { signal: controller.signal },
+    );
+    setTimeout(() => controller.abort(reason), 10);
+    const error = await settlesWithin(download.then(() => undefined, (e: unknown) => e), 2_000);
+    assertEquals(error, reason);
+  });
+
+  it("retries a run artifact whose body fails mid-download", async () => {
+    const bytes = new Uint8Array([7, 8, 9]);
+    const broken = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([7]));
+        controller.error(new TypeError("connection reset"));
+      },
+    });
+    const { sdk, requests } = retryingSdkWith(
+      [new Response(broken), new Response(bytes)],
+      1,
+      60_000,
+    );
+    const blob = await sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "a" } });
+    assertEquals(new Uint8Array(await blob.arrayBuffer()), bytes);
+    assertEquals(requests(), 2);
+  });
+
+  it("does not retry a run artifact over maxResponseBytes", async () => {
+    const { sdk, requests } = retryingSdkWith(
+      [new Response("abcdefgh"), new Response("abcdefgh")],
+      1,
+      60_000,
+    );
+    const error = await rejection(() =>
+      sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "big" } }, {
+        maxResponseBytes: 6,
+      })
+    );
+    assertEquals(error.status, 502);
+    assertEquals(requests(), 1);
   });
 
   it("rejects a run artifact call that is missing artifact_id before sending it", async () => {

@@ -505,7 +505,11 @@ function snapshotBoundedJsonFieldOptions(
   return Object.freeze({ fieldName, maximumBytes });
 }
 
-function successfulResponseProtocolError(
+/**
+ * A 502 error for a successful response whose body breaks the protocol (for example over
+ * its byte limit). The transport never retries it: a retry would download the same body.
+ */
+export function successfulResponseProtocolError(
   detail: string,
   url: string,
   cause?: unknown,
