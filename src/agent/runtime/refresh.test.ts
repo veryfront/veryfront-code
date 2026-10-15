@@ -826,9 +826,9 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(model.toolNames(0).includes("create_agent"), true);
     assertEquals(model.toolNames(0).includes("web_search"), true);
     assertEquals(model.toolNames(0).includes("web_fetch"), true);
-    assertEquals(model.toolNames(1), ["load_skill", "veryfront__load_skill"]);
+    assertEquals(model.toolNames(1), ["veryfront__load_skill"]);
     assertEquals(model.systemPrompts()[1]?.includes("- create_agent"), false);
-    assertEquals(model.systemPrompts()[1]?.includes("- load_skill"), true);
+    assertEquals(model.systemPrompts()[1]?.includes("- veryfront__load_skill"), true);
     assertEquals(executionCount, 1);
     assertEquals(response.toolCalls[1]?.status, "error");
     assertEquals(
@@ -967,7 +967,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
+    assertEquals(toolNamesByStep[1], ["veryfront__load_skill"]);
     assertEquals(executionCount, 1);
   });
 
@@ -1123,7 +1123,7 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill", "veryfront__load_skill"]);
+      assertEquals(toolNamesByStep[1], ["create_schedule", "veryfront__load_skill"]);
       assertEquals(toolNamesByStep.length, 3);
       assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
     });
@@ -1581,7 +1581,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
+    assertEquals(toolNamesByStep[1], ["veryfront__load_skill"]);
   });
 
   it("notifies configured hooks after stream() executes a tool", async () => {
@@ -4830,14 +4830,12 @@ describe("agent runtime refresh hooks", () => {
     const expectedToolNames = [
       [
         "load_skill",
-        "load_skill_reference",
         "read_secret",
         "veryfront__load_skill",
         "veryfront__load_skill_reference",
       ],
       [
         "load_skill",
-        "load_skill_reference",
         "read_secret",
         "veryfront__load_skill",
         "veryfront__load_skill_reference",

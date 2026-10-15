@@ -1,6 +1,7 @@
 import { PERMISSION_DENIED } from "#veryfront/errors/index.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import {
   hasAdaptedPlatformSource,
@@ -68,13 +69,14 @@ export function withPlatformMcpPolicyAliases(
 
 /** Expand platform tool selectors to their accepted bare and canonical spellings. */
 export function withPlatformMcpToolNameAliases(names: readonly string[]): string[] {
-  const expanded = createPrivateSet(names);
-  for (const name of names) {
+  const expanded = createPrivateSet<string>();
+  forEachPrivateArray(names, (name) => {
+    expanded.add(name);
     const legacyName = platformMcpLegacyName(name);
-    if (!legacyName || legacyName.includes("__")) continue;
+    if (!legacyName || legacyName.includes("__")) return;
     expanded.add(legacyName);
     expanded.add(`veryfront__${legacyName}`);
-  }
+  });
   return [...expanded];
 }
 

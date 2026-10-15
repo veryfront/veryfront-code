@@ -2538,11 +2538,11 @@ Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill b
 
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/ROUTES.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call veryfront__load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
   assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
     error:
-      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
+      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call veryfront__load_skill with {"load":{"skillId":"veryfront"}} first, then request one of the listed reference files.',
   });
 });
 
@@ -2607,7 +2607,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
   assertEquals(
@@ -2617,7 +2617,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
 });
@@ -2677,7 +2677,7 @@ Deno.test("createRuntimeLoadSkillTool authorizes cold reference reads from provi
     ),
     {
       error:
-        'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+        'Skill "research" must be loaded before reference file "resources/schema.json". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
     },
   );
 
@@ -2749,7 +2749,7 @@ Deno.test("createRuntimeLoadSkillTool rejects cold observed refs for wrong body,
   const untrusted = {};
   assertEquals(await create().execute(readResearch, untrusted), {
     error:
-      'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+      'Skill "research" must be loaded before reference file "resources/schema.json". Call veryfront__load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
   });
 
   const observed = {};
@@ -3166,6 +3166,20 @@ it("createRuntimeLoadSkillTool pages authorized IDs for standalone consumers", a
   });
 });
 
+it("createRuntimeLoadSkillTool names the canonical loader when inventory is unavailable", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(await tool.execute({}), {
+    error:
+      "The authorized skill inventory is unavailable. Call veryfront__load_skill with a known skillId.",
+  });
+});
+
 it("createRuntimeLoadSkillTool accepts provider-safe inventory and load requests", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({ availableSkillIds: ["plan"] }),
@@ -3270,11 +3284,12 @@ it("createRuntimeLoadSkillTool continues after the IDs embedded in the prompt", 
     instructions: `Instructions for ${id}`,
   }));
   const prompt = buildRuntimeAvailableSkillsPromptBlock(skills);
-  const cursorMatch = /load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(prompt);
+  const embeddedSkillIds = new Set(prompt.match(/skill-\d{8}/g) ?? []);
 
-  assertEquals(cursorMatch !== null, true);
-  if (cursorMatch === null) return;
-  const cursor = Number(cursorMatch[1]);
+  assertEquals(prompt.includes("Call load_skill("), false);
+  assertEquals(embeddedSkillIds.size > 0, true);
+  assertEquals(embeddedSkillIds.size < availableSkillIds.length, true);
+  const cursor = embeddedSkillIds.size;
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({ availableSkillIds }),
     skillsDir: "/skills",

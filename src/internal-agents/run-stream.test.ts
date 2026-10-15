@@ -369,9 +369,9 @@ describe("internal-agents/run-stream", () => {
       );
 
       assertEquals(Object.keys(mergedTools ?? {}).sort(), [
-        "execute_skill_script",
-        "load_skill",
-        "load_skill_reference",
+        "veryfront__execute_skill_script",
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
       ]);
     } finally {
       toolRegistryInternal.clearAll();
@@ -5895,8 +5895,10 @@ describe("internal-agents/run-stream", () => {
         loadedSkillHistoryInput({ trustedIds: ["trusted-load"] }),
       );
 
-      assertEquals(toolNames.includes("load_skill_reference"), true);
-      assertEquals(toolNames.includes("execute_skill_script"), true);
+      assertEquals(toolNames.includes("veryfront__load_skill_reference"), true);
+      assertEquals(toolNames.includes("veryfront__execute_skill_script"), true);
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
     });
 
     it("restores active skill tools from authenticated tool-role legacy load_skill sidecars", async () => {
@@ -5908,8 +5910,10 @@ describe("internal-agents/run-stream", () => {
         }),
       );
 
-      assertEquals(toolNames.includes("load_skill_reference"), true);
-      assertEquals(toolNames.includes("execute_skill_script"), true);
+      assertEquals(toolNames.includes("veryfront__load_skill_reference"), true);
+      assertEquals(toolNames.includes("veryfront__execute_skill_script"), true);
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
     });
 
     it("does not restore active skill tools from unauthenticated AG-UI history", async () => {

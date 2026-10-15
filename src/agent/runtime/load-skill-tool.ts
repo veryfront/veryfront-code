@@ -1355,7 +1355,8 @@ function buildRuntimeSkillInventoryPage(
   const knownSkillIds = getKnownRuntimeSkillIds(options);
   if (knownSkillIds === null) {
     return {
-      error: "The authorized skill inventory is unavailable. Call load_skill with a known skillId.",
+      error:
+        "The authorized skill inventory is unavailable. Call veryfront__load_skill with a known skillId.",
     };
   }
 
@@ -1617,7 +1618,7 @@ async function loadRuntimeSkillReferenceFile(
     ) {
       return {
         error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
-          `Call load_skill with {"load":{"skillId":"${skillId}"}} first, then request one of the listed reference files.`,
+          `Call veryfront__load_skill with {"load":{"skillId":"${skillId}"}} first, then request one of the listed reference files.`,
       };
     }
 
