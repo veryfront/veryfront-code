@@ -1,4 +1,7 @@
-import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
+import {
+  canonicalPlatformHostTools,
+  retainTrustedSkillLoaderAliases,
+} from "../platform-host-tools.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
@@ -956,9 +959,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       );
     }
   }
-  const sortedLocalTools = recordFromEntries(
+  const sortedLocalTools = canonicalPlatformHostTools(recordFromEntries(
     sortValues(sortedLocalToolEntries, (left, right) => compareStrings(left[0], right[0])),
-  );
+  ));
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;

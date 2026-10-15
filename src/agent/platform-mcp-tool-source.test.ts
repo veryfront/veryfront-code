@@ -1,6 +1,6 @@
 import { inheritTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { createMcpToolPolicyGate } from "./mcp-tool-policy.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLivePlatformMcpSource,
@@ -26,9 +26,8 @@ describe("platform MCP catalog aliases", () => {
       },
     });
     assertEquals((await source.listTools()).map(({ name }) => name), [
-      "get_file",
-      "github__delete_repo",
       "veryfront__get_file",
+      "github__delete_repo",
     ]);
     assertEquals(
       platformMcpLegacyName("veryfront__github__delete_repo"),
@@ -55,7 +54,7 @@ describe("platform MCP catalog aliases", () => {
         return {};
       },
     }, definitions);
-    assertEquals(catalog.definitions, definitions);
+    assertEquals(catalog.definitions, [definitions[1]]);
     await catalog.source.executeTool("veryfront__get_file", {});
     assertEquals(calls, ["veryfront__get_file"]);
   });
@@ -91,11 +90,10 @@ it("live platform catalogs preserve existing canonical dispatch", async () => {
   });
   assertEquals((await source.listTools()).map(({ name }) => name), [
     "veryfront__get_file",
-    "get_file",
   ]);
   await source.executeTool("veryfront__get_file", {});
-  await source.executeTool("get_file", {});
-  assertEquals(calls, ["veryfront__get_file", "veryfront__get_file"]);
+  await assertRejects(() => source.executeTool("get_file", {}));
+  assertEquals(calls, ["veryfront__get_file"]);
 });
 
 it("live platform execution resolves undiscovered aliases without repeating known discovery", async () => {

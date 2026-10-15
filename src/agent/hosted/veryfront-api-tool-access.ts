@@ -255,7 +255,7 @@ export async function fetchVeryfrontApiToolAccessProfile(input: {
   context?: ToolExecutionContext;
 }): Promise<VeryfrontApiToolAccessProfile | null> {
   const rawProfile = await input.source.executeTool(
-    TOOL_ACCESS_PROFILE_TOOL_NAME,
+    `veryfront__${TOOL_ACCESS_PROFILE_TOOL_NAME}`,
     { project_reference: input.projectId },
     input.context,
   );

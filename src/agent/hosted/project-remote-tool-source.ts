@@ -218,7 +218,11 @@ export function createHostedProjectRemoteToolSource(
   };
   objectSetPrototypeOf(catalogOptions, null);
   const toolCatalog = createProjectScopedRemoteToolCatalog(catalogOptions);
-  const retryToolName = input.retryToolName ?? "update_file";
+  const configuredRetryToolName = input.retryToolName ?? "update_file";
+  const retryToolName =
+    hasTrustedPlatformSource(input.source) && !configuredRetryToolName.includes("__")
+      ? `veryfront__${configuredRetryToolName}`
+      : configuredRetryToolName;
 
   function normalizeProjectToolInput(
     toolName: string,
@@ -422,7 +426,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
   if (server.kind === "veryfront-api") markTrustedPlatformSource(source);
-  const isPlatform = server.kind === "veryfront-api";
+  const isPlatform = server.kind === "veryfront-api" || server.kind === "veryfront-studio";
   const wireSource = isPlatform ? createLivePlatformMcpSource(source) : source;
   const policySource = createHostedMcpToolPolicySource(
     wireSource,

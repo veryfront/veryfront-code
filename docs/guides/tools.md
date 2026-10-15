@@ -56,10 +56,9 @@ export default agent({
 });
 ```
 
-Existing noncolliding platform selectors such as `get_file` remain supported.
+Use canonical platform selectors such as `veryfront__get_file`.
 Integration tools retain names such as `github__list_repos`. Project tool IDs
-cannot use the reserved double-underscore namespace. Platform aliases retain
-the same project scope and policy restrictions as their legacy names.
+cannot use the reserved double-underscore namespace. Platform tools retain their project scope and policy restrictions.
 
 Connector allowlists do not remove trusted platform capabilities. That exception
 requires host-owned provenance; a remote source cannot claim it with a tool name
@@ -72,10 +71,11 @@ Reserved platform names resolve only through trusted sources, regardless of
 custom server ordering. Hosted discovery applies connector policy to the same
 catalog snapshot it lists, without fetching each catalog a second time.
 
-Parent, child, hosted-project, and standalone API sources derive canonical aliases
-from the authenticated legacy catalog. API MCP allow/deny entries apply to both
-spellings; a run's tool-name ceiling still grants only its exact selected names.
-Canonical calls use the legacy wire name after project and access checks.
+Parent, child, hosted-project, and standalone API sources publish only canonical
+`veryfront__` names from the authenticated catalog. Bare transport names are
+normalized internally and do not create duplicate tool definitions. Internal
+policy checks recognize both spellings; an explicit tool-name ceiling remains
+restrictive. Host-provided platform tools also publish one canonical identity.
 
 Runtime
 dispatch reuses the source selected during authorization for that call.

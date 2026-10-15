@@ -1,3 +1,4 @@
+import { PERMISSION_DENIED } from "#veryfront/errors/index.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -17,15 +18,19 @@ export function createPlatformMcpCatalogSource(
   aliases: ReadonlyMap<string, string>;
 } {
   const aliases = createPrivateMap<string, string>();
-  const catalog = [...definitions];
-  const names = createPrivateSet(definitions.map((definition) => definition.name));
+  const catalog: ToolDefinition[] = [];
+  const names = createPrivateSet<string>();
+  // Prefer an explicitly published canonical definition over a bare wire name.
+  const canonicalNames = createPrivateSet(definitions.map(({ name }) => name));
   for (const definition of definitions) {
-    const legacyName = platformMcpLegacyName(definition.name);
-    if (legacyName.includes("__")) continue;
-    const alias = definition.name === legacyName ? `veryfront__${legacyName}` : legacyName;
-    if (names.has(alias)) continue;
-    aliases.set(alias, definition.name);
-    catalog.push({ ...definition, name: alias });
+    if (!definition.name.includes("__") && canonicalNames.has(`veryfront__${definition.name}`)) {
+      continue;
+    }
+    const name = definition.name.includes("__") ? definition.name : `veryfront__${definition.name}`;
+    if (names.has(name)) continue;
+    names.add(name);
+    if (name !== definition.name) aliases.set(name, definition.name);
+    catalog.push({ ...definition, name });
   }
   return {
     definitions: catalog,
@@ -33,8 +38,14 @@ export function createPlatformMcpCatalogSource(
     source: markAdaptedPlatformSource({
       id: source.id,
       listTools: async () => [...catalog],
-      executeTool: (name, args, context) =>
-        source.executeTool(aliases.get(name) ?? name, args, context),
+      executeTool: (name, args, context) => {
+        if (!names.has(name)) {
+          throw PERMISSION_DENIED.create({
+            detail: `Tool "${name}" is not in the platform catalog`,
+          });
+        }
+        return source.executeTool(aliases.get(name) ?? name, args, context);
+      },
     }),
   };
 }
@@ -92,7 +103,11 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     listTools,
     executeTool: async (name, args, context) => {
       if (!wireNames.has(name)) await listTools(context);
-      return source.executeTool(wireNames.get(name) ?? name, args, context);
+      const wireName = wireNames.get(name);
+      if (!wireName && !name.includes("__")) {
+        throw PERMISSION_DENIED.create({ detail: `Tool "${name}" is not in the platform catalog` });
+      }
+      return source.executeTool(wireName ?? name, args, context);
     },
   });
 }

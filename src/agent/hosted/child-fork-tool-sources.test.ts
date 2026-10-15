@@ -174,7 +174,6 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(Object.keys(result.forkTools), [
     "sleep",
     "studio_open_project",
-    "update_file",
     "veryfront__update_file",
   ]);
   assertEquals(
@@ -202,7 +201,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",
-      toolName: "get_tool_access_profile",
+      toolName: "veryfront__get_tool_access_profile",
       args: { project_reference: "project-1" },
       context: undefined,
     },
@@ -227,7 +226,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with t
         remoteTool("update_file"),
       ]),
     executeTool: (toolName, args) => {
-      if (toolName === "get_tool_access_profile") {
+      if (toolName === "veryfront__get_tool_access_profile") {
         return Promise.resolve({
           version: 1,
           freshness: {
@@ -271,8 +270,6 @@ Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with t
   }
 
   assertEquals(Object.keys(result.forkTools), [
-    "delete_server",
-    "update_file",
     "veryfront__delete_server",
     "veryfront__update_file",
   ]);
@@ -317,19 +314,18 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy
     return;
   }
 
-  assertEquals(listedDefinitions, ["update_file", "veryfront__update_file"]);
+  assertEquals(listedDefinitions, ["veryfront__update_file"]);
   assertEquals(Object.keys(result.forkTools), [
     "delete_file",
-    "update_file",
     "veryfront__update_file",
   ]);
-  await result.forkTools.update_file?.execute?.({});
+  await result.forkTools.veryfront__update_file?.execute?.({});
   await assertRejects(
     async () => await result.forkTools.delete_file!.execute!({}),
     Error,
     'Tool "delete_file" is not allowed for this MCP server',
   );
-  assertEquals(executed, ["get_tool_access_profile", "update_file"]);
+  assertEquals(executed, ["veryfront__get_tool_access_profile", "update_file"]);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources enforces generic MCP tool policy at listing and execution", async () => {
@@ -632,7 +628,6 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
     "bash",
     "sleep",
     "studio_open_project",
-    "update_file",
     "veryfront__bash",
     "veryfront__update_file",
   ]);
@@ -834,7 +829,7 @@ Deno.test("child canonical platform tools preserve wire names, denials, and proj
     assertEquals(Object.keys(result.forkTools), ["get_file", "veryfront__get_file"]);
     assertEquals(await result.forkTools.get_file!.execute!({}), { owner: "project" });
     assertEquals(await result.forkTools.veryfront__get_file!.execute!({}), { owner: "platform" });
-    assertEquals(executed, ["get_tool_access_profile", "get_file"]);
+    assertEquals(executed, ["veryfront__get_tool_access_profile", "get_file"]);
   }
 });
 

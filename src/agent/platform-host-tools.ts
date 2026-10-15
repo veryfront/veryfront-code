@@ -165,3 +165,29 @@ export function retainTrustedSkillLoaderAliases(input: {
   }
   return tools;
 }
+
+/** Publish one canonical identity for each authorized platform host operation. */
+export function canonicalPlatformHostTools(input: HostToolSet): HostToolSet {
+  const tools = objectCreate(null) as HostToolSet;
+  for (const name of ownKeys(input)) {
+    const definition = ownDataValue(input, name);
+    if (definition === undefined) continue;
+    if (!hasTrustedHostToolProvenance(definition)) {
+      defineData(tools, name, definition);
+      continue;
+    }
+    const canonicalName = hasPlatformNamespace(name) ? name : `veryfront__${name}`;
+    const explicit = ownDataValue(input, canonicalName);
+    const selected = explicit !== undefined && hasTrustedHostToolProvenance(explicit)
+      ? explicit
+      : definition;
+    defineData(
+      tools,
+      canonicalName,
+      markTrustedHostToolProvenance(
+        cloneHostToolDefinitionWithId(selected, canonicalName),
+      ),
+    );
+  }
+  return tools;
+}
