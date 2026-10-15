@@ -27,6 +27,7 @@ function fixture(
     completeFailure?: boolean;
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
+    workerDisplayName?: string;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -37,9 +38,11 @@ function fixture(
   const batches: unknown[][] = [];
   let id = 0;
   let registrations = 0;
+  const registeredWorkers: Record<string, unknown>[] = [];
   const sequences: number[] = [];
   const client = {
-    registerWorker: () => {
+    registerWorker: (input: Record<string, unknown>) => {
+      registeredWorkers.push(input);
       registrations++;
       if (options.registerFailureOnce && registrations === 1) {
         return Promise.reject(new Error("registration offline"));
@@ -83,6 +86,7 @@ function fixture(
     apiToken: "private",
     projectId: "project",
     projectSlug: "sample",
+    workerDisplayName: options.workerDisplayName,
     environmentId: "env",
     studioUrl: options.studioUrl ?? "http://localhost:3440",
   }, {
@@ -125,11 +129,25 @@ function fixture(
     sequences,
     logs,
     registrations: () => registrations,
+    registeredWorkers,
     appendStarted,
   };
 }
 
 describe("connected local execution", () => {
+  it("registers the configured worker name without changing its implementation or unique key", async () => {
+    const f = fixture({ workerDisplayName: "Kentaro laptop" });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    assertEquals(f.registeredWorkers[0]!.displayName, "Kentaro laptop");
+    assertEquals(f.registeredWorkers[0]!.implementationKind, "veryfront-local");
+    assertEquals(typeof f.registeredWorkers[0]!.workerKey, "string");
+    await run.finish("completed");
+  });
   it("logs the actual model when a model call is recorded", async () => {
     const f = fixture();
     const run = await f.runtime.admit({

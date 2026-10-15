@@ -37,6 +37,7 @@ import { advertisesCloudGateway, listInferenceOptions } from "./inference-status
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
+import { captureLocalWorkerName } from "./worker-name.ts";
 import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
 import { connectedDevApiBaseUrl, prepareConnectedDev, stopDevServices } from "./connected-dev.ts";
 import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
@@ -253,6 +254,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       } = options;
 
       const displayOptions = captureDevDisplayOptions();
+      const workerDisplayName = captureLocalWorkerName();
       captureHostApiEnvironment();
       trustOperatorConfiguredVeryfrontApiOrigins();
 
@@ -352,6 +354,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         connectedTarget && runtimeAuth.apiToken && runtimeAuth.apiBaseUrl
           ? installConnectedLocalRuntime({
             ...connectedTarget,
+            workerDisplayName,
             apiToken: runtimeAuth.apiToken,
             apiBaseUrl: runtimeAuth.apiBaseUrl,
             studioUrl: displayOptions.studioUrl ??

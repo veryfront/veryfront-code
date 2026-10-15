@@ -42,6 +42,7 @@ export interface ConnectedLocalRuntimeOptions {
   environmentId?: string;
   environmentName?: string;
   studioUrl: string;
+  workerDisplayName?: string;
 }
 
 /** @internal Safe setup errors returned to the local app and terminal. */
@@ -172,7 +173,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         implementationKind: "veryfront-local",
         implementationDisplayName: "Veryfront local",
         workerKey,
-        displayName: "Local development",
+        displayName: options.workerDisplayName ?? "Local development",
       }).catch((error) => {
         worker = undefined;
         throw error;

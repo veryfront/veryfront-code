@@ -240,3 +240,15 @@ A local API is labeled `Local Veryfront`; hosted APIs use `Veryfront Cloud`.
 Press `?` for shortcuts; use verbose logs for cache and runtime diagnostics.
 
 Open the app URL and save a source file. The browser should hot-reload.
+
+## Name your local worker
+
+Studio identifies local runs by the machine hostname by default. To use a
+recognizable label, set it before starting the app:
+
+```bash
+VERYFRONT_WORKER_NAME="Kentaro laptop" npm run dev
+```
+
+Names are limited to 128 characters. The label does not change the project,
+environment, or unique runtime identity.
