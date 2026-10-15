@@ -1,3 +1,4 @@
+import { getServiceRuntimeIdentity } from "../service/runtime-identity.ts";
 /** Agent-config resolution, context creation, and project-steering accessor for the cloud agent service. */
 import { AGENT_NOT_FOUND, CONFIG_INVALID, INITIALIZATION_ERROR } from "#veryfront/errors";
 import { createNodeAgentServiceRuntimeInfrastructure } from "../service/node-runtime-infrastructure.ts";
@@ -228,6 +229,8 @@ function resolveDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): 
 export async function initializeNodeVeryfrontCloudAgentServiceContext(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): Promise<void> {
+  // Capture operator identity before discovery imports project-controlled modules.
+  getServiceRuntimeIdentity();
   context.skillDocumentParserProvider = await getDefaultSkillDocumentParserProvider();
   await discoverProjectPrimitives(context);
   context.defaultAgentId = resolveDefaultAgentId(context);
