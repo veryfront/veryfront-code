@@ -316,7 +316,8 @@ async function generateFullHtml(
 
   if (isFullHTMLDocument(htmlBody)) {
     const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
-    const importMapJson = hasEnabledDependencySnapshot || options.reactPeers !== undefined
+    const importMapJson = hasEnabledDependencySnapshot || options.reactPeers !== undefined ||
+        getRuntimeModuleLoader(options.adapter) !== undefined
       ? await buildImportMapJson({
         adapter: options.adapter,
         reactPeers: options.reactPeers,

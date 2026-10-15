@@ -211,8 +211,9 @@ describe("project runtime delegation", () => {
       });
       await Deno.writeTextFile(join(f.project, ".pnp.loader.mjs"), "export const = invalid;");
       for (const args of [["deploy", "--json"], ["project", "runs", "list", "--ndjson"]]) {
+        const outputFile = join(f.root, "reports", `${args[0]}.json`);
         const failed = await new Deno.Command("node", {
-          args: [join(f.global, "bin", "veryfront.js"), ...args],
+          args: [join(f.global, "bin", "veryfront.js"), ...args, "--output", outputFile],
           cwd: f.project,
           stdout: "piped",
           stderr: "piped",
@@ -222,6 +223,7 @@ describe("project runtime delegation", () => {
         const output = new TextDecoder().decode(failed.stdout);
         assertEquals(JSON.parse(output).error.slug, "command-failed");
         assertEquals(output.includes(f.root), false);
+        assertEquals(JSON.parse(await Deno.readTextFile(outputFile)), JSON.parse(output));
       }
     } finally {
       await Deno.remove(f.root, { recursive: true });
@@ -412,8 +414,16 @@ describe("project runtime delegation", () => {
             pkg.name = "unexpected-package";
             await Deno.writeTextFile(manifest, JSON.stringify(pkg));
           }
+          const outputFile = join(f.root, "reports", "failure.json");
           const output = await new Deno.Command("node", {
-            args: [join(f.global, "bin", "veryfront.js"), command, "runs", "list", "--ndjson"],
+            args: [
+              join(f.global, "bin", "veryfront.js"),
+              command,
+              "runs",
+              "list",
+              "--ndjson",
+              "--output=" + outputFile,
+            ],
             cwd: f.project,
             stdout: "piped",
             stderr: "piped",
@@ -424,6 +434,7 @@ describe("project runtime delegation", () => {
           assertEquals(result.success, false);
           assertEquals(result.command, command);
           assertEquals(result.error.slug, "command-failed");
+          assertEquals(JSON.parse(await Deno.readTextFile(outputFile)), result);
           assertEquals(stdout.trim().split("\n").length, 1);
           assertEquals(new TextDecoder().decode(output.stderr), "");
           assertEquals(stdout.includes(f.root), false);

@@ -899,6 +899,11 @@ function buildCachePayload(value: unknown): CachePayload {
   const stream = ownDataValue(result, "stream");
   const rawFrontmatter = ownDataValue(result, "frontmatter");
   const rawHtmlNoncePlaceholder = ownDataValue(value, "htmlNoncePlaceholder");
+  const aliasEpoch = ownDataValue(value, "aliasEpoch");
+  if (
+    aliasEpoch !== undefined &&
+    (typeof aliasEpoch !== "string" || !/^[a-f0-9-]{36}$/i.test(aliasEpoch))
+  ) fail("aliasEpoch is invalid");
 
   if (typeof html !== "string") fail("result.html must be a string");
   if (css !== undefined && typeof css !== "string") {
@@ -983,6 +988,7 @@ function buildCachePayload(value: unknown): CachePayload {
       ...(headers === undefined ? {} : { headers }),
     },
     ...(htmlNoncePlaceholder === undefined ? {} : { htmlNoncePlaceholder }),
+    ...(aliasEpoch === undefined ? {} : { aliasEpoch: aliasEpoch as string }),
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
@@ -1045,6 +1051,7 @@ export function serializeCachePayload(value: CachePayload): string {
       ? {}
       : { htmlNoncePlaceholder: snapshot.htmlNoncePlaceholder }),
     ...(encodedNodeMapEntries === undefined ? {} : { nodeMapEntries: encodedNodeMapEntries }),
+    ...(snapshot.aliasEpoch === undefined ? {} : { aliasEpoch: snapshot.aliasEpoch }),
     storedAt: snapshot.storedAt,
     ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),
     ...(snapshot.staleUntil === undefined ? {} : { staleUntil: snapshot.staleUntil }),

@@ -59,6 +59,38 @@ export function getSourceModuleConditions(url) {
   );
 }
 
+function capturedRequire(url, peers) {
+  const native = nodeModule.createRequire(url);
+  const fromPeer = (specifier) => {
+    const selected = peers.paths?.[specifier];
+    if (typeof selected === "string") {
+      return { require: native, specifier: fileURLToPath(selected) };
+    }
+    const root =
+      typeof specifier === "string" && (specifier === "react" || specifier.startsWith("react/"))
+        ? peers.roots?.react
+        : typeof specifier === "string" &&
+            (specifier === "react-dom" || specifier.startsWith("react-dom/"))
+        ? peers.roots?.["react-dom"]
+        : undefined;
+    return {
+      require: root ? nodeModule.createRequire(pathToFileURL(join(root, "package.json"))) : native,
+      specifier,
+    };
+  };
+  const bound = (specifier) => {
+    const selected = fromPeer(specifier);
+    return selected.require(selected.specifier);
+  };
+  Object.assign(bound, native);
+  bound.resolve = (specifier, options) => {
+    const selected = fromPeer(specifier);
+    return selected.require.resolve(selected.specifier, options);
+  };
+  bound.resolve.paths = native.resolve.paths;
+  return bound;
+}
+
 export function createSourceModuleMeta(native, url, peers) {
   const meta = create(prototype(native), descriptors(native));
   const path = fileURLToPath(url);
@@ -66,7 +98,7 @@ export function createSourceModuleMeta(native, url, peers) {
   for (const key of ["filename", "path"]) if (key in native) meta[key] = path;
   for (const key of ["dirname", "dir"]) if (key in native) meta[key] = dirname(path);
   if ("file" in native) meta.file = basename(path);
-  if (typeof native.require === "function") meta.require = nodeModule.createRequire(url);
+  if (typeof native.require === "function") meta.require = capturedRequire(url, peers);
   const resolveFromSource = nativeResolveHasParent
     ? native.resolve.bind(native)
     : resolvers.get(url);
@@ -91,7 +123,20 @@ export function createSourceModuleMeta(native, url, peers) {
     return resolveFromSource(specifier, parent);
   };
   if (typeof native.resolveSync === "function") {
-    meta.resolveSync = (specifier, parent = url) => native.resolveSync(specifier, parent);
+    meta.resolveSync = (specifier, parent = url) => {
+      if (parent === url && typeof specifier === "string") {
+        if (typeof peers.paths?.[specifier] === "string") {
+          return fileURLToPath(peers.paths[specifier]);
+        }
+        const root = specifier === "react" || specifier.startsWith("react/")
+          ? peers.roots?.react
+          : specifier === "react-dom" || specifier.startsWith("react-dom/")
+          ? peers.roots?.["react-dom"]
+          : undefined;
+        if (root) parent = pathToFileURL(join(root, "package.json")).href;
+      }
+      return native.resolveSync(specifier, parent);
+    };
   }
   return meta;
 }

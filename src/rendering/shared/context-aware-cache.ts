@@ -3,7 +3,12 @@ import { rendererLogger } from "#veryfront/utils";
 import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
-import type { CachePayload, CacheStore } from "../cache/types.ts";
+import {
+  CACHE_ALIAS_EPOCH_KEY,
+  CACHE_ALIAS_KEY_PREFIX,
+  type CachePayload,
+  type CacheStore,
+} from "../cache/types.ts";
 import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
@@ -47,15 +52,27 @@ function isScopedOverride(key?: string): boolean {
   return Boolean(key && /(?:^|:)(?:react-runtime:|pins:|render-identity:hash-)/.test(key));
 }
 
-function isSlugOwnedOverride(key: string, slug: string): boolean {
-  const contentKey = key.startsWith("page:") ? key.slice(5) : key;
-  return contentKey === slug || contentKey.startsWith(`${slug}:`) ||
-    contentKey.startsWith(`${slug}?`);
-}
-
 function scopedSlugPrefix(slug: string): string {
   const digest = `${hashString(`render-slug:a:${slug}`)}-${hashString(`render-slug:b:${slug}`)}`;
   return `render-variants:v1:${digest}:`;
+}
+
+// Serialize legacy alias control operations within a process, including separate
+// handles for one context. Stored generations provide invalidation across restarts.
+const aliasGenerationOperations = new Map<string, { settled: Promise<void> }>();
+async function withAliasGeneration<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = aliasGenerationOperations.get(key)?.settled ?? Promise.resolve();
+  const operation = (async () => {
+    await previous;
+    return await action();
+  })();
+  const entry = { settled: operation.then(() => {}, () => {}) };
+  aliasGenerationOperations.set(key, entry);
+  try {
+    return await operation;
+  } finally {
+    if (aliasGenerationOperations.get(key) === entry) aliasGenerationOperations.delete(key);
+  }
 }
 
 export class ContextAwareCacheCoordinator {
@@ -70,6 +87,7 @@ export class ContextAwareCacheCoordinator {
   private readonly legacyKeys = new Map<string, string>();
   private readonly maxLegacyKeys: number;
   private legacyWriteBarrier: Promise<void> = Promise.resolve();
+  private readonly aliasEpochKeys = new Set<string>();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
@@ -116,6 +134,21 @@ export class ContextAwareCacheCoordinator {
             lookupDurationMs,
           });
           return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+        }
+
+        if (
+          cached.aliasEpoch !== undefined ||
+          (!this.store.deleteByPrefix && cacheKeyOverride && !isScopedOverride(cacheKeyOverride))
+        ) {
+          const epoch = await this.store.get(this.aliasEpochKey(ctx));
+          if (
+            typeof cached.aliasEpoch !== "string" || cached.aliasEpoch !== epoch?.aliasEpoch ||
+            (epoch && this.isExpired(epoch))
+          ) {
+            const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+            recordCacheLookup("miss", lookupDurationMs);
+            return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+          }
         }
 
         const trackedSlug = this.legacyKeys.get(cacheKey);
@@ -269,7 +302,12 @@ export class ContextAwareCacheCoordinator {
           this.legacyKeys.delete(oldest);
         }
       }
+      const aliasEpoch =
+        !this.store.deleteByPrefix && cacheKeyOverride && !isScopedOverride(cacheKeyOverride)
+          ? await this.captureAliasEpoch(ctx)
+          : undefined;
       await this.store.set(cacheKey, {
+        ...(aliasEpoch ? { aliasEpoch } : {}),
         result: cachedResult,
         ...(sealedHtml.placeholder === undefined
           ? {}
@@ -302,11 +340,73 @@ export class ContextAwareCacheCoordinator {
     });
   }
 
+  private aliasEpochKey(ctx: RenderContext): string {
+    return createCacheKey(ctx, CACHE_ALIAS_EPOCH_KEY);
+  }
+
+  private captureAliasEpoch(ctx: RenderContext): Promise<string> {
+    return withAliasGeneration(this.aliasEpochKey(ctx), () => this.initializeAliasEpoch(ctx));
+  }
+
+  private async initializeAliasEpoch(ctx: RenderContext): Promise<string> {
+    const key = this.aliasEpochKey(ctx);
+    const existing = await this.store.get(key);
+    const valid = typeof existing?.aliasEpoch === "string" && !this.isExpired(existing);
+    const token = valid ? existing.aliasEpoch! : crypto.randomUUID();
+    if (!this.store.deleteByPrefix && !this.aliasEpochKeys.has(key)) {
+      while (this.aliasEpochKeys.size >= this.maxLegacyKeys) {
+        const oldest = this.aliasEpochKeys.values().next().value;
+        if (oldest === undefined) break;
+        await this.store.delete(oldest);
+        this.aliasEpochKeys.delete(oldest);
+      }
+      this.aliasEpochKeys.add(key);
+    }
+    if (!valid) {
+      await this.store.set(key, {
+        aliasEpoch: token,
+        storedAt: Date.now(),
+        ...(this.ttlMs ? { expiresAt: Date.now() + this.ttlMs + Math.max(0, this.staleMs) } : {}),
+        result: { html: "", frontmatter: {}, stream: null },
+      });
+    }
+    return token;
+  }
+
+  private revokeAliasEpoch(ctx: RenderContext): Promise<void> {
+    const key = this.aliasEpochKey(ctx);
+    return withAliasGeneration(key, async () => {
+      const epoch = await this.store.get(key);
+      if (typeof epoch?.aliasEpoch === "string") await this.store.delete(key);
+      this.aliasEpochKeys.delete(key);
+    });
+  }
+
+  private async deleteAliasEpochs(matches: (key: string) => boolean): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.aliasEpochKeys].filter(matches).map(async (key) => {
+        await this.store.delete(key);
+        this.aliasEpochKeys.delete(key);
+      }),
+    );
+    const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Alias epoch invalidation failed");
+  }
+
   clearForContext(ctx: RenderContext): Promise<void> {
     const prefix = `${ctx.cachePrefix}:`;
     return this.invalidate((key) => key.startsWith(prefix), async () => {
       if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
-      else await this.deleteLegacyKeys((key) => key.startsWith(prefix));
+      else {
+        const results = await Promise.allSettled([
+          this.deleteLegacyKeys((key) => key.startsWith(prefix)),
+          this.revokeAliasEpoch(ctx),
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : []
+        );
+        if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+      }
     });
   }
 
@@ -314,16 +414,33 @@ export class ContextAwareCacheCoordinator {
     const prefix = `${projectId}:`;
     return this.invalidate((key) => key.startsWith(prefix), async () => {
       if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
-      else await this.deleteLegacyKeys((key) => key.startsWith(prefix));
+      else {
+        const results = await Promise.allSettled([
+          this.deleteLegacyKeys((key) => key.startsWith(prefix)),
+          this.deleteAliasEpochs((key) => key.startsWith(prefix)),
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : []
+        );
+        if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+      }
     });
   }
 
   clearSlug(slug: string, ctx: RenderContext): Promise<void> {
     const slugKey = createCacheKey(ctx, `page:${slug}`);
-    return this.invalidate((_key, trackedSlug) => trackedSlug === slugKey, async () => {
+    // Alias keys intentionally erase route identity. Drain this context before
+    // revoking its alias generation so pending writes cannot restore old data.
+    return this.invalidate((key) => key.startsWith(`${ctx.cachePrefix}:`), async () => {
       const deletions = [slugKey, `${slugKey}:theme-light`, `${slugKey}:theme-dark`]
         .map((key) => Promise.resolve().then(() => this.store.delete(key)));
+      if (!this.store.deleteByPrefix) deletions.push(this.revokeAliasEpoch(ctx));
       if (this.store.deleteByPrefix) {
+        deletions.push(
+          Promise.resolve().then(() =>
+            this.store.deleteByPrefix!(createCacheKey(ctx, CACHE_ALIAS_KEY_PREFIX))
+          ).then(() => {}),
+        );
         deletions.push(
           Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}:`)).then(() => {}),
         );
@@ -388,6 +505,7 @@ export class ContextAwareCacheCoordinator {
     return this.invalidate(() => true, async () => {
       await this.store.clear();
       this.legacyKeys.clear();
+      this.aliasEpochKeys.clear();
     });
   }
 
@@ -396,6 +514,7 @@ export class ContextAwareCacheCoordinator {
     return this.invalidate(() => true, async () => {
       await this.store.destroy();
       this.legacyKeys.clear();
+      this.aliasEpochKeys.clear();
     });
   }
 
@@ -415,9 +534,7 @@ export class ContextAwareCacheCoordinator {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
     if (
-      isScopedOverride(cacheKeyOverride) ||
-      (cacheKeyOverride && this.store.deleteByPrefix &&
-        !isSlugOwnedOverride(cacheKeyOverride, slug))
+      isScopedOverride(cacheKeyOverride)
     ) {
       const identity = `${cacheKeyOverride}:${colorScheme ?? "default"}`;
       const digest = `${hashString(`render-variant:a:${identity}`)}-${
@@ -430,6 +547,13 @@ export class ContextAwareCacheCoordinator {
     const themedKey = themeKey && !/:theme-(light|dark)$/.test(contentKey)
       ? `${contentKey}${themeKey}`
       : contentKey;
+    if (cacheKeyOverride) {
+      const digest = `${hashString(`render-alias:a:${themedKey}`)}-${
+        hashString(`render-alias:b:${themedKey}`)
+      }`;
+      const suffix = themedKey.match(/:theme-(light|dark)$/)?.[0] ?? "";
+      return createCacheKey(ctx, `${CACHE_ALIAS_KEY_PREFIX}${digest}${suffix}`);
+    }
     return createCacheKey(ctx, themedKey);
   }
 

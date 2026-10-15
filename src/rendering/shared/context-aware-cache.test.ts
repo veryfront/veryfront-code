@@ -570,6 +570,114 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(deletedKeys.every((k) => k.includes("test-slug")), true);
     });
 
+    for (const prefixCapable of [false, true]) {
+      it(`preserves explicit override sharing with prefix support ${prefixCapable}`, async () => {
+        const store = createInMemoryStore();
+        if (!prefixCapable) Reflect.deleteProperty(store, "deleteByPrefix");
+        const writer = new ContextAwareCacheCoordinator({ store });
+        const reader = new ContextAwareCacheCoordinator({ store: { ...store } });
+        const ctx = makeMockCtx();
+        await writer.persistResult(
+          { html: "shared result", frontmatter: {}, stream: null },
+          "first",
+          ctx,
+          undefined,
+          "shared",
+        );
+        const otherContext = makeMockCtx({
+          projectId: "proj-2",
+          cachePrefix: "proj-2:production:release-1",
+        });
+        await writer.persistResult(
+          { html: "other context", frontmatter: {}, stream: null },
+          "other",
+          otherContext,
+          undefined,
+          "shared",
+        );
+        assertEquals(
+          (await reader.checkCache("shared", ctx)).hit,
+          false,
+          "aliases cannot populate normal route keys",
+        );
+        const lookup = await reader.checkCache("second", ctx, undefined, "shared");
+        assertEquals(lookup.hit, true);
+        assertEquals(lookup.cachedResult?.html, "shared result");
+        await writer.persistResult(
+          { html: "updated shared", frontmatter: {}, stream: null },
+          "second",
+          ctx,
+          undefined,
+          "shared",
+        );
+        assertEquals(
+          (await reader.checkCache("first", ctx, undefined, "shared")).cachedResult?.html,
+          "updated shared",
+        );
+        await writer.persistResult(
+          { html: "old sibling", frontmatter: {}, stream: null },
+          "third",
+          ctx,
+          undefined,
+          "sibling-alias",
+        );
+        await reader.clearSlug("first", ctx);
+        assertEquals((await writer.checkCache("second", ctx, undefined, "shared")).hit, false);
+        assertEquals(
+          (await reader.checkCache("other", otherContext, undefined, "shared")).hit,
+          true,
+        );
+        await writer.persistResult(
+          { html: "new generation", frontmatter: {}, stream: null },
+          "second",
+          ctx,
+          undefined,
+          "shared",
+        );
+        assertEquals((await reader.checkCache("second", ctx, undefined, "shared")).hit, true);
+        assertEquals(
+          (await reader.checkCache("third", ctx, undefined, "sibling-alias")).hit,
+          false,
+        );
+        await reader.clearForContext(ctx);
+        assertEquals((await writer.checkCache("second", ctx, undefined, "shared")).hit, false);
+      });
+    }
+
+    for (const prefixCapable of [false, true]) {
+      it(`retains concurrent aliases across store handles with prefix support ${prefixCapable}`, async () => {
+        const store = createInMemoryStore();
+        if (!prefixCapable) Reflect.deleteProperty(store, "deleteByPrefix");
+        const first = new ContextAwareCacheCoordinator({ store });
+        const second = new ContextAwareCacheCoordinator({ store: { ...store } });
+        const ctx = makeMockCtx();
+        await Promise.all([
+          first.persistResult(
+            { html: "one", frontmatter: {}, stream: null },
+            "one",
+            ctx,
+            undefined,
+            "alias-one",
+          ),
+          second.persistResult(
+            { html: "two", frontmatter: {}, stream: null },
+            "two",
+            ctx,
+            undefined,
+            "alias-two",
+          ),
+        ]);
+        assertEquals(
+          (await second.checkCache("one", ctx, undefined, "alias-one")).cachedResult?.html,
+          "one",
+        );
+        assertEquals(
+          (await first.checkCache("two", ctx, undefined, "alias-two")).cachedResult?.html,
+          "two",
+        );
+      });
+    }
+
     it("invalidates scoped and hashed variants across coordinators sharing a prefix-capable store", async () => {
       const store = createInMemoryStore();
       const writer = new ContextAwareCacheCoordinator({ store });

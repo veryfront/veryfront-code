@@ -73,6 +73,97 @@ describe("react-paths", () => {
     assertEquals(rendered.html.includes("virtual script"), true);
   });
 
+  it("keeps Bun metadata APIs on captured peers", async () => {
+    if (!isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const { pathToFileURL } = await import("node:url");
+    const directory = mkdtempSync(join(tmpdir(), "script-bun-meta-"));
+    const captured = join(directory, "captured");
+    const installed = join(directory, "node_modules", "react");
+    for (const root of [captured, installed]) {
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        join(root, "package.json"),
+        '{"name":"react","type":"module","exports":{".":"./index.js","./extra":"./extra.js"}}',
+      );
+      for (const file of ["index.js", "extra.js"]) {
+        fs.writeFileSync(
+          join(root, file),
+          `export const marker = "${root === captured ? "captured" : "installed"}";`,
+        );
+      }
+    }
+    fs.writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    const page = join(directory, "page.js");
+    fs.writeFileSync(
+      page,
+      'import * as React from "react"; export default () => "<main>" + React.marker + "|" + import.meta.require("react").marker + "|" + import.meta.require("react/extra").marker + "|" + import.meta.resolveSync("react") + "|" + import.meta.resolveSync("react/extra") + "</main>";',
+    );
+    const base = captureLocalReactPeers();
+    const peers = {
+      ...base,
+      roots: { ...base.roots, react: captured },
+      paths: { ...base.paths, react: pathToFileURL(join(captured, "index.js")).href },
+    };
+    try {
+      const rendered = await handleScriptPage(
+        { entity: { path: page, frontmatter: {} } } as never,
+        "page",
+        {
+          mode: "production",
+          config: {},
+          projectDir: directory,
+          adapter: createMockAdapter(),
+          reactPeers: peers,
+        },
+      );
+      assertEquals(
+        rendered.html.includes(
+          `<main>captured|captured|captured|${join(captured, "index.js")}|${
+            join(captured, "extra.js")
+          }</main>`,
+        ),
+        true,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  for (const fullDocument of [false, true]) {
+    it(`uses prepared peers for script import maps with full document ${fullDocument}`, async () => {
+      const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+      const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+      const adapter = createMockAdapter();
+      const html = fullDocument
+        ? "<html><head></head><body>prepared</body></html>"
+        : "<main>prepared</main>";
+      Reflect.set(adapter, "moduleLoader", {
+        importModule: (reference: { kind: string }) =>
+          Promise.resolve(
+            reference.kind === "source"
+              ? { default: () => html }
+              : { default: { version: "19.1.1" } },
+          ),
+      });
+      const rendered = await handleScriptPage(
+        { entity: { path: "/prepared/page.js", frontmatter: {} } } as never,
+        "page",
+        {
+          mode: "production",
+          config: {},
+          projectDir: "/prepared",
+          adapter,
+          dependencyPinningCacheKey: "off",
+        },
+      );
+      assertEquals(rendered.html.includes('type="importmap"'), true);
+      assertEquals(rendered.html.includes("react@19.1.1"), true);
+      assertEquals(rendered.html.includes("react@19.2.4"), false);
+    });
+  }
+
   it("preserves native addons and configured native module identity in script pages", async () => {
     if (!isNode) return;
     const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
@@ -456,12 +547,9 @@ describe("react-paths", () => {
       const directory = mkdtempSync(join(tmpdir(), "script-peer-snapshot-"));
       const adapter = createMockAdapter();
       const pagePath = join(directory, "page.js");
-      const html = fullDocument
-        ? "<html><head></head><body>script</body></html>"
-        : "<main>script</main>";
-      const source = `import React from "react"; export default () => ${
-        JSON.stringify(html)
-      } + React.version;`;
+      const source = fullDocument
+        ? 'import React from "react"; export default () => "<html><head></head><body>script</body></html>" + React.version;'
+        : 'import React from "react"; export default () => "<main>script</main>" + React.version;';
       fs.mkdirSync(join(directory, "node_modules"), { recursive: true });
       assertExists(peers.roots.react);
       fs.symlinkSync(peers.roots.react, join(directory, "node_modules", "react"), "dir");

@@ -1,6 +1,12 @@
 import type { RenderResult } from "../orchestrator/types.ts";
 
+/** Reserved control key within a render-cache context. */
+export const CACHE_ALIAS_EPOCH_KEY = "render-alias-epoch:v1";
+export const CACHE_ALIAS_KEY_PREFIX = "render-aliases:v1:";
+
 export interface CachePayload {
+  /** Persistent context generation for explicit, unscoped cache aliases. */
+  aliasEpoch?: string;
   result: RenderResult;
   /** Opaque cache-owned slot used to bind inline CSP nonces per response. */
   htmlNoncePlaceholder?: string;

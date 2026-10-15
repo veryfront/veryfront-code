@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as nodeModule from "node:module";
 import process from "node:process";
@@ -305,6 +305,40 @@ function launcherJsonMode() {
   return enabled || ndjsonEnabled;
 }
 
+function launcherOutputPath() {
+  let output;
+  let shortOutput;
+  const args = process.argv.slice(2);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--") break;
+    if (arg === "--output" || arg === "-o") {
+      const value = args[index + 1];
+      if (typeof value === "string" && !value.startsWith("-")) {
+        if (arg === "--output") output = value;
+        else shortOutput = value;
+        index++;
+      }
+    } else if (arg.startsWith("--output=")) output = arg.slice(9);
+    else if (arg.startsWith("-o=")) shortOutput = arg.slice(3);
+  }
+  return output ?? shortOutput;
+}
+
+function reportLauncherFailure(envelope, outputPath, jsonMode) {
+  if (!jsonMode) { console.error(envelope.error.message); return; }
+  const json = JSON.stringify(envelope);
+  console.log(json);
+  if (outputPath) {
+    try {
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, json);
+    } catch {
+      console.error("Failed to write CLI output file");
+    }
+  }
+}
+
 function failProjectLaunch(error) {
   const messages = new Set([
     "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
@@ -318,13 +352,11 @@ function failProjectLaunch(error) {
     typeof error?.message === "string" && messages.has(error.message)
       ? error.message
       : "Project CLI setup failed; verify the project directory and reinstall its dependencies";
-  if (launcherJsonMode()) {
-    console.log(JSON.stringify({
-      success: false,
-      command: launcherCommand,
-      error: { code: "RUNTIME_ERROR", slug: "command-failed", message },
-    }));
-  } else console.error(message);
+  reportLauncherFailure({
+    success: false,
+    command: launcherCommand,
+    error: { code: "RUNTIME_ERROR", slug: "command-failed", message },
+  }, launcherOutputPath(), launcherJsonMode());
   process.exit(1);
 }
 
@@ -339,13 +371,11 @@ if (launch.pnpStartup) {
   const message = "Project CLI setup failed; verify the project directory and reinstall its dependencies";
   const errorEnvelope = { success: false, command: launcherCommand,
     error: { code: "RUNTIME_ERROR", slug: "command-failed", message } };
-  const report = launcherJsonMode()
-    ? `console.log(${JSON.stringify(JSON.stringify(errorEnvelope))});`
-    : `console.error(${JSON.stringify(message)});`;
+  const report = `(${reportLauncherFailure.toString()})(${JSON.stringify(errorEnvelope)}, ${JSON.stringify(launcherOutputPath())}, ${JSON.stringify(launcherJsonMode())});`;
   // register() installs the PnP ESM hooks without experimental-loader warnings.
   // Its startup failures occur before this wrapper reloads, so report them here.
   const registration = "data:text/javascript," + encodeURIComponent(
-    `import { register } from "node:module"; try { register(${JSON.stringify(pathToFileURL(loader).href)}); } catch { ${report} process.exit(1); }`,
+    `import { register } from "node:module"; import { mkdirSync, writeFileSync } from "node:fs"; import { dirname } from "node:path"; try { register(${JSON.stringify(pathToFileURL(loader).href)}); } catch { ${report} process.exit(1); }`,
   );
   const child = spawn(process.execPath, [
     ...process.execArgv,
