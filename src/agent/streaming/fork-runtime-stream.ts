@@ -6,6 +6,7 @@ import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
+  readHostedChildModelStreamTimeouts,
 } from "../hosted/inference-credential.ts";
 import {
   createToolsFromHostDefinitions,
@@ -386,10 +387,17 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
     const dependencyContext = hostedPlatformDependencyRuntimeContext(input, input.projectId);
+    // Host-owned model stream budgets apply to delegated child model calls too.
+    const modelStreamTimeouts = readHostedChildModelStreamTimeouts(input);
     const runtime = new AgentRuntime(
       dependencyContext?.agentId ?? "invoke-agent-child-runtime",
       runtimeConfig,
-      resolveModelRuntime ? { resolveModelRuntime } : undefined,
+      resolveModelRuntime || modelStreamTimeouts
+        ? {
+          ...(resolveModelRuntime ? { resolveModelRuntime } : {}),
+          ...(modelStreamTimeouts ? { modelStreamTimeouts } : {}),
+        }
+        : undefined,
     );
 
     stream = await runWithVeryfrontCloudContextAsync(

@@ -1,7 +1,15 @@
+import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { dynamicTool, tool } from "./factory.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
+import type {
+  Tool,
+  ToolConfig,
+  ToolDiscoveryMetadata,
+  ToolExecutionContext,
+  ToolSet,
+} from "./types.ts";
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -36,6 +44,8 @@ export type HostToolDefinition = {
   description?: string;
   inputSchema?: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Catalog navigation hints, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
   parameters?: unknown;
   providerOptions?: unknown;
   execute?: Tool["execute"] | HostToolExecute;
@@ -110,6 +120,7 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     "execute",
     "inputSchema",
     "inputSchemaJson",
+    "discovery",
     "mcp",
   ];
   for (let index = 0; index < prototypeFields.length; index++) {
@@ -209,6 +220,7 @@ export function createToolsFromHostDefinitions(
         materializedTool = tool(config);
       }
       if (materializedTool) {
+        copyToolDiscoveryMetadata(definition, materializedTool);
         const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
@@ -216,7 +228,10 @@ export function createToolsFromHostDefinitions(
         defineOwnDataProperty(
           tools,
           toolName,
-          inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
+          inheritTrustedHostToolProvenance(
+            originalDefinition,
+            inheritFrameworkSkillLoader(originalDefinition, toolWithRemoteProvenance),
+          ),
           { enumerable: true, configurable: true, writable: true },
         );
       }

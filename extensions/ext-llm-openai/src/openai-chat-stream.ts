@@ -1,5 +1,9 @@
 import {
   mergeUsage,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
   ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
@@ -208,6 +212,69 @@ function isContentFilterAnnotation(choice: Record<string, unknown>): boolean {
     readRecord(choice.content_filter_offsets) !== undefined;
 }
 
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ReflectApply = Reflect.apply;
+const StringToLowerCase = String.prototype.toLowerCase;
+const StringIncludes = String.prototype.includes;
+
+/** Return an own data property, never an inherited or accessor value. */
+function readOwnDataField(record: Record<string, unknown> | undefined, key: string): unknown {
+  if (record === undefined) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value")
+    ? descriptor.value
+    : undefined;
+}
+
+const STREAMED_CONTEXT_LENGTH_PATTERNS = [
+  "context size has been exceeded",
+  "context length exceeded",
+  "maximum context length",
+] as const;
+
+/** Match context-size wording through load-time intrinsics, never project hooks. */
+function isStreamedContextLengthMessage(message: string): boolean {
+  const normalized = ReflectApply(StringToLowerCase, message, []) as string;
+  for (let index = 0; index < STREAMED_CONTEXT_LENGTH_PATTERNS.length; index++) {
+    if (ReflectApply(StringIncludes, normalized, [STREAMED_CONTEXT_LENGTH_PATTERNS[index]])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Map a provider error reported inside an HTTP 200 chat stream to a curated
+ * error. Only known codes grant retryability, matching the Responses parser.
+ * The public message is fixed; provider text and the record are never kept.
+ */
+function streamedProviderError(
+  context: OpenAIChatStreamContext,
+  code: unknown,
+  message: string,
+): Error {
+  const options = {
+    provider: context.providerKind ?? "openai",
+    status: 200,
+    message: "Provider reported a failed generation in its response stream",
+    retryable: false,
+  };
+  if (code === "context_length_exceeded" || isStreamedContextLengthMessage(message)) {
+    // Fixed wording that provider error parsing classifies as a context limit.
+    return new ProviderRequestError({
+      ...options,
+      message: "Provider reported context length exceeded in its response stream",
+    });
+  }
+  if (code === "server_error") return new ProviderOverloadedError({ ...options, retryable: true });
+  if (code === "rate_limit_exceeded") {
+    return new ProviderRateLimitError({ ...options, retryable: true });
+  }
+  if (code === "insufficient_quota") return new ProviderQuotaError(options);
+  return new ProviderRequestError(options);
+}
+
 export async function* streamOpenAICompatibleParts(
   stream: ReadableStream<Uint8Array>,
   context: OpenAIChatStreamContext = {},
@@ -246,6 +313,22 @@ export async function* streamOpenAICompatibleParts(
     const record = readRecord(event);
     if (!record) {
       throw invalidOpenAIStream(context, "event was not an object");
+    }
+    // Providers can report a failed generation inside an HTTP 200 SSE stream.
+    // Classify it here from known codes and fixed wording so the thrown error
+    // never carries the provider record (or its text) as a cause.
+    // Own data fields only: an inherited accessor must not run, forge a
+    // retryable code, or mask the provider failure.
+    // An explicit envelope that cannot be classified is rejected rather than
+    // accepted as generated output; `null` is the absent-field form.
+    const errorValue = readOwnDataField(record, "error");
+    if (errorValue !== undefined && errorValue !== null) {
+      const errorRecord = readRecord(errorValue);
+      const errorMessage = readOwnDataField(errorRecord, "message");
+      if (!errorRecord || typeof errorMessage !== "string") {
+        throw invalidOpenAIStream(context, "provider error event was malformed");
+      }
+      throw streamedProviderError(context, readOwnDataField(errorRecord, "code"), errorMessage);
     }
     const usageRecord = readRecord(record.usage);
     usage = mergeOpenAIUsage(usage, record);

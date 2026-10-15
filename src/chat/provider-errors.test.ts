@@ -588,6 +588,12 @@ describe("chat/provider-errors", () => {
       code: "CONTEXT_LENGTH_EXCEEDED",
       message: "Conversation is too long",
     });
+    for (const message of ["Context size has been exceeded.", "context length exceeded"]) {
+      assertEquals(parseProviderError(message), {
+        code: "CONTEXT_LENGTH_EXCEEDED",
+        message: "Conversation is too long",
+      });
+    }
     assertEquals(
       parseProviderError(new Error("429 Too Many Requests")),
       {

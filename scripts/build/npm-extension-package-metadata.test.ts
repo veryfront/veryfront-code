@@ -149,8 +149,7 @@ describe("createExtensionPackageSpec", () => {
       exports: "./src/index.ts",
       veryfront: { extension: true },
       imports: {
-        "@veryfront/ext-bundler-esbuild":
-          "../ext-bundler-esbuild/src/index.ts",
+        "@veryfront/ext-bundler-esbuild": "../ext-bundler-esbuild/src/index.ts",
       },
     };
 
@@ -894,6 +893,36 @@ describe("createVeryfrontPeerTypeImportReplacements", () => {
 });
 
 describe("normalizeExtensionPackageJson", () => {
+  it("keeps React extensions in the consumer peer graph", () => {
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-dev-ui-react/deno.json",
+      manifest: {
+        name: "@veryfront/ext-dev-ui-react",
+        exports: "./src/index.ts",
+        imports: {
+          react: "npm:react@19.2.4",
+          "react-dom": "npm:react-dom@19.2.4",
+        },
+        veryfront: { extension: true },
+      },
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      packageJson: { module: "./esm/index.js" },
+    });
+    assertEquals(normalized.dependencies, undefined);
+    assertEquals(normalized.peerDependencies, {
+      veryfront: "^0.1.985",
+      react: "^19.2.4",
+      "react-dom": "^19.2.4",
+    });
+  });
+
   it("moves dnt-added veryfront dependency back to a peer and preserves manifest metadata", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",

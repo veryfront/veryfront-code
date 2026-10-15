@@ -591,6 +591,63 @@ describe("VeryfrontApiClient", () => {
         ["create", "artifact", 2, result, controller.signal],
       ]);
     });
+
+    it("keeps the previous release asset method names as aliases", async () => {
+      const client = createClient({ ...baseConfig, projectId: PROJECT_ID });
+      const calls: unknown[][] = [];
+      client.startReleaseAssetManifestBuild = (...args) => {
+        calls.push(["start", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      client.writeReleaseAsset = (...args) => {
+        calls.push(["write asset", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      client.writeReleaseAssetManifest = (...args) => {
+        calls.push(["write manifest", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      client.updateReleaseAssetManifestState = (...args) => {
+        calls.push(["update state", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      const bytes = new Uint8Array(new ArrayBuffer(1));
+      const manifest = { schemaVersion: 1 };
+      const controller = new AbortController();
+
+      await client.beginReleaseAssetManifestBuild("rel-1", "project-slug", controller.signal);
+      await client.uploadReleaseAsset(
+        "rel-1",
+        "hash",
+        "text/javascript",
+        bytes,
+        "project-slug",
+        controller.signal,
+      );
+      await client.putReleaseAssetManifest("rel-1", manifest, "project-slug", controller.signal);
+      await client.reportReleaseAssetManifestState(
+        "rel-1",
+        "failed",
+        "boom",
+        "project-slug",
+        controller.signal,
+      );
+
+      assertEquals(calls, [
+        ["start", "rel-1", "project-slug", controller.signal],
+        [
+          "write asset",
+          "rel-1",
+          "hash",
+          "text/javascript",
+          bytes,
+          "project-slug",
+          controller.signal,
+        ],
+        ["write manifest", "rel-1", manifest, "project-slug", controller.signal],
+        ["update state", "rel-1", "failed", "boom", "project-slug", controller.signal],
+      ]);
+    });
   });
 
   describe("initialize with projectId in config", () => {

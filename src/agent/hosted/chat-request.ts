@@ -8,6 +8,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getRuntimeAgentResumeToolCallSchema,
+  getRuntimeAgentRuntimeOverridesSchema,
   type RuntimeAgentRunInvocation,
 } from "../runtime/agent-invocation-contract.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
@@ -35,14 +36,8 @@ export const hostedDurableRootRunDescriptorSchema = lazySchema(
   getHostedDurableRootRunDescriptorSchema,
 );
 
-export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
-  v.object({
-    allowedTools: v.array(v.string().min(1)).max(100).optional(),
-    thinking: v.union([v.literal(false), v.number().int().positive()]).optional(),
-    maxSteps: v.number().int().positive().optional(),
-    maxOutputTokens: v.number().int().positive().optional(),
-  }).strip()
-);
+/** Schema for hosted chat runtime overrides (shared with the runtime invocation contract). */
+export const getHostedChatRuntimeOverridesSchema = getRuntimeAgentRuntimeOverridesSchema;
 
 /** Schema for hosted chat runtime overrides.
  * @deprecated Use getHostedChatRuntimeOverridesSchema()
@@ -178,6 +173,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
       const knownToolNames = new Map<string, string>();
       const knownToolResultIds = new Set<string>();
+      const toolResultMessageIndices = new Map<string, number>();
       const openToolCalls = new Map<string, OpenHostedToolCall>();
       // Count of openToolCalls entries originating from the current message that
       // have not seen later non-result content. When every open entry is in that
@@ -194,7 +190,14 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         options: { messageIndex: number; requiresResult?: boolean },
       ): boolean => {
         rejectOpenToolCallsBeforeNewCall(options.messageIndex);
-        if (knownToolNames.has(toolCallId)) {
+        // Reused provider IDs identify a new occurrence only after the previous
+        // occurrence closed. Same-message reuse is ambiguous to UI normalization.
+        if (
+          knownToolNames.has(toolCallId) &&
+          (!knownToolResultIds.has(toolCallId) ||
+            (toolResultMessageIndices.get(toolCallId) ?? options.messageIndex) >=
+              options.messageIndex)
+        ) {
           ctx.addIssue({
             code: "custom",
             message: "tool_call id must be unique",
@@ -204,6 +207,8 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         knownToolNames.set(toolCallId, toolName);
+        knownToolResultIds.delete(toolCallId);
+        toolResultMessageIndices.delete(toolCallId);
         openToolCalls.set(toolCallId, {
           toolName,
           path,
@@ -356,6 +361,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           freshOpenToolCallCount -= 1;
         }
         openToolCalls.delete(toolCallId);
+        toolResultMessageIndices.set(toolCallId, currentMessageIndex);
         if (toolName && toolName !== openToolCall.toolName) {
           ctx.addIssue({
             code: "custom",

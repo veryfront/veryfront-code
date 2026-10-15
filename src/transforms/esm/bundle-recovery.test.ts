@@ -128,6 +128,91 @@ afterEach(() => {
 
 describe("transforms/esm/bundle-recovery", () => {
   describe("recoverHttpBundleByHash", () => {
+    it("recovers a local React bundle for the current installation scope", async () => {
+      const cacheDir = await makeTempDir();
+      const url = "https://esm.sh/component@1";
+      const identity = {
+        url,
+        importMap: { imports: {} },
+        reactVersion: "19.2.4",
+        localReact: true,
+      };
+      const hash = await hashHttpCacheIdentity(await buildHttpCacheIdentity(url, identity));
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hash}`]: "export const accepted = true;",
+          [`identity:${hash}`]: JSON.stringify(identity),
+          [`hash:${hash}`]: url,
+        }))
+      );
+      try {
+        assertEquals(
+          await recoverHttpBundleByHash(hash, cacheDir, () => Promise.resolve(null)),
+          true,
+        );
+        assertEquals(
+          await readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+          "export const accepted = true;",
+        );
+        await remove(join(cacheDir, `http-${hash}.mjs`));
+        assertEquals(
+          await ensureHttpBundlesExist(
+            [{ hash, path: join(cacheDir, `http-${hash}.mjs`) }],
+            cacheDir,
+            () => Promise.resolve(null),
+          ),
+          [],
+        );
+        assertEquals(
+          await readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+          "export const accepted = true;",
+        );
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("refuses a local React bundle hash from another installation scope", async () => {
+      const cacheDir = await makeTempDir();
+      const url = "https://esm.sh/component@1";
+      const hash = await hashHttpCacheIdentity("foreign-react-installation");
+      const identity = {
+        url,
+        importMap: { imports: {} },
+        reactVersion: "19.2.4",
+        localReact: true,
+      };
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hash}`]: 'import React from "file:///foreign/node_modules/react/index.js";',
+          [`identity:${hash}`]: JSON.stringify(identity),
+          [`hash:${hash}`]: url,
+        }))
+      );
+      try {
+        assertEquals(
+          await recoverHttpBundleByHash(hash, cacheDir, () => {
+            throw new Error("Foreign installation hashes must not be fetched");
+          }),
+          false,
+        );
+        await assertRejects(() => stat(join(cacheDir, `http-${hash}.mjs`)));
+        assertEquals(
+          await ensureHttpBundlesExist(
+            [{ hash, path: join(cacheDir, `http-${hash}.mjs`) }],
+            cacheDir,
+            () => {
+              throw new Error("Foreign installation hashes must not be fetched");
+            },
+          ),
+          [hash],
+        );
+        await assertRejects(() => stat(join(cacheDir, `http-${hash}.mjs`)));
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
     it("writes code recovered by hash from distributed cache and refreshes local path state", async () => {
       const cacheDir = await makeTempDir();
       const cachedPaths = new Map<string, string>();

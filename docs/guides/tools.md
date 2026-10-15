@@ -166,7 +166,21 @@ Use an explicit map such as `tools: { getWeather: true }` when the model needs a
 selected schema on its first step. Schema loading and tool authorization stay
 separate, and execution rechecks authorization.
 
-`tool_search` uses deterministic, case-insensitive matching. It treats
+`tool_search` accepts exactly one of four mode fields. All arguments are
+top-level strings or integers:
+
+- `schema: "<exact name>"` returns one exact tool's input schema and loads it
+  for the next model step.
+- `search: "<phrase>"` finds tools by a short capability phrase without loading
+  schemas.
+- `inventory: "all" | "platform"` browses tool metadata pages. `platform` lists
+  only Veryfront platform tools. The inventory-only fields `domain` and
+  `resource` match a tool's `discovery` metadata exactly, and `cursor` and
+  `limit` page through results.
+- `query: "<name or phrase>"` searches and loads matching schemas for the next
+  model step.
+
+Search uses deterministic, case-insensitive matching. It treats
 underscores as spaces and ranks results in this order:
 
 1. Exact tool name.

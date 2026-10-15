@@ -31,7 +31,10 @@ import {
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
-import { buildSSRModuleCacheKey, isKeyForProject } from "../../../cache/keys.ts";
+import {
+  buildSSRModuleCacheKey as buildUnscopedSSRModuleCacheKey,
+  isKeyForProject,
+} from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -52,7 +55,10 @@ import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  getMdxModuleCacheVariant,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -162,7 +168,40 @@ function productionGateRelativePath(filePath: string, projectDir: string): strin
 // Deno reports the leak against the whole describe. The shared esbuild service
 // used to leak here too; afterAll(stopEsbuild) closes that one, so do not widen
 // this override any further.
+const TEST_REACT_RUNTIME_SCOPE = await getSSRReactRuntimeCacheScope();
+function buildSSRModuleCacheKey(
+  ...args: Parameters<typeof buildUnscopedSSRModuleCacheKey>
+): string {
+  return buildUnscopedSSRModuleCacheKey(
+    args[0],
+    args[1],
+    `${args[2]}:react-runtime:${TEST_REACT_RUNTIME_SCOPE}`,
+  );
+}
+
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("reads one peer scope for concurrent modules in a graph and refreshes the next graph", async () => {
+    const { createDependencyHashCache } = await import("#veryfront/cache/dependency-graph.ts");
+    let reads = 0;
+    const readScope = () => Promise.resolve(`scope-${++reads}`);
+    const graph = createDependencyHashCache();
+    const scopes = await Promise.all(
+      Array.from(
+        { length: 20 },
+        () => __ssrModuleLoaderInternals.getGraphReactRuntimeScope(graph, readScope),
+      ),
+    );
+    assertEquals(new Set(scopes), new Set(["scope-1"]));
+    assertEquals(reads, 1);
+    assertEquals(
+      await __ssrModuleLoaderInternals.getGraphReactRuntimeScope(
+        createDependencyHashCache(),
+        readScope,
+      ),
+      "scope-2",
+    );
+  });
+
   afterAll(async () => {
     await stopEsbuild();
   });
@@ -316,13 +355,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
-  it("uses the writer's origin-aware MDX cache variant for lookup and invalidation", () => {
-    const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+  it("uses the writer's origin-aware MDX cache variant for lookup and invalidation", async () => {
+    const originA = await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://a.example",
       dev: false,
     });
-    const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+    const originB = await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://b.example",
       dev: false,
@@ -332,29 +371,35 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     assert(originB?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
     assert(originA !== originB);
     assertEquals(
-      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
         dependencyPinningCacheKey: "off",
         moduleServerOrigin: "https://a.example",
         dev: false,
       }),
-      undefined,
+      `on:react-runtime-${await getSSRReactRuntimeCacheScope()}`,
     );
-    const externalA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+    const externalA = await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["knex", "@prisma/client"],
       dev: false,
     });
-    const externalB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+    const externalB = await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["@prisma/client", "knex"],
       dev: false,
     });
     assertEquals(externalB, externalA);
     assert(externalA?.startsWith("on:server-externals-"));
     assertEquals(
-      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      await __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
         serverExternalPackages: ["knex", "@prisma/client"],
         dev: true,
       }),
-      `${externalA}:${MDX_MODULE_DEV_COMPILE_VARIANT}`,
+      getMdxModuleCacheVariant(
+        undefined,
+        undefined,
+        ["knex", "@prisma/client"],
+        true,
+        await getSSRReactRuntimeCacheScope(),
+      ),
     );
   });
 
@@ -734,7 +779,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/VerifiedMdxStaleCache.js",
         undefined,
-        MDX_MODULE_DEV_COMPILE_VARIANT,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          true,
+          await getSSRReactRuntimeCacheScope(),
+        ),
       );
       const mdxPathCache = await getModulePathCache(mdxCacheDir);
       mdxPathCache.set(mdxPathCacheKey, staleTempPath);
@@ -820,7 +871,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/ColdMdxStaleCache.js",
         undefined,
-        MDX_MODULE_DEV_COMPILE_VARIANT,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          true,
+          await getSSRReactRuntimeCacheScope(),
+        ),
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -913,7 +970,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/BranchMdxStaleCache.js",
         undefined,
-        MDX_MODULE_DEV_COMPILE_VARIANT,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          true,
+          await getSSRReactRuntimeCacheScope(),
+        ),
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -1478,8 +1541,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: true,
       });
       contentCacheKey = (loader as unknown as {
-        cache: { getCacheKey(value: string): string };
-      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+        cache: { getCacheKey(value: string, runtimeScope?: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`, TEST_REACT_RUNTIME_SCOPE);
       globalInProgress.set(contentCacheKey, leader);
       __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
 
@@ -1550,8 +1613,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: true,
       });
       contentCacheKey = (loader as unknown as {
-        cache: { getCacheKey(value: string): string };
-      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+        cache: { getCacheKey(value: string, runtimeScope?: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`, TEST_REACT_RUNTIME_SCOPE);
       globalInProgress.set(contentCacheKey, leader);
       __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
 
@@ -2001,7 +2064,17 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await loader.loadRawModule(filePath, source);
 
       const pathCache = await getModulePathCache(mdxCacheDir);
-      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey("_vf_modules/util.js"));
+      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey(
+        "_vf_modules/util.js",
+        undefined,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      ));
       assert(artifactPath !== undefined, "expected the _vf_modules artifact to be cached");
 
       const artifact = await Deno.readTextFile(artifactPath);

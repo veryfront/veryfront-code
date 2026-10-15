@@ -2114,6 +2114,75 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     );
   });
 
+  it("drops reasoning beside function tools when the catalog serves OpenAI only on chat completions", async () => {
+    setCloudBootstrap();
+    // Every OpenAI row is chat-completions only, so the provider is not native
+    // to the OpenAI surface and builds through the chat-only path. The row's
+    // function-tool reasoning capability must still reach that request builder.
+    const catalog = () =>
+      Response.json({
+        models: [{
+          id: "gpt-5.5",
+          modelId: "openai/gpt-5.5",
+          provider: "openai",
+          surface: "openai",
+          operations: ["chat-completions"],
+          aliases: [],
+          capabilities: {
+            thinking: true,
+            reasoning: true,
+            transport: "chat-completions",
+            chat_completions_reasoning_with_function_tools: false,
+          },
+        }],
+      });
+    const bodies: Array<Record<string, unknown>> = [];
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/ai/models")) return catalog();
+        bodies.push(JSON.parse(await request.text()) as Record<string, unknown>);
+        return new Response(
+          readableStreamFrom([
+            encoder.encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'),
+            encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            encoder.encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.5") as ModelRuntime;
+    await model.prepare?.();
+    assertEquals(readVeryfrontCloudModelFacts(model)?.native, false);
+    // The registry-backed compatible builder reads the "openai-compatible" bucket.
+    assertEquals(readVeryfrontCloudModelFacts(model)?.openAIChatProviderName, "openai-compatible");
+
+    for (const withTools of [true, false]) {
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        reasoning: { enabled: true, effort: "high" },
+        ...(withTools
+          ? {
+            tools: [{
+              type: "function",
+              name: "tool_search",
+              inputSchema: { type: "object", properties: { query: { type: "string" } } },
+            }],
+          }
+          : {}),
+      } as never);
+      await drainStream(result.stream);
+    }
+
+    assertEquals(bodies.length, 2);
+    assertEquals((bodies[0]?.tools as unknown[] | undefined)?.length, 1);
+    assertEquals(bodies[0]?.reasoning_effort, undefined);
+    assertEquals(bodies[1]?.reasoning_effort, "high");
+  });
+
   it("does not settle a model on a caller that stopped waiting", async () => {
     setCloudBootstrap();
     let release: (() => void) | undefined;
@@ -2186,6 +2255,39 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     await streamOnce(model);
 
     assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
+  it("keeps the served limit in a built model's facts after its catalog scope is evicted", async () => {
+    setCloudBootstrap();
+    __setVeryfrontCloudCatalogForScopeForTests({
+      apiBaseUrl: "https://api.veryfront.com",
+      apiToken: "vf_test_provider",
+      projectSlug: "provider-test-project",
+    }, {
+      models: [{
+        id: "mistral-small-2503",
+        modelId: "mistral/mistral-small-2503",
+        provider: "mistral",
+        surface: "openai",
+        operations: ["chat-completions"],
+        capabilities: { limit: { context: 32_000, output: 4_000 } },
+      }],
+    });
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2503") as ModelRuntime;
+    await model.prepare?.();
+    assertEquals(readVeryfrontCloudModelFacts(model)?.servedLimit, {
+      context: 32_000,
+      output: 4_000,
+    });
+    // The bounded catalog cache can drop this scope; the limit stays recorded.
+    __resetVeryfrontCloudCatalogForTests();
+    setCloudBootstrap();
+    installGateway(() => new Response("unavailable", { status: 503 }));
+    await Promise.resolve(model.prepare?.()).catch(() => {});
+    assertEquals(readVeryfrontCloudModelFacts(model)?.servedLimit, {
+      context: 32_000,
+      output: 4_000,
+    });
   });
 
   it("still refuses a model a fresh catalog does not list", () => {

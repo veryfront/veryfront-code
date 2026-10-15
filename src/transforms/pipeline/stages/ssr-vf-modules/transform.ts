@@ -1,3 +1,8 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  captureSSRReactRuntimeIdentity,
+  getSSRReactRuntimeCacheScope,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Code transformation logic for the SSR VF Modules stage.
  *
@@ -11,7 +16,7 @@ import {
 } from "#veryfront/transforms/esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { dirname, fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, relative, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
@@ -215,6 +220,7 @@ async function compileFallbackSource(
     format: "esm",
     target: "es2022",
     supported: ESBUILD_SUPPORTED_FEATURES,
+    define: { "import.meta.url": JSON.stringify(toFileUrl(sourcePath).href) },
   });
   return await restoreRootBundledSourceSpecifiers(
     await upgradeImportAssertions(result.code),
@@ -262,6 +268,7 @@ async function transformAndCacheFallbackDep(
     ctx.projectDir,
     depContent,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope(ctx.reactPeers)),
   );
   // Prefer the main path's fully-resolved cache entry when present —
   // that output is strictly higher quality than what the fallback
@@ -360,7 +367,12 @@ async function rewriteFallbackRelativeImports(
 
     // Same React-instance fix as the main path: route React re-exports to the
     // esm.sh bundle instead of linking veryfront's project-React bridge.
-    const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
+    const reactUrl = reactReExportToEsmUrl(
+      resolvedPath,
+      ctx.reactVersion,
+      reactImportMap,
+      ctx.reactPeers,
+    );
     if (reactUrl) {
       replacements.set(specifier, reactUrl);
       continue;
@@ -389,7 +401,7 @@ async function rewriteFallbackRelativeImports(
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return replacements.get(specifier) ?? null;
     }
-    return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
+    return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap, ctx.reactPeers);
   });
 
   // Materialize any `https://esm.sh/...` React imports as local file:// bundles
@@ -404,6 +416,8 @@ async function rewriteFallbackRelativeImports(
     abortSignal: ctx.abortSignal,
     onProgress: ctx.onProgress,
     reactVersion: ctx.reactVersion,
+    reactPeers: ctx.reactPeers,
+    localReact: true,
   });
   return cacheResult.code;
 }
@@ -421,12 +435,20 @@ export async function transformFrameworkCode(
   throwOnMissingImport = false,
   depth = 0,
 ): Promise<string> {
+  const captured = ctx.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  ctx = {
+    ...ctx,
+    reactPeers: ctx.reactPeers ?? captured!.peers,
+    reactRuntimeScope: captured?.scope ?? ctx.reactRuntimeScope ??
+      getSSRReactRuntimeCacheScope(ctx.reactPeers),
+  };
   const transformKey = buildFrameworkTransformCacheKey(
     sourcePath,
     ctx.reactVersion,
     ctx.projectDir,
     content,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope(ctx.reactPeers)),
   );
   const ancestry = ctx.transformAncestry ?? new Set<string>();
 
@@ -492,6 +514,7 @@ async function transformFrameworkCodeUncoalesced(
     ctx.projectDir,
     content,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope(ctx.reactPeers)),
   );
   const cached = frameworkFileCache.get(transformKey);
   if (cached) {
@@ -523,6 +546,7 @@ async function transformFrameworkCodeUncoalesced(
       format: "esm",
       target: "es2022",
       supported: ESBUILD_SUPPORTED_FEATURES,
+      define: { "import.meta.url": JSON.stringify(toFileUrl(sourcePath).href) },
     });
 
     let transformed = await restoreRootBundledSourceSpecifiers(
@@ -597,7 +621,12 @@ async function transformFrameworkCodeUncoalesced(
         // veryfront's own React re-exports bridge to project React, which is a
         // different instance than the esm.sh react-dom bundle during SSR.
         // Point these straight at the esm.sh bundle so SSR shares one React.
-        const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
+        const reactUrl = reactReExportToEsmUrl(
+          resolvedPath,
+          ctx.reactVersion,
+          reactImportMap,
+          ctx.reactPeers,
+        );
         if (reactUrl) {
           relativeReplacements.set(specifier, reactUrl);
           continue;
@@ -622,6 +651,7 @@ async function transformFrameworkCodeUncoalesced(
             ctx.projectDir,
             depContent,
             ctx.importMapFingerprint,
+            await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope(ctx.reactPeers)),
           );
           const existingFileUrl = frameworkFileCache.get(dependencyTransformKey);
           if (existingFileUrl) {
@@ -702,6 +732,7 @@ async function transformFrameworkCodeUncoalesced(
         relativeReplacements,
         reactVersion: ctx.reactVersion,
         reactImportMap,
+        reactPeers: ctx.reactPeers,
       }),
     );
 
@@ -715,6 +746,8 @@ async function transformFrameworkCodeUncoalesced(
       abortSignal: ctx.abortSignal,
       onProgress: ctx.onProgress,
       reactVersion: ctx.reactVersion,
+      reactPeers: ctx.reactPeers,
+      localReact: true,
     });
 
     // Cache the final transformed code
@@ -736,6 +769,13 @@ export async function resolveAndTransformVeryfrontImport(
   specifier: string,
   ctx: TransformContext,
 ): Promise<string | null> {
+  const captured = ctx.reactPeers ? undefined : captureSSRReactRuntimeIdentity();
+  ctx = {
+    ...ctx,
+    reactPeers: ctx.reactPeers ?? captured!.peers,
+    reactRuntimeScope: captured?.scope ?? ctx.reactRuntimeScope ??
+      getSSRReactRuntimeCacheScope(ctx.reactPeers),
+  };
   const sourcePath = Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)
     ? await resolveRootBundledExtensionSourcePath(specifier)
     : await resolveVeryfrontSourcePath(specifier);
@@ -749,6 +789,7 @@ export async function resolveAndTransformVeryfrontImport(
       ctx.projectDir,
       content,
       ctx.importMapFingerprint,
+      await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope(ctx.reactPeers)),
     );
     const cached = veryfrontTransformCache.get(transformKey);
     if (cached) {
@@ -832,11 +873,21 @@ export async function transformFrameworkSource(
   importMap?: TransformContext["importMap"],
   importMapFingerprint?: string,
   abortSignal?: AbortSignal,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<string> {
   return transformFrameworkCode(
     content,
     sourcePath,
-    { reactVersion, projectDir, fs, onProgress, importMap, importMapFingerprint, abortSignal },
+    {
+      reactVersion,
+      reactPeers,
+      projectDir,
+      fs,
+      onProgress,
+      importMap,
+      importMapFingerprint,
+      abortSignal,
+    },
     true,
   );
 }

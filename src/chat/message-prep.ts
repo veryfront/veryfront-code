@@ -837,8 +837,11 @@ function isToolErrorState(part: unknown): boolean {
 }
 
 /** Strip pending tool parts. */
-export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
-  const replayMatches = findProviderVisibleToolReplayMatches(messages);
+export function stripPendingToolParts(
+  messages: ChatUiMessage[],
+  trustedToolReplayMessageIds: readonly string[] = [],
+): ChatUiMessage[] {
+  const replayMatches = findProviderVisibleToolReplayMatches(messages, trustedToolReplayMessageIds);
 
   return messages.flatMap((message) => {
     if (message.parts.length === 0) {
@@ -1007,17 +1010,25 @@ export function prepareProviderModelMessagesFromUiMessages(
     options.providerOwnedToolNames,
     options.preserveProviderOwnedToolSourceMessageIds,
   );
-  const strippedPendingToolMessages = stripPendingToolParts(strippedProviderOwnedToolMessages);
+  const strippedPendingToolMessages = stripPendingToolParts(
+    strippedProviderOwnedToolMessages,
+    options.trustedToolReplayMessageIds,
+  );
   const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);
   const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(
     strippedSupersededToolMessages,
   );
   const providerModelMessages = preserveEmptyAssistantAnchors(
-    convertUiMessagesToProviderModelMessages(rewrittenMessages),
+    convertUiMessagesToProviderModelMessages(
+      rewrittenMessages,
+      options.trustedToolReplayMessageIds,
+    ),
     rewrittenMessages,
     options.preserveProviderOwnedToolSourceMessageIds,
   );
-  const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
+  const patchedMessages = ensureToolCallInputs(
+    dedupeToolHistory(providerModelMessages, options.trustedToolReplayMessageIds),
+  );
   const preserveOptions = {
     preserveEmptyAssistantSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
   };
@@ -1688,7 +1699,14 @@ export function compactForStep(
 }
 
 /** Dedupe tool history. */
-export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+export function dedupeToolHistory(
+  messages: ProviderModelMessage[],
+  trustedSourceMessageIds: readonly string[] = [],
+): ProviderModelMessage[] {
+  const trustedIds = new Set(trustedSourceMessageIds.filter((id) => id.length > 0));
+  const callSourceIds = new Map<string, string>();
+  const closedTrustedCallIds = new Set<string>();
+  let sourceId: string | undefined;
   const seenToolCallIds = new Set<string>();
   const seenToolResultIds = new Set<string>();
   let mutated = false;
@@ -1699,9 +1717,18 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
     const filtered = filterPrivateArray(parts, (part) => {
       if (isToolCallPart(part)) {
         if (seenToolCallIds.has(part.toolCallId)) {
-          mutated = true;
-          return false;
+          if (
+            !sourceId || !trustedIds.has(sourceId) ||
+            callSourceIds.get(part.toolCallId) === sourceId ||
+            !closedTrustedCallIds.has(part.toolCallId)
+          ) {
+            mutated = true;
+            return false;
+          }
+          seenToolResultIds.delete(part.toolCallId);
         }
+        closedTrustedCallIds.delete(part.toolCallId);
+        if (sourceId) callSourceIds.set(part.toolCallId, sourceId);
         seenToolCallIds.add(part.toolCallId);
         return true;
       }
@@ -1711,6 +1738,10 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
           return false;
         }
         seenToolResultIds.add(part.toolCallId);
+        if (
+          sourceId && trustedIds.has(sourceId) &&
+          trustedIds.has(callSourceIds.get(part.toolCallId) ?? "")
+        ) closedTrustedCallIds.add(part.toolCallId);
         return true;
       }
       return true;
@@ -1719,9 +1750,12 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   };
 
   for (const message of messages) {
+    sourceId = getProviderModelMessageSourceId(message);
     if (message.role === "user" || message.role === "system") {
       seenToolCallIds.clear();
       seenToolResultIds.clear();
+      callSourceIds.clear();
+      closedTrustedCallIds.clear();
     }
     if (message.role === "user" && Array.isArray(message.content)) {
       const { filtered, changed } = filterParts(message.content);

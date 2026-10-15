@@ -12,6 +12,7 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { markFrameworkSkillLoader } from "./loader-provenance.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -513,69 +514,72 @@ async function assertActiveSkillFileAvailable(
  * Loads a skill's full instructions, available references, and scripts.
  */
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
-  return tool({
-    id: "load_skill",
-    description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
-      `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
-    inputSchema: getLoadSkillInputSchema(),
-    execute: async (input, context): Promise<SkillContent> => {
-      const budget = createFileBudget(context);
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
+  return markFrameworkSkillLoader(
+    tool({
+      id: "load_skill",
+      description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
+        `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
+      inputSchema: getLoadSkillInputSchema(),
+      execute: async (input, context): Promise<SkillContent> => {
+        const budget = createFileBudget(context);
+        const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
 
-      // Read SKILL.md
-      const validatedSkillMdPath = await validateStrictSkillPath(
-        skill.rootPath,
-        SKILL_MD_FILENAME,
-        [],
-        skill.fsAdapter,
-        { budget },
-      );
-      const content = await readSkillFile(
-        skill,
-        validatedSkillMdPath,
-        SKILL_TEXT_FILE_MAX_BYTES,
-        budget,
-      );
-      assertDocumentCharacterLimit(content);
+        // Read SKILL.md
+        const validatedSkillMdPath = await validateStrictSkillPath(
+          skill.rootPath,
+          SKILL_MD_FILENAME,
+          [],
+          skill.fsAdapter,
+          { budget },
+        );
+        const content = await readSkillFile(
+          skill,
+          validatedSkillMdPath,
+          SKILL_TEXT_FILE_MAX_BYTES,
+          budget,
+        );
+        assertDocumentCharacterLimit(content);
 
-      // Parse frontmatter to get instructions
-      const parsed = await parseSkillFrontmatter(content);
+        // Parse frontmatter to get instructions
+        const parsed = await parseSkillFrontmatter(content);
 
-      // List available files the agent can load through load_skill_reference.
-      const references = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_REFERENCES_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const resources = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_RESOURCES_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const assets = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_ASSETS_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const scripts = await listStrictSkillTree(
-        skill.rootPath,
-        SKILL_SCRIPTS_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const loadableReferences = [...references, ...resources, ...assets];
+        // List available files the agent can load through load_skill_reference.
+        const references = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_REFERENCES_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const resources = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_RESOURCES_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const assets = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_ASSETS_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const scripts = await listStrictSkillTree(
+          skill.rootPath,
+          SKILL_SCRIPTS_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const loadableReferences = [...references, ...resources, ...assets];
 
-      return {
-        skillId: skill.id,
-        instructions: parsed.body,
-        references: loadableReferences,
-        scripts,
-      };
-    },
-  });
+        return {
+          skillId: skill.id,
+          instructions: parsed.body,
+          references: loadableReferences,
+          scripts,
+        };
+      },
+    }),
+    "flat",
+  );
 }
 
 /**

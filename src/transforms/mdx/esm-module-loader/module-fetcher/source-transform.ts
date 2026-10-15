@@ -1,3 +1,6 @@
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Source-file transform phase for the MDX ESM module fetcher.
  *
@@ -32,6 +35,8 @@ function isRecursiveReactRuntimeEntry(normalizedPath: string): boolean {
 }
 
 export interface TransformResolvedModuleSourceInput {
+  /** Physical peers captured once for this SSR graph. */
+  reactPeers?: LocalReactPeerSnapshot;
   sourceCode: string;
   actualFilePath: string;
   projectDir: string;
@@ -49,6 +54,7 @@ export interface TransformResolvedModuleSourceInput {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   log: SourceTransformLogger;
@@ -96,12 +102,14 @@ export async function transformResolvedModuleSource(
       return await transformFramework(
         input.sourceCode,
         input.actualFilePath,
-        input.reactVersion ?? REACT_DEFAULT_VERSION,
+        input.reactVersion ?? resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION,
         input.projectDir,
         createFileSystem(),
         undefined,
         importMap,
         importMapFingerprint,
+        undefined,
+        input.reactPeers,
       );
     } catch (transformError) {
       logTransformFailure(input, transformError);
@@ -124,12 +132,16 @@ export async function transformResolvedModuleSource(
         dev: input.dev,
         ssr: true,
         reactVersion: input.reactVersion,
+        ...(input.reactPeers ? { reactPeers: input.reactPeers } : {}),
         serverExternalPackages: input.serverExternalPackages,
         moduleServerOrigin: input.moduleServerOrigin,
         dependencyPinningCacheKey: input.dependencyPinningCacheKey,
         ...(input.dependencyPinningDependencies === undefined
           ? {}
           : { dependencyPinningDependencies: input.dependencyPinningDependencies }),
+        ...(input.dependencyPinningConfiguredVersions === undefined
+          ? {}
+          : { dependencyPinningConfiguredVersions: input.dependencyPinningConfiguredVersions }),
         ...(input.dependencyPinningSource === undefined
           ? {}
           : { dependencyPinningSource: input.dependencyPinningSource }),
@@ -159,6 +171,7 @@ export async function transformResolvedModuleSource(
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion: input.reactVersion,
+    ...(input.reactPeers ? { reactPeers: input.reactPeers } : {}),
     serverExternalPackages: input.serverExternalPackages,
   });
 

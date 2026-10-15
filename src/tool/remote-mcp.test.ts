@@ -422,6 +422,15 @@ describe("tool/remote-mcp", () => {
               inputSchema: {},
               title: "Search docs",
               annotations: { readOnlyHint: true },
+              _meta: {
+                "veryfront/tool-discovery": {
+                  version: 1,
+                  type: "integration",
+                  domain: "docs",
+                  operation: "search",
+                  ignored: true,
+                },
+              },
             }],
           },
         });
@@ -442,6 +451,7 @@ describe("tool/remote-mcp", () => {
       name: "search_docs",
       description: "Search documentation",
       parameters: { type: "object", properties: {} },
+      discovery: { version: 1, type: "integration", domain: "docs", operation: "search" },
       title: "Search docs",
       annotations: { readOnlyHint: true },
     }]);

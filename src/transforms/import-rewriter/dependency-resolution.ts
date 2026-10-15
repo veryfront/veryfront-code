@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import {
   type DependencyPinningSourceInput,
   getProjectDependenciesSync,
@@ -67,6 +68,7 @@ export interface ImportDependencyResolutionContext {
   dependencyPinningSource?: DependencyPinningSourceInput;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /**
    * Records unresolved imports as inert cache metadata. Replays still pass
    * through this resolver so current snapshot authority and scheduler TTLs

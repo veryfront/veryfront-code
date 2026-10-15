@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedHttpFixture } from "../../../tests/fixtures/hosted-http-broker.ts";
@@ -63,6 +64,35 @@ describe("installed HTTP broker", () => {
       await b.shutdown();
     }
   });
+  it("uses the configured bounded lifetime for long requests and streams", async () => {
+    const f = createHostedHttpFixture(() => new Response("A"));
+    const options = {
+      installations: [{ image: f.input.session.expectedImage, configuration }],
+      expectedBrokerInstanceId: "broker-a",
+      allocator: f.input.session.allocator,
+      connectTransport: f.input.session.connectTransport,
+      maxActive: 1,
+      authorize: async () => {},
+      requestLifetimeMs: 180_000,
+    };
+    const b = createInstalledHttpBroker(options);
+    try {
+      const startedAt = Date.now();
+      const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
+      const finishedAt = Date.now();
+      const { hardDeadlineAt, prepareDeadlineAt } = input.session.request;
+      // Lifetimes start after authorization, which can cross a clock tick.
+      assertEquals(hardDeadlineAt >= startedAt + 180_000, true);
+      assertEquals(hardDeadlineAt <= finishedAt + 180_000, true);
+      assertEquals(prepareDeadlineAt >= startedAt + 30_000, true);
+      assertEquals(prepareDeadlineAt <= finishedAt + 30_000, true);
+    } finally {
+      await b.shutdown();
+    }
+    for (const requestLifetimeMs of [0, -1, NaN, Infinity, 1.5, 86_400_001]) {
+      assertThrows(() => createInstalledHttpBroker({ ...options, requestLifetimeMs }), TypeError);
+    }
+  });
   it("refuses each foreign identity before authorization or allocation", async () => {
     let calls = 0;
     const b = fixture(async () => {
@@ -96,24 +126,25 @@ describe("installed HTTP broker", () => {
     }
   });
   it("orders a request by when its authorization began, not when it finished", async () => {
-    let began = 0;
-    const b = fixture(async () => {
-      began = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    });
+    using time = new FakeTime(1_000_000);
+    const authorized = Promise.withResolvers<void>();
+    const b = fixture(() => authorized.promise);
     try {
-      const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
-      const request = input.session.request;
-      assertEquals(request.requestedAt <= began, true);
-      // The configured lifetime still runs from the end of authorization.
-      assertEquals(request.hardDeadlineAt >= began + 40 + 75_000, true);
-      assertEquals(request.prepareDeadlineAt >= began + 40 + 30_000, true);
+      const pending = b.hostedHttp.resolve(authority, new AbortController().signal);
+      time.tick(40);
+      authorized.resolve();
+      const { request } = (await pending).session;
+      assertEquals(request.requestedAt, 1_000_000);
+      assertEquals(request.hardDeadlineAt, 1_000_040 + 75_000);
+      assertEquals(request.prepareDeadlineAt, 1_000_040 + 30_000);
     } finally {
       await b.shutdown();
     }
   });
 
   it("keeps the maximum lifetime within the session bound when authorization takes time", async () => {
+    using time = new FakeTime(1_000_000);
+    const authorized = Promise.withResolvers<void>();
     const f = createHostedHttpFixture(() => new Response("A"));
     const b = createInstalledHttpBroker({
       installations: [{ image: f.input.session.expectedImage, configuration }],
@@ -122,13 +153,16 @@ describe("installed HTTP broker", () => {
       connectTransport: f.input.session.connectTransport,
       maxActive: 2,
       requestLifetimeMs: 86_400_000,
-      authorize: () => new Promise((resolve) => setTimeout(resolve, 40)),
+      authorize: () => authorized.promise,
     });
     try {
-      const { request } = (await b.hostedHttp.resolve(authority, new AbortController().signal))
-        .session;
-      assertEquals(request.hardDeadlineAt - request.requestedAt, 86_400_000);
-      assertEquals(request.prepareDeadlineAt <= request.hardDeadlineAt, true);
+      const pending = b.hostedHttp.resolve(authority, new AbortController().signal);
+      time.tick(40);
+      authorized.resolve();
+      const { request } = (await pending).session;
+      assertEquals(request.requestedAt, 1_000_000);
+      assertEquals(request.hardDeadlineAt, 1_000_000 + 86_400_000);
+      assertEquals(request.prepareDeadlineAt, 1_000_040 + 30_000);
     } finally {
       await b.shutdown();
     }

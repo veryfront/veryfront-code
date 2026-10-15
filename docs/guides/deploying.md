@@ -120,6 +120,18 @@ npx veryfront@latest push --branch feature-x
 npx veryfront@latest deploy --branch feature-x --env staging
 ```
 
+## Pull a release
+
+A release is an immutable snapshot of a branch's saved files and its browser
+asset build. A deployment serves one release in one environment. To copy the
+files of a release into the local project, select the release by ID, by
+version, or with `latest`:
+
+```bash
+npx veryfront@latest pull --release latest
+npx veryfront@latest pull --release <RELEASE_VERSION>
+```
+
 ## Resolve project identity
 
 Project references use this precedence:

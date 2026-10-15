@@ -1,3 +1,4 @@
+import { isFrameworkSkillBootstrapExecution } from "#veryfront/skill/loader-provenance.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
@@ -45,6 +46,7 @@ import {
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { markFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import {
   hasProviderObservedSkillBody,
   hasProviderObservedSkillReferences,
@@ -2147,7 +2149,7 @@ export function createRuntimeLoadSkillTool(
       const authorityGuard = privateAuthority.begin();
       const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
       const trustedResponse = trustedResponseStore.get(loadedSkillKey);
-      if (trustedResponse) {
+      if (trustedResponse && !isFrameworkSkillBootstrapExecution(execute)) {
         return buildAlreadyLoadedSkillResponse(skillId, trustedResponse);
       }
 
@@ -2249,22 +2251,25 @@ export function createRuntimeLoadSkillTool(
     };
   }
 
-  return {
-    id: "load_skill",
-    type: "function",
-    description: buildRuntimeLoadSkillDescription(options),
-    inputSchema: runtimeLoadSkillToolInputSchema,
-    get inputSchemaJson() {
-      // Keep refreshing the private reference-authorization scope on schema
-      // access (its side effect is relied upon), but advertise the STATIC
-      // generic schema so the tool definition is byte-identical across projects
-      // (shared cache prefix, RFC 0001). The runtime validation schema is
-      // still used for `.parse()` validation at execution, so all runtime
-      // enforcement (valid IDs, reference authorization, compact repeat loads) is preserved; the model
-      // just no longer sees the per-project enum.
-      refreshPrivateAuthorityScope();
-      return createStaticRuntimeLoadSkillToolInputJsonSchema();
+  return markFrameworkSkillLoader(
+    {
+      id: "load_skill",
+      type: "function",
+      description: buildRuntimeLoadSkillDescription(options),
+      inputSchema: runtimeLoadSkillToolInputSchema,
+      get inputSchemaJson() {
+        // Keep refreshing the private reference-authorization scope on schema
+        // access (its side effect is relied upon), but advertise the STATIC
+        // generic schema so the tool definition is byte-identical across projects
+        // (shared cache prefix, RFC 0001). The runtime validation schema is
+        // still used for `.parse()` validation at execution, so all runtime
+        // enforcement (valid IDs, reference authorization, compact repeat loads) is preserved; the model
+        // just no longer sees the per-project enum.
+        refreshPrivateAuthorityScope();
+        return createStaticRuntimeLoadSkillToolInputJsonSchema();
+      },
+      execute,
     },
-    execute,
-  };
+    "operation",
+  );
 }

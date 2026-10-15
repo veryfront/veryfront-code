@@ -825,6 +825,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
           simpleTool("create_invite"),
           simpleTool("create_project_invitation"),
           simpleTool("delete_member"),
+          simpleTool("delete_project_member"),
           simpleTool("update_file"),
         ],
         execute: (toolName) => {

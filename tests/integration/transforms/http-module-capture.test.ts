@@ -71,6 +71,31 @@ describe("HTTP module source capture", () => {
     );
   });
 
+  it("captures React bytes even when a host caller requests local peers", async () => {
+    let fetches = 0;
+    await withMockFetch(async () => {
+      fetches++;
+      return new Response("export const jsx = () => null;", {
+        headers: { "content-type": "application/javascript" },
+      });
+    }, () =>
+      withCache(async (cacheDir) => {
+        const captured = await captureHttpImportsToLocal(
+          'import { jsx } from "react/jsx-runtime"; export default jsx;',
+          { cacheDir, importMap: { imports: {} }, reactVersion: "19.2.4", localReact: true },
+          limits,
+        );
+        const root = toFileUrl(join(cacheDir, "entry.mjs")).href;
+        const graph = await linkRenderModules({
+          modules: [{ url: root, source: captured.code }, ...captured.modules],
+          entrypoints: [root],
+        }, limits);
+        assertEquals(fetches, 1);
+        assertEquals(captured.modules.length, 1);
+        assertEquals(graph.files.length, 2);
+      }));
+  });
+
   it("captures lazy cyclic dependencies on fetch and cache hits without rereading at publication", async () => {
     let fetches = 0;
     await withMockFetch(async (input) => {

@@ -1,3 +1,10 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * App Route HTML Rendering for Build
  */
@@ -96,6 +103,7 @@ function getLayoutDirectoriesForPage(appRoot: string, pageFile: string): string[
  * Render an App Router route to HTML
  */
 interface RenderAppRouteArgs {
+  reactPeers?: LocalReactPeerSnapshot;
   adapter: RuntimeAdapter;
   projectDir: string;
   routePath: string;
@@ -110,6 +118,7 @@ interface RenderAppRouteArgs {
   includePreviewStylesheet?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 interface AppRouteRendererInternals {
@@ -138,6 +147,7 @@ async function renderAppRouteToHTMLWithInternals(
     includePreviewStylesheet,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   } = args;
 
   const appRoot = join(projectDir, config?.directories?.app ?? "app");
@@ -155,13 +165,20 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningSource,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   );
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? args.reactPeers ?? captureLocalReactPeers()
+    : undefined;
   const snapshotReactVersion = await resolveProjectReactVersion({
+    adapter: adapter,
+    reactPeers,
     projectDir,
     config,
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   });
   const reactVersion = dependencySnapshot.cacheKey.startsWith("on:")
     ? snapshotReactVersion
@@ -177,7 +194,7 @@ async function renderAppRouteToHTMLWithInternals(
   }
 
   // Use the resolved project version so component and renderer modules share one React instance.
-  const React = await getProjectReact(reactVersion, adapter);
+  const React = await getProjectReact(reactVersion, adapter, reactPeers);
 
   const componentOptions: LoadComponentOptions = {
     projectId: projectDir,
@@ -186,9 +203,11 @@ async function renderAppRouteToHTMLWithInternals(
     moduleServerOrigin,
     contentSourceId,
     reactVersion,
+    reactPeers,
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   };
   const pageSource = await adapter.fs.readFile(pageFile);
   const Page = await internals.componentLoader(
@@ -272,13 +291,15 @@ async function renderAppRouteToHTMLWithInternals(
   // and without a render context the Head instances never commit, leaving the
   // built page on the framework's placeholder title.
   const { result: htmlInner, head: requestHead } = await runWithHeadCollector(
-    (renderContext) => renderToStringAdapter(element, { reactVersion, renderContext }, adapter),
+    (renderContext) =>
+      renderToStringAdapter(element, { reactVersion, reactPeers, renderContext }, adapter),
   );
   const committedHead = resolveCommittedHeadFromHTML(htmlInner, requestHead);
   const title = committedHead?.title ?? "Veryfront App";
   const headElements = buildHeadElements(committedHead);
   const slug = routePathToSlug(routePath);
   const importMapJson = await buildImportMapJson({
+    adapter: adapter,
     projectDir,
     config: {
       ...config,
@@ -287,6 +308,7 @@ async function renderAppRouteToHTMLWithInternals(
     moduleServerOrigin,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
     releaseAssetManifest,
   });
   const hydrationData = clientPageIsland || hasUseClientDirective(pageSource)

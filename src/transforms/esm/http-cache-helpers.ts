@@ -22,6 +22,13 @@ import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
+import {
+  captureLocalReactPeers,
+  getLocalReactPath,
+  type LocalReactPeerSnapshot,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 
 const logger = rendererLogger.component("http-cache");
 const ArrayIncludes = Array.prototype.includes;
@@ -259,6 +266,9 @@ export type CacheOptions = {
   importMap: ImportMapConfig;
   /** React version to use for esm.sh URLs (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Use framework peers only for host SSR, never a captured render graph. */
+  localReact?: boolean;
+  reactPeers?: LocalReactPeerSnapshot;
   /** Bare npm package roots that the runtime resolves without bundling. */
   serverExternalPackages?: readonly string[];
   /** Absolute request origin used to identify same-origin module-server URLs. */
@@ -273,7 +283,7 @@ export type CacheOptions = {
 
 export type HttpCacheIdentityOptions = Pick<
   CacheOptions,
-  "importMap" | "reactVersion" | "serverExternalPackages"
+  "importMap" | "reactVersion" | "serverExternalPackages" | "localReact" | "reactPeers"
 >;
 
 export interface HttpCacheIdentityMetadata extends HttpCacheIdentityOptions {
@@ -380,8 +390,19 @@ function getHttpCacheRequestIdentityContext(
  * Callers must create a fresh prepared options object for each top-level request.
  */
 export function prepareHttpCacheRequestOptions<T extends CacheOptions>(options: T): T {
+  const peers = options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
+    ? options.reactPeers ?? captureLocalReactPeers()
+    : undefined;
   const prepared = {
     ...options,
+    localReact: options.localReact === true && (runtimeKind === "node" || runtimeKind === "bun"),
+    ...(options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
+      ? {
+        reactPeers: peers,
+        reactVersion: options.reactVersion ?? peers?.versions.react ??
+          resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION,
+      }
+      : {}),
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
   } as T;
   return attachHttpCacheRequestIdentityContext(prepared, {});
@@ -421,6 +442,33 @@ function getRequestImportMapFingerprint(
   return context.canonicalReactImportMapFingerprint;
 }
 
+/** Scope cached SSR code to the runtime and its immutable local peer paths. */
+export function captureSSRReactRuntimeIdentity(): {
+  reactVersion: string | undefined;
+  scope: Promise<string>;
+  peers: LocalReactPeerSnapshot;
+} {
+  const peers = captureLocalReactPeers();
+  const imports = peers.paths;
+  const versions = peers.versions;
+  const scope = fingerprintImportMap({
+    imports,
+    scopes: { "installed-peer-versions": versions, "installed-peer-roots": peers.roots },
+  })
+    .then((peers) => `local-react:${runtimeKind}:${peers}`);
+  return { reactVersion: versions.react, scope, peers };
+}
+
+export function getSSRReactRuntimeCacheScope(peers?: LocalReactPeerSnapshot): Promise<string> {
+  if (peers) {
+    return fingerprintImportMap({
+      imports: peers.paths,
+      scopes: { "installed-peer-versions": peers.versions, "installed-peer-roots": peers.roots },
+    }).then((identity) => `local-react:${runtimeKind}:${identity}`);
+  }
+  return captureSSRReactRuntimeIdentity().scope;
+}
+
 /** Canonical identity shared by normal caching and all recovery paths. */
 export async function buildHttpCacheIdentity(
   url: string,
@@ -430,9 +478,23 @@ export async function buildHttpCacheIdentity(
   const normalizedUrl = normalizeHttpUrl(effective.url);
   const importMapFingerprint = await getRequestImportMapFingerprint(url, effective.options);
   const reactVersion = effective.options.reactVersion;
+  let localReactScope = "";
+  if (effective.options.localReact && (runtimeKind === "node" || runtimeKind === "bun")) {
+    getLocalReactPath(
+      "react",
+      reactVersion ?? effective.options.reactPeers?.versions.react ??
+        resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION,
+      effective.options.reactPeers,
+    );
+    // Absolute peer URLs are process-installation references, not portable
+    // cache dependencies. Recovery recomputes this scope in the consumer.
+    localReactScope = `,${
+      JSONStringify(await getSSRReactRuntimeCacheScope(effective.options.reactPeers))
+    }`;
+  }
   const base = `[${JSONStringify(normalizedUrl)},${
     reactVersion === undefined ? "null" : JSONStringify(reactVersion)
-  },${JSONStringify(importMapFingerprint)}`;
+  },${JSONStringify(importMapFingerprint)}${localReactScope}`;
   const serverExternalPackages = canonicalizeServerExternalPackages(
     effective.options.serverExternalPackages,
   );
@@ -456,6 +518,9 @@ export async function buildHttpCacheIdentityMetadata(
     url: normalizeHttpUrl(effective.url),
     importMap: effective.options.importMap,
     reactVersion: effective.options.reactVersion,
+    ...(effective.options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
+      ? { localReact: true }
+      : {}),
     serverExternalPackages: canonicalizeServerExternalPackages(
       effective.options.serverExternalPackages,
     ),

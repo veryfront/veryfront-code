@@ -93,6 +93,8 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     ]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
+    bootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
+    bootstrapSkill: v.string().min(1).max(256).optional(),
     toolResultContext: v.union([
       v.boolean(),
       v.object({
@@ -273,6 +275,8 @@ export function parseRuntimeAgentMarkdownDefinition(
     : undefined;
   const knowledge = Object.hasOwn(attrs, "knowledge") ? attrs.knowledge : undefined;
   const toolLoading = readOptionalAlias(attrs, "tool-loading", "toolLoading");
+  const bootstrapTools = readOptionalAlias(attrs, "bootstrap-tools", "bootstrapTools");
+  const bootstrapSkill = readOptionalAlias(attrs, "bootstrap-skill", "bootstrapSkill");
   const toolResultContext = readOptionalAlias(attrs, "tool-result-context", "toolResultContext");
   const toolSelection = Object.hasOwn(attrs, "tools") ? parseToolSelector(attrs.tools) : undefined;
   const tools = toolSelection?.tools;
@@ -326,6 +330,8 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(skills === undefined ? {} : { skills }),
     ...(knowledge === undefined ? {} : { knowledge }),
     ...(toolLoading === undefined ? {} : { toolLoading }),
+    ...(bootstrapTools === undefined ? {} : { bootstrapTools }),
+    ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
     ...(toolResultContext === undefined ? {} : { toolResultContext }),
     ...(tools === undefined ? {} : { tools }),
     ...(deniedTools === undefined ? {} : { deniedTools }),

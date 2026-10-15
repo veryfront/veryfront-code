@@ -82,6 +82,31 @@ describe("executor tool schema", () => {
     assert(!Object.hasOwn(definition, "title"));
   });
 
+  it("preserves bounded discovery metadata through executor definition validation", () => {
+    const discovery = {
+      version: 1 as const,
+      type: "platform" as const,
+      domain: "agents",
+      resource: "Agents",
+    };
+    const source = {
+      name: "list_agents",
+      description: "List agents",
+      parameters: { type: "object" },
+      discovery,
+    };
+    assertEquals(executorToolDefinition(source, executorToolLimits()).discovery, discovery);
+    assertEquals(
+      executorToolDefinition({ ...source, discovery: undefined }, executorToolLimits()).discovery,
+      undefined,
+    );
+    assertThrows(() =>
+      executorToolDefinition(
+        { ...source, discovery: { version: 2, type: "platform" } },
+        executorToolLimits(),
+      )
+    );
+  });
   it("bounds IDs, correlations, definitions, progress and JSON byte size", () => {
     const call = { sourceId: "source", toolName: "tool", args: {} };
     for (
