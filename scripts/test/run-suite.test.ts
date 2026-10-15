@@ -292,6 +292,12 @@ describe("suite planning parity", () => {
         ),
         `${suite} must retain response cleanup intrinsic coverage`,
       );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+        ),
+        `${suite} must retain standalone identity startup coverage`,
+      );
     }
   });
 
@@ -999,6 +1005,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
@@ -1034,6 +1041,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
