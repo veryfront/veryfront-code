@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stub } from "#std/testing/mock";
 import {
   connectedDevApiBaseUrl,
@@ -156,7 +156,7 @@ it("requires a Studio override for an unsupported connected API", () => {
 Deno.test("connected project and environment reads carry onboarding deadlines", async () => {
   const paths: string[] = [];
   await withMockFetch((_input, init) => {
-    assertEquals(init?.signal instanceof AbortSignal, true);
+    assertEquals(observeFetchRequestInit(init).signal instanceof AbortSignal, true);
     const path = new URL(String(_input)).pathname;
     paths.push(path);
     return Promise.resolve(

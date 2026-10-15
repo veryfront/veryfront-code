@@ -1,14 +1,15 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createCloudOnboardingTransport } from "../../../../cli/shared/cloud-onboarding-transport.ts";
 
 Deno.test("onboarding cancels a stalled request at its deadline", async () => {
   let cancelled = false;
   await withMockFetch((_input, init) =>
     new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => {
+      const { signal } = observeFetchRequestInit(init);
+      signal?.addEventListener("abort", () => {
         cancelled = true;
-        reject(init.signal?.reason);
+        reject(signal.reason);
       }, { once: true });
     }), async () => {
     const transport = createCloudOnboardingTransport("https://api.veryfront.com", 10);
@@ -22,9 +23,10 @@ Deno.test("onboarding preserves caller cancellation", async () => {
   let cancelled = false;
   await withMockFetch((_input, init) =>
     new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => {
+      const { signal } = observeFetchRequestInit(init);
+      signal?.addEventListener("abort", () => {
         cancelled = true;
-        reject(init.signal?.reason);
+        reject(signal.reason);
       }, { once: true });
       controller.abort();
     }), async () => {
