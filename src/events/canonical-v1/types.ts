@@ -75,3 +75,18 @@ export interface EventDiscoveryV1 {
     schemas: { public: string; diagnostic: string | null };
   }[];
 }
+
+/** Additive cross-store descendant history profile; single-run pages remain unchanged. */
+export interface DescendantRunReadPageV1 extends RunReadPageV1 {
+  cursor_profile: "run-events-descendants-v1";
+}
+export interface DescendantCursorV1 {
+  version: 1;
+  root_run_id: string;
+  producing_run_id: string;
+  view: EventViewV1;
+  sort_order: "asc" | "desc";
+  filters_digest: string;
+  event_id: string;
+  store: "agent_run_event" | "run_execution_event";
+}

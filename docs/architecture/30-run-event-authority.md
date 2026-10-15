@@ -100,3 +100,7 @@ deno task generate
 deno run -A src/events/generate-payload-types.mjs
 git diff --exit-code -- src/events/payload-types.generated.ts
 ```
+
+## Descendant history continuation
+
+Canonical single-run pages retain the immutable decimal cursor contract. Reads with `include_descendants: true` explicitly select `cursor_profile=run-events-descendants-v1` and require that additive page profile and preserve the opaque `vfd1.` continuation token exactly. Equal physical event IDs from different producing runs remain distinct history entries. The SDK validates the bounded canonical token encoding, page discriminator, continuation identity, nonregressing physical IDs, and duplicate producing-run/event-ID pairs. It cannot infer physical storage from a member. The API owns total tuple ordering and authorizes the cursor's root, filters, order, store, and view before querying history; client token validation grants no access.

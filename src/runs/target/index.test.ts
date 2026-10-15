@@ -13,6 +13,8 @@ const expectedRuntimeExports = [
   "createCanonicalEventsV1Facade",
   "createRunsApiTransport",
   "createRunsSdk",
+  "decodeDescendantCursorV1",
+  "parseDescendantRunReadPageV1",
   "parseEventDiscoveryV1",
   "parseEventErrorV1",
   "parseRunReadMemberV1",

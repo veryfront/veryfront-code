@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:descendant-read-contracts",
+  "$comment": "Additive descendant pagination profile. Runtime validates canonical cursor encoding and last member identity; contextual authorization and filter binding are caller responsibilities.",
+  "$defs": {
+    "cursor": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^vfd1\\.[A-Za-z0-9_-]+$"
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cursor_profile",
+        "entries",
+        "next_cursor",
+        "has_more"
+      ],
+      "properties": {
+        "cursor_profile": {
+          "const": "run-events-descendants-v1"
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "urn:veryfront:events:1:read-contracts#/$defs/member"
+          }
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "has_more": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "next_cursor": {
+                "$ref": "#/$defs/cursor"
+              },
+              "entries": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "next_cursor": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "cursorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "root_run_id",
+        "producing_run_id",
+        "view",
+        "sort_order",
+        "filters_digest",
+        "event_id",
+        "store"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "root_run_id": {
+          "$ref": "#/$defs/runId"
+        },
+        "producing_run_id": {
+          "$ref": "#/$defs/runId"
+        },
+        "view": {
+          "enum": [
+            "public",
+            "diagnostic"
+          ]
+        },
+        "sort_order": {
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        },
+        "filters_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990|9007199254740991)$",
+          "description": "Canonical positive decimal ECMAScript safe integer, at most 9007199254740991; enforced by runtime codec."
+        },
+        "store": {
+          "enum": [
+            "agent_run_event",
+            "run_execution_event"
+          ]
+        }
+      }
+    }
+  }
+}

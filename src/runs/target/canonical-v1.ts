@@ -5,6 +5,8 @@ import {
   type VeryfrontApiTransport,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import {
+  decodeDescendantCursorV1,
+  parseDescendantRunReadPageV1,
   parseEventDiscoveryV1,
   parseEventErrorV1,
   parseRunReadMemberV1,
@@ -12,6 +14,7 @@ import {
   parseStreamMemberV1,
 } from "#veryfront/events/canonical-v1/index.ts";
 import type {
+  DescendantRunReadPageV1,
   EventDiscoveryV1,
   RunReadMemberV1,
   RunReadPageV1,
@@ -45,7 +48,7 @@ export interface CanonicalEventsV1Facade {
     runId: string,
     query?: CanonicalEventsV1ListOptions,
     options?: RunsCallOptions,
-  ): Promise<RunReadPageV1>;
+  ): Promise<RunReadPageV1 | DescendantRunReadPageV1>;
   get(runId: string, eventId: string, options?: RunsCallOptions): Promise<RunReadMemberV1>;
   discover(options?: RunsCallOptions): Promise<EventDiscoveryV1>;
   stream(
@@ -171,7 +174,10 @@ export function createCanonicalEventsV1Facade(
   }
   return {
     async list(runId, query = {}, options) {
-      if (query.cursor !== undefined) cursor(query.cursor);
+      if (query.cursor !== undefined) {
+        if (query.include_descendants === true) await decodeDescendantCursorV1(query.cursor);
+        else cursor(query.cursor);
+      }
       if (query.after_event_id !== undefined) {
         cursor(String(query.after_event_id), true);
         if (query.cursor !== undefined || query.sort_order === "desc") {
@@ -187,17 +193,45 @@ export function createCanonicalEventsV1Facade(
         if (Array.isArray(value)) { for (const item of value) params.append(key, item); }
         else if (value !== undefined) params.set(key, String(value));
       }
-      const page = await parseRunReadPageV1(
-        await request(`${path(runId, "events")}&${params}`, options),
-      );
+      if (query.include_descendants === true) {
+        params.set("cursor_profile", "run-events-descendants-v1");
+      }
+      const rawPage = await request(`${path(runId, "events")}&${params}`, options);
+      const page = query.include_descendants === true
+        ? await parseDescendantRunReadPageV1(rawPage)
+        : await parseRunReadPageV1(rawPage);
       if (query.include_descendants !== true) {
         for (const member of page.entries) assertRequestedRunIdentity(member, runId);
       }
       const ascending = query.sort_order !== "desc";
-      let previous = query.cursor !== undefined ? Number(query.cursor) : query.after_event_id;
+      const position = query.include_descendants === true && query.cursor !== undefined
+        ? await decodeDescendantCursorV1(query.cursor)
+        : undefined;
+      let previous = position
+        ? Number(position.event_id)
+        : query.cursor !== undefined
+        ? Number(query.cursor)
+        : query.after_event_id;
+      const identities = new Set<string>();
+      if (position) identities.add(JSON.stringify([position.producing_run_id, position.event_id]));
       for (const member of page.entries) {
         const id = member.metadata.event_id;
-        if (previous !== undefined && (ascending ? id <= previous : id >= previous)) {
+        if (query.after_event_id !== undefined && id <= query.after_event_id) {
+          throw new TypeError("List event IDs must advance beyond after_event_id");
+        }
+        const identity = JSON.stringify([member.metadata.run_id, String(id)]);
+        if (query.include_descendants === true && identities.has(identity)) {
+          throw new TypeError("Duplicate descendant event identity");
+        }
+        identities.add(identity);
+        if (
+          previous !== undefined &&
+          (query.include_descendants === true
+            ? ascending ? id < previous : id > previous
+            : ascending
+            ? id <= previous
+            : id >= previous)
+        ) {
           throw new TypeError("List event IDs must advance in the requested order");
         }
         previous = id;

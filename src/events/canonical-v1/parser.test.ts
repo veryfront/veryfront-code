@@ -1,7 +1,12 @@
 import "../test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { parseRunReadPageV1, parseStreamMemberV1 } from "./parser.ts";
+import {
+  decodeDescendantCursorV1,
+  parseDescendantRunReadPageV1,
+  parseRunReadPageV1,
+  parseStreamMemberV1,
+} from "./parser.ts";
 import type { LegacyMemberV1 } from "./types.ts";
 const row: LegacyMemberV1 = {
   kind: "legacy",
@@ -120,4 +125,87 @@ it("rejects forbidden CloudEvents characters in structured errors", async () => 
       TypeError,
     );
   }
+});
+
+describe("strict descendant cursor codec", () => {
+  const payload = {
+    version: 1,
+    root_run_id: "run_demo",
+    producing_run_id: "run_demo",
+    view: "public",
+    sort_order: "asc",
+    filters_digest: "a".repeat(64),
+    event_id: "42",
+    store: "agent_run_event",
+  };
+  const encode = (value: unknown) =>
+    "vfd1." +
+    btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  it("validates canonical encoding and preserves explicit profile", async () => {
+    const next_cursor = encode(payload);
+    assertEquals(await decodeDescendantCursorV1(next_cursor), payload);
+    assertEquals(
+      (await parseDescendantRunReadPageV1({
+        cursor_profile: "run-events-descendants-v1",
+        entries: [row],
+        next_cursor,
+        has_more: true,
+      })).next_cursor,
+      next_cursor,
+    );
+  });
+  it("rejects malformed, noncanonical, oversized and out of range tokens", async () => {
+    const { version, ...rest } = payload;
+    for (
+      const token of [
+        "42",
+        "vfd1.A",
+        "vfd1." + "a".repeat(2048),
+        encode({ ...payload, unknown: true }),
+        encode({ ...payload, event_id: "9007199254740992" }),
+        encode({ ...payload, event_id: "042" }),
+        encode({ ...payload, root_run_id: "invalid/run" }),
+        encode({ ...payload, view: "private" }),
+        encode({ ...rest, version }),
+        encode({ ...payload, store: "unknown" }),
+      ]
+    ) await assertRejects(() => decodeDescendantCursorV1(token));
+  });
+});
+
+it("enforces descendant page item bounds and continuation condition after split validation", async () => {
+  for (
+    const input of [
+      {
+        cursor_profile: "run-events-descendants-v1",
+        entries: [],
+        next_cursor: null,
+        has_more: true,
+      },
+      {
+        cursor_profile: "run-events-descendants-v1",
+        entries: [],
+        next_cursor: "vfd1.abc",
+        has_more: true,
+      },
+      {
+        cursor_profile: "run-events-descendants-v1",
+        entries: [row],
+        next_cursor: "vfd1.abc",
+        has_more: false,
+      },
+      {
+        cursor_profile: "run-events-descendants-v1",
+        entries: Array.from({ length: 101 }, () => row),
+        next_cursor: null,
+        has_more: false,
+      },
+      {
+        cursor_profile: "run-events-descendants-v1",
+        entries: [{ ...row, reason: "invalid" }],
+        next_cursor: null,
+        has_more: false,
+      },
+    ]
+  ) await assertRejects(() => parseDescendantRunReadPageV1(input));
 });

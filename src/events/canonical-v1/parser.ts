@@ -8,6 +8,7 @@ import { assertEventSchemaValidator, getEventSchemaValidatorVersion } from "../s
 import core from "./resources/envelope.schema.json" with { type: "json" };
 import stored from "./resources/stored-envelope.schema.json" with { type: "json" };
 import live from "./resources/live-envelope.schema.json" with { type: "json" };
+import descendants from "./resources/descendant-read-contracts.schema.json" with { type: "json" };
 import reads from "./resources/read-contracts.schema.json" with { type: "json" };
 import publicPayloads from "./resources/public-payload-schemas.json" with { type: "json" };
 import controls from "./resources/control-payload-schemas.json" with { type: "json" };
@@ -15,6 +16,8 @@ import resources from "./resources/schema-resources.json" with { type: "json" };
 import { validatePayloadSemantics } from "./resources/payload-semantics.mjs";
 import type {
   CanonicalEventV1,
+  DescendantCursorV1,
+  DescendantRunReadPageV1,
   EventDiscoveryV1,
   RunReadMemberV1,
   RunReadPageV1,
@@ -28,6 +31,7 @@ for (
     stored,
     live,
     reads,
+    descendants,
     publicPayloads,
     controls,
     ...Object.values(resources.resources),
@@ -59,7 +63,10 @@ function inferSchemaTypes(result: Record<string, unknown>): void {
   if (result.type === undefined && (result.minimum !== undefined || result.maximum !== undefined)) {
     result.type = "number";
   }
-  if (result.type === undefined && result.items !== undefined) result.type = "array";
+  if (
+    result.type === undefined &&
+    (result.items !== undefined || result.minItems !== undefined || result.maxItems !== undefined)
+  ) result.type = "array";
 }
 function materializeRequiredProperties(result: Record<string, unknown>): void {
   if (Array.isArray(result.required)) {
@@ -92,7 +99,7 @@ const normalizedDefinitions = Object.fromEntries(
 );
 let validatorVersion = -1;
 const compiledValidators = new Map<string, JsonSchemaValidationFunction<unknown>>();
-async function decode<T>(input: unknown, definition: string): Promise<T> {
+async function decode<T>(input: unknown, definition: string, documentId = reads.$id): Promise<T> {
   const adapter = assertEventSchemaValidator();
   const version = getEventSchemaValidatorVersion();
   if (validatorVersion !== version) {
@@ -101,15 +108,33 @@ async function decode<T>(input: unknown, definition: string): Promise<T> {
   }
   const canonical = input !== null && typeof input === "object" &&
     Object.getOwnPropertyDescriptor(input, "kind")?.value === "canonical";
-  const cacheKey = `${definition}:${canonical ? "canonical" : "default"}`;
+  const cacheKey = `${documentId}:${definition}:${canonical ? "canonical" : "default"}`;
   let validate = compiledValidators.get(cacheKey);
   if (!validate) {
     const compiler = adapter.compileJsonSchema;
     if (!compiler) throw new TypeError("canonical-v1 needs compileJsonSchema support");
+    const definitions = definition === "page" && documentId === descendants.$id
+      ? structuredClone(normalizedDefinitions)
+      : normalizedDefinitions;
+    if (definition === "page" && documentId === descendants.$id) {
+      // Member bodies are validated individually; continuation identity below enforces
+      // the normative nonempty-page condition against the actual member array.
+      const pageResource = definitions[`resource${keys.indexOf(descendants.$id)}`];
+      if (pageResource && typeof pageResource === "object" && "$defs" in pageResource) {
+        const resourceDefinitions = pageResource.$defs;
+        if (
+          resourceDefinitions && typeof resourceDefinitions === "object" &&
+          "page" in resourceDefinitions
+        ) {
+          const page = resourceDefinitions.page;
+          if (page && typeof page === "object" && "allOf" in page) delete page.allOf;
+        }
+      }
+    }
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $ref: `#/$defs/resource${keys.indexOf(reads.$id)}/$defs/${definition}`,
-      $defs: normalizedDefinitions,
+      $ref: `#/$defs/resource${keys.indexOf(documentId)}/$defs/${definition}`,
+      $defs: definitions,
     } as JsonSchema;
     validate = compiler(
       schema,
@@ -280,6 +305,61 @@ export async function parseEventErrorV1(
   );
   if (!isCloudEventsString(value.code) || !isCloudEventsString(value.message)) {
     throw new TypeError("Invalid canonical-v1 error String");
+  }
+  return value;
+}
+
+/** Decode the bounded canonical transport token; API authorization binds its scope. */
+export async function decodeDescendantCursorV1(token: string): Promise<DescendantCursorV1> {
+  if (token.length > 2048 || !/^vfd1\.[A-Za-z0-9_-]+$/.test(token)) {
+    throw new TypeError("Invalid descendant cursor encoding");
+  }
+  const encoded = token.slice(5);
+  const binary = atob(encoded.replaceAll("-", "+").replaceAll("_", "/"));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    Uint8Array.from(binary, (c) => c.charCodeAt(0)),
+  );
+  const value = await decode<DescendantCursorV1>(
+    JSON.parse(text),
+    "cursorPayload",
+    descendants.$id,
+  );
+  safeCursor(value.event_id);
+  const canonical = {
+    version: value.version,
+    root_run_id: value.root_run_id,
+    producing_run_id: value.producing_run_id,
+    view: value.view,
+    sort_order: value.sort_order,
+    filters_digest: value.filters_digest,
+    event_id: value.event_id,
+    store: value.store,
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(canonical));
+  const result = "vfd1." +
+    btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join("")).replaceAll("+", "-").replaceAll(
+      "/",
+      "_",
+    ).replace(/=+$/, "");
+  if (result !== token) throw new TypeError("Noncanonical descendant cursor encoding");
+  return value;
+}
+export async function parseDescendantRunReadPageV1(
+  input: unknown,
+): Promise<DescendantRunReadPageV1> {
+  const parts = pageParts(input);
+  const value = await decode<DescendantRunReadPageV1>(parts.header, "page", descendants.$id);
+  for (const entry of parts.entries) value.entries.push(await parseRunReadMemberV1(entry));
+  if (value.has_more !== (value.next_cursor !== null)) {
+    throw new TypeError("Invalid descendant page continuation");
+  }
+  if (value.next_cursor !== null) {
+    const position = await decodeDescendantCursorV1(value.next_cursor);
+    const last = value.entries.at(-1)?.metadata;
+    if (
+      !last || position.event_id !== String(last.event_id) ||
+      position.producing_run_id !== last.run_id || position.view !== last.view
+    ) throw new TypeError("Descendant cursor must identify the last returned entry");
   }
   return value;
 }

@@ -1,6 +1,13 @@
 /** Explicit canonical-v1 read contracts. Existing pilot event parsers are unchanged. */
 export * from "./types.ts";
-import type { EventDiscoveryV1, RunReadMemberV1, RunReadPageV1, StreamMemberV1 } from "./types.ts";
+import type {
+  DescendantCursorV1,
+  DescendantRunReadPageV1,
+  EventDiscoveryV1,
+  RunReadMemberV1,
+  RunReadPageV1,
+  StreamMemberV1,
+} from "./types.ts";
 
 // Existing Runs imports expose this facade without loading or normalizing its
 // normative schema graph. The module is cached by the runtime after first use.
@@ -27,4 +34,15 @@ export async function parseEventErrorV1(
   input: unknown,
 ): Promise<{ code: string; message: string; event_ids?: number[] }> {
   return (await loadParsers()).parseEventErrorV1(input);
+}
+
+/** Validate an explicit cross-store descendant history page. */
+export async function parseDescendantRunReadPageV1(
+  input: unknown,
+): Promise<DescendantRunReadPageV1> {
+  return (await loadParsers()).parseDescendantRunReadPageV1(input);
+}
+/** Validate a bounded descendant token without replacing server scope authorization. */
+export async function decodeDescendantCursorV1(input: string): Promise<DescendantCursorV1> {
+  return (await loadParsers()).decodeDescendantCursorV1(input);
 }

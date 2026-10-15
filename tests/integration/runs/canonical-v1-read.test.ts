@@ -157,6 +157,7 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
     await fixture((request) => {
       const url = new URL(request.url);
       assertEquals(url.searchParams.get("event_representation"), "canonical-v1");
+      assertEquals(url.searchParams.has("cursor_profile"), false);
       assertEquals(url.pathname, "/runs/run_demo/events");
       return Response.json({ entries: [canonical, legacy], next_cursor: "42", has_more: true });
     }, async (sdk) => {
@@ -189,7 +190,15 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
   it("scopes list and durable stream members to the requested run", async () => {
     for (const member of [canonical, legacy]) {
       await fixture(
-        () => Response.json({ entries: [member], next_cursor: null, has_more: false }),
+        (request) =>
+          Response.json({
+            entries: [member],
+            next_cursor: null,
+            has_more: false,
+            ...(new URL(request.url).searchParams.get("include_descendants") === "true"
+              ? { cursor_profile: "run-events-descendants-v1" }
+              : {}),
+          }),
         async (sdk) => {
           for (const query of [{}, { include_descendants: false }]) {
             await assertRejects(
@@ -613,3 +622,158 @@ for (const status of [400, 401, 403, 404, 409, 422, 429, 500, 503]) {
     });
   }
 }
+
+function descendantToken(runId: string, id: number, sortOrder = "asc") {
+  return "vfd1." + btoa(JSON.stringify({
+    version: 1,
+    root_run_id: "run_demo",
+    producing_run_id: runId,
+    view: "public",
+    sort_order: sortOrder,
+    filters_digest: "a".repeat(64),
+    event_id: String(id),
+    store: runId === "child_task" ? "run_execution_event" : "agent_run_event",
+  })).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+describe("canonical descendant pagination profile", () => {
+  for (const sort_order of ["asc", "desc"] as const) {
+    it(`preserves equal physical IDs across stores and pages (${sort_order})`, async () => {
+      const rows = ["child_agent", "child_task"].map((run_id) => ({
+        ...legacy,
+        metadata: { ...metadata, run_id, event_id: 42 },
+      }));
+      const next = descendantToken("child_agent", 42, sort_order);
+      let calls = 0;
+      await fixture((request) => {
+        const url = new URL(request.url);
+        assertEquals(url.searchParams.get("cursor_profile"), "run-events-descendants-v1");
+        calls++;
+        if (calls === 1) {
+          return Response.json({
+            cursor_profile: "run-events-descendants-v1",
+            entries: [rows[0]],
+            next_cursor: next,
+            has_more: true,
+          });
+        }
+        assertEquals(url.searchParams.get("cursor"), next);
+        return Response.json({
+          cursor_profile: "run-events-descendants-v1",
+          entries: [rows[1]],
+          next_cursor: null,
+          has_more: false,
+        });
+      }, async (sdk) => {
+        const first = await sdk.canonicalEventsV1.list("run_demo", {
+          include_descendants: true,
+          sort_order,
+          limit: 1,
+        });
+        const second = await sdk.canonicalEventsV1.list("run_demo", {
+          include_descendants: true,
+          sort_order,
+          limit: 1,
+          cursor: first.next_cursor ?? undefined,
+        });
+        assertEquals([...first.entries, ...second.entries].map((x) => x.metadata.run_id), [
+          "child_agent",
+          "child_task",
+        ]);
+      });
+    });
+  }
+  it("accepts equal IDs from distinct producers in one page", async () => {
+    await fixture(
+      () =>
+        Response.json({
+          cursor_profile: "run-events-descendants-v1",
+          entries: ["child_agent", "child_task"].map((run_id) => ({
+            ...legacy,
+            metadata: { ...metadata, event_id: 42, run_id },
+          })),
+          next_cursor: null,
+          has_more: false,
+        }),
+      async (sdk) =>
+        assertEquals(
+          (await sdk.canonicalEventsV1.list("run_demo", { include_descendants: true })).entries
+            .length,
+          2,
+        ),
+    );
+  });
+  it("rejects mixed profiles, duplicate identity, and inconsistent continuation", async () => {
+    for (
+      const page of [
+        { entries: [legacy], next_cursor: null, has_more: false },
+        {
+          cursor_profile: "run-events-descendants-v1",
+          entries: [legacy, legacy],
+          next_cursor: null,
+          has_more: false,
+        },
+        {
+          cursor_profile: "run-events-descendants-v1",
+          entries: [legacy],
+          next_cursor: descendantToken("child_task", 42),
+          has_more: true,
+        },
+      ]
+    ) {
+      await fixture(() => Response.json(page), async (sdk) => {
+        await assertRejects(
+          () => sdk.canonicalEventsV1.list("run_demo", { include_descendants: true }),
+          TypeError,
+        );
+      });
+    }
+    await fixture(
+      () =>
+        Response.json({
+          cursor_profile: "run-events-descendants-v1",
+          entries: [legacy],
+          next_cursor: null,
+          has_more: false,
+        }),
+      async (sdk) => {
+        await assertRejects(() => sdk.canonicalEventsV1.list("run_demo"), TypeError);
+      },
+    );
+  });
+  it("surfaces authoritative server scope rejection without reinterpretation", async () => {
+    await fixture(
+      () =>
+        Response.json({ code: "INVALID_EVENT_REQUEST", message: "Invalid cursor scope" }, {
+          status: 400,
+        }),
+      async (sdk) => {
+        const error = await assertRejects(() =>
+          sdk.canonicalEventsV1.list("other_root", {
+            include_descendants: true,
+            cursor: descendantToken("child_task", 42),
+          }), CanonicalEventsV1Error);
+        assertEquals(error.problem.code, "INVALID_EVENT_REQUEST");
+      },
+    );
+  });
+});
+
+it("keeps numeric after_event_id exclusive before allowing equal descendant IDs", async () => {
+  await fixture(
+    () =>
+      Response.json({
+        cursor_profile: "run-events-descendants-v1",
+        entries: [{ ...legacy, metadata: { ...metadata, event_id: 42, run_id: "child_task" } }],
+        next_cursor: null,
+        has_more: false,
+      }),
+    async (sdk) => {
+      await assertRejects(
+        () =>
+          sdk.canonicalEventsV1.list("run_demo", { include_descendants: true, after_event_id: 42 }),
+        TypeError,
+        "after_event_id",
+      );
+    },
+  );
+});
