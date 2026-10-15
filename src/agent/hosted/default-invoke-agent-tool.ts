@@ -42,6 +42,7 @@ import { prepareDefaultHostedChildForkSandboxToolSources } from "./child-fork-to
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
+import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
 import {
   runHostedChildExecutionLifecycle,
   shouldSkipHostedChildTerminalPersistence,
@@ -212,6 +213,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     resolveChildAgentExecutionConfig?: (
       childAgentId: string,
       projectId: string,
+      lookup?: { abortSignal?: AbortSignal },
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
@@ -818,10 +820,22 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         project_reference: undefined,
       };
     }
-    const childConfig = await options.resolveChildAgentExecutionConfig?.(
-      childAgentId,
-      targetProjectId,
-    );
+    let childConfig: DefaultHostedChildAgentExecutionConfig | undefined;
+    try {
+      childConfig = await options.resolveChildAgentExecutionConfig?.(
+        childAgentId,
+        targetProjectId,
+        { abortSignal },
+      );
+    } catch (error) {
+      // A missing or unreadable target agent is reported to the parent as a
+      // terminal child failure; the child never runs without its definition.
+      if (!(error instanceof HostedChildAgentResolutionError)) throw error;
+      return buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: error.code,
+        terminalErrorMessage: error.message,
+      });
+    }
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
     const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
     const forkInput = configuredInput;

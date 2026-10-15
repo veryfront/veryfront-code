@@ -429,6 +429,7 @@ export async function resolveHostedChildAgentExecutionConfig(
   taskContext: ChildRunContext,
   childAgentId: string,
   projectId: string,
+  abortSignal?: AbortSignal,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
   let agentConfig: RuntimeAgentMarkdownDefinition;
@@ -438,16 +439,17 @@ export async function resolveHostedChildAgentExecutionConfig(
     // A saved project agent is not part of this service's discovered runtime.
     // Read its definition through the API so the child runs with the target
     // agent's own instructions and tool selection, never the parent's toolset.
+    // An unknown agent ID fails with CHILD_AGENT_NOT_FOUND instead of running
+    // an unconfigured fork of the parent.
     if (!projectId) return undefined;
-    const remoteAgentConfig = await fetchHostedProjectAgentDefinition({
+    agentConfig = await fetchHostedProjectAgentDefinition({
       apiUrl: context.infrastructure.getConfig().VERYFRONT_API_URL,
       authToken: taskContext.authToken,
       projectId,
       agentId: childAgentId,
       branchId,
+      abortSignal,
     });
-    if (!remoteAgentConfig) return undefined;
-    agentConfig = remoteAgentConfig;
   }
   const steering = await fetchProjectSteering(context, {
     projectId: projectId || null,
@@ -532,8 +534,14 @@ export function createInvokeAgentTool(
         childToolContext,
       });
     },
-    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
-      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
+    resolveChildAgentExecutionConfig: (childAgentId, projectId, lookup) =>
+      resolveHostedChildAgentExecutionConfig(
+        context,
+        childContext,
+        childAgentId,
+        projectId,
+        lookup?.abortSignal,
+      ),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,

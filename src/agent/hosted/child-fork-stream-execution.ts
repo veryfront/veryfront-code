@@ -38,6 +38,7 @@ import {
 } from "../child-run/result-summary.ts";
 import {
   buildHostedChildCompletedLog,
+  buildHostedChildEmptyResultLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
   type HostedChildExecutionLogEntry,
@@ -274,9 +275,19 @@ export async function finalizeHostedChildForkCompletion(input: {
     return buildChildRunFailureResult(common, errorMessage);
   }
 
-  if (finalText.trim().length === 0) {
-    // An empty completion carries no answer. Report it explicitly so the
-    // parent cannot present an invented reply as the child's result.
+  if (finalText.trim().length === 0 && input.toolResults.length === 0) {
+    // A completion with no text and no tool results carries no answer and no
+    // side effects. Report it explicitly so the parent cannot present an
+    // invented reply as the child's result. A tool-only child (its work is in
+    // its tool results) still succeeds, so its side effects are never retried.
+    input.writeLog?.(
+      buildHostedChildEmptyResultLog({
+        description: input.description,
+        kind: input.kind,
+        stepCount,
+        toolCallsLength: input.toolCalls.length,
+      }),
+    );
     const common = buildChildRunResultCommon({
       description: input.description,
       steps: stepCount,
