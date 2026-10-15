@@ -723,6 +723,73 @@ describe("final model request budget", () => {
     }
   }
 
+  for (const pauseConfigured of [false, true]) {
+    for (const reject of [false, true]) {
+      it(`admits a resumed tool before its effect (pause=${pauseConfigured}, reject=${reject})`, async () => {
+        const { registerTurnProviderRequestValidator } = await import(
+          "../middleware/turn-validation.ts"
+        );
+        let effects = 0;
+        const model = servedModel("stream", 256, [{ text: "unexpected" }]);
+        const runtime = new AgentRuntime("resumed-tool-admission", {
+          model: model.modelId,
+          system: "Short system",
+          maxSteps: 1,
+          skills: false,
+          memory: { type: "buffer", maxMessages: 10 },
+          tools: {
+            record_effect: tool({
+              id: "record_effect",
+              description: "Record an effect",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => {
+                effects++;
+                return { receipt: "effect-recorded" };
+              },
+            }),
+          },
+          middleware: reject
+            ? [async (context, next) => {
+              registerTurnProviderRequestValidator(context, () =>
+                Promise.reject(new Error("input rejected")));
+              return await next();
+            }]
+            : [],
+          resolveModelTransport: () => ({ model }),
+        }, {
+          resumeToolCall: { id: "parked-effect", name: "record_effect", input: {} },
+          ...(pauseConfigured
+            ? {
+              manualPause: {
+                load: () => Promise.resolve(null),
+                requested: () => Promise.resolve(false),
+                acknowledge: () => Promise.resolve(false),
+              },
+            }
+            : {}),
+        });
+        await new Response(
+          await runtime.stream([{
+            id: "resumed-input",
+            role: "user",
+            parts: [{ type: "text", text: "Oversized request ".repeat(200) }],
+          }]),
+        ).text();
+        assertEquals(model.callCount, 0);
+        assertEquals(effects, reject ? 0 : 1);
+        const history = await runtime.getMemory().getMessages();
+        if (reject) assertEquals(history, []);
+        else {
+          assert(history.some((message) => message.id === "resumed-input"));
+          assert(
+            JSON.stringify(history).includes("effect-recorded"),
+            "an executed effect must retain its receipt even if later provider budgeting fails",
+          );
+        }
+      });
+    }
+  }
+
   for (const mode of ["generate", "stream"] as const) {
     it(`evicts an older deferred schema, checkpoints it, and allows reactivation (${mode})`, async () => {
       const makeLargeTool = () =>

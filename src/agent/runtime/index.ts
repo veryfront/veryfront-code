@@ -22,7 +22,6 @@ import {
   admitTerminalDispatch,
   createTerminalRunControl,
   isTerminalRunControlError,
-  isTerminalRunToolName,
   terminalCompletionResponse,
   terminalDispatchRecord,
   terminalReceiptPersistenceFailure,
@@ -5749,15 +5748,6 @@ export class AgentRuntime {
       });
 
       if (!resumeToolCallExecuted && this.#resumeToolCall) {
-        // A resumed finalize can terminate before any provider call. Validate
-        // the staged turn first so accepted terminal results commit and
-        // rejected turns roll back without dispatching the parked action.
-        if (isTerminalRunToolName(this.#resumeToolCall.name)) {
-          await validateProviderRequest(
-            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
-            currentMessages,
-          );
-        }
         const resumeToolCall = this.#resumeToolCall;
         resumeToolCallExecuted = true;
         const inputText = privateJsonStringify(resumeToolCall.input);
@@ -5852,6 +5842,13 @@ export class AgentRuntime {
             skillState.activeSkillDelegationOverrides,
             resolveConfiguredTool(this.config.tools, resumeToolCall.name, { agentId: this.id }) ??
               undefined,
+          );
+          // Resuming a trusted parked tool is a real dispatch even before the
+          // next provider request. Validate before its effect, then retain that
+          // accepted history if later provider preparation fails.
+          await validateProviderRequest(
+            withAgentRunRuntimeContext(currentSystemPrompt, runRuntimeContext),
+            currentMessages,
           );
           callbacks?.onToolCall?.(toolCall);
           const startTime = Date.now();
