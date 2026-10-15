@@ -420,7 +420,16 @@ oversized root fails the run instead of being truncated. Keep the root focused o
 navigation and process, and put detailed guidance in references. The run fails
 before any model call when the agent has no authorized framework skill loader or
 the skill is not authorized. Omit `bootstrapSkill` to start without a preloaded
-skill. In Markdown agent definitions, use `bootstrap-skill`.
+skill. Use an exact skill ID or the agent's own short name, not a selector pattern.
+Hosted children load only the target agent's own configured startup skill.
+The parent's startup skill is not inherited. Loading runs once before the child's
+first model call; its instructions remain in history across tool steps and
+continuations. Hosted preparation retains the original trusted load and its full
+root, without loading it again. If that root cannot survive the existing context
+budget, preparation fails before inference. A fresh fork authorizes its own load;
+serialized history does not grant skill activation. Later steps fail before inference
+if that original authenticated result becomes missing, ambiguous or changed. In Markdown agent definitions,
+use `bootstrap-skill`.
 
 ```ts
 import { agent } from "veryfront/agent";

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { compactForStep, estimateOverhead } from "../../chat/message-prep.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
@@ -16,6 +17,16 @@ import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import { cloneRuntimeStateMutableData } from "../runtime/index.ts";
 import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
+import { isToolResultPart } from "../runtime/tool-result-part.ts";
+import {
+  extractSkillId,
+  getSkillActivationResult,
+  hasTrustedPlatformPolicyToolResultPart,
+  inheritTrustedPlatformPolicyToolResultPart,
+  snapshotTrustedSkillLoadResults,
+} from "../runtime/skill-policy-enforcement.ts";
+import { withProviderModelMessageSourceId } from "#veryfront/chat/conversation.ts";
+import { validateRuntimeSkillBootstrapResult } from "../runtime/skill-bootstrap.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Public API contract for hosted child fork runtime step system resolver. */
@@ -32,6 +43,8 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   messages: AgentMessage[];
   buildInstructions: () => AgentSystem;
   forkToolNames: readonly string[];
+  /** Canonical target startup skill whose trusted bounded root must remain intact. */
+  bootstrapSkill?: string;
   /** Provider-options key used by the child model runtime. */
   providerOptionKey?: string;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
@@ -90,11 +103,21 @@ function convertAgentRuntimePartToChildForkMessagePart(
 
   const toolResultPart = getAgentRuntimeToolResultPart(part);
   if (toolResultPart) {
+    // This adapter consumes one provider-owned output envelope. Its value may
+    // itself be an ordinary user object with a similarly shaped type/value.
+    let result = toolResultPart.output;
+    if (typeof result === "object" && result !== null && "type" in result && "value" in result) {
+      if (result.type === "json" || result.type === "text") {
+        result = result.value;
+      } else if (result.type === "error-text") {
+        result = { error: result.value };
+      }
+    }
     return {
       type: "tool-result",
       toolCallId: toolResultPart.toolCallId,
       toolName: toolResultPart.toolName,
-      result: toolResultPart.output,
+      result,
     };
   }
 
@@ -134,6 +157,83 @@ export function convertCompactedProviderMessagesToChildForkRuntimeMessages(
   }));
 }
 
+function getStartupCalls(messages: readonly AgentMessage[], toolCallId: string) {
+  return messages.flatMap((message) =>
+    message.role !== "assistant" ? [] : message.parts.flatMap((part) => {
+      if (isToolResultPart(part)) return [];
+      const call = getAgentRuntimeToolCallPart(part);
+      return call?.toolCallId === toolCallId ? [call] : [];
+    })
+  );
+}
+
+/** Snapshot only the original authenticated, bounded startup call/result. */
+function snapshotHostedChildStartupHistory(
+  messages: readonly AgentMessage[],
+  bootstrapSkill?: string,
+) {
+  const trustedLoads = snapshotTrustedSkillLoadResults(messages);
+  const bootstrap = bootstrapSkill === undefined
+    ? undefined
+    : trustedLoads.find((result) => extractSkillId(result.result) === bootstrapSkill);
+  if (bootstrap && bootstrapSkill !== undefined) {
+    validateRuntimeSkillBootstrapResult(getSkillActivationResult(bootstrap.result), bootstrapSkill);
+  }
+  const originalCalls = bootstrap ? getStartupCalls(messages, bootstrap.toolCallId) : [];
+  if (
+    bootstrap && (originalCalls.length !== 1 || originalCalls[0]?.toolName !== bootstrap.toolName)
+  ) {
+    throw AGENT_ERROR.create({ detail: "Startup skill requires its unique original load call" });
+  }
+  return {
+    trustedLoads,
+    bootstrap,
+    originalCallSnapshot: privateJsonStringify(originalCalls),
+    preservedId: bootstrap ? `startup:${bootstrap.toolCallId}` : undefined,
+  };
+}
+
+/** Preserve provenance only on matching clones and reject a damaged startup pair. */
+function retainHostedChildSkillHistory(
+  startup: ReturnType<typeof snapshotHostedChildStartupHistory>,
+  sourceMessages: readonly AgentMessage[],
+  messages: AgentMessage[],
+): void {
+  const { bootstrap } = startup;
+  const trustedResultIds = new Set(
+    startup.trustedLoads.map((result) => result.toolCallId),
+  );
+  const sources = new Map(
+    sourceMessages.flatMap((message) =>
+      message.parts.flatMap((part) =>
+        isToolResultPart(part) && trustedResultIds.has(part.toolCallId)
+          ? [[part.toolCallId, part] as const]
+          : []
+      )
+    ),
+  );
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!isToolResultPart(part)) continue;
+      const source = sources.get(part.toolCallId);
+      if (source) inheritTrustedPlatformPolicyToolResultPart(source, part);
+    }
+  }
+  if (
+    bootstrap &&
+    (privateJsonStringify(getStartupCalls(messages, bootstrap.toolCallId)) !==
+        startup.originalCallSnapshot ||
+      !messages.some((message) =>
+        message.parts.some((part) =>
+          isToolResultPart(part) && part.toolCallId === bootstrap.toolCallId &&
+          hasTrustedPlatformPolicyToolResultPart(part)
+        )
+      ))
+  ) {
+    throw AGENT_ERROR.create({ detail: "Startup skill exceeds the prepared context budget" });
+  }
+}
+
 /** Prepare hosted child fork runtime step messages. */
 export function prepareHostedChildForkRuntimeStepMessages(
   input: PrepareHostedChildForkRuntimeStepMessagesInput,
@@ -151,11 +251,32 @@ export function prepareHostedChildForkRuntimeStepMessages(
   type ConvertibleMessage = Parameters<
     typeof convertAgentRuntimeMessagesToProviderMessages
   >[0][number];
-  const compactedMessages = compactForStep(
-    convertAgentRuntimeMessagesToProviderMessages(
-      input.messages as readonly ConvertibleMessage[],
-    ),
+  const startup = snapshotHostedChildStartupHistory(input.messages, input.bootstrapSkill);
+  const { bootstrap, preservedId } = startup;
+  const providerMessages = convertAgentRuntimeMessagesToProviderMessages(
+    input.messages as readonly ConvertibleMessage[],
+  ).map((message) =>
+    preservedId && bootstrap && Array.isArray(message.content) &&
+      message.content.some((part) =>
+        "toolCallId" in part && part.toolCallId === bootstrap.toolCallId
+      )
+      ? withProviderModelMessageSourceId(
+        cloneRuntimeStateMutableData(
+          message,
+          canIdentifyProxyWithoutHooks,
+          input.providerOptionKey,
+        ),
+        preservedId,
+      )
+      : message
+  );
+  let compactedMessages = compactForStep(
+    providerMessages,
     estimateOverhead(flattenedInstructions, input.forkToolNames.length),
+    {
+      historicalToolInputRetention: { preserveSourceMessageIds: preservedId ? [preservedId] : [] },
+      requireBudgetFit: input.bootstrapSkill !== undefined,
+    },
   );
   const resolvedSystem = input.resolveSystem?.({
     system: flattenedInstructions,
@@ -168,6 +289,22 @@ export function prepareHostedChildForkRuntimeStepMessages(
     compactedMessages,
   });
 
+  const finalSystem = resolvedSystem ?? currentInstructions;
+  if (input.resolveSystem !== undefined && input.bootstrapSkill !== undefined) {
+    compactedMessages = compactForStep(
+      compactedMessages,
+      estimateOverhead(
+        typeof finalSystem === "string" ? finalSystem : flattenSystemInstructions(finalSystem),
+        input.forkToolNames.length,
+      ),
+      {
+        historicalToolInputRetention: {
+          preserveSourceMessageIds: preservedId ? [preservedId] : [],
+        },
+        requireBudgetFit: true,
+      },
+    );
+  }
   const liveForkToolNames = input.getActivatedToolNames
     ? [
       ...new Set([
@@ -177,9 +314,11 @@ export function prepareHostedChildForkRuntimeStepMessages(
     ].sort(compareStrings)
     : undefined;
 
+  const messages = convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages);
+  retainHostedChildSkillHistory(startup, input.messages, messages);
   return {
-    messages: convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages),
-    system: resolvedSystem ?? currentInstructions,
+    messages,
+    system: finalSystem,
     ...(liveForkToolNames !== undefined ? { forkToolNames: liveForkToolNames } : {}),
   };
 }

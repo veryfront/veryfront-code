@@ -403,6 +403,7 @@ it("fixed hosted delegates keep every explicit input over project-agent settings
 it("default hosted invoke resolves and runs configured child against the target project", async () => {
   const captured: {
     model?: string;
+    bootstrapSkill?: string;
     temperature?: number;
     maxSteps?: number;
     forkToolNames?: readonly string[];
@@ -430,6 +431,7 @@ it("default hosted invoke resolves and runs configured child against the target 
                 anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
               },
             }],
+            bootstrapSkill: "extraction",
             model: "configured-model",
             temperature: 0.35,
             maxSteps: 12,
@@ -469,6 +471,7 @@ it("default hosted invoke resolves and runs configured child against the target 
           }),
         startRuntime: (input) => {
           captured.model = input.forkModel;
+          captured.bootstrapSkill = input.bootstrapSkill;
           captured.temperature = input.temperature;
           captured.maxSteps = input.maxSteps;
           captured.forkToolNames = input.forkToolNames;
@@ -511,6 +514,7 @@ it("default hosted invoke resolves and runs configured child against the target 
 
   assertEquals("success" in result && result.success, true);
   assertEquals(captured.model, "resolved-configured-model");
+  assertEquals(captured.bootstrapSkill, "extraction");
   assertEquals(captured.temperature, 0.35);
   assertEquals(captured.maxSteps, 12);
   assertEquals(captured.forkToolNames, ["create_file"]);
