@@ -6,7 +6,10 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createToolResultContext } from "./tool-result-context.ts";
+import {
+  createToolResultContext,
+  isToolResultContextCapacityError,
+} from "./tool-result-context.ts";
 import {
   createToolResultReadDefinition,
   readToolResultContext,
@@ -95,6 +98,52 @@ describe("agent runtime tool result context", () => {
     }
     assertEquals(first.modelResult.ref, second.modelResult.ref);
     assertEquals(context.size, 1);
+  });
+
+  it("uses a smaller historical preview without changing the retained result", () => {
+    const context = createToolResultContext();
+    const original = { content: "full reference ".repeat(500) };
+    const first = context.discloseReference({
+      toolCallId: "reference-call",
+      toolName: "load_skill",
+      result: original,
+    });
+    const compact = context.discloseReference({
+      toolCallId: "reference-call",
+      toolName: "load_skill",
+      result: original,
+    }, { previewBytes: 256 });
+    assertEquals(compact.modelResult.ref, first.modelResult.ref);
+    assertLessOrEqual(compact.modelResult.previewBytes, 256);
+    assertStrictEquals(context.getOriginalResult(compact.modelResult.ref), original);
+    assertEquals(
+      context.read({ ref: compact.modelResult.ref }).text.includes("full reference"),
+      true,
+    );
+  });
+
+  it("forces a reference for a small result and reports capacity errors by type", () => {
+    const context = createToolResultContext({ limits: { maxStoredResults: 1 } });
+    const small = context.discloseReference({
+      toolCallId: "small-call",
+      toolName: "read_data",
+      result: "small",
+    });
+    assertEquals(small.kind, "reference");
+    assertEquals(context.size, 1);
+    let capacityError: unknown;
+    try {
+      context.discloseReference({ toolCallId: "other", toolName: "read_data", result: "x" });
+    } catch (error) {
+      capacityError = error;
+    }
+    assertEquals(isToolResultContextCapacityError(capacityError), true);
+    assertEquals(
+      isToolResultContextCapacityError(
+        new RangeError("Tool result context stored result limit exceeded"),
+      ),
+      false,
+    );
   });
 
   it("does not silently evict live references when storage is full", () => {

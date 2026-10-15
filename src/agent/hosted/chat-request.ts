@@ -8,6 +8,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getRuntimeAgentResumeToolCallSchema,
+  getRuntimeAgentRuntimeOverridesSchema,
   type RuntimeAgentRunInvocation,
 } from "../runtime/agent-invocation-contract.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
@@ -35,14 +36,8 @@ export const hostedDurableRootRunDescriptorSchema = lazySchema(
   getHostedDurableRootRunDescriptorSchema,
 );
 
-export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
-  v.object({
-    allowedTools: v.array(v.string().min(1)).max(100).optional(),
-    thinking: v.union([v.literal(false), v.number().int().positive()]).optional(),
-    maxSteps: v.number().int().positive().optional(),
-    maxOutputTokens: v.number().int().positive().optional(),
-  }).strip()
-);
+/** Schema for hosted chat runtime overrides (shared with the runtime invocation contract). */
+export const getHostedChatRuntimeOverridesSchema = getRuntimeAgentRuntimeOverridesSchema;
 
 /** Schema for hosted chat runtime overrides.
  * @deprecated Use getHostedChatRuntimeOverridesSchema()

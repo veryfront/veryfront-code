@@ -323,6 +323,10 @@ export class ConversationRunEventEncoder {
 
   private encodeChunk(chunk: ChatStreamEvent): ConversationRunEvent[] {
     switch (chunk.type) {
+      case "data-veryfront.manual_pause":
+        // This closes the live transport; the pause checkpoint owns durable state.
+        return [];
+
       case "start":
         this.activeMessageId = chunk.messageId ?? null;
         return [];

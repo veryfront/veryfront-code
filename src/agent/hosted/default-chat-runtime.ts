@@ -411,6 +411,10 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
+    ...(input.options.maxOutputTokensExplicit === false &&
+        input.options.maxOutputTokens !== undefined
+      ? { __vfMaxOutputTokensCeiling: input.options.maxOutputTokens }
+      : {}),
     ...(input.options.toolLoading !== undefined ? { toolLoading: input.options.toolLoading } : {}),
     // Authored startup tools are already merged into the bootstrap names above.
     // A form continuation resumes a turn whose startup load is already in
@@ -788,7 +792,9 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,
             projectSlug: taskContext.projectSlug,
-            maxOutputTokens: input.options.maxOutputTokens,
+            ...(input.options.maxOutputTokensExplicit === false
+              ? {}
+              : { maxOutputTokens: input.options.maxOutputTokens }),
             resolveProjectContext: () => ({
               ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),
               ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),

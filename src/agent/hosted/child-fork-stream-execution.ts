@@ -38,6 +38,7 @@ import {
 } from "../child-run/result-summary.ts";
 import {
   buildHostedChildCompletedLog,
+  buildHostedChildEmptyResultLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
   type HostedChildExecutionLogEntry,
@@ -60,6 +61,11 @@ import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 const hasOwn = Object.hasOwn;
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;
+
+/** Terminal error code for a child run that completed without any final text. */
+export const HOSTED_CHILD_EMPTY_RESULT_CODE = "CHILD_RESULT_EMPTY";
+const HOSTED_CHILD_EMPTY_RESULT_MESSAGE =
+  "The child agent completed without a final response. Do not infer or invent its answer; report that it returned no output.";
 
 /** State for hosted child fork stream handling. */
 export interface HostedChildForkStreamHandlingState {
@@ -267,6 +273,45 @@ export async function finalizeHostedChildForkCompletion(input: {
     const snapshot = buildChildRunFailureSnapshot(common, errorMessage, finalText || null);
     await input.onSettled?.(snapshot);
     return buildChildRunFailureResult(common, errorMessage);
+  }
+
+  if (
+    finalText.trim().length === 0 && input.toolResults.length === 0 &&
+    input.toolCalls.length === 0
+  ) {
+    // A completion with no text and no tool activity carries no answer and no
+    // side effects. Report it explicitly so the parent cannot present an
+    // invented reply as the child's result. A child that called any tool,
+    // including one that failed, may have side effects, so it still succeeds
+    // and its work is never retried as a retryable empty result.
+    input.writeLog?.(
+      buildHostedChildEmptyResultLog({
+        description: input.description,
+        kind: input.kind,
+        stepCount,
+        toolCallsLength: input.toolCalls.length,
+      }),
+    );
+    const common = buildChildRunResultCommon({
+      description: input.description,
+      steps: stepCount,
+      toolCalls: input.toolCalls,
+      toolResults: input.toolResults,
+      usage,
+      durationMs: Date.now() - input.startTime,
+    });
+    const snapshot = buildChildRunFailureSnapshot(
+      common,
+      HOSTED_CHILD_EMPTY_RESULT_MESSAGE,
+      null,
+      HOSTED_CHILD_EMPTY_RESULT_CODE,
+    );
+    await input.onSettled?.(snapshot);
+    return buildChildRunFailureResult(
+      common,
+      HOSTED_CHILD_EMPTY_RESULT_MESSAGE,
+      HOSTED_CHILD_EMPTY_RESULT_CODE,
+    );
   }
 
   input.writeLog?.(
@@ -496,6 +541,13 @@ export async function handleHostedChildForkStreamPart(input: {
     await input.closeDurableMirrorReasoning();
     await input.closeDurableMirrorText();
     shouldSeparateNextTextBlock = finalText.length > 0;
+    // A failed tool call may still have mutated state before it threw, so it
+    // counts as observed work: completion must not report it as empty.
+    appendMissingChildRunToolCalls(input.toolCalls, [{
+      toolName: part.toolName,
+      toolCallId: part.toolCallId,
+      input: snapshotChildTelemetry(summarizeChildRunResultValue(part.input)),
+    }]);
     input.logger?.warn?.("Child fork tool error", {
       conversationId: input.conversationId,
       toolCallId: part.toolCallId,

@@ -21,6 +21,8 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  isVeryfrontCloudCatalogLoadedForScope,
+  readServedVeryfrontCloudCatalogModel,
   registerVeryfrontCloudModelFacts,
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -266,6 +268,9 @@ function createVeryfrontCloudModelInternal(
   const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
   const catalogScopeKey = veryfrontCloudCatalogScopeKey(catalogScope);
 
+  // The served limit last read from a loaded catalog. An evicted scope reads
+  // no catalog, so it keeps this value rather than dropping the limit.
+  let servedLimit: VeryfrontCloudModelFacts["servedLimit"];
   // The catalog facts a build reads, from this model's own credentials and
   // project. A model built before the catalog loaded is rebuilt at its first
   // async step when these differ.
@@ -284,6 +289,9 @@ function createVeryfrontCloudModelInternal(
         catalogModelId,
       );
       const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      if (isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey)) {
+        servedLimit = readServedVeryfrontCloudCatalogModel(catalogScopeKey, catalogModelId)?.limit;
+      }
       // The registry-backed compatible builder reads its own option bucket.
       const usesCompatibleRegistryBuilder = routing.surface === "openai" &&
         routing.native !== true && !useFirstPartyTransport && registry?.get("openai") !== undefined;
@@ -303,6 +311,7 @@ function createVeryfrontCloudModelInternal(
         ...(usesCompatibleRegistryBuilder
           ? { openAIChatProviderName: "openai-compatible" as const }
           : {}),
+        ...(servedLimit === undefined ? {} : { servedLimit }),
       });
     });
   }
