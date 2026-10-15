@@ -236,6 +236,7 @@ describe("external agent worker client", () => {
     const run = await client.claimRun({
       workerId: registeredWorker.id,
       leaseDurationSeconds: 30,
+      canonicalRunId: CANONICAL_RUN_ID,
     });
     assertEquals(run?.source_target_kind, "release");
     assertEquals(run?.source_target_release_version, "2026.05.08");
@@ -267,7 +268,10 @@ describe("external agent worker client", () => {
     );
     assertEquals(authorization(calls[1]!), `Bearer ${WORKER_TOKEN}`);
     assertEquals(calls[1]?.[1]?.method, "POST", "claiming a run must POST to the claim endpoint");
-    assertEquals(requestBody(calls[1]!), { lease_duration_seconds: 30 });
+    assertEquals(requestBody(calls[1]!), {
+      lease_duration_seconds: 30,
+      canonical_run_id: CANONICAL_RUN_ID,
+    });
     assertEquals(
       String(calls[2]?.[0]),
       `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/session`,

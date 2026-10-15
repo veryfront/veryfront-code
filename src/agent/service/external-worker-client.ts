@@ -264,6 +264,8 @@ export interface RegisterExternalAgentWorkerInput {
 /** Input payload for claim external agent worker run. */
 export interface ClaimExternalAgentWorkerRunInput {
   workerId: string;
+  /** Claim only this canonical run, or preserve FIFO when omitted. */
+  canonicalRunId?: string;
   leaseDurationSeconds: number;
 }
 
@@ -527,7 +529,10 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       WorkerClaimSchema,
       {
         method: "POST",
-        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+        body: JSON.stringify({
+          lease_duration_seconds: input.leaseDurationSeconds,
+          ...(input.canonicalRunId ? { canonical_run_id: input.canonicalRunId } : {}),
+        }),
       },
       { workerId: input.workerId },
     );

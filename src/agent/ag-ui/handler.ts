@@ -576,6 +576,7 @@ async function createAgUiDirectStreamResponse(
   const connectedRuntime = getConnectedLocalRuntime();
   const localRun = await connectedRuntime?.admit({
     agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
     threadId,
     messages: request.messages,
     signal: rawRequest.signal,

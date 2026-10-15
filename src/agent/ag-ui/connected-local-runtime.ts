@@ -117,10 +117,18 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   const active = new Set<ConnectedLocalRun>();
   let worker: Promise<{ id: string }> | undefined;
   let admissionTail: Promise<unknown> = Promise.resolve();
-  async function api(path: string, body: unknown): Promise<{ id: string }> {
+  async function api(
+    path: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Promise<{ id: string }> {
     const response = await transport(`${options.apiBaseUrl.replace(/\/$/, "")}${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${options.apiToken}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${options.apiToken}`,
+        "Content-Type": "application/json",
+        ...headers,
+      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
@@ -147,6 +155,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   async function admit(
     input: {
       agentId: string;
+      agentName?: string;
       threadId: string;
       messages: Array<{ role: string; parts: unknown[] }>;
       signal: AbortSignal;
@@ -201,6 +210,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         config: {
           agent_admission: {
             mode: "worker",
+            agent_identity: { name: input.agentName ?? input.agentId },
             implementation_kind: "veryfront-local",
             source_target_kind: "project",
             worker_key: workerKey,
@@ -209,7 +219,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       });
       try {
         input.signal.throwIfAborted();
-        const claim = await client.claimRun({ workerId: registered.id, leaseDurationSeconds: 60 });
+        const claim = await client.claimRun({
+          workerId: registered.id,
+          leaseDurationSeconds: 60,
+          canonicalRunId: accepted.id,
+        });
         input.signal.throwIfAborted();
         if (!claim || claim.conversation_id !== conversationId) {
           throw new Error("Veryfront did not return the admitted local run.");
@@ -473,7 +487,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         return run;
       } catch (error) {
         try {
-          await api(`/runs/${encodeURIComponent(accepted.id)}/cancel`, {});
+          await api(`/runs/${encodeURIComponent(accepted.id)}/cancel`, {}, {
+            "Idempotency-Key": `local-cancel:${accepted.id}`,
+          });
         } catch {
           log(`Could not cancel local run ${accepted.id}. Check its status in Studio.`);
         }

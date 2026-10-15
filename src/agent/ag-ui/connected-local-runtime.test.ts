@@ -9,6 +9,7 @@ function fixture(
     abortOnPath?: string;
     controller?: AbortController;
     claimNull?: boolean;
+    requireExactClaim?: boolean;
     appendGate?: Promise<void>;
     appendFailure?: boolean;
     renewOutcome?: "missing" | "error";
@@ -16,7 +17,7 @@ function fixture(
     studioUrl?: string;
   } = {},
 ) {
-  const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
   const completed: string[] = [];
   const logs: string[] = [];
   let markAppendStarted!: () => void;
@@ -31,14 +32,16 @@ function fixture(
       return Promise.resolve({ id: "worker" });
     },
     heartbeatWorker: () => Promise.resolve({}),
-    claimRun: () =>
+    claimRun: (input: { canonicalRunId?: string }) =>
       Promise.resolve(
-        options.claimNull ? null : {
-          run_id: `run-${id}`,
-          conversation_id: `conversation-${id}`,
-          message_id: "message",
-          latest_external_event_sequence: 0,
-        },
+        options.claimNull || (options.requireExactClaim && input.canonicalRunId !== `run-${id}`)
+          ? null
+          : {
+            run_id: `run-${id}`,
+            conversation_id: `conversation-${id}`,
+            message_id: "message",
+            latest_external_event_sequence: 0,
+          },
       ),
     renewLease: () =>
       options.renew
@@ -75,7 +78,7 @@ function fixture(
     fetch: ((_url: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(_url)).pathname;
       const body = JSON.parse(String(init?.body ?? "{}"));
-      requests.push({ path, body });
+      requests.push({ path, body, headers: new Headers(init?.headers) });
       if (path === options.abortOnPath) options.controller?.abort();
       if (path === "/conversations") {
         id++;
@@ -102,10 +105,17 @@ describe("connected local execution", () => {
     const f = fixture();
     const run = await f.runtime.admit({
       agentId: "assistant",
+      agentName: "Local Assistant",
       threadId: "client-thread",
       messages: [],
       signal: new AbortController().signal,
     });
+    assertEquals(
+      (f.requests.find((r) => r.path === "/runs")?.body.config as {
+        agent_admission: { agent_identity: unknown };
+      }).agent_admission.agent_identity,
+      { name: "Local Assistant" },
+    );
     assertEquals(run.runId, "run-1");
     assertEquals(
       (f.requests.find((r) => r.path === "/runs")?.body.config as {
@@ -194,6 +204,31 @@ describe("connected local execution", () => {
       })
     );
     assertEquals(f.requests.some((request) => request.path === "/runs/run-1/cancel"), true);
+  });
+  it("claims its accepted run even when another conversation is queued first", async () => {
+    const f = fixture({ requireExactClaim: true });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await run.finish("completed");
+    assertEquals(f.completed, ["completed"]);
+    await f.runtime.dispose();
+  });
+  it("sends a stable canonical cancellation idempotency key", async () => {
+    const f = fixture({ claimNull: true });
+    await assertRejects(() =>
+      f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      })
+    );
+    const cancellation = f.requests.find((request) => request.path === "/runs/run-1/cancel");
+    assertEquals(cancellation?.headers.get("Idempotency-Key"), "local-cancel:run-1");
   });
   it("settles pending event appends before cancellation finalizes", async () => {
     let release!: () => void;
