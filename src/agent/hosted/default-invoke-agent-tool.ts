@@ -264,7 +264,8 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
 const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
   agent_id: v.string()
     .min(1, "agent_id is required")
-    .regex(/\S/, "agent_id must not be blank")
+    // Local providers cannot compile the nonblank regex into a sampling grammar.
+    .refine((value: string) => /\S/.test(value), "agent_id must not be blank")
     .describe("Built-in child agent type or user-defined agent id."),
 });
 
