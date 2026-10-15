@@ -104,10 +104,10 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     executeTool: async (name, args, context) => {
       if (!wireNames.has(name)) await listTools(context);
       const wireName = wireNames.get(name);
-      if (!wireName && !name.includes("__")) {
+      if (!wireName) {
         throw PERMISSION_DENIED.create({ detail: `Tool "${name}" is not in the platform catalog` });
       }
-      return source.executeTool(wireName ?? name, args, context);
+      return source.executeTool(wireName, args, context);
     },
   });
 }

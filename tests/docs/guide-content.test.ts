@@ -554,12 +554,12 @@ describe("guide content contracts", () => {
     );
     const docs = [agentsGuide, toolsGuide, architecture].join("\n");
 
-    assertStringIncludes(toolsGuide, "`form_input` is authorized but deferred");
+    assertStringIncludes(toolsGuide, "`veryfront__form_input` is authorized but deferred");
     assertStringIncludes(docs, "configured `providerTools`");
     assertStringIncludes(docs, "provider's native schema on the next model step");
     assertEquals(docs.includes("does not search or load provider-native `providerTools`"), false);
     assertEquals(docs.includes("does not search `providerTools`"), false);
-    assertEquals(docs.includes("bootstrap tools (`form_input`"), false);
+    assertEquals(docs.includes("bootstrap tools (`veryfront__form_input`"), false);
   });
 
   it("documents the exact-run writer capability migration", async () => {

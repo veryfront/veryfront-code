@@ -75,7 +75,7 @@ mechanism.
 Provide exactly one of four mode fields. Every argument is a top-level string or
 integer:
 
-- `{"schema":"get_agent"}` returns the exact input schema of one authorized
+- `{"schema":"veryfront__get_agent"}` returns the exact input schema of one authorized
   executable tool and loads it for the next model step. Use it when the exact
   name is known. The name never matches by substring. Provider-native tools have
   no inspectable schema, so load them with `query`.
@@ -94,7 +94,7 @@ integer:
 
   Pass `nextPageInput` unchanged to browse the next page. A null `nextPageInput`
   means the inventory is complete. `nextCursor` remains for compatibility.
-- `{"query":"get_agent"}` searches and loads matching authorized executable
+- `{"query":"veryfront__get_agent"}` searches and loads matching authorized executable
   tools. Their input schemas become visible on the next model step.
 
 The `veryfront__tool_search` parameter schema declares no root `oneOf`, `anyOf`, or `allOf`

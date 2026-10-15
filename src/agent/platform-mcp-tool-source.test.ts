@@ -133,6 +133,73 @@ it("live platform execution resolves undiscovered aliases without repeating know
   assertEquals(listings, 2);
 });
 
+it("live platform execution rejects every unadvertised qualified name after one refresh", async () => {
+  let listings = 0;
+  const calls: string[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      return [{
+        name: "get_file",
+        description: "Read",
+        parameters: { type: "object" as const, properties: {} },
+      }];
+    },
+    executeTool: async (name) => {
+      calls.push(name);
+      return {};
+    },
+  });
+
+  await assertRejects(
+    () => source.executeTool("veryfront__hidden_admin_operation", {}),
+    Error,
+    "not in the platform catalog",
+  );
+  await assertRejects(
+    () => source.executeTool("github__unknown", {}),
+    Error,
+    "not in the platform catalog",
+  );
+  await assertRejects(
+    () => source.executeTool("get_file", {}),
+    Error,
+    "not in the platform catalog",
+  );
+
+  assertEquals(listings, 3, "each absent name refreshes the live catalog exactly once");
+  assertEquals(calls, [], "unadvertised names must never reach the underlying source");
+});
+
+it("live platform execution discovers a newly advertised connector before dispatch", async () => {
+  let listings = 0;
+  const calls: string[] = [];
+  const names = ["get_file"];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      return names.map((name) => ({
+        name,
+        description: name,
+        parameters: { type: "object" as const, properties: {} },
+      }));
+    },
+    executeTool: async (name) => {
+      calls.push(name);
+      return {};
+    },
+  });
+
+  await source.listTools();
+  names.push("github__list_issues");
+  await source.executeTool("github__list_issues", {});
+
+  assertEquals(listings, 2);
+  assertEquals(calls, ["github__list_issues"]);
+});
+
 it("does not restore aliases removed by an outer policy when adapted again", async () => {
   const calls: string[] = [];
   const adapted = createLivePlatformMcpSource({

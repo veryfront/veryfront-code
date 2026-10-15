@@ -288,6 +288,66 @@ Deno.test("prepareDefaultHostedChildForkToolSources filters bare and canonical A
   }
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources uses a mixed catalog's published profile wire name", async () => {
+  const executed: string[] = [];
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{
+      kind: "veryfront-api",
+      toolPolicy: { deny: ["get_tool_access_profile"] },
+    }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("get_tool_access_profile"),
+          remoteTool("create_server"),
+          remoteTool("delete_server"),
+          remoteTool("veryfront__update_file"),
+        ]),
+      executeTool: (toolName) => {
+        executed.push(toolName);
+        if (toolName !== "get_tool_access_profile" && toolName !== "delete_server") {
+          throw new Error(`unexpected wire name: ${toolName}`);
+        }
+        if (toolName === "get_tool_access_profile") {
+          return Promise.resolve({
+            version: 1,
+            freshness: {
+              resolved_at: "2999-01-01T00:00:00.000Z",
+              valid_for_ms: 60_000,
+              fail_closed_on_expiry: true,
+            },
+            families: [{
+              family: "runtime",
+              default_decision: {
+                visibility: "hidden",
+                reason_code: "billing_plan_restriction",
+              },
+              action_overrides: [{
+                action: "delete_server",
+                decision: { visibility: "visible", reason_code: "allowed" },
+              }],
+            }],
+          });
+        }
+        return Promise.resolve({ ok: true });
+      },
+    }),
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  assertEquals(Object.keys(result.forkTools), [
+    "veryfront__delete_server",
+    "veryfront__update_file",
+  ]);
+  await result.forkTools.veryfront__delete_server?.execute?.({});
+  assertEquals(executed, ["get_tool_access_profile", "delete_server"]);
+});
+
 Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy at listing and execution", async () => {
   const executed: string[] = [];
   let listedDefinitions: string[] = [];

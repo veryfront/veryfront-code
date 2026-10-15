@@ -770,7 +770,7 @@ Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools 
         ],
         execute: (toolName, args) => {
           executed.push({ toolName, args });
-          if (toolName === "veryfront__get_tool_access_profile") {
+          if (toolName === "get_tool_access_profile") {
             return {
               version: 1,
               freshness: {
@@ -806,7 +806,7 @@ Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools 
   );
   assertEquals(executed, [
     {
-      toolName: "veryfront__get_tool_access_profile",
+      toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
     },
   ]);
@@ -828,7 +828,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
           simpleTool("update_file"),
         ],
         execute: (toolName) => {
-          if (toolName === "veryfront__get_tool_access_profile") {
+          if (toolName === "get_tool_access_profile") {
             throw new Error("profile unavailable");
           }
           return { ok: true };
@@ -1227,7 +1227,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
 
   assertEquals(executed, [
     {
-      toolName: "veryfront__get_tool_access_profile",
+      toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
       context: { projectId: "project-1" },
     },
@@ -1274,7 +1274,7 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation f
 
   assertEquals(executed, [
     {
-      toolName: "veryfront__get_tool_access_profile",
+      toolName: "get_tool_access_profile",
       args: { project_reference: "project-1" },
       context: { projectId: "project-1" },
     },
@@ -1402,7 +1402,7 @@ Deno.test("hosted platform aliases preserve exact ceilings, live activation, and
         ],
         execute: (name) => {
           executions.push(name);
-          if (name === "veryfront__get_tool_access_profile") throw new Error("Unavailable");
+          if (name === "get_tool_access_profile") throw new Error("Unavailable");
           return { owner: "platform" };
         },
       }),
@@ -1428,7 +1428,7 @@ Deno.test("hosted platform aliases preserve exact ceilings, live activation, and
       await source!.executeTool(name, {}, { projectId: "project-1" })
     );
   }
-  assertEquals(executions.filter((name) => name !== "veryfront__get_tool_access_profile"), [
+  assertEquals(executions.filter((name) => name !== "get_tool_access_profile"), [
     "get_file",
   ]);
 });

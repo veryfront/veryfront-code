@@ -254,7 +254,7 @@ duplicating transport configuration.
 export default agent({
   id: "project-reader",
   system: "Use project evidence when answering.",
-  tools: { get_file: true, list_files: true },
+  tools: { veryfront__get_file: true, veryfront__list_files: true },
 });
 ```
 

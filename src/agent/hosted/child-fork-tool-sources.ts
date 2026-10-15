@@ -37,7 +37,10 @@ import {
   type DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
 import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
-import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import {
+  filterVeryfrontApiToolDefinitionsWithAccessProfile,
+  resolveVeryfrontApiToolAccessProfileToolName,
+} from "./veryfront-api-tool-access.ts";
 import {
   createHostedMcpToolPolicySource,
   throwExplicitStudioMcpUnavailable,
@@ -161,17 +164,12 @@ export async function prepareDefaultHostedChildForkToolSources(
       }
       const rawSource = createRemoteToolSource(remoteConfig);
       const rawDefinitions = await rawSource.listTools();
-      const usesCanonicalPlatformWireNames = rawDefinitions.some(({ name }) =>
-        name.startsWith("veryfront__")
-      );
       const accessFilteredDefinitions = server.kind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
           source: rawSource,
           toolDefinitions: rawDefinitions,
           projectId: input.getProjectId() ?? null,
-          profileToolName: usesCanonicalPlatformWireNames
-            ? "veryfront__get_tool_access_profile"
-            : "get_tool_access_profile",
+          profileToolName: resolveVeryfrontApiToolAccessProfileToolName(rawDefinitions),
         })
         : rawDefinitions;
       const catalog = server.kind === "veryfront-api"

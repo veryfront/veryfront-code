@@ -63,7 +63,7 @@ it("keeps saved selectors and deny policies with canonical discovery", async () 
       await assertRejects(
         async () => await source.executeTool("veryfront__update_file", {}),
         Error,
-        "not allowed",
+        "not in the platform catalog",
       );
       await assertRejects(async () => await source.executeTool("get_file", {}));
       await source.executeTool("veryfront__get_file", {});
