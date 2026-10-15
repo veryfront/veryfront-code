@@ -2576,6 +2576,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Object.assign(fs, {
       exists: async (path: string) => path === "/veryfront.config.ts",
       readFile: async () => "export default { integrations:",
+      refreshSourceSnapshot: async () => {},
+      getSourceSnapshotFingerprint: () => "invalid-config-source-snapshot",
     });
     const body = createAgentStreamRequestBody();
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
