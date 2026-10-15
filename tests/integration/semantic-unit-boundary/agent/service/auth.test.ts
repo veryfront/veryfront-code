@@ -561,7 +561,14 @@ describe("agent/agent-service-auth", () => {
           return { scheduled: true };
         },
       });
-      const owner = {};
+      const owner = {
+        runId: scope.runId,
+        agentId: scope.agentId,
+        threadId: "platform-owner",
+        messages: [],
+        tools: [],
+        context: [],
+      };
       registerPlatformDependencyOwner(owner, verification, scope);
       const execution = runWithPlatformDependencyOwner(owner, () =>
         executeConfiguredTool(
@@ -718,7 +725,14 @@ describe("agent/agent-service-auth", () => {
     assertEquals(effects, 1);
     // The actual host execution object holds authority across stream pulls.
     // Hidden sources do not have to enter the model-facing source list.
-    const owner = {};
+    const owner = {
+      runId: scope.runId,
+      agentId: scope.agentId,
+      threadId: "platform-owner",
+      messages: [],
+      tools: [],
+      context: [],
+    };
     registerPlatformDependencyOwner(owner, verification, scope);
     capturePlatformDependencySource(owner, source);
     await assertRejects(async () =>

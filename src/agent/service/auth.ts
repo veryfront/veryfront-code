@@ -1,3 +1,4 @@
+import type { RuntimeRunAgentInput } from "#veryfront/internal-agents/schema.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
@@ -95,11 +96,14 @@ export function createVerifiedPlatformToolDependencyRunner(
 }
 
 type PlatformDependencyRunner = ReturnType<typeof createVerifiedPlatformToolDependencyRunner>;
-const platformDependencyOwners = createPrivateWeakStore<object, PlatformDependencyRunner>();
+const platformDependencyOwners = createPrivateWeakStore<
+  RuntimeRunAgentInput,
+  PlatformDependencyRunner
+>();
 
 /** Bind an actual host execution object; JSON clones and public context cannot acquire the grant. */
 export function registerPlatformDependencyOwner(
-  owner: object,
+  owner: RuntimeRunAgentInput,
   verification: HostedServiceRunEventAppendTokenResult | VerifiedControlPlaneRequestClaims,
   scope: PlatformDependencyScope,
 ): void {
@@ -109,21 +113,24 @@ export function registerPlatformDependencyOwner(
   );
 }
 
-export function capturePlatformDependencySource(owner: object, source: RemoteToolSource): void {
+export function capturePlatformDependencySource(
+  owner: RuntimeRunAgentInput,
+  source: RemoteToolSource,
+): void {
   const runner = platformDependencyOwners.get(owner);
   if (!runner) throw new Error("Platform dependency owner is unavailable");
   runner.captureSource(source);
 }
 
 export function runWithPlatformDependencyOwner<T>(
-  owner: object,
+  owner: RuntimeRunAgentInput,
   execute: () => Promise<T>,
 ): Promise<T> {
   const runner = platformDependencyOwners.get(owner);
   return runner ? runner.run(execute) : execute();
 }
 
-export function revokePlatformDependencyOwner(owner: object): void {
+export function revokePlatformDependencyOwner(owner: RuntimeRunAgentInput): void {
   platformDependencyOwners.get(owner)?.revoke();
 }
 

@@ -1,3 +1,4 @@
+import type { HostedServiceRunEventAppendTokenResult } from "#veryfront/agent/service/auth.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
   type ControlPlaneClaims,
@@ -39,7 +40,7 @@ const verifiedPlatformGrants = createPrivateWeakStore<
 
 /** Read a private exact-body operator grant. Compatibility adapter signatures cannot mint it. */
 export function getVerifiedControlPlanePlatformDependencies(
-  claims: object,
+  claims: VerifiedControlPlaneRequestClaims | HostedServiceRunEventAppendTokenResult,
   scope: { projectId: string; runId: string; agentId: string },
 ): VerifiedPlatformToolDependencies | undefined {
   const grant = verifiedPlatformGrants.get(claims);
