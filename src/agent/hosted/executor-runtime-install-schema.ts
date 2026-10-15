@@ -133,6 +133,7 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
       runId: getExecutorDiscoveryIdSchema(),
       userId: getExecutorDiscoveryIdSchema().optional(),
       projectSlug: getExecutorDiscoveryIdSchema().optional(),
+      branch: getExecutorDiscoveryIdSchema().nullable().optional(),
     }).strict(),
     allowedToolNames: v.array(getExecutorToolIdSchema()).max(
       EXECUTOR_TOOL_LIMITS.maxToolsPerSource,
@@ -144,7 +145,8 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     (input) =>
       new Set(input.allowedToolNames).size === input.allowedToolNames.length &&
       (input.context.projectId !== null ||
-        (input.owner.scopeKind === "global" && input.context.projectSlug === undefined)),
+        (input.owner.scopeKind === "global" && input.context.projectSlug === undefined &&
+          input.context.branch == null)),
     "Invalid project tool grant or source context",
   )
 );

@@ -77,6 +77,7 @@ export async function createTrustedManagedRuntime(
         projectId: execution.projectId,
         ...(execution.userId === undefined ? {} : { userId: execution.userId }),
         ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+        ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
         execution: { kind: "canonical", runId: execution.runId },
       },
       allowedToolNames: new Set(options.projectToolNames),

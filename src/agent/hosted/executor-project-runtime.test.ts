@@ -60,6 +60,7 @@ function fixture(
         runId: context?.runId,
         ...(context?.userId === undefined ? {} : { userId: context.userId }),
         ...(context?.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
+        ...(context?.branch === undefined ? {} : { branch: context.branch }),
         ...(executed === undefined ? {} : { executed }),
       };
     },
@@ -131,6 +132,7 @@ describe("installed project tool runtime", () => {
         { ...input, owner: { scopeKind: "project", projectId: "source-project" } },
         { ...input, context: { ...input.context, projectId: undefined } },
         { ...input, context: { ...input.context, projectSlug: "unbound-project" } },
+        { ...input, context: { ...input.context, branch: "unbound-branch" } },
       ]
     ) {
       assertEquals(schema.safeParse(invalid).success, false);
@@ -258,11 +260,13 @@ describe("installed project tool runtime", () => {
     const input = install();
     input.context.userId = "synthetic-user";
     input.context.projectSlug = "synthetic-slug";
+    input.context.branch = "synthetic-branch";
     const f = fixture(undefined, () => {
       input.context.agentId = "foreign";
       input.context.runId = "foreign-run";
       input.context.userId = "foreign-user";
       input.context.projectSlug = "foreign-slug";
+      input.context.branch = "foreign-branch";
       input.allowedToolNames.length = 0;
       input.maxCalls = 1;
       input.binding.generation = 2;
@@ -291,6 +295,7 @@ describe("installed project tool runtime", () => {
           runId: "synthetic-run",
           userId: "synthetic-user",
           projectSlug: "synthetic-slug",
+          branch: "synthetic-branch",
         },
       }]);
     } finally {

@@ -178,7 +178,12 @@ describe("executor project tools", () => {
   });
 
   it("preserves fixed user and project scope and only the current call's skill data", async () => {
-    const scope = { ...projectContext, userId: "synthetic-user", projectSlug: "synthetic-slug" };
+    const scope = {
+      ...projectContext,
+      userId: "synthetic-user",
+      projectSlug: "synthetic-slug",
+      branch: "synthetic-branch",
+    };
     const observed: ToolExecutionContext[] = [];
     const f = fixture(async (_args, context) => {
       assert(context);
@@ -190,6 +195,7 @@ describe("executor project tools", () => {
       // Neither adapter may keep reading mutable installation authority.
       scope.userId = "changed-user";
       scope.projectSlug = "changed-slug";
+      scope.branch = "changed-branch";
       const active = {
         activeSkillId: "inspect-skill",
         activeSkillToolAvailability: {
@@ -214,12 +220,13 @@ describe("executor project tools", () => {
         const result = observed.at(-1)!;
         assertEquals(result.userId, "synthetic-user");
         assertEquals(result.projectSlug, "synthetic-slug");
+        assertEquals(result.branch, "synthetic-branch");
         assertEquals(result.activeSkillId, current.activeSkillId);
         assertEquals(result.activeSkillToolAvailability, current.activeSkillToolAvailability);
         assert(!Object.hasOwn(result, "authToken"));
       }
       const before = f.wire.length;
-      for (const key of ["userId", "projectSlug"]) {
+      for (const key of ["userId", "projectSlug", "branch"]) {
         await assertRejects(() =>
           source.executeTool("inspect", { query: "hello" }, {
             ...correlation,

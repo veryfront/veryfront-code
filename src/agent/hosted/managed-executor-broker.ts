@@ -528,6 +528,7 @@ function snapshotTrustedRuntime(
     context: {
       agentId: installation.grant.agentId,
       projectId: execution.projectId,
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
       runId: execution.runId,
       ...(execution.userId === undefined ? {} : { userId: execution.userId }),
       ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
