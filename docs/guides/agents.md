@@ -427,7 +427,8 @@ first model call; its instructions remain in history across tool steps and
 continuations. Hosted preparation retains the original trusted load and its full
 root, without loading it again. If that root cannot survive the existing context
 budget, preparation fails before inference. A fresh fork authorizes its own load;
-serialized history does not grant skill activation. In Markdown agent definitions,
+serialized history does not grant skill activation. Later steps fail before inference
+if that original authenticated result becomes missing, ambiguous or changed. In Markdown agent definitions,
 use `bootstrap-skill`.
 
 ```ts

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { compactForStep, estimateOverhead } from "../../chat/message-prep.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
@@ -274,7 +275,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
   }
   if (
     bootstrap &&
-    (JSON.stringify(startupCalls(messages)) !== JSON.stringify(originalCalls) ||
+    (privateJsonStringify(startupCalls(messages)) !== privateJsonStringify(originalCalls) ||
       !messages.some((message) =>
         message.parts.some((part) =>
           isToolResultPart(part) && part.toolCallId === bootstrap.toolCallId &&

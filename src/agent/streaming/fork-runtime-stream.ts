@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
@@ -33,7 +34,7 @@ import {
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { AGENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "../types.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
@@ -45,6 +46,12 @@ import {
 import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
+import {
+  extractSkillId,
+  getSkillActivationResult,
+  snapshotTrustedSkillLoadResults,
+} from "../runtime/skill-policy-enforcement.ts";
+import { validateRuntimeSkillBootstrapResult } from "../runtime/skill-bootstrap.ts";
 
 const IntrinsicReadableStream = ReadableStream;
 
@@ -538,6 +545,34 @@ export async function resolveForkRuntimeContinuationState(input: {
   };
 }
 
+type ForkStartupSkillState = { toolCallId: string; toolName: string; result: string };
+
+/** Keep the original authenticated startup identity/body, never a serialized claim. */
+function requireForkStartupSkillState(
+  messages: readonly AgentMessage[],
+  skillId: string,
+  expected?: ForkStartupSkillState,
+): ForkStartupSkillState {
+  const load = snapshotTrustedSkillLoadResults(messages).find((result) =>
+    extractSkillId(result.result) === skillId &&
+    (expected === undefined || result.toolCallId === expected.toolCallId)
+  );
+  if (!load) {
+    throw AGENT_ERROR.create({ detail: "Startup skill history is missing or changed" });
+  }
+  const result = getSkillActivationResult(load.result);
+  validateRuntimeSkillBootstrapResult(result, skillId);
+  const state = {
+    toolCallId: load.toolCallId,
+    toolName: load.toolName,
+    result: privateJsonStringify(result),
+  };
+  if (expected && (state.toolName !== expected.toolName || state.result !== expected.result)) {
+    throw AGENT_ERROR.create({ detail: "Startup skill history is missing or changed" });
+  }
+  return state;
+}
+
 /** Starts agent runtime fork. */
 export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRuntimeStreamResult {
   const stepsDeferred = createForkRuntimeDeferred<readonly ForkRuntimeStep[]>();
@@ -563,15 +598,30 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
         prompt: input.prompt,
       }));
       let continuationStepsRemaining = input.maxContinuationSteps ?? 0;
+      let startupSkillState: ForkStartupSkillState | undefined;
 
       try {
         while (progress.steps.length < getMaxForkRuntimeStepCount(input)) {
+          if (startupSkillState && input.bootstrapSkill !== undefined) {
+            requireForkStartupSkillState(
+              progress.currentMessages,
+              input.bootstrapSkill,
+              startupSkillState,
+            );
+          }
           const prepared = await prepareForkRuntimeStep({
             prepareStep: input.prepareStep,
             messages: progress.currentMessages,
             buildInstructions: input.buildInstructions,
             forkToolNames: input.forkToolNames,
           });
+          if (startupSkillState && input.bootstrapSkill !== undefined) {
+            requireForkStartupSkillState(
+              prepared.messages,
+              input.bootstrapSkill,
+              startupSkillState,
+            );
+          }
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
           // If the step preparer returned a live forkToolNames (pinned ∪ activated),
@@ -624,6 +674,13 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             streamedStepState,
           });
           const step = commitForkRuntimeStep(progress, response);
+          if (input.bootstrapSkill !== undefined) {
+            startupSkillState = requireForkStartupSkillState(
+              progress.currentMessages,
+              input.bootstrapSkill,
+              startupSkillState,
+            );
+          }
           for (const recoveredPart of buildRecoveredStepParts(step, state)) {
             yield recoveredPart;
           }
