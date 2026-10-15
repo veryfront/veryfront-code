@@ -70,8 +70,7 @@ Deno.test("does not let a patched Object.assign rebind canonical form input to g
         values: { approved: true },
         inputRequestId: "input-request-1",
         reused: true,
-        reason:
-          "A submitted form_input result already exists for this run. Use these values as final input, do not call form_input again, and continue to the requested output.",
+        reason: "A submitted form already exists for this run. These are its final values.",
       },
     );
   } finally {
