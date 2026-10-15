@@ -1,6 +1,11 @@
+import { setEnv } from "#cli/process-env";
+import { refreshEnvironmentConfig } from "#cli/environment-config";
+import type { DeployControlPlane } from "../../shared/deployment/control-plane.ts";
+import { readProjectLinkForControlPlane, writeProjectLink } from "../../shared/project-link.ts";
+import { projectApiReference } from "../../shared/project-resolution.ts";
 import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
 import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
-import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { DEFAULT_API_URL } from "../../shared/constants.ts";
 /** Admission preflight for a directory that explicitly names a Cloud project. */
 export interface ConnectedDevTarget {
@@ -50,7 +55,7 @@ export async function stopDevServices(cleanups: Array<() => void | Promise<void>
 export function createConnectedDevControlPlane(config: ResolvedConfig) {
   return createHttpDeployControlPlane(
     config,
-    createApiClient(config, createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl)),
+    createApiClient(config, createCloudOnboardingTransport(config.apiUrl)),
   );
 }
 
@@ -66,4 +71,35 @@ export function connectedDevStudioBaseUrl(apiBaseUrl: string, studioUrl?: string
   throw new Error(
     `Cannot determine Studio for connected API "${apiBaseUrl}". Set STUDIO_URL to your Studio origin and run npm run dev again.`,
   );
+}
+
+/** Resolve directory-owned identity before accepting a mutable Cloud slug. */
+export async function resolveConnectedDevProject(
+  controlPlane: Pick<DeployControlPlane, "getProject">,
+  projectDir: string,
+  config: ResolvedConfig,
+) {
+  const link = await readProjectLinkForControlPlane(projectDir, config.apiUrl);
+  const matchesLink = link && (link.projectSlug === config.projectSlug ||
+    link.previousProjectSlugs?.includes(config.projectSlug));
+  const projectId = matchesLink ? link.projectId : config.projectId;
+  const project = await controlPlane.getProject(projectApiReference({ ...config, projectId }));
+  if (matchesLink && link.projectSlug !== project.slug) {
+    await writeProjectLink(projectDir, {
+      controlPlane: link.controlPlane,
+      projectId: link.projectId,
+      projectSlug: project.slug,
+      previousProjectSlugs: [...new Set([...(link.previousProjectSlugs ?? []), link.projectSlug])],
+    });
+  }
+  return project;
+}
+
+export function applyConnectedDevProjectSlug<T extends { projectSlug?: string }>(
+  context: T,
+  projectSlug: string,
+): T {
+  setEnv("VERYFRONT_PROJECT_SLUG", projectSlug);
+  refreshEnvironmentConfig();
+  return { ...context, projectSlug };
 }

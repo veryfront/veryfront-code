@@ -1,4 +1,4 @@
-import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import { createCloudOnboardingTransport } from "./cloud-onboarding-transport.ts";
 import { getApiUrl } from "./constants.ts";
 import { createApiClient, resolveConfigWithAuthNoModule } from "./config.ts";
 import { getEnvironmentConfig } from "veryfront/config";
@@ -32,8 +32,8 @@ export async function chooseCloudProject(
   const config = await resolveConfigWithAuthNoModule(projectDir, {
     ...env,
     projectSlug: await inferProjectSlugFromDirectory(projectDir),
-  }, { transport: createVeryfrontApiOriginBoundOutboundFetch(getApiUrl(env)) });
-  const transport = createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl);
+  }, { transport: createCloudOnboardingTransport(getApiUrl(env)) });
+  const transport = createCloudOnboardingTransport(config.apiUrl);
   const client = createApiClient(config, transport);
   let project: { id: string; slug: string };
   if (mode === "new") {

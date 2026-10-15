@@ -152,3 +152,145 @@ it("requires a Studio override for an unsupported connected API", () => {
     "Set STUDIO_URL",
   );
 });
+
+Deno.test("connected project and environment reads carry onboarding deadlines", async () => {
+  const paths: string[] = [];
+  await withMockFetch((_input, init) => {
+    assertEquals(init?.signal instanceof AbortSignal, true);
+    const path = new URL(String(_input)).pathname;
+    paths.push(path);
+    return Promise.resolve(
+      Response.json(
+        path.endsWith("/environments")
+          ? { data: [{ id: "environment", name: "preview" }] }
+          : { id: "project", slug: "demo", name: "Demo" },
+      ),
+    );
+  }, async () => {
+    const controlPlane = createConnectedDevControlPlane({
+      apiUrl: "https://api.veryfront.com",
+      apiToken: "test",
+      projectSlug: "demo",
+    });
+    await controlPlane.getProject("demo");
+    await controlPlane.getEnvironment("project", "preview");
+  });
+  assertEquals(paths.length, 2);
+});
+
+Deno.test("connected development resolves a renamed linked project by canonical ID", async () => {
+  const { writeProjectLink, readProjectLink } = await import(
+    "../../../../../../cli/shared/project-link.ts"
+  );
+  const { resolveConnectedDevProject } = await import(
+    "../../../../../../cli/commands/dev/connected-dev.ts"
+  );
+  const projectDir = await Deno.makeTempDir();
+  try {
+    await writeProjectLink(projectDir, {
+      controlPlane: "https://api.veryfront.com",
+      projectId: "52e9f7ea-5c06-4f9b-b04d-352f31484c54",
+      projectSlug: "old-slug",
+    });
+    const config = {
+      apiUrl: "https://api.veryfront.com",
+      apiToken: "test",
+      projectSlug: "old-slug",
+    };
+    let canonicalSlug = "renamed";
+    await withMockFetch((input) => {
+      assertEquals(
+        new URL(String(input)).pathname,
+        "/projects/52e9f7ea-5c06-4f9b-b04d-352f31484c54",
+      );
+      return Promise.resolve(
+        Response.json({
+          id: "52e9f7ea-5c06-4f9b-b04d-352f31484c54",
+          slug: canonicalSlug,
+          name: "Renamed",
+        }),
+      );
+    }, async () => {
+      const project = await resolveConnectedDevProject(
+        createConnectedDevControlPlane(config),
+        projectDir,
+        config,
+      );
+      assertEquals(project.slug, "renamed");
+      assertEquals((await readProjectLink(projectDir))?.projectSlug, "renamed");
+      canonicalSlug = "renamed-again";
+      await resolveConnectedDevProject(createConnectedDevControlPlane(config), projectDir, {
+        ...config,
+        projectSlug: "renamed",
+      });
+      const repeated = await resolveConnectedDevProject(
+        createConnectedDevControlPlane(config),
+        projectDir,
+        config,
+      );
+      assertEquals(repeated.slug, "renamed-again");
+      const override = await resolveConnectedDevProject(
+        {
+          getProject: (reference) => {
+            assertEquals(reference, "explicit-other");
+            return Promise.resolve({ id: "other", slug: "explicit-other", name: "Other" });
+          },
+        },
+        projectDir,
+        { ...config, projectSlug: "explicit-other" },
+      );
+      assertEquals(override.id, "other");
+      assertEquals((await readProjectLink(projectDir))?.projectSlug, "renamed-again");
+      assertEquals((await readProjectLink(projectDir))?.previousProjectSlugs, [
+        "old-slug",
+        "renamed",
+      ]);
+    });
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+Deno.test("connected development resolves shared configuration without a private link", async () => {
+  const { resolveConnectedDevProject } = await import(
+    "../../../../../../cli/commands/dev/connected-dev.ts"
+  );
+  const projectDir = await Deno.makeTempDir();
+  try {
+    const project = await resolveConnectedDevProject(
+      {
+        getProject: (reference) => {
+          assertEquals(reference, "shared");
+          return Promise.resolve({ id: "shared-id", slug: "shared", name: "Shared" });
+        },
+      },
+      projectDir,
+      { apiUrl: "https://api.veryfront.com", apiToken: "test", projectSlug: "shared" },
+    );
+    assertEquals(project.id, "shared-id");
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+Deno.test("canonical connected identity reaches inference environment and runtime context", async () => {
+  const { applyConnectedDevProjectSlug } = await import(
+    "../../../../../../cli/commands/dev/connected-dev.ts"
+  );
+  const { getEnv, setEnv, deleteEnv } = await import("#cli/process-env");
+  const { refreshEnvironmentConfig } = await import("#cli/environment-config");
+  const { getEnvironmentConfig } = await import("veryfront/config");
+  const previous = getEnv("VERYFRONT_PROJECT_SLUG");
+  setEnv("VERYFRONT_PROJECT_SLUG", "old-slug");
+  refreshEnvironmentConfig();
+  try {
+    const context = applyConnectedDevProjectSlug({ projectSlug: "old-slug" }, "canonical-slug");
+    assertEquals(context.projectSlug, "canonical-slug");
+    assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "canonical-slug");
+    assertEquals(getEnvironmentConfig().projectSlug, "canonical-slug");
+  } finally {
+    if (previous === undefined) deleteEnv("VERYFRONT_PROJECT_SLUG");
+    else setEnv("VERYFRONT_PROJECT_SLUG", previous);
+    refreshEnvironmentConfig();
+  }
+});

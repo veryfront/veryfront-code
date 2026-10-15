@@ -266,3 +266,31 @@ Deno.test("shared association warns about legacy credentials without exposing or
     });
   });
 });
+
+Deno.test("shared association keeps JSON output free of legacy warnings", async () => {
+  const { setJsonMode } = await import("./json-output.ts");
+  await withTempProject(async (dir) => {
+    await Deno.writeTextFile(join(dir, "veryfront.json"), JSON.stringify({ apiToken: "secret" }));
+    const warnings: string[] = [];
+    using _warning = stub(console, "warn", (...args: unknown[]) => warnings.push(args.join(" ")));
+    setJsonMode(true);
+    try {
+      await saveSharedProjectAssociation(dir, "linked-project");
+      assertEquals(warnings, []);
+    } finally {
+      setJsonMode(false);
+    }
+  });
+});
+
+Deno.test("unchanged shared association preserves bytes without attempting a write", async () => {
+  await withTempProject(async (dir) => {
+    const path = join(dir, "veryfront.json");
+    const original =
+      '{ "projectSlug":"linked-project", "apiUrl":"https://api.veryfront.com", "port":3551 }';
+    await Deno.writeTextFile(path, original);
+    using _write = stub(Deno, "writeTextFile", () => Promise.reject(new Error("read-only source")));
+    await saveSharedProjectAssociation(dir, "linked-project", "https://api.veryfront.com");
+    assertEquals(await Deno.readTextFile(path), original);
+  });
+});

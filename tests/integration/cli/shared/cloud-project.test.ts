@@ -126,6 +126,7 @@ it("creates a cloud project without uploading local source", async () => {
   await withCloudSetup(async (directory, requests) => {
     await withMockFetch(
       ((_input: RequestInfo | URL, init?: RequestInit) => {
+        assertEquals(init?.signal instanceof AbortSignal, true);
         requests.push({ url: String(_input), method: init?.method ?? "GET" });
         return Promise.resolve(Response.json({ id: "cloud-new" }, { status: 201 }));
       }) as typeof fetch,
@@ -152,6 +153,7 @@ it("lists every cloud project page and saves the selected canonical identity", a
   await withCloudSetup(async (directory, requests) => {
     await withMockFetch(
       ((input: RequestInfo | URL, init?: RequestInit) => {
+        assertEquals(init?.signal instanceof AbortSignal, true);
         const url = new URL(String(input));
         requests.push({ url: url.href, method: init?.method ?? "GET" });
         return Promise.resolve(Response.json(

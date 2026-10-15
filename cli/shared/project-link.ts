@@ -1,3 +1,4 @@
+import { isJsonMode } from "./json-output.ts";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
 import { join, relative } from "veryfront/platform/path";
 
@@ -11,6 +12,8 @@ export interface ProjectLink {
   controlPlane: string;
   projectId: string;
   projectSlug: string;
+  /** Previously selected slugs of this same canonical project, retained across renames. */
+  previousProjectSlugs?: string[];
 }
 
 function projectLinkPath(projectDir: string): string {
@@ -90,7 +93,10 @@ function isProjectLink(value: unknown): value is ProjectLink {
     isNonEmptyTrimmedString(link.controlPlane) &&
     isControlPlaneUrl(link.controlPlane) &&
     isNonEmptyTrimmedString(link.projectId) &&
-    isNonEmptyTrimmedString(link.projectSlug);
+    isNonEmptyTrimmedString(link.projectSlug) &&
+    (link.previousProjectSlugs === undefined ||
+      (Array.isArray(link.previousProjectSlugs) &&
+        link.previousProjectSlugs.every(isNonEmptyTrimmedString)));
 }
 
 function isNonEmptyTrimmedString(value: unknown): value is string {
@@ -202,10 +208,15 @@ export async function saveSharedProjectAssociation(
     );
     return;
   }
-  if (typeof existing.apiToken === "string" && existing.apiToken.length > 0) {
+  if (!isJsonMode() && typeof existing.apiToken === "string" && existing.apiToken.length > 0) {
     console.warn(
       "veryfront.json contains a legacy apiToken. Run veryfront login, then remove apiToken before committing this shared project association.",
     );
+  }
+  if (
+    existing.projectSlug === projectSlug && (apiUrl === undefined || existing.apiUrl === apiUrl)
+  ) {
+    return;
   }
   const temporary = join(projectDir, `.veryfront-association-${crypto.randomUUID()}.tmp`);
   try {
