@@ -354,6 +354,127 @@ describe("final model request budget", () => {
     assertEquals(JSON.stringify(remembered).includes("Oversized request"), false);
   });
 
+  it("rolls back a stateful turn rejected by an output-only served limit", async () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "small",
+        modelId: "acme/small",
+        provider: "acme",
+        surface: "openai",
+        aliases: [],
+        operations: ["chat-completions"],
+        capabilities: { limit: { output: 32 } },
+      }],
+    });
+    const model = scriptedModel([{ text: "unexpected" }], {
+      modelId: "veryfront-cloud/acme/small",
+      only: "generate",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "test-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "acme",
+      surface: "openai",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    const runtime = new AgentRuntime("output-only-budget-agent", {
+      model: model.modelId,
+      system: "Short system",
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+      memory: { type: "buffer", maxMessages: 10 },
+    }, { resolveModelRuntime: () => model });
+    const error = await assertRejects(
+      () => runtime.generate("Rejected output request", undefined, undefined, 64),
+      VeryfrontError,
+    );
+    if (!(error instanceof VeryfrontError)) throw new Error("Expected typed context error");
+    assertEquals(error.slug, "agent-context-window-exceeded");
+    assertEquals(model.callCount, 0);
+    const remembered = await runtime.getMemory().getMessages();
+    assertEquals(JSON.stringify(remembered).includes("Rejected output request"), false);
+  });
+
+  it("keeps enforcing a settled model's served limit after its catalog scope is evicted", async () => {
+    // No catalog is loaded for this scope, as after the bounded cache evicts
+    // it; the model still carries the limit it was built with.
+    const model = scriptedModel([{ text: "unexpected" }], {
+      modelId: "veryfront-cloud/acme/small",
+      only: "generate",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      catalogScopeKey: "evicted-scope" as ReturnType<
+        typeof import("#veryfront/provider/veryfront-cloud/catalog-client.ts").veryfrontCloudCatalogScopeKey
+      >,
+      provider: "acme",
+      surface: "openai",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+      servedLimit: { context: 256, output: 32 },
+    }));
+    const runtime = new AgentRuntime("evicted-budget-agent", {
+      model: model.modelId,
+      system: "Mandatory system guidance ".repeat(100),
+      maxSteps: 1,
+      skills: false,
+      tools: {},
+    }, { resolveModelRuntime: () => model });
+    const error = await assertRejects(
+      () => runtime.generate("Keep this user request"),
+      VeryfrontError,
+    );
+    if (!(error instanceof VeryfrontError)) throw new Error("Expected typed context error");
+    assertEquals(error.slug, "agent-context-window-exceeded");
+    assertEquals(model.callCount, 0);
+  });
+
+  it("measures a native OpenAI tool list that replaces the neutral tools", () => {
+    const bigSchema = {
+      type: "object",
+      properties: { payload: { type: "string", description: "Field guidance ".repeat(4_000) } },
+    };
+    const base = {
+      model: { provider: "openai", modelId: "gpt-4.1" },
+      system: "ok",
+      messages: [{ role: "user", content: "hello" }],
+      limit: { context: 8_000, output: 1_000 },
+      requestedOutputTokens: 1_000,
+      explicitOutputTokens: true,
+    };
+    // Large native function schemas reach the wire, so they are counted.
+    assertThrows(
+      () =>
+        enforceProviderRequestBudget({
+          ...base,
+          providerOptions: {
+            openai: {
+              tools: [{ type: "function", function: { name: "big", parameters: bigSchema } }],
+            },
+          },
+        }),
+      Error,
+      "context window",
+    );
+    // A native empty list clears the neutral tools, so they are not counted.
+    const neutral = {
+      big: { type: "function", description: "Big", inputSchema: { jsonSchema: bigSchema } },
+    };
+    assertThrows(
+      () => enforceProviderRequestBudget({ ...base, tools: neutral }),
+      Error,
+      "context window",
+    );
+    const cleared = enforceProviderRequestBudget({
+      ...base,
+      tools: neutral,
+      providerOptions: { openai: { tools: [] } },
+    });
+    assertEquals(cleared.maxOutputTokens, 1_000);
+  });
+
   it("reads a managed proxy's limits from the received catalog its run scope carries", async () => {
     const key = rememberReceivedVeryfrontCloudCatalog([{
       id: "small",
@@ -1379,21 +1500,24 @@ describe("invoke_agent child request budget", () => {
     assertEquals(inspections, 4);
   });
 
-  it("leaves a context safety margin when expanding implicit output", () => {
-    // Dense text (CJK) tokenizes well above chars/4. A small served window
-    // must keep slack so an underestimate does not reach the provider as an
-    // `input + max_tokens > context` rejection.
+  it("counts dense CJK text per character when expanding implicit output", () => {
+    // A CJK character is usually at least one token, not a quarter of one.
+    // Counting it at chars/4 would expand max_tokens past the real room left.
     const context = 32_768;
     const margin = Math.ceil(context * IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO);
+    const characters = 20_000;
     const result = enforceFinalRequestBudget({
       system: "ok",
-      messages: [{ role: "user", content: "\u6f22".repeat(30_000) }],
+      messages: [{ role: "user", content: "\u6f22".repeat(characters) }],
       limit: { context, output: 32_768 },
       requestedOutputTokens: 32_768,
     });
     const estimate = result.estimatedInputTokens ?? 0;
+    assert(estimate >= characters, `estimate ${estimate} below one token per character`);
     assertEquals(result.maxOutputTokens, context - estimate - margin);
-    // An input that tokenizes up to the margin above the estimate still fits.
+    // Even at one real token per character the expanded request fits the window.
+    assert(characters + result.maxOutputTokens <= context);
+    // The margin then absorbs a moderate underestimate on top of that.
     assert(estimate + margin + result.maxOutputTokens <= context);
     // The margin only shrinks the expansion; it never drops below the floor.
     const crowded = enforceFinalRequestBudget({

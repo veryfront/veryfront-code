@@ -1890,6 +1890,20 @@ function suppressOpenAIFunctionToolReasoning(
   return false;
 }
 
+/**
+ * The native tool list an OpenAI builder sends in place of the neutral tools,
+ * when the selected native option bucket owns a `tools` value. That value,
+ * including `[]` or `undefined`, replaces the neutral list on the wire.
+ */
+export function resolveModelCallNativeTools(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): { readonly value: unknown } | undefined {
+  if (!usesOpenAIBuilder(model)) return undefined;
+  const providerOptions = openAIProviderOptions(model, options);
+  return ObjectHasOwn(providerOptions, "tools") ? { value: providerOptions.tools } : undefined;
+}
+
 function resolveOpenAINeutralReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,

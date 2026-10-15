@@ -629,6 +629,12 @@ export interface VeryfrontCloudModelFacts {
    * differs from the default Cloud name: the registry-backed compatible path.
    */
   readonly openAIChatProviderName?: "openai-compatible";
+  /**
+   * Token limits the served catalog declared for this model when it was last
+   * read, kept so a request budget still applies after the bounded catalog
+   * cache evicts this model's scope.
+   */
+  readonly servedLimit?: { readonly context?: number; readonly output?: number };
 }
 
 const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();

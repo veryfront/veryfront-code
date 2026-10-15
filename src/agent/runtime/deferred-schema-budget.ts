@@ -18,17 +18,22 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   const awaitingFirstUse = new Set<string>();
   // A newer search step supersedes schemas the model already skipped once.
   let modelStepSinceSearch = false;
-  // Whether the latest search reported its matches, even an empty list.
-  let latestSearchMatchesKnown = false;
+  // Search calls of the latest search step whose matches are not yet known.
+  // Each parallel search is tracked on its own: one readable result says
+  // nothing about what an unreadable sibling loaded.
+  let unknownSearchCalls = new Set<string>();
   for (const message of messages) {
     if (message.role === "user") {
       // A newer user turn ends the previous tool opportunity, so its
-      // just-called and just-searched schemas no longer need protection.
+      // just-called, still-unanswered and just-searched schemas no longer
+      // need protection.
       latestCallNames = new Set();
+      pending.clear();
       awaitingFirstUse.clear();
       modelStepSinceSearch = false;
     }
     const names = new Set<string>();
+    let searchCalls: Set<string> | undefined;
     for (const part of message.parts) {
       if (part.type === "tool-result") {
         pending.delete(part.toolCallId);
@@ -40,7 +45,7 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
           ) {
             if (modelStepSinceSearch) awaitingFirstUse.clear();
             modelStepSinceSearch = false;
-            latestSearchMatchesKnown = true;
+            unknownSearchCalls.delete(part.toolCallId);
             for (const match of result.matches) {
               if (
                 match && typeof match === "object" && match.status === "loaded" &&
@@ -53,9 +58,12 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
         pending.set(part.toolCallId, part.toolName);
         names.add(part.toolName);
         awaitingFirstUse.delete(part.toolName);
-        if (part.toolName === TOOL_SEARCH_TOOL_NAME) latestSearchMatchesKnown = false;
+        if (part.toolName === TOOL_SEARCH_TOOL_NAME) {
+          (searchCalls ??= new Set()).add(part.toolCallId);
+        }
       }
     }
+    if (searchCalls) unknownSearchCalls = searchCalls;
     if (names.size > 0) {
       latestCallNames = names;
       modelStepSinceSearch = true;
@@ -63,12 +71,9 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   }
   const protectedNames = new Set([...latestCallNames, ...pending.values(), ...awaitingFirstUse]);
   // A schema returned by tool_search has not yet had a chance to be called.
-  // When the search result is unreadable, protect the newest loaded schema; a
-  // known empty result loaded nothing, so no older schema needs protection.
-  if (
-    latestCallNames.has(TOOL_SEARCH_TOOL_NAME) && awaitingFirstUse.size === 0 &&
-    !latestSearchMatchesKnown
-  ) {
+  // When any search of the latest step has an unreadable result, protect the
+  // newest loaded schema; known results, even empty ones, name what loaded.
+  if (latestCallNames.has(TOOL_SEARCH_TOOL_NAME) && unknownSearchCalls.size > 0) {
     const loaded = [...plan.loadedToolNames];
     const newest = loaded[loaded.length - 1];
     if (newest !== undefined) protectedNames.add(newest);

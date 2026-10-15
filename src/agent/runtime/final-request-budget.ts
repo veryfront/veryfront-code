@@ -1,6 +1,10 @@
-import { estimateTokens } from "../../chat/message-prep.ts";
+import { stringifyChatJson } from "../../chat/json-value.ts";
+import { DEFAULT_MESSAGE_PREP_LIMITS } from "../../chat/message-prep.ts";
 import { AGENT_CONTEXT_WINDOW_EXCEEDED, CONFIG_INVALID } from "#veryfront/errors";
-import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import {
+  buildModelCallContextRequest,
+  resolveModelCallNativeTools,
+} from "#veryfront/runtime/model-call-context-request.ts";
 
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 const isArray = Array.isArray;
@@ -9,6 +13,24 @@ function own(value: unknown, key: string): unknown {
   return value !== null && typeof value === "object"
     ? getOwnDescriptor(value, key)?.value
     : undefined;
+}
+
+/**
+ * Estimate the tokens of one serialized request value. ASCII text averages
+ * about four characters per token, but dense scripts do not: a CJK, kana or
+ * Hangul character is usually at least one token on its own, and other
+ * non-ASCII text is close to that. Each non-ASCII UTF-16 unit therefore counts
+ * as one token, so dense text is not underestimated several times over.
+ */
+export function estimateRequestTokens(value: unknown): number {
+  const text = stringifyChatJson(value ?? "");
+  let ascii = 0;
+  let dense = 0;
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) < 0x80) ascii++;
+    else dense++;
+  }
+  return Math.ceil(ascii / DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken) + dense;
 }
 
 /**
@@ -56,9 +78,10 @@ export const MIN_IMPLICIT_OUTPUT_TOKENS = 4_096;
 
 /**
  * Share of the context window an implicit output expansion leaves unused. The
- * input estimate is a heuristic, not a tokenizer upper bound, so dense text
- * (CJK, code, base64-like tool output) can tokenize above it. Keeping this
- * slack makes an underestimate shrink the unused tail instead of producing a
+ * input estimate is a heuristic, not a tokenizer upper bound: dense scripts
+ * are counted per character, but code, base64-like tool output and provider
+ * framing can still tokenize somewhat above it. Keeping this slack makes such
+ * a moderate underestimate shrink the unused tail instead of producing a
  * provider-side `input + max_tokens > context` rejection.
  */
 export const IMPLICIT_OUTPUT_CONTEXT_SAFETY_RATIO = 0.05;
@@ -71,6 +94,11 @@ export type FinalRequestBudgetInput = {
   system: unknown;
   messages: readonly unknown[];
   tools?: Record<string, unknown>;
+  /**
+   * A native provider tool list that replaces `tools` on the wire. When set,
+   * its value is measured instead of the neutral tool schemas.
+   */
+  nativeTools?: { readonly value: unknown };
   responseFormat?: unknown;
   limit?: ServedRequestLimit;
   requestedOutputTokens: number;
@@ -165,8 +193,15 @@ function wireOutputTokens(value: unknown): number | undefined {
 function resolveEffectiveBudget(
   input: ProviderRequestBudgetInput,
 ): { budget: FinalRequestBudgetInput; nativeOutputTokens?: number } {
-  const { model, reasoning, providerOptions, ...budget } = input;
-  if (budget.limit === undefined) return { budget };
+  const { model, reasoning, providerOptions, ...neutralBudget } = input;
+  if (neutralBudget.limit === undefined) return { budget: neutralBudget };
+  // A native tool list replaces the neutral one on the wire, so the request
+  // is measured with the tools the provider actually receives.
+  const nativeTools = resolveModelCallNativeTools(
+    model,
+    { ...(providerOptions === undefined ? {} : { providerOptions }) } as ModelCallSource,
+  );
+  const budget = nativeTools === undefined ? neutralBudget : { ...neutralBudget, nativeTools };
   const probe = (maxOutputTokens: number) =>
     buildModelCallContextRequest(model, {
       maxOutputTokens,
@@ -289,33 +324,35 @@ export function inspectFinalRequestBudget(
   // With native media the remaining measurable request is still enforced: if
   // it alone cannot fit, the whole request cannot either.
   const measured = withoutNativeMediaPayloads(input.messages);
-  const toolSchemas = Object.entries(input.tools ?? {}).map(([name, value]) => {
-    const definition = value as Record<string, unknown> | null;
-    if (!definition || typeof definition !== "object") return { name, definition };
-    // Provider-native tools send their provider id and arguments, not the
-    // framework's lazy validation schema.
-    if (definition.type === "provider") {
-      return { name, type: "provider", id: definition.id, args: definition.args };
-    }
-    const schema = definition.inputSchema;
-    const schemaObject = typeof schema === "function" ? schema() : schema;
-    const inputSchema = schemaObject && typeof schemaObject === "object" &&
-        "jsonSchema" in schemaObject
-      ? schemaObject.jsonSchema
-      : schemaObject;
-    return {
-      name,
-      type: definition.type,
-      id: definition.id,
-      args: definition.args,
-      description: definition.description,
-      inputSchema,
-    };
-  });
-  const rawInputTokens = estimateTokens(input.system) +
-    estimateTokens(measured.messages) + estimateTokens(toolSchemas) +
-    (input.responseFormat === undefined ? 0 : estimateTokens(input.responseFormat));
-  // This heuristic margin is not a tokenizer upper bound: Unicode, media and
+  const toolSchemas = input.nativeTools !== undefined
+    ? input.nativeTools.value
+    : Object.entries(input.tools ?? {}).map(([name, value]) => {
+      const definition = value as Record<string, unknown> | null;
+      if (!definition || typeof definition !== "object") return { name, definition };
+      // Provider-native tools send their provider id and arguments, not the
+      // framework's lazy validation schema.
+      if (definition.type === "provider") {
+        return { name, type: "provider", id: definition.id, args: definition.args };
+      }
+      const schema = definition.inputSchema;
+      const schemaObject = typeof schema === "function" ? schema() : schema;
+      const inputSchema = schemaObject && typeof schemaObject === "object" &&
+          "jsonSchema" in schemaObject
+        ? schemaObject.jsonSchema
+        : schemaObject;
+      return {
+        name,
+        type: definition.type,
+        id: definition.id,
+        args: definition.args,
+        description: definition.description,
+        inputSchema,
+      };
+    });
+  const rawInputTokens = estimateRequestTokens(input.system) +
+    estimateRequestTokens(measured.messages) + estimateRequestTokens(toolSchemas) +
+    (input.responseFormat === undefined ? 0 : estimateRequestTokens(input.responseFormat));
+  // This heuristic margin is not a tokenizer upper bound: media and
   // provider-specific framing can use more tokens than this estimate.
   const estimatedInputTokens = Math.ceil(rawInputTokens * 1.1) + 16;
   const availableOutputTokens = input.limit.context - estimatedInputTokens -

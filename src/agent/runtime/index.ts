@@ -2334,23 +2334,27 @@ function readServedModelLimit(
     : languageModel.provider === "veryfront-cloud"
     ? currentVeryfrontCloudCatalogScopeKey()
     : undefined;
-  return catalogScopeKey
+  if (catalogScopeKey === undefined) return facts?.servedLimit;
+  // A settled model keeps the limit it was built with, so a bounded catalog
+  // cache evicting its scope cannot turn the budget check off.
+  return isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey)
     ? readServedVeryfrontCloudCatalogModel(catalogScopeKey, model)?.limit
-    : undefined;
+    : facts?.servedLimit;
 }
 
 /**
  * Whether a turn on this model needs transactional admission for the served
- * request budget. It does when the served catalog declares a context limit,
- * and, conservatively, while that catalog has not loaded yet, since a limit
- * may still arrive before dispatch. A loaded catalog without a limit can never
- * reject a request on size, so the turn keeps the cheaper, concurrent
+ * request budget. It does when the served catalog declares any limit, since
+ * either an output or a context ceiling can reject the request before
+ * dispatch, and, conservatively, while that catalog has not loaded yet, since
+ * a limit may still arrive. A loaded catalog without a limit can never reject
+ * a request on size, so the turn keeps the cheaper, concurrent
  * non-transactional path.
  */
 function requiresServedModelAdmission(languageModel: ModelRuntime, model: string): boolean {
   const facts = readVeryfrontCloudModelFacts(languageModel);
   if (!facts && languageModel.provider !== "veryfront-cloud") return false;
-  if (readServedModelLimit(languageModel, model)?.context !== undefined) return true;
+  if (readServedModelLimit(languageModel, model) !== undefined) return true;
   const catalogScopeKey = facts ? facts.catalogScopeKey : currentVeryfrontCloudCatalogScopeKey();
   return catalogScopeKey !== undefined && !isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey);
 }

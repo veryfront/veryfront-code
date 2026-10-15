@@ -409,3 +409,87 @@ it("amortizes the search schema over multiple deferred evictions", () => {
     assertEquals([...state.loadedToolNames], names);
   }
 });
+
+it("stops protecting an unanswered deferred call once a newer user message follows it", () => {
+  const state = createToolExposureState(["stale"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("stale", 6_000)],
+    mode: "deferred",
+    state,
+  });
+  const fitted = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [{
+      id: "unanswered-call",
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCallId: "lost", toolName: "stale", args: {} }],
+    }, {
+      id: "next-user",
+      role: "user",
+      parts: [{ type: "text", text: "Never mind, do something else." }],
+    }],
+    inspect: (candidate) => {
+      const stale = candidate.visible.some((tool) => tool.name === "stale");
+      return { fits: !stale, outputExceeded: false, estimatedInputTokens: stale ? 13_250 : 11_500 };
+    },
+  });
+  assertEquals(fitted.evictedNames, ["stale"]);
+});
+
+it("protects the newest schema when one of parallel searches has an unreadable result", () => {
+  const state = createToolExposureState(["older", "newest"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("older", 6_000), definition("newest", 6_000)],
+    mode: "deferred",
+    state,
+  });
+  const messages: Message[] = [{
+    id: "parallel",
+    role: "assistant",
+    parts: ["empty", "opaque"].map((id) => ({
+      type: "tool-call" as const,
+      toolCallId: id,
+      toolName: "tool_search",
+      args: {},
+    })),
+  }, {
+    id: "empty-result",
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: "empty",
+      toolName: "tool_search",
+      result: { matches: [] },
+    }],
+  }, {
+    id: "opaque-result",
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: "opaque",
+      toolName: "tool_search",
+      result: "Loaded a tool.",
+    }],
+  }];
+  const fitted = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: messages,
+    inspect: (candidate) => ({
+      fits: false,
+      outputExceeded: false,
+      estimatedInputTokens: candidate.visible.length * 1_000,
+    }),
+  });
+  assertEquals(fitted.evictedNames.includes("newest"), false);
+  // Reversing the result order must not change the outcome.
+  const reversed = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [messages[0]!, messages[2]!, messages[1]!],
+    inspect: (candidate) => ({
+      fits: false,
+      outputExceeded: false,
+      estimatedInputTokens: candidate.visible.length * 1_000,
+    }),
+  });
+  assertEquals(reversed.evictedNames.includes("newest"), false);
+});
