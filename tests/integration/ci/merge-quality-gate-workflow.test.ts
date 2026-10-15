@@ -877,6 +877,7 @@ done
         "tests/integration/cli/dev/display-options.test.ts",
         "tests/integration/cli/pull/project-bootstrap.test.ts",
         "tests/integration/cli/shared/cloud-project.test.ts",
+        "tests/integration/agent/connected-local-inference.test.ts",
         "tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts",
         "tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts",
         "tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts",
