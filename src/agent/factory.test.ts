@@ -1456,7 +1456,12 @@ description: Excluded skill
         { invoke_agent: true, veryfront__invoke_agent: false },
       ]
     ) {
-      const assistant = agent({ id: "denied-generic", skills: [], tools });
+      const assistant = agent({
+        id: "denied-generic",
+        system: "Use authorized tools.",
+        skills: [],
+        tools,
+      });
       const definitions = await getAvailableTools(assistant.config.tools, {
         callerAgentId: assistant.id,
         includeIntegrationTools: false,
@@ -1474,6 +1479,7 @@ description: Excluded skill
     });
     const assistant = agent({
       id: "project-delegation-name",
+      system: "Use project and platform tools.",
       skills: [],
       tools: { invoke_agent: projectTool, veryfront__invoke_agent: true },
     });

@@ -450,6 +450,8 @@ function withoutProviderOnlyForkTools(
     forkTools: Object.fromEntries(
       Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
         !providerOnly.has(toolName) &&
+        !(hasTrustedHostToolProvenance(tool) &&
+          providerOnly.has(platformMcpLegacyName(toolName)) && !selected.has(toolName)) &&
         (tool.shortName === undefined || !providerOnly.has(tool.shortName) ||
           selected.has(toolName))
       ),
@@ -571,6 +573,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     hostedModel: input.hostedModel,
     effectivePrompt: input.effectivePrompt,
     requestedTools,
+    allowedTools: input.childConfig?.toolNames,
     ...(input.childConfig?.deniedToolNames?.length
       ? { excludedTools: new Set(input.childConfig.deniedToolNames) }
       : {}),
@@ -797,9 +800,13 @@ function applyChildAgentExecutionConfig(
   const allowedToolNames = childConfig.toolNames === undefined
     ? undefined
     : new Set(childConfig.toolNames);
+  // Alias candidates survive until the assembled catalog can establish their
+  // provenance. Final selection intersects the resolved child and parent lists.
   const requestedTools = input.tools?.filter((toolName) =>
     deniedToolNames?.includes(toolName) !== true &&
-    (allowedToolNames === undefined || allowedToolNames.has(toolName))
+    (allowedToolNames === undefined || allowedToolNames.has(toolName) ||
+      allowedToolNames.has(platformMcpLegacyName(toolName)) ||
+      (!toolName.includes("__") && allowedToolNames.has(`veryfront__${toolName}`)))
   );
 
   return {

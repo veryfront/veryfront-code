@@ -20,6 +20,29 @@ import {
 } from "../project/steering-mutation.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+
+/** Resolve legacy selectors only against an existing trusted canonical binding. */
+function resolveHostedChildToolSelectors(
+  names: readonly string[] | undefined,
+  tools: HostToolSet,
+): string[] | undefined {
+  return names === undefined ? undefined : [
+    ...new Set(names.map((name) => {
+      if (
+        name.includes("__") || objectGetOwnPropertyDescriptor(tools, name) !== undefined
+      ) return name;
+      const canonicalName = `veryfront__${name}`;
+      const descriptor = objectGetOwnPropertyDescriptor(tools, canonicalName);
+      return descriptor !== undefined && objectHasOwn(descriptor, "value") &&
+          hasTrustedHostToolProvenance(descriptor.value)
+        ? canonicalName
+        : name;
+    })),
+  ];
+}
+
 /** Input payload for hosted child requested tools. */
 export interface HostedChildRequestedToolsInput {
   prompt: string;
@@ -225,14 +248,15 @@ export function selectHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   requestedTools?: readonly string[];
 }): HostedChildForkRuntimeToolSelectionResult {
-  if (input.requestedTools === undefined) {
+  const requestedTools = resolveHostedChildToolSelectors(input.requestedTools, input.forkTools);
+  if (requestedTools === undefined) {
     return {
       ok: true,
       forkTools: input.forkTools,
     };
   }
 
-  if (input.requestedTools.length === 0) {
+  if (requestedTools.length === 0) {
     return {
       ok: true,
       forkTools: {},
@@ -255,9 +279,7 @@ export function selectHostedChildForkRuntimeTools(input: {
     }),
     ...providerNativeNames,
   ]);
-  const unavailableRequested = input.requestedTools.filter((toolName) =>
-    !availableNames.has(toolName)
-  );
+  const unavailableRequested = requestedTools.filter((toolName) => !availableNames.has(toolName));
   if (unavailableRequested.length > 0) {
     return {
       ok: false,
@@ -267,7 +289,7 @@ export function selectHostedChildForkRuntimeTools(input: {
     };
   }
 
-  const allowedSet = new Set(input.requestedTools);
+  const allowedSet = new Set(requestedTools);
   const forkTools: HostToolSet = {};
   for (const [toolName, toolDefinition] of Object.entries(input.forkTools)) {
     if (allowedSet.has(toolName)) {
@@ -275,7 +297,7 @@ export function selectHostedChildForkRuntimeTools(input: {
     }
   }
 
-  const requestedAvailableToolNames = [...new Set(input.requestedTools)];
+  const requestedAvailableToolNames = [...new Set(requestedTools)];
   const includesProviderNativeTool = requestedAvailableToolNames.some((toolName) =>
     providerNativeNames.has(toolName)
   );
@@ -315,15 +337,22 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  allowedTools?: readonly string[];
   excludedTools?: ReadonlySet<string>;
 }): HostedChildForkRuntimeToolSelectionResult {
+  const requestedTools = resolveHostedChildToolSelectors(
+    input.requestedTools ?? input.allowedTools,
+    input.forkTools,
+  );
+  const allowedTools = resolveHostedChildToolSelectors(input.allowedTools, input.forkTools);
+  const allowed = allowedTools === undefined ? undefined : new Set(allowedTools);
   const effectiveRequestedTools = sanitizeDefaultHostedChildRequestedTools({
     prompt: input.effectivePrompt,
-    requestedTools: input.requestedTools,
+    requestedTools,
     excludedTools: input.excludedTools,
   });
 
-  const explicitNames = new Set(input.requestedTools ?? []);
+  const explicitNames = new Set(requestedTools ?? []);
   const availableNames = new Set(getForkRuntimeAllowedToolNames({
     provider: input.provider,
     forkModel: input.forkModel,
@@ -335,7 +364,8 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
     hostedModel: input.hostedModel,
     forkTools: input.forkTools,
     requestedTools: effectiveRequestedTools?.filter((name) =>
-      explicitNames.has(name) || availableNames.has(name)
+      (allowed === undefined || allowed.has(name)) &&
+      (explicitNames.has(name) || availableNames.has(name))
     ),
   });
 }
@@ -349,6 +379,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  allowedTools?: readonly string[];
   excludedTools?: ReadonlySet<string>;
   activeProjectId?: string | null;
   activeBranchId?: string | null;
@@ -363,6 +394,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
     forkTools: input.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    allowedTools: input.allowedTools,
     excludedTools: input.excludedTools,
   });
   if (!selectedTools.ok) {
@@ -411,6 +443,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
   hostedModel?: boolean;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  allowedTools?: readonly string[];
   excludedTools?: ReadonlySet<string>;
   activeProjectId?: string | null;
   activeBranchId?: string | null;
@@ -430,6 +463,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
     forkTools: toolSources.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    allowedTools: input.allowedTools,
     excludedTools: input.excludedTools,
     activeProjectId: input.activeProjectId,
     activeBranchId: input.activeBranchId,
