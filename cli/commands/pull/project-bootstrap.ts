@@ -3,7 +3,12 @@ import { join } from "veryfront/platform/path";
 import { isNotFoundError } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import type { ResolvedConfig } from "#cli/shared/config";
-import { clearProjectLink, readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import {
+  clearProjectLink,
+  readProjectLink,
+  saveSharedProjectAssociation,
+  writeProjectLink,
+} from "../../shared/project-link.ts";
 import { normalizeControlPlane, type ProjectTarget } from "../../shared/deployment-provenance.ts";
 import { generateGitignoreContent } from "../../utils/env-prompt.ts";
 import { createPackageJson, createTypeScriptConfig } from "../init/config-generator.ts";
@@ -11,12 +16,14 @@ import { createPackageJson, createTypeScriptConfig } from "../init/config-genera
 const PACKAGE_JSON_PATH = "package.json";
 const TSCONFIG_PATH = "tsconfig.json";
 const GITIGNORE_PATH = ".gitignore";
+const SHARED_ASSOCIATION_PATH = "veryfront.json";
 const PROJECT_LINK_PATH = ".veryfront/project.json";
 const LOCAL_BOOTSTRAP_PATHS = new Set([
   PACKAGE_JSON_PATH,
   TSCONFIG_PATH,
   GITIGNORE_PATH,
   PROJECT_LINK_PATH,
+  SHARED_ASSOCIATION_PATH,
 ]);
 
 export interface PulledProjectBootstrapPlan {
@@ -24,6 +31,7 @@ export interface PulledProjectBootstrapPlan {
   createPackageJson: boolean;
   createTsconfig: boolean;
   createGitignore: boolean;
+  sharedAssociationAction: "create" | "update" | null;
   writeCount: number;
 }
 
@@ -97,6 +105,7 @@ export async function preflightPulledProjectBootstrap(
   await assertRegularBootstrapFile(options.projectDir, PACKAGE_JSON_PATH);
   await assertRegularBootstrapFile(options.projectDir, TSCONFIG_PATH);
   await assertRegularBootstrapFile(options.projectDir, GITIGNORE_PATH);
+  await assertRegularBootstrapFile(options.projectDir, SHARED_ASSOCIATION_PATH);
 }
 
 export async function planPulledProjectBootstrap(
@@ -134,7 +143,27 @@ export async function planPulledProjectBootstrap(
     options.deletedPaths,
   ));
 
+  let sharedAssociationAction: "create" | "update" | null = "create";
+  if (
+    await pathExistsInFinalState(
+      options.projectDir,
+      SHARED_ASSOCIATION_PATH,
+      options.pulledPaths,
+      options.deletedPaths,
+    )
+  ) {
+    sharedAssociationAction = "update";
+    if (!options.pulledPaths.has(SHARED_ASSOCIATION_PATH)) {
+      const existing = JSON.parse(
+        await Deno.readTextFile(join(options.projectDir, SHARED_ASSOCIATION_PATH)),
+      );
+      if (
+        existing.projectSlug === options.project.slug && existing.apiUrl === options.config.apiUrl
+      ) sharedAssociationAction = null;
+    }
+  }
   return {
+    sharedAssociationAction,
     projectLinkAction,
     createPackageJson,
     createTsconfig,
@@ -142,7 +171,7 @@ export async function planPulledProjectBootstrap(
     writeCount: Number(projectLinkAction !== null) +
       Number(createPackageJson) +
       Number(createTsconfig) +
-      Number(createGitignore),
+      Number(createGitignore) + Number(sharedAssociationAction !== null),
   };
 }
 
@@ -158,11 +187,19 @@ export async function ensurePulledProjectBootstrap(
       }
       if (plan.createPackageJson) cliLogger.info(`  Would create: ${PACKAGE_JSON_PATH}`);
       if (plan.createTsconfig) cliLogger.info(`  Would create: ${TSCONFIG_PATH}`);
+      if (plan.sharedAssociationAction) {
+        cliLogger.info(`  Would ${plan.sharedAssociationAction}: ${SHARED_ASSOCIATION_PATH}`);
+      }
       if (plan.createGitignore) cliLogger.info(`  Would create: ${GITIGNORE_PATH}`);
     }
     return;
   }
 
+  const sharedPath = join(options.projectDir, SHARED_ASSOCIATION_PATH);
+  const previousSharedText = plan.sharedAssociationAction === "update"
+    ? await Deno.readTextFile(sharedPath)
+    : null;
+  let sharedAssociationMutationAttempted = false;
   const previousLink = plan.projectLinkAction ? await readProjectLink(options.projectDir) : null;
   const previousLinkText = previousLink
     ? await Deno.readTextFile(join(options.projectDir, PROJECT_LINK_PATH))
@@ -182,6 +219,16 @@ export async function ensurePulledProjectBootstrap(
       });
     }
 
+    if (plan.sharedAssociationAction) {
+      sharedAssociationMutationAttempted = plan.sharedAssociationAction === "update";
+      await saveSharedProjectAssociation(
+        options.projectDir,
+        options.project.slug,
+        options.config.apiUrl,
+        plan.sharedAssociationAction === "create" ? { createNew: true } : undefined,
+      );
+      if (plan.sharedAssociationAction === "create") createdFiles.push(sharedPath);
+    }
     if (plan.createPackageJson) {
       createdFiles.push(join(options.projectDir, PACKAGE_JSON_PATH));
       await createPackageJson(options.projectDir, options.project.slug);
@@ -206,6 +253,13 @@ export async function ensurePulledProjectBootstrap(
       }
     }
 
+    if (sharedAssociationMutationAttempted && previousSharedText !== null) {
+      try {
+        await Deno.writeTextFile(sharedPath, previousSharedText);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
     if (projectLinkMutationAttempted) {
       try {
         if (previousLinkText !== null) {

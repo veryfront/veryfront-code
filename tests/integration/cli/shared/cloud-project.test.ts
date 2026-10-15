@@ -1,10 +1,11 @@
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { saveSharedProjectAssociation } from "./project-link.ts";
+import { saveSharedProjectAssociation } from "../../../../cli/shared/project-link.ts";
 
 it("persists only association while preserving existing configuration", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDirWithOptions();
   try {
     await Deno.writeTextFile(
       `${directory}/veryfront.json`,
@@ -21,7 +22,7 @@ it("persists only association while preserving existing configuration", async ()
 });
 
 it("refuses association writes through a veryfront.json symlink", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDirWithOptions();
   try {
     await Deno.writeTextFile(`${directory}/outside.json`, "{}");
     await Deno.symlink(`${directory}/outside.json`, `${directory}/veryfront.json`);
@@ -39,7 +40,7 @@ it("refuses association writes through a veryfront.json symlink", async () => {
 });
 
 it("retains the write failure and cleans its temporary association", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDirWithOptions();
   const originalRename = Deno.rename;
   const failure = new Error("association rename failed");
   try {
@@ -59,7 +60,7 @@ it("retains the write failure and cleans its temporary association", async () =>
 });
 
 it("preserves the original failure when temporary cleanup also fails", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDirWithOptions();
   const originalRename = Deno.rename;
   const originalRemove = Deno.remove;
   const failure = new Error("association rename failed");
@@ -84,8 +85,8 @@ it("preserves the original failure when temporary cleanup also fails", async () 
 });
 
 it("asks Yes/No before project selection and skips Cloud setup on No", async () => {
-  const { chooseCloudProject } = await import("./cloud-project.ts");
-  const directory = await Deno.makeTempDir();
+  const { chooseCloudProject } = await import("../../../../cli/shared/cloud-project.ts");
+  const directory = await makeTempDirWithOptions();
   const prompts: Array<{ question: string; labels: string[] }> = [];
   try {
     await chooseCloudProject(directory, (question, options) => {
@@ -100,7 +101,7 @@ it("asks Yes/No before project selection and skips Cloud setup on No", async () 
 });
 
 it("asks new or existing project only after choosing Yes", async () => {
-  const { chooseCloudProject } = await import("./cloud-project.ts");
+  const { chooseCloudProject } = await import("../../../../cli/shared/cloud-project.ts");
   const prompts: Array<{ question: string; labels: string[] }> = [];
   await chooseCloudProject("unused", (question, options) => {
     prompts.push({ question, labels: options.map((option) => option.label) });

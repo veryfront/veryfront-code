@@ -1,6 +1,7 @@
 import { createApiClient, resolveConfigWithAuthNoModule } from "./config.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import { inferProjectSlugFromDirectory, persistProjectLink } from "./project-resolution.ts";
+import { saveSharedProjectAssociation } from "./project-link.ts";
 import { reserveProjectSlug } from "./reserve-slug.ts";
 import { select } from "../utils/terminal-select.ts";
 
@@ -69,6 +70,7 @@ export async function chooseCloudProject(
     project = projects.find((entry) => entry.id === id)!;
   }
   await persistProjectLink(projectDir, config, project);
+  await saveSharedProjectAssociation(projectDir, project.slug, config.apiUrl);
   console.log(
     `  ✓ Linked local project to cloud project ${project.slug}. Source stays local until veryfront push.`,
   );

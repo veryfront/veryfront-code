@@ -1,3 +1,4 @@
+import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 /**
  * Push command - Upload local project files to a Veryfront branch
  *
@@ -1582,6 +1583,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
+      if (!dryRun && outcome.kind !== "planned-create" && outcome.persisted) {
+        await saveSharedProjectAssociation(projectDir, outcome.project.slug, config.apiUrl);
+      }
       spinner.update("Scanning local files...");
       let sourceSnapshot: PushSourceSnapshot;
       try {

@@ -176,6 +176,7 @@ export async function saveSharedProjectAssociation(
   projectDir: string,
   projectSlug: string,
   apiUrl?: string,
+  options?: { createNew: boolean },
 ): Promise<void> {
   const path = join(projectDir, "veryfront.json");
   let existing: Record<string, unknown> = {};
@@ -190,6 +191,14 @@ export async function saveSharedProjectAssociation(
     }
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  if (options?.createNew) {
+    await Deno.writeTextFile(
+      path,
+      `${JSON.stringify({ projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
+      { createNew: true },
+    );
+    return;
   }
   const temporary = join(projectDir, `.veryfront-association-${crypto.randomUUID()}.tmp`);
   try {

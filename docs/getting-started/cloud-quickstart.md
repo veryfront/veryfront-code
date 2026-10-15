@@ -63,7 +63,7 @@ The environment's application data and quotas are shared with other members.
 
 ## Verify the agent locally
 
-Open the local URL printed by the CLI and ask:
+Open the local URL printed by the CLI, `http://localhost:3000` by default, and ask:
 
 ```text
 What is 128 divided by 8?

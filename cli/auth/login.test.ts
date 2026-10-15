@@ -428,22 +428,23 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     }
 
     it("reports API unavailability instead of asking to log in during connected dev", async () => {
-      const originalFetch = globalThis.fetch;
       try {
         setNonInteractive(true);
-        globalThis.fetch = (() =>
-          Promise.reject(new TypeError("connection refused"))) as typeof fetch;
-        const { ensureAuthenticated } = await import("./login.ts");
-        await assertRejects(
-          () =>
-            ensureAuthenticated({ ...testEnv, apiToken: "vf_test_secret" }, undefined, {
-              throwOnCredentialValidationUnavailable: true,
-            }),
-          Error,
-          "API is unavailable",
+        await withMockFetch(
+          (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch,
+          async () => {
+            const { ensureAuthenticated } = await import("./login.ts");
+            await assertRejects(
+              () =>
+                ensureAuthenticated({ ...testEnv, apiToken: "vf_test_secret" }, undefined, {
+                  throwOnCredentialValidationUnavailable: true,
+                }),
+              Error,
+              "API is unavailable",
+            );
+          },
         );
       } finally {
-        globalThis.fetch = originalFetch;
         resetInteractiveMode();
       }
     });

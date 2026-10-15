@@ -16,7 +16,7 @@ import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { VeryfrontError } from "veryfront/errors";
 import type { ProjectReferenceSource, ResolvedConfig } from "./config.ts";
-import { saveSharedProjectAssociation, writeProjectLink } from "./project-link.ts";
+import { writeProjectLink } from "./project-link.ts";
 import { normalizeProjectSlug } from "./slug.ts";
 
 /** A project as the control plane identifies it. */
@@ -165,7 +165,6 @@ export async function persistProjectLink<T extends { apiUrl: string }>(
     projectId: project.id,
     projectSlug: project.slug,
   });
-  await saveSharedProjectAssociation(projectDir, project.slug, config.apiUrl);
   return { ...config, projectId: project.id, projectSlug: project.slug };
 }
 

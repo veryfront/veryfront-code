@@ -655,6 +655,10 @@ describe("pullCommand", () => {
         quiet: true,
       });
 
+      assertEquals(JSON.parse(await Deno.readTextFile(join(tempDir, "veryfront.json"))), {
+        projectSlug: "alpha-canonical",
+        apiUrl: "https://api.veryfront.com",
+      });
       const gitignore = await Deno.readTextFile(join(tempDir, ".gitignore"));
       for (const entry of ["node_modules/", ".veryfront/", ".env", ".cache/"]) {
         assertEquals(gitignore.split("\n").includes(entry), true);
@@ -934,6 +938,7 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
       assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       Deno.writeTextFile = originalWriteTextFile;
       globalThis.fetch = originalFetch;
@@ -1105,6 +1110,7 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
       assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
@@ -1159,6 +1165,7 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
       assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
       assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -1223,6 +1230,7 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
       assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       cliLogger.info = originalInfo;
       globalThis.fetch = originalFetch;

@@ -6,7 +6,7 @@ import {
   markEnvFileSource,
   markProcessEnvSource,
 } from "veryfront/utils/env-loader";
-import { captureDevDisplayOptions } from "./display-options.ts";
+import { captureDevDisplayOptions } from "../../../../cli/commands/dev/display-options.ts";
 
 it("accepts process display overrides and ignores project file values", () => {
   const keys = ["STUDIO_URL", "VERYFRONT_DEFAULT_MODEL"];

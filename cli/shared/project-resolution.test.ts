@@ -157,8 +157,8 @@ describe("resolveOrCreateProject", () => {
         if (outcome.kind !== "existing") throw new Error("unreachable");
         assertEquals(outcome.persisted, true);
         assertEquals(
-          JSON.parse(await Deno.readTextFile(join(dir, "veryfront.json"))).projectSlug,
-          "my-app",
+          await Deno.stat(join(dir, "veryfront.json")).then(() => true, () => false),
+          false,
         );
         assertEquals(outcome.config.projectId, "proj_1");
         assertEquals(outcome.config.projectSlug, "my-app");
