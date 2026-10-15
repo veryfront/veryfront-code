@@ -97,7 +97,7 @@ async function fixture() {
           path: sourcePath,
           checksum,
           indexed_chunk_count: 1,
-          model: { provider: "openai", name: "text-embedding-3-small", dimension: 1536 },
+          model: { provider: "google", name: "gemini-embedding-001", dimension: 3072 },
         } as T,
       );
     },
@@ -110,7 +110,7 @@ async function fixture() {
     embed: (text) => {
       embedCalls++;
       assertEquals(text, "Complete current canonical body.\n");
-      return Promise.resolve(Array(1536).fill(0.125));
+      return Promise.resolve(Array(3072).fill(0.125));
     },
   });
   const request = { sourcePath, content, signal: new AbortController().signal };
@@ -233,6 +233,28 @@ describe("host-owned canonical index authority proof", () => {
       "without authorization denial",
     );
   });
+  for (
+    const model of [
+      { provider: "openai", name: "gemini-embedding-001", dimension: 3072 },
+      { provider: "google", name: "text-embedding-3-small", dimension: 3072 },
+      { provider: "google", name: "gemini-embedding-001", dimension: 1536 },
+    ]
+  ) {
+    it(`rejects a mislabeled managed index acknowledgement ${JSON.stringify(model)}`, async () => {
+      const f = await fixture();
+      const postRaw = f.client.postRaw;
+      f.client.postRaw = async <T>(...args: Parameters<typeof postRaw>): Promise<T> => {
+        const result = await postRaw<Record<string, unknown>>(...args);
+        return { ...result, model } as T;
+      };
+      await assertRejects(
+        () => f.probe({ ...f.request, stale: false }),
+        NativeError,
+        "acknowledgement mismatched",
+      );
+    });
+  }
+
   it("rejects incomplete provider vectors before canonical commit", async () => {
     const f = await fixture();
     const probe = createRuntimeOwnershipIndexProbe({
@@ -256,7 +278,7 @@ describe("host-owned canonical index authority proof", () => {
       branchId,
       createWriter: () => f.client,
       createReader: () => f.client,
-      embed: () => Promise.resolve(Array(1536).fill(Number.MAX_VALUE)),
+      embed: () => Promise.resolve(Array(3072).fill(Number.MAX_VALUE)),
     });
     await assertRejects(
       () => probe({ ...f.request, stale: false }),

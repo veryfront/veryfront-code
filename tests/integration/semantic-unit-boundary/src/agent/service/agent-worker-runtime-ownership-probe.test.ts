@@ -66,9 +66,9 @@ function credentials(suffix = "") {
 }
 
 function managedTestEmbedder(calls: string[] = []) {
-  const vector = Array.from({ length: 1536 }, () => 0.001);
+  const vector = Array.from({ length: 3072 }, () => 0.001);
   return {
-    model: "veryfront-cloud/openai/text-embedding-3-small",
+    model: "veryfront-cloud/google/gemini-embedding-001",
     async embed(_text: string): Promise<number[]> {
       throw new Error("probe should request document embedding through embedMany");
     },
@@ -81,12 +81,12 @@ function managedTestEmbedder(calls: string[] = []) {
 
 function overflowingTestEmbedder() {
   return {
-    model: "veryfront-cloud/openai/text-embedding-3-small",
+    model: "veryfront-cloud/google/gemini-embedding-001",
     async embed(_text: string): Promise<number[]> {
       throw new Error("probe should request document embedding through embedMany");
     },
     async embedMany(texts: string[]): Promise<number[][]> {
-      return texts.map(() => Array.from({ length: 1536 }, () => 1e300));
+      return texts.map(() => Array.from({ length: 3072 }, () => 1e300));
     },
   };
 }
@@ -280,9 +280,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
           chunks?: Array<{ vector?: unknown[] }>;
         };
         assertEquals(index.expected_version_id, "22222222-2222-4222-8222-222222222222");
-        assertEquals(index.model?.name, "text-embedding-3-small");
-        assertEquals(index.model?.dimension, 1536);
-        assertEquals(index.chunks?.[0]?.vector?.length, 1536);
+        assertEquals(index.model?.name, "gemini-embedding-001");
+        assertEquals(index.model?.dimension, 3072);
+        assertEquals(index.chunks?.[0]?.vector?.length, 3072);
         return Response.json({
           file_id: options.wrongIndexFile
             ? "99999999-9999-4999-8999-999999999999"
@@ -808,9 +808,9 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
         chunks?: Array<{ vector?: unknown[] }>;
       };
       assertEquals(index.expected_version_id, "22222222-2222-4222-8222-222222222222");
-      assertEquals(index.model?.name, "text-embedding-3-small");
-      assertEquals(index.model?.dimension, 1536);
-      assertEquals(index.chunks?.[0]?.vector?.length, 1536);
+      assertEquals(index.model?.name, "gemini-embedding-001");
+      assertEquals(index.model?.dimension, 3072);
+      assertEquals(index.chunks?.[0]?.vector?.length, 3072);
       return jsonResponse({
         file_id: "11111111-1111-4111-8111-111111111111",
         version_id: "22222222-2222-4222-8222-222222222222",
@@ -948,7 +948,7 @@ it("does not let replaced String model helpers validate a wrong embedder", async
   Object.defineProperty(String.prototype, "slice", {
     configurable: true,
     value(this: string, start?: number, end?: number) {
-      if (String(this) === "local/bad-model") return "openai/text-embedding-3-small";
+      if (String(this) === "local/bad-model") return "openai/gemini-embedding-001";
       return Reflect.apply(originalSlice, this, [start, end]);
     },
   });

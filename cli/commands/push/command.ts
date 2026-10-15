@@ -47,6 +47,7 @@ import {
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
+import { collectReferencedOkfCompanions } from "../../sync/okf-companions.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
@@ -249,7 +250,8 @@ export async function scanLocalFiles(
   await ignoreChecker.refreshGitIgnores();
   const fs = createFileSystem();
   const ops: UploadOp[] = [];
-  const supportedSymlinks: string[] = [];
+  const symlinks: string[] = [];
+  const opaquePaths: string[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await fs.readDir(currentDir);
@@ -261,7 +263,7 @@ export async function scanLocalFiles(
       if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
 
       if (entry.isSymlink) {
-        if (ignoreChecker.isSupportedExtension(entry.name)) supportedSymlinks.push(relativePath);
+        symlinks.push(relativePath);
         continue;
       }
 
@@ -270,7 +272,10 @@ export async function scanLocalFiles(
         continue;
       }
 
-      if (!ignoreChecker.isSupportedExtension(entry.name)) continue;
+      if (!ignoreChecker.isSupportedExtension(entry.name)) {
+        opaquePaths.push(relativePath);
+        continue;
+      }
 
       const content = await fs.readTextFile(entryPath);
       ops.push({ path: relativePath, content });
@@ -283,16 +288,36 @@ export async function scanLocalFiles(
   // excluded when the checkout ignores it.
   await ignoreChecker.resolveGitIgnoredCandidates([
     ...ops.map((op) => op.path),
-    ...supportedSymlinks,
+    ...opaquePaths,
+    ...symlinks,
   ]);
   // A symbolic link is rejected only once Git confirms the checkout does not
   // ignore it, so an ignored link created since the listing is skipped instead.
-  const rejectedSymlink = supportedSymlinks.find((path) => !ignoreChecker.isIgnored(path));
+  const referencedCompanions = collectReferencedOkfCompanions(
+    ops,
+    ignoreChecker,
+    new Set([...ops.map((op) => op.path), ...opaquePaths, ...symlinks]),
+  );
+  const rejectedSymlink = symlinks.find((path) =>
+    !ignoreChecker.isIgnored(path) &&
+    (ignoreChecker.isSupportedExtension(path) || referencedCompanions.has(path))
+  );
   if (rejectedSymlink !== undefined) {
     throw INVALID_ARGUMENT.create({
       detail:
         `Veryfront push does not support symbolic links: "${rejectedSymlink}". Replace the link with a file and run veryfront push again.`,
     });
+  }
+  for (const path of opaquePaths) {
+    if (!referencedCompanions.has(path) || ignoreChecker.isIgnored(path)) continue;
+    // Recheck after discovery so a replaced path cannot become a symlink read.
+    const info = await lstat(join(projectDir, path));
+    if (!info.isFile || info.isSymlink) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Veryfront push requires a regular file: "${path}".`,
+      });
+    }
+    ops.push({ path, content: await fs.readTextFile(join(projectDir, path)) });
   }
   return ops.filter((op) => !ignoreChecker.isIgnored(op.path));
 }
@@ -1477,7 +1502,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       await preflightSyncState(projectDir);
 
       spinner.update("Loading ignore patterns...");
-      const ignoreChecker = await loadIgnoreChecker(projectDir);
+      const baseIgnoreChecker = await loadIgnoreChecker(projectDir);
+      const companionPaths = new Set<string>();
+      const ignoreChecker: IgnoreChecker = {
+        ...baseIgnoreChecker,
+        isSupportedExtension: (path) =>
+          baseIgnoreChecker.isSupportedExtension(path) || companionPaths.has(path),
+      };
       // Remote files need not exist locally, so ask Git about each listing:
       // otherwise a remote path the checkout ignores would count as managed
       // and prune would delete it, which `.vfignore` rules already prevent.
@@ -1486,6 +1517,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       ): Promise<RemoteFile[]> => {
         const files = await listAllFiles(...args);
         await ignoreChecker.resolveGitIgnoredCandidates(files.map((file) => file.path));
+        for (const path of collectReferencedOkfCompanions(files, ignoreChecker)) {
+          companionPaths.add(path);
+        }
         return files;
       };
 
@@ -1587,7 +1621,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       try {
         sourceSnapshot = await capturePushSourceSnapshot(
           projectDir,
-          ignoreChecker,
+          baseIgnoreChecker,
           options.expectedCommitSha,
           options.discoverDeletedGitPaths ?? false,
           options.expectedRepositoryAvailable,
@@ -1617,6 +1651,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           branchExists: isMainBranch,
         };
       await ignoreChecker.resolveGitIgnoredCandidates(target.remoteFiles.map((file) => file.path));
+      for (const path of collectReferencedOkfCompanions(target.remoteFiles, ignoreChecker)) {
+        companionPaths.add(path);
+      }
       let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
 
       if (!dryRun && !isMainBranch && !target.branchId) {
@@ -1720,6 +1757,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
         }
       }
+
+      for (const file of sourceSnapshot.files) companionPaths.add(file.path);
 
       const remoteFilesMissingLocally = findRemoteFilesMissingLocally(
         target.remoteFiles,
@@ -1872,7 +1911,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             // proves itself against has to describe the directory as it stands.
             const recaptured = await capturePushSourceSnapshot(
               projectDir,
-              ignoreChecker,
+              baseIgnoreChecker,
               options.expectedCommitSha,
               options.discoverDeletedGitPaths ?? false,
               options.expectedRepositoryAvailable,
@@ -2109,7 +2148,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 projectDir,
                 branchName,
                 sourceSnapshot,
-                ignoreChecker,
+                baseIgnoreChecker,
                 pushedSourceDigest,
                 retainedTrackedLocalPaths,
               );
@@ -2601,7 +2640,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectDir,
             branchName,
             sourceSnapshot,
-            ignoreChecker,
+            baseIgnoreChecker,
             pushedSourceDigest,
             retainedTrackedLocalPaths,
           );

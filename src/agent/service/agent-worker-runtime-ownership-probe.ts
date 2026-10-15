@@ -54,9 +54,9 @@ const RuntimeResponseOkGet = Object.getOwnPropertyDescriptor(Response.prototype,
 const RuntimeResponseText = Response.prototype.text;
 const CANONICAL_KNOWLEDGE_BRANCH = "main";
 const CANONICAL_KNOWLEDGE_MODEL = {
-  name: "text-embedding-3-small",
-  provider: "openai",
-  dimension: 1536,
+  name: "gemini-embedding-001",
+  provider: "google",
+  dimension: 3072,
 } as const;
 
 export interface AgentWorkerRuntimeOwnershipProbeCredentials {
@@ -827,7 +827,7 @@ async function canonicalIndexBody(
         !RuntimeNumberIsFinite(RuntimeMathFround(value)),
     ]) as boolean
   ) {
-    throw new Error("canonical embedding provider returned an invalid 1536-dimensional vector");
+    throw new Error("canonical embedding provider returned an invalid 3072-dimensional vector");
   }
   return {
     expected_version_id: versionId,

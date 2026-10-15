@@ -268,13 +268,16 @@ With cloud bootstrap:
   through AI Gateway.
 
 The default cloud embedding model is
-`veryfront-cloud/openai/text-embedding-3-small`. Set
-`VERYFRONT_DEFAULT_EMBEDDING_MODEL` to `provider/model`, such as
-`google/text-embedding-004`; Cloud bootstrap routes it as
-`veryfront-cloud/google/text-embedding-004`:
+`veryfront-cloud/google/gemini-embedding-001`, served through the managed
+EU-resident Vertex deployment. Reindex documents when changing embedding models;
+vectors from different models are not interchangeable. Existing immutable
+OpenAI indexes keep their recorded identity and are not relabeled as Gemini.
+
+`VERYFRONT_DEFAULT_EMBEDDING_MODEL` accepts a model present in the managed gateway
+registry and permitted by the project's model policy:
 
 ```bash title="Terminal"
-export VERYFRONT_DEFAULT_EMBEDDING_MODEL=google/text-embedding-004
+export VERYFRONT_DEFAULT_EMBEDDING_MODEL=google/gemini-embedding-001
 ```
 
 ## Use raw Cloud APIs

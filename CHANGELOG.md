@@ -6,6 +6,20 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: managed knowledge embeddings use the registered Gemini model
+
+Managed knowledge indexing defaults to `google/gemini-embedding-001` with 3072
+dimensions. Retrieval carries the query model identity so compatible API ranking
+keeps embeddings from different models separate. Deploy with the matching API
+model policy and query isolation changes.
+
+### Fixed: native push preserves referenced OKF assets
+
+`veryfront push` includes text assets explicitly referenced by OKF frontmatter,
+including SQL, Python, CSV, notebooks and extensionless executors. Push and pull
+share bundle-root reference rules. Ignore rules and path safety still apply;
+unreferenced files with unsupported extensions remain outside sync.
+
 ### Changed: PurgeCSS uses a verified in-memory distribution and patched parser
 
 The CSS purging extension now uses PurgeCSS 8's in-memory algorithm with exact
