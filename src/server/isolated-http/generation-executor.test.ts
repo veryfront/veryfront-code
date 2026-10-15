@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 import { createHostedExecutorSessionClock } from "#veryfront/agent/hosted/executor-session.ts";
