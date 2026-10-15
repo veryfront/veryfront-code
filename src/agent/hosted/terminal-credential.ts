@@ -444,15 +444,23 @@ export async function acceptInheritedRunAdmission(
 }
 
 /** Create inference transport only from this inherited child's private admission authority. */
-export function hostedInheritedInferenceModelResolver(descriptor: HostedTerminalDescriptor) {
+export function hostedInheritedInferenceModelResolver(
+  descriptor: HostedTerminalDescriptor,
+  options: { projectModels?: boolean; signal?: AbortSignal } = {},
+) {
   const authority = credentials.get(descriptor);
   if (!authority) return undefined;
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  return createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+  const resolver = createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
     apiBaseUrl: authority.apiUrl,
+    assertParentActive: () => options.signal?.throwIfAborted(),
   });
+  return options.projectModels
+    ? (model: string) =>
+      resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)
+    : resolver;
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */

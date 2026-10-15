@@ -1,3 +1,7 @@
+import {
+  executeLocalChild,
+  observeAdmittedAgentToolCalls,
+} from "../composition/local-child-execution.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { FakeTime } from "#std/testing/time";
@@ -175,6 +179,56 @@ function fixture(
 }
 
 describe("connected local execution", () => {
+  it("requires private child claim authority after stream setup instead of executing an untracked child", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pending!: Promise<unknown>;
+    let executed = false;
+    try {
+      await run.execute(async () => {
+        await observeAdmittedAgentToolCalls({
+          id: "assistant-message",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "child-call",
+            toolName: "invoke_agent",
+            args: { agent_id: "child" },
+          }],
+        });
+        pending = gate.then(() =>
+          executeLocalChild({
+            agentId: "child",
+            input: "task",
+            toolName: "invoke_agent",
+            toolInput: { agent_id: "child" },
+            context: { toolCallId: "child-call" },
+            execute: async () => {
+              executed = true;
+              return { text: "untracked", toolCalls: 0, status: "completed" };
+            },
+          })
+        );
+      });
+      release();
+      await assertRejects(() => pending, Error, "Trusted worker claim authority is unavailable");
+      assertEquals(executed, false);
+      assertEquals(f.requests.filter((request) => request.path === "/runs").length, 1);
+    } finally {
+      release();
+      await run.finish("failed");
+    }
+  });
+
   it("registers the configured worker name without changing its implementation or unique key", async () => {
     const f = fixture({ workerDisplayName: "Kentaro laptop" });
     const run = await f.runtime.admit({

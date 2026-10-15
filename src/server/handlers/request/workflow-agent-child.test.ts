@@ -1,9 +1,16 @@
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { getRuntimeObservationWriterBinding } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   acceptInheritedRunAdmission,
   acceptWorkflowInheritedRunAdmission,
 } from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "#veryfront/agent/factory.ts";
@@ -29,14 +36,14 @@ const encode = (value: unknown) => `test.${btoa(JSON.stringify(value))}.signatur
 const eventToken = encode({
   tokenUse: "run_event_writer",
   runId: "run_parent",
-  projectId: "project",
+  projectId: "11111111-1111-4111-8111-111111111111",
   projectExecutionAttempt: { canonicalRunId: parentId, workerId: "worker", attemptId: "attempt" },
 });
 const terminalToken = encode({
   tokenUse: "run_event_writer",
   writerPurpose: "current_run_terminal",
   runId: "run_child",
-  projectId: "project",
+  projectId: "11111111-1111-4111-8111-111111111111",
   canonicalRunId: childId,
   dispatchNonce: "nonce",
 });
@@ -64,7 +71,7 @@ function admission(
       id,
       status,
       output,
-      project_id: "project",
+      project_id: "11111111-1111-4111-8111-111111111111",
       parent_run_id: parent,
       target: { type: "agent", id: "coordinator" },
       conversation_id: conversationId,
@@ -77,11 +84,12 @@ function admission(
         tokenUse: "run_event_writer",
         writerPurpose: "current_run_terminal",
         runId: publicId,
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         canonicalRunId: id,
         dispatchNonce: "nonce-child",
       }),
       "X-Veryfront-Run-Invocation-Token": "child-invocation",
+      "X-Veryfront-Inference-Token": "child-inference",
       "X-Veryfront-Run-Event-Token": "child-event",
       "X-Veryfront-Run-Renewal-Token": "child-renewal",
       "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
@@ -93,7 +101,7 @@ function admission(
 function runner(send: typeof fetch, token = eventToken) {
   return createWorkflowAgentNodeRunner({
     runId: "run_parent",
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     apiUrl: "https://api.example.test",
     eventToken: token,
     authToken: "parent-invocation",
@@ -639,6 +647,8 @@ describe("workflow agent child protocol", () => {
 
   it("persists actual coordinator tool evidence before admitting and locally streaming its child", async () => {
     const grandchildId = "44444444-4444-4444-8444-444444444444";
+    let childBinding: ReturnType<typeof getRuntimeObservationWriterBinding>;
+    let parentSink: ReturnType<typeof getActiveRunEventSink>;
     const order: string[] = [];
     const counts = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
@@ -683,6 +693,7 @@ describe("workflow agent child protocol", () => {
     const result = await runner(send)({
       ...invocation,
       execute: async () => {
+        parentSink = getActiveRunEventSink();
         await observeGeneratedAgentTurn("coordinator-message", {
           text: "",
           toolCalls: [{
@@ -698,6 +709,11 @@ describe("workflow agent child protocol", () => {
           toolInput: { agent_id: "brief-research", prompt: "Research" },
           context: { toolCallId: "call-research" },
           execute: async (control) => {
+            const childSink = getActiveRunEventSink();
+            assertEquals(childSink === parentSink, false);
+            childBinding = getRuntimeObservationWriterBinding(childSink);
+            assertEquals(childBinding?.scope.canonicalRunId, grandchildId);
+            childBinding?.assertActive();
             order.push("local-research");
             await control?.onEvent?.({ type: "text-start", id: "text" });
             await control?.onEvent?.({ type: "text-delta", id: "text", delta: "Finding" });
@@ -709,6 +725,8 @@ describe("workflow agent child protocol", () => {
       },
     });
     assertEquals(result.success, true);
+    assertExists(childBinding);
+    assertThrows(() => childBinding!.assertActive(), Error, "no longer active");
     assertEquals(order, [
       "tool-evidence",
       "admit-research",
@@ -912,14 +930,14 @@ describe("workflow agent child protocol", () => {
       };
       const second = createWorkflowAgentNodeRunner({
         runId: "run_parent_b",
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         apiUrl: "https://api.example.test",
         fetch: send,
         authToken: "parent-b",
         eventToken: encode({
           tokenUse: "run_event_writer",
           runId: "run_parent_b",
-          projectId: "project",
+          projectId: "11111111-1111-4111-8111-111111111111",
           projectExecutionAttempt: {
             canonicalRunId: parentB,
             workerId: "worker-b",
@@ -1025,7 +1043,7 @@ describe("workflow agent child protocol", () => {
         ++calls === 1 ? json({}) : json(
           {
             id: childId,
-            project_id: "project",
+            project_id: "11111111-1111-4111-8111-111111111111",
             parent_run_id: parentId,
             target: { type: "agent", id: "coordinator" },
             status: "completed",
@@ -1068,7 +1086,7 @@ describe("workflow agent child protocol", () => {
       const token = encode({
         tokenUse: "run_event_writer",
         runId: "run_parent",
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         projectExecutionAttempt: { canonicalRunId: id, workerId: "worker", attemptId: "attempt" },
       });
       let requests = 0;
@@ -1096,7 +1114,7 @@ describe("workflow agent child protocol", () => {
     const token = encode({
       tokenUse: "run_event_writer",
       runId: "run_parent",
-      projectId: "project",
+      projectId: "11111111-1111-4111-8111-111111111111",
       projectExecutionAttempt: {
         canonicalRunId: `prefix-${parentId}`,
         workerId: "worker",
@@ -1122,7 +1140,7 @@ describe("workflow agent child protocol", () => {
         encode({
           tokenUse: "run_event_writer",
           runId: "foreign",
-          projectId: "project",
+          projectId: "11111111-1111-4111-8111-111111111111",
           projectExecutionAttempt: {
             canonicalRunId: parentId,
             workerId: "worker",
@@ -1150,7 +1168,7 @@ describe("workflow agent child protocol", () => {
 
 describe("private workflow inherited execution response", () => {
   const binding = {
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     parentRunId: parentId,
     agentId: "coordinator",
     apiUrl: "https://api.example.test",
@@ -1160,7 +1178,7 @@ describe("private workflow inherited execution response", () => {
     version: 1,
     canonicalRunId: childId,
     parentRunId: parentId,
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     agentId: "coordinator",
     status: "running",
     conversationId,
@@ -1287,7 +1305,7 @@ describe("private workflow inherited execution response", () => {
 
 describe("workflow terminal admission result validation", () => {
   const binding = {
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     parentRunId: parentId,
     agentId: "coordinator",
     apiUrl: "https://api.example.test",
@@ -1295,7 +1313,7 @@ describe("workflow terminal admission result validation", () => {
   };
   const row = {
     id: childId,
-    project_id: "project",
+    project_id: "11111111-1111-4111-8111-111111111111",
     parent_run_id: parentId,
     target: { type: "agent", id: "coordinator" },
     status: "completed",

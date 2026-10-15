@@ -78,12 +78,13 @@ async function runAgentAsStreamingTool(
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const signal = control?.signal ?? context?.abortSignal;
-    const useApplicationRuntime = shouldUseApplicationInferenceRuntime(
-      getAgentExecutionConfig(agent.config).model,
-    );
+    const useApplicationRuntime = !control?.resolveModelRuntime &&
+      shouldUseApplicationInferenceRuntime(
+        getAgentExecutionConfig(agent.config).model,
+      );
     // The factory also imports the registry. Defer loading it until invocation
     // so composition does not create an eager module-initialization cycle.
-    const createAdmittedAgent = useApplicationRuntime
+    const createAdmittedAgent = useApplicationRuntime || control?.resolveModelRuntime
       ? (await import("../factory.ts")).createEphemeralAgentWithRuntimeOptions
       : undefined;
     const privateRuntime = useApplicationRuntime
@@ -97,7 +98,12 @@ async function runAgentAsStreamingTool(
       throw new Error("Application inference admission was cancelled");
     }
     try {
-      const streamAgent = privateRuntime && createAdmittedAgent
+      const streamAgent = control?.resolveModelRuntime && createAdmittedAgent
+        ? createAdmittedAgent(
+          { ...getAgentExecutionConfig(agent.config), id: agent.id },
+          { resolveModelRuntime: control.resolveModelRuntime, preserveToolCatalog: true },
+        )
+        : privateRuntime && createAdmittedAgent
         ? await privateRuntime.prepareAgent(() => {
           const admittedAgent = createAdmittedAgent(
             { ...getAgentExecutionConfig(agent.config), id: agent.id },
@@ -107,8 +113,9 @@ async function runAgentAsStreamingTool(
           return admittedAgent;
         })
         : agent;
-      const streamContext = privateRuntime
-        ? buildAdmittedChildStreamContext(context, privateRuntime.runId)
+      const childRunId = control?.runId ?? privateRuntime?.runId;
+      const streamContext = childRunId
+        ? buildAdmittedChildStreamContext(context, childRunId)
         : undefined;
       const streamInput = {
         input,
