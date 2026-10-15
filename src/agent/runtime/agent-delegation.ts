@@ -1,5 +1,6 @@
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { Tool, ToolExecutionContext } from "../../tool/types.ts";
+import { tool as createTool } from "#veryfront/tool";
 import type { Agent } from "../types.ts";
 import { agentAsTool, getAgent } from "../composition/index.ts";
 import { type AgentToolInput, getAgentToolInputSchema } from "../schemas/index.ts";
@@ -43,7 +44,8 @@ const getInvokeAgentInputSchema = defineSchema((v) =>
   v.object({
     agent_id: v.string()
       .min(1, "agent_id is required")
-      .regex(/\S/, "agent_id must not be blank")
+      // Local providers cannot compile the nonblank regex into a sampling grammar.
+      .refine((value: string) => /\S/.test(value), "agent_id must not be blank")
       .describe("Built-in child agent type or user-defined agent id."),
     description: v.string().describe("3-5 word task summary"),
     prompt: v.string().describe("Detailed instructions for the task"),
@@ -91,9 +93,8 @@ function buildInvokeAgentPrompt(
  */
 export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): Tool {
   const resolveAgent = input.resolveAgent ?? getAgent;
-  const tool = markSkillDelegationOverridesUnsupported(markRuntimeLocalTool({
+  const tool = markSkillDelegationOverridesUnsupported(markRuntimeLocalTool(createTool({
     id: INVOKE_AGENT_TOOL_ID,
-    type: "function",
     description:
       "Invoke a registered project agent for a self-contained task. Select the target with agent_id and provide complete standalone instructions.",
     inputSchema: getInvokeAgentInputSchema(),
@@ -123,7 +124,7 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
         input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
       }, context);
     },
-  }));
+  })));
   markFrameworkTool(frameworkInvokeAgentTools, tool);
   return tool;
 }

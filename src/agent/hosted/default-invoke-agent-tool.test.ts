@@ -1,6 +1,7 @@
 import { registerModelProvider } from "#veryfront/provider";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import { schemaToJsonSchema } from "#veryfront/schemas/index.ts";
 import {
   assert,
   assertEquals,
@@ -28,6 +29,7 @@ import {
   type DefaultHostedInvokeAgentToolOptions,
   type DefaultHostedInvokeAgentTraceAttributes,
   executeDefaultHostedInvokeAgentTool,
+  getDefaultHostedInvokeAgentInputSchema,
 } from "./default-invoke-agent-tool.ts";
 import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
 
@@ -96,6 +98,30 @@ it("defaultHostedInvokeAgentInputSchema accepts child-agent selection", () => {
   );
 });
 
+it("invoke_agent exposes provider-compatible selection bounds and preserves runtime nonblank validation", () => {
+  const inputSchema = getDefaultHostedInvokeAgentInputSchema();
+  const jsonSchema = schemaToJsonSchema(inputSchema);
+  const selection = jsonSchema.properties?.agent_id as Record<string, unknown>;
+  assertEquals(selection.type, "string");
+  assertEquals(selection.minLength, 1);
+  assertEquals(selection.pattern, undefined);
+
+  for (
+    const [agentId, accepted] of [
+      ["security-reviewer", true],
+      [" \nsecurity-reviewer\r\n ", true],
+      ["first\nsecond", true],
+      ["\u2003agent\u2028", true],
+      ["", false],
+      [" \t\r\n", false],
+      ["\u2003\u2028\uFEFF", false],
+    ] as const
+  ) {
+    const input = { description: "inspect auth", prompt: "Inspect auth flow.", agent_id: agentId };
+    assertEquals(inputSchema.safeParse(input).success, accepted);
+  }
+});
+
 it("defaultHostedInvokeAgentInputSchema requires explicit child-agent selection", async () => {
   await assertRejects(
     async () =>
@@ -109,18 +135,31 @@ it("defaultHostedInvokeAgentInputSchema requires explicit child-agent selection"
   );
 });
 
-it("defaultHostedInvokeAgentInputSchema rejects blank child-agent selection", async () => {
-  await assertRejects(
-    async () =>
-      defaultHostedInvokeAgentInputSchema.parse({
-        description: "inspect auth",
-        prompt: "Inspect auth flow.",
-        context: {},
-        agent_id: "   ",
-      }),
-    Error,
-    "agent_id must not be blank",
-  );
+it("invoke_agent rejects blank selection before resolving a child agent", async () => {
+  let childResolutions = 0;
+  const invokeTool = createDefaultHostedInvokeAgentTool(createTestOptions({
+    options: {
+      resolveChildAgentId: () => {
+        childResolutions++;
+        return "child";
+      },
+    },
+  }));
+
+  for (const agentId of ["   ", " \t\r\n", "\u2003\u2028\uFEFF"]) {
+    await assertRejects(
+      () =>
+        invokeTool.execute({
+          description: "inspect auth",
+          prompt: "Inspect auth flow.",
+          context: {},
+          agent_id: agentId,
+        }),
+      Error,
+      "agent_id must not be blank",
+    );
+  }
+  assertEquals(childResolutions, 0);
 });
 
 it("defaultHostedInvokeAgentInputSchema rejects invalid result mode", async () => {
