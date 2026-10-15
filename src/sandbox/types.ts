@@ -20,6 +20,12 @@ export interface SandboxClientOptions {
   authToken?: string;
 }
 
+/** Options for discovering caller creation capabilities in a billing project. */
+export interface SandboxCapabilitiesOptions extends SandboxClientOptions {
+  /** Project UUID or slug. Omit to check personal-account always-on eligibility. */
+  projectReference?: string;
+}
+
 /** Options for creating a sandbox. */
 export interface SandboxOptions extends SandboxClientOptions {
   /** Project UUID or slug used for billing. */
