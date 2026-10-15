@@ -22,6 +22,19 @@ const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
 const HeadersForEach = Headers.prototype.forEach;
 const HeadersAppend = Headers.prototype.append;
 
+// Node's constructor reads public response accessors while initializing its state.
+// Shadow project-replaceable getters on a private, frozen prototype, including
+// when a prior returned response exposes this subclass to project code.
+class HostResponse extends NativeResponse {}
+Object.defineProperties(HostResponse.prototype, {
+  body: { get: ResponseBodyGet },
+  headers: { get: ResponseHeadersGet },
+  status: { get: ResponseStatusGet },
+  statusText: { get: ResponseStatusTextGet },
+});
+Object.freeze(HostResponse.prototype);
+Object.freeze(HostResponse);
+
 export function readResponseValue<T>(response: Response, getter: () => T): T {
   return IntrinsicReflectApply(getter, response, []) as T;
 }
@@ -36,7 +49,7 @@ export function copyNativeResponse(
     readResponseValue<number>(target, ResponseStatusGet),
     readResponseValue<string>(target, ResponseStatusTextGet),
   );
-  const result = new NativeResponse(
+  const result = new HostResponse(
     body,
     init,
   );

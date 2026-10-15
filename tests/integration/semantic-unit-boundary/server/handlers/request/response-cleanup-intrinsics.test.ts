@@ -27,6 +27,16 @@ it("preserves response metadata and cleanup after project response intrinsic rep
     }
     Object.defineProperty(Headers.prototype, Symbol.iterator, { ...iterator, value: poison });
     response = withResponseCleanup(input, () => cleaned++, new AbortController().signal);
+    for (const [field] of descriptors) {
+      assertEquals(Object.getOwnPropertyDescriptor(Response.prototype, field)?.get, poison);
+    }
+    assertEquals(
+      Object.getOwnPropertyDescriptor(Headers.prototype, Symbol.iterator)?.value,
+      poison,
+    );
+    assertEquals(response.status, 200);
+    assertEquals(response.statusText, "Accepted stream");
+    assertEquals(response.headers.get("x-runtime"), "trusted");
   } finally {
     for (const [field, descriptor] of descriptors) {
       Object.defineProperty(Response.prototype, field, descriptor);
