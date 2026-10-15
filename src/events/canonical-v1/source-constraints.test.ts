@@ -28,7 +28,7 @@ function requested(fields: Record<string, unknown>) {
       runkind: "agent" as const,
       recordedat: "2026-10-12T00:00:00Z",
       type: "com.veryfront.run.requested",
-      datacontenttype: "application/json",
+      datacontenttype: "application/json" as const,
       dataschema: "urn:veryfront:events:1:data:run.requested:diagnostic",
       data: {
         type: "com.veryfront.run.requested",
