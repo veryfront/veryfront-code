@@ -516,3 +516,47 @@ it("hosted startup retention rejects a missing or ambiguous original call instea
     );
   }
 });
+
+it("hosted preparation detects nested startup call mutation without changing source history", () => {
+  const skillId = "child--process";
+  const result = markTrustedPlatformPolicyToolResultPart({
+    type: "tool-result" as const,
+    toolCallId: "startup",
+    toolName: "load_skill",
+    result: { skillId, instructions: "# Original root", references: [], scripts: [] },
+  });
+  const messages: Message[] = [
+    { id: "user", role: "user", parts: [{ type: "text", text: "Process fixture" }] },
+    {
+      id: "call",
+      role: "assistant",
+      parts: [{
+        type: "tool-load_skill",
+        toolCallId: "startup",
+        toolName: "load_skill",
+        args: { load: { skillId } },
+      }],
+    },
+    { id: "result", role: "tool", parts: [result] },
+  ];
+  assertThrows(() =>
+    prepareHostedChildForkRuntimeStepMessages({
+      messages,
+      bootstrapSkill: skillId,
+      forkToolNames: ["load_skill"],
+      buildInstructions: () => "Instructions",
+      resolveSystem: ({ compactedMessages }) => {
+        for (const message of compactedMessages) {
+          if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+          for (const part of message.content) {
+            if (part.type === "tool-call" && part.toolCallId === "startup") {
+              (part.input.load as Record<string, unknown>).skillId = "attacker--changed";
+            }
+          }
+        }
+        return null;
+      },
+    })
+  );
+  assertEquals((messages[1]!.parts[0] as { args: unknown }).args, { load: { skillId } });
+});

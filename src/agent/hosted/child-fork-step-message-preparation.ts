@@ -188,7 +188,7 @@ function snapshotHostedChildStartupHistory(
   return {
     trustedLoads,
     bootstrap,
-    originalCalls,
+    originalCallSnapshot: privateJsonStringify(originalCalls),
     preservedId: bootstrap ? `startup:${bootstrap.toolCallId}` : undefined,
   };
 }
@@ -222,7 +222,7 @@ function retainHostedChildSkillHistory(
   if (
     bootstrap &&
     (privateJsonStringify(getStartupCalls(messages, bootstrap.toolCallId)) !==
-        privateJsonStringify(startup.originalCalls) ||
+        startup.originalCallSnapshot ||
       !messages.some((message) =>
         message.parts.some((part) =>
           isToolResultPart(part) && part.toolCallId === bootstrap.toolCallId &&
@@ -260,7 +260,14 @@ export function prepareHostedChildForkRuntimeStepMessages(
       message.content.some((part) =>
         "toolCallId" in part && part.toolCallId === bootstrap.toolCallId
       )
-      ? withProviderModelMessageSourceId(message, preservedId)
+      ? withProviderModelMessageSourceId(
+        cloneRuntimeStateMutableData(
+          message,
+          canIdentifyProxyWithoutHooks,
+          input.providerOptionKey,
+        ),
+        preservedId,
+      )
       : message
   );
   let compactedMessages = compactForStep(
