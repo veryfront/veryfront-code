@@ -9,7 +9,8 @@
  *
  * - `tools` is the authored selector when the source states one. `false` is
  *   deny-all: no callable host tools, including the skill loader. Provider-native
- *   tools (`provider_tool_ids`) stay, as they do for a main agent run.
+ *   tools (`provider_tool_ids`) stay, as they do for a main agent run, except a
+ *   name that collides with a host or platform tool, which is denied.
  * - `tools: true`, or no `tools` with `all_tools_enabled: true`, grants all tools.
  * - Otherwise `tool_ids` is the exact allowlist, and the `false` entries of a
  *   map selector are explicit denials.
@@ -18,6 +19,21 @@
  * "source_only"` or no `system_prompt`) is a placeholder, not the agent. A
  * Markdown source is parsed with the runtime's own agent parser; any other
  * source fails closed rather than running a child with empty instructions.
+ *
+ * Other document fields:
+ *
+ * - `allowed_models` is carried as `allowedModels`; hosted child execution
+ *   rejects an `invoke_agent.model` override outside a non-empty list.
+ * - `parallel_tool_calls` (boolean) maps to `parallelToolCalls`.
+ * - `delegates` and `mcp_servers` are not part of the REST document today. A
+ *   document that sets either fails closed: the child cannot honor them.
+ * - `security_enabled`, `avatar_url` and `skill_resolution` do not change what
+ *   the child may do: runtime guardrails always apply, and skills resolve from
+ *   the selector above.
+ *
+ * The REST reader cannot select an environment (release) source, so a lookup
+ * on behalf of an environment-target run fails closed instead of reading the
+ * project's current source.
  */
 import {
   parseRuntimeAgentMarkdownDefinition,
@@ -31,6 +47,8 @@ export const hostedChildAgentResolutionErrorCodes = {
   unsupportedSource: "CHILD_AGENT_SOURCE_UNSUPPORTED",
   lookupFailed: "CHILD_AGENT_LOOKUP_FAILED",
   lookupTimedOut: "CHILD_AGENT_LOOKUP_TIMEOUT",
+  environmentTargetUnsupported: "CHILD_AGENT_ENVIRONMENT_TARGET_UNSUPPORTED",
+  modelNotAllowed: "CHILD_AGENT_MODEL_NOT_ALLOWED",
 } as const;
 
 /** Terminal error code of a failed hosted child agent lookup. */
@@ -58,15 +76,27 @@ export type FetchHostedProjectAgentDefinitionInput = {
   projectId: string;
   agentId: string;
   branchId?: string | null;
+  /**
+   * Runtime target of the run that asks for the agent. `environment` fails
+   * closed with `CHILD_AGENT_ENVIRONMENT_TARGET_UNSUPPORTED`: the API agent
+   * reader cannot select a release-bound source.
+   */
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   fetch?: typeof fetch;
 };
 
+/** A saved agent's runtime definition plus the document's model allowlist. */
+export type HostedProjectAgentDefinition = RuntimeAgentMarkdownDefinition & {
+  /** Models an `invoke_agent.model` override may select; empty or absent allows any. */
+  allowedModels?: string[];
+};
+
 /** Fetches a saved project agent definition, or throws {@link HostedChildAgentResolutionError}. */
 export type HostedProjectAgentDefinitionFetcher = (
   input: FetchHostedProjectAgentDefinitionInput,
-) => Promise<RuntimeAgentMarkdownDefinition>;
+) => Promise<HostedProjectAgentDefinition>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -95,6 +125,21 @@ function readStringArray(source: Record<string, unknown>, key: string): string[]
 /** The skill loader spellings deny-all removes. */
 const SKILL_LOADER_TOOL_NAMES = [LOAD_SKILL_TOOL_ID, CANONICAL_LOAD_SKILL_TOOL_ID];
 
+/** Host and platform tool names a deny-all agent's provider tools may never claim. */
+const RESERVED_HOST_TOOL_NAMES = new Set([
+  "invoke_agent",
+  "load_skill",
+  "form_input",
+  "tool_search",
+  "search_knowledge",
+]);
+const RESERVED_HOST_TOOL_PREFIXES = ["veryfront__", "agent_"];
+
+function isReservedHostToolName(name: string): boolean {
+  return RESERVED_HOST_TOOL_NAMES.has(name) ||
+    RESERVED_HOST_TOOL_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 /** Callable tool selection derived from an agent document's tool fields. */
 export type AgentDocumentToolSelection = {
   /** `tools: false`: no callable host tools, including the skill loader. */
@@ -112,7 +157,16 @@ export function deriveAgentDocumentToolSelection(
   const toolIds = readStringArray(document, "tool_ids") ?? [];
   const providerTools = readStringArray(document, "provider_tool_ids") ?? [];
   if (selector === false) {
-    return { denyAll: true, tools: [], deniedTools: [...SKILL_LOADER_TOOL_NAMES], providerTools };
+    // A provider-native name that collides with a host or platform tool would
+    // re-grant that host tool through the shared tool allowlist; drop it and
+    // deny it explicitly instead.
+    const collisions = providerTools.filter(isReservedHostToolName);
+    return {
+      denyAll: true,
+      tools: [],
+      deniedTools: [...new Set([...SKILL_LOADER_TOOL_NAMES, ...collisions])],
+      providerTools: providerTools.filter((name) => !isReservedHostToolName(name)),
+    };
   }
   if (
     selector === true || (selector === undefined && readOwn(document, "all_tools_enabled") === true)
@@ -194,16 +248,19 @@ function parseMarkdownSourceDefinition(
 export function toRuntimeAgentDefinitionFromAgentDocument(
   document: unknown,
   expectedAgentId: string,
-): RuntimeAgentMarkdownDefinition {
+): HostedProjectAgentDefinition {
   if (!isRecord(document) || readString(document, "id") !== expectedAgentId) {
     throw new HostedChildAgentResolutionError(
       hostedChildAgentResolutionErrorCodes.lookupFailed,
       `Project agent lookup did not confirm agent "${expectedAgentId}"`,
     );
   }
+  rejectUnsupportedDocumentFields(document, expectedAgentId);
+  const allowedModels = readAllowedModels(document, expectedAgentId);
+  const allowedModelsField = allowedModels.length > 0 ? { allowedModels } : {};
   const systemPrompt = readString(document, "system_prompt");
   if (readOwn(document, "edit_mode") === "source_only" || !systemPrompt?.trim()) {
-    return parseMarkdownSourceDefinition(document, expectedAgentId);
+    return { ...parseMarkdownSourceDefinition(document, expectedAgentId), ...allowedModelsField };
   }
 
   const selection = deriveAgentDocumentToolSelection(document);
@@ -213,6 +270,7 @@ export function toRuntimeAgentDefinitionFromAgentDocument(
   const model = readString(document, "model");
   const temperature = readNumber(document, "temperature");
   const maxSteps = readNumber(document, "max_steps");
+  const parallelToolCalls = readOwn(document, "parallel_tool_calls");
 
   return {
     id: expectedAgentId,
@@ -222,6 +280,7 @@ export function toRuntimeAgentDefinitionFromAgentDocument(
     ...(model ? { model } : {}),
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
+    ...(typeof parallelToolCalls === "boolean" ? { parallelToolCalls } : {}),
     ...(isRecord(thinking) && typeof thinking.enabled === "boolean"
       ? {
         thinking: {
@@ -234,7 +293,74 @@ export function toRuntimeAgentDefinitionFromAgentDocument(
     ...(skills === undefined ? {} : { skills }),
     tools: selection.tools,
     ...(selection.deniedTools.length > 0 ? { deniedTools: selection.deniedTools } : {}),
+    ...allowedModelsField,
   };
+}
+
+/** Document fields a hosted child cannot honor; a document that sets one fails closed. */
+const UNSUPPORTED_AGENT_DOCUMENT_FIELDS = ["delegates", "mcp_servers"] as const;
+
+function isUnsetDocumentValue(value: unknown): boolean {
+  return value === undefined || value === null ||
+    (Array.isArray(value) && value.length === 0) ||
+    (isRecord(value) && Object.keys(value).length === 0);
+}
+
+function rejectUnsupportedDocumentFields(
+  document: Record<string, unknown>,
+  agentId: string,
+): void {
+  for (const field of UNSUPPORTED_AGENT_DOCUMENT_FIELDS) {
+    if (!isUnsetDocumentValue(readOwn(document, field))) {
+      throw unsupportedSource(
+        agentId,
+        document,
+        `its "${field}" setting is not supported for child agents.`,
+      );
+    }
+  }
+  const parallelToolCalls = readOwn(document, "parallel_tool_calls");
+  if (
+    parallelToolCalls !== undefined && parallelToolCalls !== null &&
+    typeof parallelToolCalls !== "boolean"
+  ) {
+    throw unsupportedSource(agentId, document, `its "parallel_tool_calls" setting is invalid.`);
+  }
+}
+
+function readAllowedModels(document: Record<string, unknown>, agentId: string): string[] {
+  const value = readOwn(document, "allowed_models");
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    // A malformed allowlist must not read as "any model".
+    throw unsupportedSource(agentId, document, `its "allowed_models" setting is invalid.`);
+  }
+  return value.filter((entry: string) => entry.length > 0);
+}
+
+/**
+ * Whether `requestedModel` is permitted by a saved agent's `allowedModels`.
+ * An empty or absent list permits any model. Entries match exactly or after
+ * `resolveModelId` normalization; a resolver failure does not match.
+ */
+export function isHostedChildModelAllowed(
+  allowedModels: readonly string[] | undefined,
+  requestedModel: string,
+  resolveModelId?: (model: string) => string,
+): boolean {
+  if (!allowedModels || allowedModels.length === 0) return true;
+  if (allowedModels.includes(requestedModel)) return true;
+  if (!resolveModelId) return false;
+  const resolve = (model: string): string | undefined => {
+    try {
+      return resolveModelId(model);
+    } catch {
+      return undefined;
+    }
+  };
+  const resolvedRequest = resolve(requestedModel);
+  if (resolvedRequest === undefined) return false;
+  return allowedModels.some((model) => resolve(model) === resolvedRequest);
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -257,8 +383,16 @@ function cancelResponseBodyWithoutWaiting(response: Response): void {
  */
 export async function fetchHostedProjectAgentDefinition(
   input: FetchHostedProjectAgentDefinitionInput,
-): Promise<RuntimeAgentMarkdownDefinition> {
+): Promise<HostedProjectAgentDefinition> {
   input.abortSignal?.throwIfAborted();
+  if (input.runtimeTargetKind === "environment") {
+    throw new HostedChildAgentResolutionError(
+      hostedChildAgentResolutionErrorCodes.environmentTargetUnsupported,
+      `Agent "${input.agentId}" is not part of this environment's release, and saved agents ` +
+        "cannot be read for an environment target. No child agent was run; deploy the agent " +
+        "with the release or invoke it from a branch target.",
+    );
+  }
   const url = new URL(
     `/projects/${encodeURIComponent(input.projectId)}/agents/${encodeURIComponent(input.agentId)}`,
     input.apiUrl,

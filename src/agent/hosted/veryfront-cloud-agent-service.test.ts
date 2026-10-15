@@ -2019,7 +2019,12 @@ Deno.test("hosted child execution config resolves steering against the target pr
 
 function resolveSavedChildAgentConfig(
   document: unknown,
-  options: { lookups?: string[]; abortSignal?: AbortSignal } = {},
+  options: {
+    lookups?: string[];
+    abortSignal?: AbortSignal;
+    taskContext?: Record<string, unknown>;
+    targetProjectId?: string;
+  } = {},
 ) {
   const agentId = (document as { id: string }).id;
   return withMockFetch(
@@ -2053,9 +2058,10 @@ function resolveSavedChildAgentConfig(
           projectId: "source-project",
           branchId: null,
           agentId: "veryfront",
+          ...options.taskContext,
         },
         agentId,
-        "target-project",
+        options.targetProjectId ?? "target-project",
         options.abortSignal,
       ),
   );
@@ -2114,6 +2120,92 @@ Deno.test("hosted child execution config fails closed for a source_only saved ag
   assert(error instanceof HostedChildAgentResolutionError);
   assertEquals(error.code, "CHILD_AGENT_SOURCE_UNSUPPORTED");
   assert(error.message.includes("cannot run as a child agent"));
+});
+
+Deno.test("hosted child execution config never grants local host tools to an API-resolved child", async () => {
+  const localTool = tool({
+    id: "project_secret_tool",
+    description: "Uses the calling project's credentials",
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: () => ({ ok: true }),
+  });
+  toolRegistryInternal.register("project_secret_tool", localTool);
+  try {
+    // A cross-project saved agent with `tools: true` (no ceiling).
+    const config = await resolveSavedChildAgentConfig({
+      ...API_AGENT_SOURCE_DOCUMENTS.all_tools_typescript,
+      id: "cross-project-agent",
+    });
+    assert(config);
+    assertEquals(config.localHostTools, undefined);
+    const loader = { createLoadSkillTool: () => localTool };
+    const context = {
+      projectSteeringByAgentId: new Map([["cross-project-agent", loader], [
+        "local-agent",
+        loader,
+      ]]),
+    } as never;
+    const childToolContext = { agentId: "cross-project-agent" } as never;
+    const apiResolvedTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      { childAgentId: "cross-project-agent", childConfig: config, childToolContext },
+    );
+    assertEquals("project_secret_tool" in apiResolvedTools, false);
+
+    // A same-name tool in a concrete selector does not resolve to the local tool either.
+    const selected = await resolveSavedChildAgentConfig({
+      ...API_AGENT_SOURCE_DOCUMENTS.tool_ids_typescript,
+      id: "cross-project-agent",
+      tool_ids: ["project_secret_tool"],
+    }, { targetProjectId: "source-project" });
+    assert(selected);
+    assertEquals(selected.localHostTools, undefined);
+    assertEquals(
+      "project_secret_tool" in veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+        context,
+        { childAgentId: "cross-project-agent", childConfig: selected, childToolContext },
+      ),
+      false,
+    );
+
+    // Only an agent this deployment discovered itself receives local tools.
+    const localTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      {
+        childAgentId: "local-agent",
+        childConfig: { ...config, localHostTools: true },
+        childToolContext: { agentId: "local-agent" } as never,
+      },
+    );
+    assertEquals("project_secret_tool" in localTools, true);
+  } finally {
+    toolRegistryInternal.delete("project_secret_tool");
+  }
+});
+
+Deno.test("hosted child execution config fails closed for an environment-target lookup", async () => {
+  const lookups: string[] = [];
+  let error: unknown;
+  try {
+    await resolveSavedChildAgentConfig(API_AGENT_SOURCE_DOCUMENTS.tools_false_markdown, {
+      lookups,
+      targetProjectId: "source-project",
+      taskContext: { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: "env-1" },
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof HostedChildAgentResolutionError);
+  assertEquals(error.code, "CHILD_AGENT_ENVIRONMENT_TARGET_UNSUPPORTED");
+  assertEquals(lookups, []);
+});
+
+Deno.test("hosted child execution config carries a saved agent's allowed models", async () => {
+  const config = await resolveSavedChildAgentConfig({
+    ...API_AGENT_SOURCE_DOCUMENTS.tool_ids_typescript,
+    allowed_models: ["anthropic/claude-sonnet-4-6"],
+  });
+  assertEquals(config?.allowedModels, ["anthropic/claude-sonnet-4-6"]);
 });
 
 Deno.test("hosted child execution config forwards the parent abort to the agent lookup", async () => {

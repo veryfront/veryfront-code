@@ -659,6 +659,63 @@ it("default hosted invoke keeps a tool-only child completion successful", async 
   assertEquals("terminalErrorCode" in result ? result.terminalErrorCode : undefined, undefined);
 });
 
+it("default hosted invoke rejects a model override outside the child's allowed models", async () => {
+  const captured: { started?: boolean } = {};
+  const options = createTestOptions({
+    enableDurableInvokeAgent: false,
+    config: { mcpServers: [] },
+    options: {
+      resolveChildAgentExecutionConfig: () =>
+        Promise.resolve({
+          system: "Answer briefly.",
+          toolNames: [],
+          availableSkillIds: [],
+          allowedModels: ["anthropic/claude-sonnet-4-6"],
+        }),
+      buildGlobalTools: parentToolset,
+      createAgentServiceSandboxTools: () =>
+        Promise.resolve({
+          tools: {},
+          sandbox: {} as never,
+          closeSandbox: () => Promise.resolve(),
+        }),
+      startRuntime: startRuntimeReturning("Done.", captured),
+    },
+  });
+  const result = await executeDefaultHostedInvokeAgentTool(
+    options,
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "triage",
+      model: "openai/gpt-5.4",
+    },
+    "triage",
+    { toolCallId: "tool-call-model-denied" },
+  );
+
+  assertEquals("success" in result && result.success, false);
+  assertEquals(
+    "terminalErrorCode" in result && result.terminalErrorCode,
+    "CHILD_AGENT_MODEL_NOT_ALLOWED",
+  );
+  assertEquals(captured.started, undefined);
+
+  const allowed = await executeDefaultHostedInvokeAgentTool(
+    options,
+    {
+      description: "triage",
+      prompt: "Triage this message.",
+      agent_id: "triage",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    "triage",
+    { toolCallId: "tool-call-model-allowed" },
+  );
+  assertEquals("success" in allowed && allowed.success, true);
+  assertEquals(captured.started, true);
+});
+
 it("default hosted invoke reports an unknown child agent to the parent without running it", async () => {
   const captured: { started?: boolean } = {};
   let lookupSignal: AbortSignal | undefined;

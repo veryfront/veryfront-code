@@ -50,7 +50,10 @@ import {
   resolveHostedRuntimeSkillLoaderToolName,
 } from "./cloud-runtime-system-messages.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
-import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
+import {
+  fetchHostedProjectAgentDefinition,
+  type HostedProjectAgentDefinition,
+} from "./project-agent-definition-resolver.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
   DefaultHostedChildAgentExecutionConfig,
@@ -361,7 +364,13 @@ export function buildHostedChildGlobalTools(
   }
 
   return {
-    ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
+    // Local tools run this deployment's project code and credentials; only a
+    // child agent this deployment discovered itself receives them. An agent
+    // read from the API (another project, or a saved agent this deployment
+    // does not ship) never does.
+    ...(input.childConfig?.localHostTools === true
+      ? getDiscoveredHostTools({ agentId: input.childAgentId })
+      : {}),
     // An undefined selector (`tools: true`) authorizes the loader unless it is
     // explicitly denied; a concrete selector must retain the advertised loader
     // spelling itself.
@@ -432,8 +441,12 @@ export async function resolveHostedChildAgentExecutionConfig(
   abortSignal?: AbortSignal,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
-  let agentConfig: RuntimeAgentMarkdownDefinition;
-  if (getProjectAgentRuntime(context).agents.has(childAgentId)) {
+  // A locally discovered agent ships with this deployment, so its tools are
+  // this deployment's tools. Any other agent is read from the API and never
+  // receives them (see `localHostTools`).
+  const isLocallyDiscovered = getProjectAgentRuntime(context).agents.has(childAgentId);
+  let agentConfig: HostedProjectAgentDefinition;
+  if (isLocallyDiscovered) {
     agentConfig = await resolveAgentConfig(context, childAgentId);
   } else {
     // A saved project agent is not part of this service's discovered runtime.
@@ -448,6 +461,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       projectId,
       agentId: childAgentId,
       branchId,
+      runtimeTargetKind: projectId === taskContext.projectId ? taskContext.runtimeTargetKind : null,
       abortSignal,
     });
   }
@@ -497,6 +511,8 @@ export async function resolveHostedChildAgentExecutionConfig(
       ? { skillSourcePaths: skillSelectorSnapshot.skillSourcePaths }
       : {}),
     ...(agentConfig.delegates === undefined ? {} : { delegateIds: agentConfig.delegates }),
+    ...(isLocallyDiscovered ? { localHostTools: true } : {}),
+    ...(agentConfig.allowedModels?.length ? { allowedModels: [...agentConfig.allowedModels] } : {}),
   };
 }
 

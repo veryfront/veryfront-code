@@ -42,7 +42,11 @@ import { prepareDefaultHostedChildForkSandboxToolSources } from "./child-fork-to
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
-import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
+import {
+  HostedChildAgentResolutionError,
+  hostedChildAgentResolutionErrorCodes,
+  isHostedChildModelAllowed,
+} from "./project-agent-definition-resolver.ts";
 import {
   runHostedChildExecutionLifecycle,
   shouldSkipHostedChildTerminalPersistence,
@@ -141,6 +145,19 @@ export type DefaultHostedChildAgentExecutionConfig = {
   loadedSkillResponses?: RuntimeLoadSkillToolContext["loadedSkillResponses"];
   loadedSkillReferenceResponses?: RuntimeLoadSkillToolContext["loadedSkillReferenceResponses"];
   delegateIds?: string[];
+  /**
+   * Whether the child may receive this deployment's locally discovered host
+   * tools. Set only for an agent this deployment discovered itself. Absent
+   * means no local tools: an agent read from the API (another project, or one
+   * this deployment does not ship) never runs the calling project's code or
+   * credentials.
+   */
+  localHostTools?: boolean;
+  /**
+   * Models an `invoke_agent.model` override may select. An override outside a
+   * non-empty list fails the child with `CHILD_AGENT_MODEL_NOT_ALLOWED`.
+   */
+  allowedModels?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -834,6 +851,21 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
       return buildHostedDurableChildInvokeFailureResult({
         terminalErrorCode: error.code,
         terminalErrorMessage: error.message,
+      });
+    }
+    if (
+      resolvedInput.model !== undefined &&
+      !isHostedChildModelAllowed(
+        childConfig?.allowedModels,
+        resolvedInput.model,
+        options.resolveModelId,
+      )
+    ) {
+      return buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: hostedChildAgentResolutionErrorCodes.modelNotAllowed,
+        terminalErrorMessage:
+          `Agent "${childAgentId}" does not allow model "${resolvedInput.model}". ` +
+          `Allowed models: ${childConfig?.allowedModels?.join(", ")}. No child agent was run.`,
       });
     }
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
