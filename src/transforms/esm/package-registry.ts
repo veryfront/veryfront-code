@@ -1,3 +1,9 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 /****
  * Central package version registry and dependency-pinning snapshot accessors.
  *
@@ -42,10 +48,17 @@ import {
 } from "./dependency-pinning-cohort.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
+import {
+  assertReactDOMPeerVersion,
+  assertReactPackageDeclaration,
+  ReactPackageIdentityError,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
   react?: string;
+  reactDeclaration?: string;
   veryfront?: string;
   /** Full merged dependency map (dependencies + devDependencies, raw semver strings). */
   dependencies?: Record<string, string>;
@@ -63,6 +76,7 @@ const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
 const currentDependencyPinningKeys = new Map<string, string>();
 type DependencyVersionsResult = {
   react?: string;
+  reactDeclaration?: string;
   veryfront?: string;
   dependencies?: Record<string, string>;
   dependencyState?: "verified" | "absent" | "unknown";
@@ -98,8 +112,11 @@ function trimDependencyVersionCache(): void {
     let evicted = false;
     for (const cacheIdentity of dependencyVersionCache.keys()) {
       if (
-        pendingDependencyVersionReads.has(`${cacheIdentity}\0on`) ||
-        pendingDependencyVersionReads.has(`${cacheIdentity}\0off`)
+        ["on", "off"].some((mode) =>
+          ["selected", "authored"].some((selection) =>
+            pendingDependencyVersionReads.has(`${cacheIdentity}\0${mode}\0${selection}`)
+          )
+        )
       ) {
         continue;
       }
@@ -401,7 +418,7 @@ export function isValidReactVersion(version: string): boolean {
  * Validate and normalize React version.
  */
 export function normalizeReactVersion(version: string | undefined): string {
-  if (!version) return DEFAULT_REACT_VERSION;
+  if (!version) return resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
 
   rendererLogger.warn(
@@ -415,6 +432,11 @@ export function normalizeReactVersion(version: string | undefined): string {
  */
 export function stripSemverRange(version: string): string {
   return version.replace(/^[~^>=<]+/, "");
+}
+
+export function selectReactDeclarationVersion(declaration: string): string {
+  return resolveInstalledReactRange(declaration) ??
+    normalizeReactVersion(stripSemverRange(declaration));
 }
 
 /**
@@ -675,6 +697,7 @@ export async function resolveDependencyPinningSnapshot(
   source: DependencyPinningSourceInput,
   cacheKey?: string,
   dependencies?: Readonly<Record<string, string>>,
+  capturedConfiguration?: DependencyPinningSnapshot["configuredVersions"],
 ): Promise<DependencyPinningSnapshot> {
   if (!cacheKey) {
     const current = await getDependencyPinningSnapshot(source);
@@ -703,7 +726,7 @@ export async function resolveDependencyPinningSnapshot(
       return remembered;
     }
 
-    const configuredVersions = captureConfiguredVersions(
+    const configuredVersions = capturedConfiguration ?? captureConfiguredVersions(
       normalizeDependencyPinningSource(source).config,
     );
     const matchesDependencyMap = `on:${hashDependencyPins(copiedDependencies)}` === cacheKey;
@@ -855,10 +878,13 @@ export async function readProjectDependencyVersions(
 async function readProjectDependencyVersionsWithMode(
   source: DependencyPinningSourceInput,
   pinningOn: boolean,
+  selectReact = true,
 ): Promise<DependencyVersionsResult> {
   const normalized = normalizeDependencyPinningSource(source);
   if (!normalized.packageJsonPath) return { dependencyState: "absent" };
-  const pendingKey = `${normalized.cacheIdentity}\0${pinningOn ? "on" : "off"}`;
+  const pendingKey = `${normalized.cacheIdentity}\0${pinningOn ? "on" : "off"}\0${
+    selectReact ? "selected" : "authored"
+  }`;
   const pending = pendingDependencyVersionReads.get(pendingKey);
   if (pending) return pending;
 
@@ -870,6 +896,7 @@ async function readProjectDependencyVersionsWithMode(
   const read = readProjectDependencyVersionsUncoalesced(
     normalized,
     pinningOn,
+    selectReact,
   ).then((result) => {
     const capture = activeSnapshotCaptures.get(normalized.cacheIdentity);
     if (capture) capture.metadata = result;
@@ -888,6 +915,7 @@ async function readProjectDependencyVersionsWithMode(
 async function readProjectDependencyVersionsUncoalesced(
   source: NormalizedDependencyPinningSource,
   pinningOn: boolean,
+  selectReact = true,
 ): Promise<DependencyVersionsResult> {
   dependencyVersionReadOperations++;
   const packageJsonPath = source.packageJsonPath!;
@@ -916,7 +944,12 @@ async function readProjectDependencyVersionsUncoalesced(
       cached.mtimeMs === mtimeMs
     ) {
       return {
-        react: cached.react,
+        react: selectReact
+          ? cached.reactDeclaration
+            ? selectReactDeclarationVersion(cached.reactDeclaration)
+            : cached.react
+          : undefined,
+        reactDeclaration: cached.reactDeclaration,
         veryfront: cached.veryfront,
         dependencies: undefined,
         dependencyState: "verified",
@@ -942,7 +975,8 @@ async function readProjectDependencyVersionsUncoalesced(
     }
 
     const deps = parsePackageDependencyMap(content);
-    const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
+    assertReactPackageDeclaration(deps["react-dom"]);
+    const react = selectReact && deps.react ? selectReactDeclarationVersion(deps.react) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
     // Full maps are needed for pinning captures and historical revision checks.
@@ -958,18 +992,27 @@ async function readProjectDependencyVersionsUncoalesced(
     setDependencyVersionCache(source.cacheIdentity, {
       mtimeMs,
       react,
+      reactDeclaration: deps.react,
       veryfront,
       dependencies,
       dependencyPinHash,
     });
 
-    return { react, veryfront, dependencies, dependencyState: "verified" };
+    return {
+      react,
+      reactDeclaration: deps.react,
+      veryfront,
+      dependencies,
+      dependencyState: "verified",
+    };
   } catch (error) {
     // Never retain transform-affecting pins after the backing package.json
     // disappears or becomes unreadable/malformed. A later valid file will be
     // re-read because there is no stale mtime entry to short-circuit on.
     dependencyVersionCache.delete(source.cacheIdentity);
     currentDependencyPinningKeys.delete(source.cacheIdentity);
+
+    if (error instanceof ReactPackageIdentityError) throw error;
 
     // ENOENT means there is no package.json in the project dir — expected for
     // framework-only environments.  Any other error (permission denied, malformed
@@ -994,11 +1037,15 @@ async function readProjectDependencyVersionsUncoalesced(
 }
 
 export interface ProjectPackageVersionOptions {
+  reactPeers?: LocalReactPeerSnapshot;
+  /** Prepared module authority used to select the graph-owned React peer. */
+  adapter?: RuntimeAdapter;
   projectDir?: string | null;
   dependencyPinningSource?: DependencyPinningSourceInput;
   config?: VeryfrontConfig | null;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 export interface ResolvedProjectPackageVersions {
@@ -1010,7 +1057,7 @@ function getConfiguredReactVersion(
   config?: VeryfrontConfig | null,
 ): string | undefined {
   const declaration = getConfiguredReactDeclaration(config);
-  return declaration ? normalizeReactVersion(stripSemverRange(declaration)) : undefined;
+  return declaration ? selectReactDeclarationVersion(declaration) : undefined;
 }
 
 function getConfiguredVeryfrontVersion(
@@ -1051,7 +1098,7 @@ function captureConfiguredVersions(
       ? {
         react: {
           declaration: reactDeclaration,
-          effective: normalizeReactVersion(stripSemverRange(reactDeclaration)),
+          effective: selectReactDeclarationVersion(reactDeclaration),
         },
       }
       : {}),
@@ -1082,12 +1129,32 @@ function hasEnabledDependencySnapshot(
 export async function resolveProjectPackageVersions(
   options: ProjectPackageVersionOptions,
 ): Promise<ResolvedProjectPackageVersions> {
+  if (getRuntimeModuleLoader(options.adapter) || ((isNode || isBun) && options.reactPeers)) {
+    const react = await resolveProjectReactVersion(options);
+    if (hasEnabledDependencySnapshot(options)) {
+      const declaration = options.dependencyPinningDependencies?.veryfront;
+      return { react, veryfront: declaration ? stripSemverRange(declaration) : undefined };
+    }
+    let veryfront = getConfiguredVeryfrontVersion(options.config);
+    if (veryfront === undefined && (options.projectDir || options.dependencyPinningSource)) {
+      const detected = await readProjectDependencyVersionsWithMode(
+        options.dependencyPinningSource ?? options.projectDir!,
+        false,
+        false,
+      );
+      veryfront = detected.veryfront;
+    }
+    return { react, veryfront };
+  }
   if (hasEnabledDependencySnapshot(options)) {
     const dependencies = options.dependencyPinningDependencies;
+    const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
     return {
-      react: dependencies?.react
-        ? normalizeReactVersion(stripSemverRange(dependencies.react))
-        : DEFAULT_REACT_VERSION,
+      react: capturedReact !== undefined
+        ? normalizeReactVersion(capturedReact)
+        : dependencies?.react
+        ? selectReactDeclarationVersion(dependencies.react)
+        : normalizeReactVersion(undefined),
       veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
     };
   }
@@ -1108,7 +1175,7 @@ export async function resolveProjectPackageVersions(
   }
 
   return {
-    react: configuredReact ?? detectedReact ?? DEFAULT_REACT_VERSION,
+    react: configuredReact ?? detectedReact ?? normalizeReactVersion(undefined),
     veryfront: configuredVeryfront ?? detectedVeryfront,
   };
 }
@@ -1124,9 +1191,94 @@ export async function resolveProjectPackageVersions(
  * This is the single source of truth for React version resolution.
  * Both HTML import map generation and module server transforms should use this.
  */
+function capturedDependencyConfiguration(
+  options: ProjectPackageVersionOptions,
+): CapturedDependencyConfiguration {
+  assertReactPackageDeclaration(options.dependencyPinningDependencies?.["react-dom"]);
+  const configuration = options.dependencyPinningConfiguredVersions;
+  if (
+    configuration !== undefined &&
+    (!options.dependencyPinningDependencies || !options.dependencyPinningCacheKey ||
+      `on:${hashDependencyPins(options.dependencyPinningDependencies, configuration)}` !==
+        options.dependencyPinningCacheKey)
+  ) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Captured dependency configuration does not match its snapshot key",
+    });
+  }
+  return configuration;
+}
+
+/** Authored constraint for validating a supplied runtime without selecting host peers. */
+export async function resolveProjectReactDeclaration(
+  options: ProjectPackageVersionOptions,
+): Promise<string | undefined> {
+  if (
+    options.dependencyPinningDependencies !== undefined ||
+    options.dependencyPinningCacheKey?.startsWith("on:")
+  ) {
+    const configuration = capturedDependencyConfiguration(options);
+    const declaration = configuration?.react?.declaration ??
+      options.dependencyPinningDependencies?.react;
+    assertReactPackageDeclaration(declaration);
+    return declaration;
+  }
+  const configured = getConfiguredReactDeclaration(options.config);
+  if (configured) {
+    assertReactPackageDeclaration(configured);
+    return configured;
+  }
+  if (!options.projectDir && !options.dependencyPinningSource) return undefined;
+  const detected = await readProjectDependencyVersionsWithMode(
+    options.dependencyPinningSource ?? options.projectDir!,
+    false,
+    false,
+  );
+  const declaration = detected.reactDeclaration ?? detected.react;
+  assertReactPackageDeclaration(declaration);
+  return declaration;
+}
+
+async function resolvePreparedReactVersion(
+  options: ProjectPackageVersionOptions,
+): Promise<string | undefined> {
+  const loader = getRuntimeModuleLoader(options.adapter);
+  if (!loader) return undefined;
+  const declaration = await resolveProjectReactDeclaration(options);
+  const module = await loader.importModule({ kind: "package", specifier: "react" });
+  const react = (module.default ?? module) as { version?: unknown };
+  const version = react.version;
+  if (
+    typeof version !== "string" || !isValidReactVersion(version) ||
+    (declaration !== undefined && versionAdmission(version, declaration) === false)
+  ) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Prepared React runtime version does not match the authored project declaration",
+    });
+  }
+  const domModule = await loader.importModule({ kind: "package", specifier: "react-dom/server" });
+  const dom = (domModule.default ?? domModule) as { version?: unknown };
+  assertReactDOMPeerVersion(version, dom.version);
+  return version;
+}
+
 export async function resolveProjectReactVersion(
   options: ProjectPackageVersionOptions,
 ): Promise<string> {
+  if ((isNode || isBun) && options.reactPeers && !getRuntimeModuleLoader(options.adapter)) {
+    const version = options.reactPeers.versions.react;
+    const declaration = await resolveProjectReactDeclaration(options);
+    if (
+      !version || !isValidReactVersion(version) ||
+      (declaration !== undefined && versionAdmission(version, declaration) === false)
+    ) {
+      throw new TypeError("Captured React runtime does not match the authored project declaration");
+    }
+    assertReactDOMPeerVersion(version, options.reactPeers.versions["react-dom"]);
+    return version;
+  }
+  const preparedVersion = await resolvePreparedReactVersion(options);
+  if (preparedVersion !== undefined) return preparedVersion;
   const {
     projectDir,
     dependencyPinningCacheKey,
@@ -1140,9 +1292,11 @@ export async function resolveProjectReactVersion(
     dependencyPinningDependencies !== undefined ||
     dependencyPinningCacheKey?.startsWith("on:")
   ) {
+    const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
+    if (capturedReact !== undefined) return normalizeReactVersion(capturedReact);
     const snapshotReactVersion = dependencyPinningDependencies?.react;
     return normalizeReactVersion(
-      snapshotReactVersion ? stripSemverRange(snapshotReactVersion) : undefined,
+      snapshotReactVersion ? selectReactDeclarationVersion(snapshotReactVersion) : undefined,
     );
   }
 
@@ -1159,5 +1313,5 @@ export async function resolveProjectReactVersion(
   }
 
   // 5. Fallback to default
-  return DEFAULT_REACT_VERSION;
+  return normalizeReactVersion(undefined);
 }

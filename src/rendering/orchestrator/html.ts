@@ -420,11 +420,14 @@ export class HTMLGenerator {
       resolveReleaseAssetManifestForHTML(context.options),
     ]);
     const importMapJson = await buildImportMapJson({
+      adapter: this.config.adapter,
+      reactPeers: context.options?.reactPeers,
       projectDir: this.config.projectDir,
       config: this.config.config,
       moduleServerOrigin: context.options?.url?.origin,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
       dependencyPinningSource: context.options?.dependencyPinningSource,
       releaseAssetManifest,
     });
@@ -666,16 +669,23 @@ export class HTMLGenerator {
 
     try {
       const reactVersion = await resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
+        reactPeers: context.options?.reactPeers,
       });
       const { getProjectReact } = await import(
         "#veryfront/react/compat/ssr-adapter/index.ts"
       );
-      const React = await getProjectReact(reactVersion, this.config.adapter);
+      const React = await getProjectReact(
+        reactVersion,
+        this.config.adapter,
+        context.options?.reactPeers,
+      );
       const createElement = React.createElement as (
         component: unknown,
         props: unknown,
@@ -714,11 +724,14 @@ export class HTMLGenerator {
       const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
       const dirs = await collectAncestorDirs(segmentDir, appRoot);
       const reactVersion = await resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
+        reactPeers: context.options?.reactPeers,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
       const { environment, contentSourceEnvironment, releaseId } =
@@ -752,6 +765,10 @@ export class HTMLGenerator {
         context.options?.dependencyPinningSource,
         context.options?.url?.origin,
         this.config.config?.build?.serverExternalPackages,
+        undefined,
+        undefined,
+        context.options?.dependencyPinningConfiguredVersions,
+        context.options?.reactPeers,
       );
       if (!loaded) return null;
 
@@ -866,6 +883,8 @@ export class HTMLGenerator {
       )
       : undefined;
     return profileSyncPhase("html.build_options.finalize", () => ({
+      adapter: this.config.adapter,
+      reactPeers: context.options?.reactPeers,
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
@@ -904,6 +923,7 @@ export class HTMLGenerator {
       forceProductionScripts: context.options?.forceProductionScripts,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
       ...(context.options?.releaseAssetManifest !== undefined
         ? { releaseAssetManifest: context.options.releaseAssetManifest }
         : {}),

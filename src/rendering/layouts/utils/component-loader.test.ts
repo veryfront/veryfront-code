@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import {
   assertEquals,
   assertExists,
@@ -1067,7 +1068,9 @@ describe("rendering/layouts/utils/component-loader", () => {
 
     assertEquals(loaded, CachedLayout);
     assertEquals(
-      requestedCacheKey.endsWith(`:19.1.1:pins:${SNAPSHOT_A_PIN_KEY}`),
+      requestedCacheKey.endsWith(
+        `:19.1.1:pins:${SNAPSHOT_A_PIN_KEY}:react-runtime:${await getSSRReactRuntimeCacheScope()}`,
+      ),
       true,
     );
   });

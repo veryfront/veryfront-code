@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -25,6 +26,24 @@ async function withCachedFile<T>(
 }
 
 describe("module-loader/module-cache-lookup", () => {
+  it("selects the current runtime artifact instead of an unscoped legacy artifact", async () => {
+    const scope = `on:react-runtime-${await getSSRReactRuntimeCacheScope()}`;
+    const path = await resolveCachedModulePath({
+      cacheKey: "current-runtime",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      projectId: "project-id",
+      contentSourceId: "source-id",
+      moduleCache: new Map(),
+      lookupMdxCache: (_file, _dir, _project, _hash, _options, _version, variant) =>
+        Promise.resolve({
+          status: "hit",
+          path: variant === scope ? "/cache/current.js" : "/cache/legacy.js",
+        }),
+    });
+    assertEquals(path, "/cache/current.js");
+  });
+
   it("builds a stable cache key scoped by project, source, and file path", () => {
     assertEquals(
       getModuleCacheKey(
@@ -177,7 +196,8 @@ describe("module-loader/module-cache-lookup", () => {
     await lookupWithDev(true);
     await lookupWithDev(false);
 
-    assertEquals(observedVariants, [MDX_MODULE_DEV_COMPILE_VARIANT, undefined]);
+    const scope = `on:react-runtime-${await getSSRReactRuntimeCacheScope()}`;
+    assertEquals(observedVariants, [`${MDX_MODULE_DEV_COMPILE_VARIANT}:${scope}`, scope]);
   });
 
   it("returns a valid in-memory cached module path", async () => {
