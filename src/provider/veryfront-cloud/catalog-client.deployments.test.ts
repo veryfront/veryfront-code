@@ -59,9 +59,9 @@ function deploymentOf(row: LegacyRow, overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Short IDs a model is selected by: slashed aliases select nothing. */
-function shortIds(model: VeryfrontCloudCatalogModel): string[] {
-  return [...new Set([model.id, ...model.aliases])].filter((id) => !id.includes("/")).sort();
+/** IDs a model is selected by besides its model ID, which deployments do not repeat as an alias. */
+function selectorIds(model: VeryfrontCloudCatalogModel): string[] {
+  return [...new Set([model.id, ...model.aliases])].filter((id) => id !== model.modelId).sort();
 }
 
 /** What routing reads from a model. A missing tool list grants no tools, like an empty one. */
@@ -70,7 +70,7 @@ function routingFacts(model: VeryfrontCloudCatalogModel) {
   return {
     ...facts,
     supportedProviderTools: model.supportedProviderTools ?? [],
-    shortIds: shortIds(model),
+    selectorIds: selectorIds(model),
   };
 }
 
@@ -168,6 +168,28 @@ describe("provider/veryfront-cloud/catalog-client deployments", () => {
       ["mistral/mistral-small-2503", "openai"],
     ]);
     assertEquals(catalog?.defaultModelId, "mistral/mistral-small-2503");
+  });
+
+  it("routes a model by its deprecated row when its first enabled deployment cannot be read", () => {
+    const mistral = legacyRow("mistral-small-2503");
+    const unreadable = deploymentOf(mistral);
+    const catalog = parseVeryfrontCloudCatalog({
+      models: [mistral],
+      deployments: [{ ...unreadable, routing: { operations: [] } }, deploymentOf(mistral)],
+    });
+
+    assertEquals(
+      catalog,
+      parseVeryfrontCloudCatalog({ models: [mistral], defaultModelId: mistral.modelId }),
+    );
+  });
+
+  it("leaves token limits unset when the API serves deployments only", () => {
+    const catalog = parseVeryfrontCloudCatalog({
+      deployments: LEGACY_ROWS.map((row) => deploymentOf(row)),
+    });
+
+    assertEquals(catalog?.models.map((model) => model.limit), LEGACY_ROWS.map(() => undefined));
   });
 
   it("leaves out a model whose first enabled deployment cannot be read, default included", () => {

@@ -251,18 +251,19 @@ function parseDeployment(
 /**
  * Read `deployments`, which lists every place a model runs in routing order.
  * Each model takes its first enabled deployment, the one the gateway routes
- * to. A model with none enabled, or whose first enabled one cannot be read, is
- * left out, and so is its `is_default`.
+ * to. When that deployment cannot be read, the model's deprecated row is used
+ * while the API still serves one. A model with no enabled deployment, or with
+ * neither, is left out, and so is its `is_default`.
  */
 function parseDeployments(
   deployments: readonly unknown[],
   legacyModels: unknown,
 ): VeryfrontCloudCatalog {
-  const limits = new Map<string, VeryfrontCloudCatalogModel["limit"]>();
+  const legacy = new Map<string, VeryfrontCloudCatalogModel>();
   if (Array.isArray(legacyModels)) {
     for (const row of legacyModels) {
       const model = parseLegacyModel(row);
-      if (model?.limit && !limits.has(model.modelId)) limits.set(model.modelId, model.limit);
+      if (model && !legacy.has(model.modelId)) legacy.set(model.modelId, model);
     }
   }
   const models: VeryfrontCloudCatalogModel[] = [];
@@ -274,7 +275,8 @@ function parseDeployments(
     const modelId = optionalString(record(row.model).id);
     if (!modelId || listed.has(modelId)) continue;
     listed.add(modelId);
-    const model = parseDeployment(row, limits.get(modelId));
+    const legacyModel = legacy.get(modelId);
+    const model = parseDeployment(row, legacyModel?.limit) ?? legacyModel;
     if (!model) {
       unreadable.push(modelId);
       continue;
