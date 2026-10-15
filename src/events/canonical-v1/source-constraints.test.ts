@@ -46,7 +46,7 @@ function requested(fields: Record<string, unknown>) {
 describe("canonical producer source refinements", () => {
   it("counts bounded payload strings in UTF-16 code units", async () => {
     const valid = requested({ context: [{ type: "text", text: "😀".repeat(8192) }] });
-    assertEquals(await parseRunReadMemberV1(valid), valid);
+    assertEquals<unknown>(await parseRunReadMemberV1(valid), valid);
     await assertRejects(
       () =>
         parseRunReadMemberV1(requested({ context: [{ type: "text", text: "😀".repeat(8193) }] })),
@@ -55,7 +55,7 @@ describe("canonical producer source refinements", () => {
   });
   it("enforces JSON context byte limits after structural validation", async () => {
     const valid = requested({ context: [{ type: "json", data: { x: "é".repeat(8188) } }] });
-    assertEquals(await parseRunReadMemberV1(valid), valid);
+    assertEquals<unknown>(await parseRunReadMemberV1(valid), valid);
     await assertRejects(
       () =>
         parseRunReadMemberV1(
@@ -75,7 +75,7 @@ describe("canonical producer source refinements", () => {
         ownerKind: "user",
       }],
     });
-    assertEquals(await parseRunReadMemberV1(valid), valid);
+    assertEquals<unknown>(await parseRunReadMemberV1(valid), valid);
     await assertRejects(
       () =>
         parseRunReadMemberV1(
