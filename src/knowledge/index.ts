@@ -286,7 +286,7 @@ export interface ProjectKnowledge {
   index(): Promise<void>;
   /**
    * Search the local OKF knowledge manifest using the same compact response
-   * shape as Veryfront Cloud's `search_knowledge` tool. Explicit
+   * shape as Veryfront Cloud's `veryfront__search_knowledge` tool. Explicit
    * `lookup_target` calls include document content. This does not build or
    * query the embedding index.
    */

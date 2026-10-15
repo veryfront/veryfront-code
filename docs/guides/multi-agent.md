@@ -144,7 +144,7 @@ Break the task down. Use agent_researcher to gather facts, then agent_writer to
 produce the final copy.
 ```
 
-Set `delegates: []` when an agent must not delegate. `invoke_agent` is the
+Set `delegates: []` when an agent must not delegate. `veryfront__invoke_agent` is the
 generic platform tool for dynamic agent selection. Enable it explicitly in a
 direct runtime with `tools: { veryfront__invoke_agent: true }`. The legacy
 `invoke_agent: true` selector also publishes `veryfront__invoke_agent` to the model.

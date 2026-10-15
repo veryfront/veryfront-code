@@ -108,7 +108,7 @@ export interface ToolExecutionContext {
    * File-backed capabilities advertised by the active loaded skill.
    *
    * Framework skill file tools use this to reject references/scripts that were
-   * not listed by `load_skill`, even if the model guesses a valid path under a
+   * not listed by `veryfront__load_skill`, even if the model guesses a valid path under a
    * skill directory.
    */
   activeSkillToolAvailability?: {

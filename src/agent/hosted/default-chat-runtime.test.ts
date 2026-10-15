@@ -2060,7 +2060,7 @@ Deno.test("hosted main agent with tools: false exposes no callable tools", async
     {
       name: "empty selector",
       agentConfig: { tools: [] },
-      expectedToolNames: ["invoke_agent", "load_skill"],
+      expectedToolNames: ["veryfront__invoke_agent", "veryfront__load_skill"],
     },
   ];
 
