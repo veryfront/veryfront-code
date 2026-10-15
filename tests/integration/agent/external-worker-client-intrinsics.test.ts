@@ -230,6 +230,10 @@ async function withProjectResponseHooks<T>(operation: () => Promise<T>) {
   ];
   const descriptors = fields.map((name) =>
     [name, Object.getOwnPropertyDescriptor(Response.prototype, name)!] as const
+  ).filter(([, descriptor]) =>
+    // Bun locks native accessors; project code can only replace configurable
+    // properties or writable methods. Exercise every replaceable surface.
+    descriptor.configurable || descriptor.writable
   );
   const cancel = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "cancel")!;
   let calls = 0;
