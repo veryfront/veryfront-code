@@ -47,7 +47,10 @@ import {
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
-import { collectReferencedOkfCompanions } from "../../sync/okf-companions.ts";
+import {
+  annotateOkfBundleMembers,
+  collectReferencedOkfCompanions,
+} from "../../sync/okf-companions.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
@@ -319,7 +322,7 @@ export async function scanLocalFiles(
     }
     ops.push({ path, content: await fs.readTextFile(join(projectDir, path)) });
   }
-  return ops.filter((op) => !ignoreChecker.isIgnored(op.path));
+  return annotateOkfBundleMembers(ops.filter((op) => !ignoreChecker.isIgnored(op.path)));
 }
 
 function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
@@ -697,6 +700,7 @@ export async function uploadFiles(
         buildFileUrl(projectSlug, op.path, branchId),
         {
           content: op.content,
+          ...(op.expectedAbsent && op.metadata ? { metadata: op.metadata } : {}),
           ...(op.expectedVersionId ? { expected_version_id: op.expectedVersionId } : {}),
           ...(op.expectedAbsent ? { expected_absent: true } : {}),
         },

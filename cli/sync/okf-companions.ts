@@ -216,3 +216,32 @@ export function collectReferencedOkfCompanions(
   }
   return referencedPaths;
 }
+
+export interface OkfBundleMetadata {
+  _veryfront: { okf: { bundle_root_path: string } };
+}
+
+/** Annotate declared native knowledge bundle members without rewriting their bytes. */
+export function annotateOkfBundleMembers<T extends OkfSyncFile>(files: readonly T[]): (T & {
+  metadata?: OkfBundleMetadata;
+})[] {
+  const roots = collectOkfBundleRoots(files);
+  return files.map((file) => {
+    const path = file.path;
+    if (
+      path.includes("\\") || path.includes("\0") || path.startsWith("/") ||
+      path.split("/").some((segment) => !segment || segment === "." || segment === "..")
+    ) return file;
+    const segments = path.split("/");
+    for (let length = segments.length - 1; length > 0; length--) {
+      const root = segments.slice(0, length).join("/");
+      if (roots.has(root)) {
+        if ((root === "knowledge" || root.startsWith("knowledge/")) && root.length <= 1024) {
+          return { ...file, metadata: { _veryfront: { okf: { bundle_root_path: root } } } };
+        }
+        break;
+      }
+    }
+    return file;
+  });
+}

@@ -32,6 +32,7 @@ import {
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
+import { planPushChanges } from "./plan.ts";
 import { type ApiClient, type ApiReadOptions, resolveConfig } from "#cli/shared/config";
 import {
   createDefaultIgnoreChecker,
@@ -1878,6 +1879,53 @@ describe("push dry-run project bootstrap", () => {
 });
 
 describe("uploadFiles", () => {
+  it("keeps an annotated forced create conditional and preserves a concurrent file", async () => {
+    const path = "knowledge/acme/doc.md";
+    const metadata = { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } };
+    const plan = await planPushChanges({
+      localFiles: [{ path, content: "local\r\n", metadata }],
+      remoteFiles: [],
+      baselineFiles: {},
+      deletePaths: [],
+      force: true,
+    });
+    assertEquals(plan.uploads, [{ path, content: "local\r\n", metadata, expectedAbsent: true }]);
+    const concurrent = { content: "concurrent", metadata: { _veryfront: { unknown: false } } };
+    const before = structuredClone(concurrent);
+    const client = createMockClient({
+      put: (_url: string, body?: unknown, options?: unknown) => {
+        assertEquals(options, { retryPolicy: "none" });
+        if (body && typeof body === "object" && "expected_absent" in body && body.expected_absent) {
+          return Promise.reject(Object.assign(new Error("File was created"), { status: 409 }));
+        }
+        throw new Error("Annotated create must not overwrite the concurrent file");
+      },
+    });
+    const result = await uploadFiles(client, "my-project", "branch-123", plan.uploads, false);
+    assertEquals(result, { uploaded: 0, failed: 0, conflicts: [path], applied: [] });
+    assertEquals(concurrent, before);
+  });
+
+  it("omits derived metadata on updates even when passed a scanned annotated file", async () => {
+    const bodies: unknown[] = [];
+    const client = createMockClient({
+      put: (_url: string, body?: unknown) => {
+        bodies.push(body);
+        return Promise.resolve({});
+      },
+    });
+    await uploadFiles(client, "my-project", null, [{
+      path: "knowledge/acme/doc.md",
+      content: "unchanged bytes\r\n",
+      metadata: { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } },
+      expectedVersionId: "observed-version",
+    }], false);
+    assertEquals(bodies, [{
+      content: "unchanged bytes\r\n",
+      expected_version_id: "observed-version",
+    }]);
+  });
+
   it("sends update and create preconditions", async () => {
     const capturedBodies: unknown[] = [];
     const capturedOptions: unknown[] = [];

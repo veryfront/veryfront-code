@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { annotateOkfBundleMembers } from "../../sync/okf-companions.ts";
 import { loadIgnoreChecker } from "../../sync/ignore.ts";
 import { pushCommand, scanLocalFiles } from "./command.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -31,6 +32,57 @@ async function withFiles(files: Record<string, string>, run: (directory: string)
 }
 
 describe("native push OKF companions", () => {
+  it("does not annotate noncanonical paths or infer roots from plain indexes", () => {
+    const files = [
+      { path: "knowledge/acme/index.md", content: "---\nokf_version: '0.1'\n---\n" },
+      ...[
+        "knowledge/acme/../outside.md",
+        "knowledge/acme//doc.md",
+        "/knowledge/acme/doc.md",
+        "knowledge/acme/./doc.md",
+        "knowledge/acme/escape\\doc.md",
+        "knowledge/acme/nul\0.md",
+      ].map((path) => ({ path, content: "bytes" })),
+    ];
+    const annotated = annotateOkfBundleMembers(files);
+    assertEquals(annotated.slice(1), files.slice(1));
+  });
+
+  it("annotates only declared knowledge bundle members with their nearest root", async () => {
+    await withFiles({
+      "knowledge/acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",
+      "knowledge/acme/doc.md":
+        "---\ntype: Metric\nunknown: {keep: false}\n---\n[Revenue](/metrics/revenue.md)\r\n",
+      "knowledge/acme/nested/index.md": "---\nokf_version: '0.1'\n---\nNested\n",
+      "knowledge/acme/nested/doc.md": "Nested bytes",
+      "knowledge/sibling/index.md": "---\nokf_version: '0.1'\n---\nSibling\n",
+      "knowledge/sibling/doc.md": "Sibling bytes",
+      "knowledge/undeclared/index.md": "# Plain index",
+      "knowledge/undeclared/doc.md": "Plain bytes",
+      "knowledge/acme-other/doc.md": "Outside bytes",
+      "other/index.md": "---\nokf_version: '0.1'\n---\nOutside knowledge\n",
+    }, async (directory) => {
+      const scanned = await scanLocalFiles(directory, await loadIgnoreChecker(directory));
+      for (const file of scanned) {
+        const root = file.path.startsWith("knowledge/acme/nested/")
+          ? "knowledge/acme/nested"
+          : file.path.startsWith("knowledge/acme/")
+          ? "knowledge/acme"
+          : file.path.startsWith("knowledge/sibling/")
+          ? "knowledge/sibling"
+          : undefined;
+        assertEquals(
+          "metadata" in file ? file.metadata : undefined,
+          root ? { _veryfront: { okf: { bundle_root_path: root } } } : undefined,
+        );
+      }
+      assertEquals(
+        scanned.find((file) => file.path === "knowledge/acme/doc.md")?.content,
+        "---\ntype: Metric\nunknown: {keep: false}\n---\n[Revenue](/metrics/revenue.md)\r\n",
+      );
+    });
+  });
+
   it("preserves all 16 bundle files, including explicitly referenced opaque assets", async () => {
     const files: Record<string, string> = {
       "acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",
@@ -48,6 +100,20 @@ describe("native push OKF companions", () => {
       const scanned = await scanLocalFiles(directory, await loadIgnoreChecker(directory));
       assertEquals(scanned.map((file) => file.path).sort(), Object.keys(files).sort());
       for (const file of scanned) assertEquals(file.content, files[file.path]);
+    });
+  });
+
+  it("does not use an ignored index to annotate an otherwise uploaded document", async () => {
+    await withFiles({
+      "knowledge/acme/index.md": "---\nokf_version: '0.1'\n---\n",
+      "knowledge/acme/doc.md": "[Revenue](/metrics/revenue.md)\r\n",
+      ".vfignore": "knowledge/acme/index.md\n",
+    }, async (directory) => {
+      const scanned = await scanLocalFiles(directory, await loadIgnoreChecker(directory));
+      assertEquals(scanned, [{
+        path: "knowledge/acme/doc.md",
+        content: "[Revenue](/metrics/revenue.md)\r\n",
+      }]);
     });
   });
 
@@ -76,10 +142,10 @@ describe("native push OKF companions", () => {
   for (const branch of ["main", "existing-preview"]) {
     it(`uploads, verifies and prunes referenced companions on ${branch}`, async () => {
       await withFiles({
-        "acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",
-        "acme/doc.md":
+        "knowledge/acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",
+        "knowledge/acme/doc.md":
           "---\ntype: Metric\ncomputation: /references/query.sql\nsources: [/references/branch-only.sql]\n---\n",
-        "acme/references/query.sql": "select 1;\r\n",
+        "knowledge/acme/references/query.sql": "select 1;\r\n",
         "remote-only.sql": "local unreferenced bytes",
       }, async (directory) => {
         const keys = [
@@ -144,6 +210,12 @@ describe("native push OKF companions", () => {
                 body == null || typeof body !== "object" || !("content" in body) ||
                 typeof body.content !== "string"
               ) throw new Error("invalid upload");
+              assertEquals(
+                "metadata" in body ? body.metadata : undefined,
+                "expected_absent" in body && body.expected_absent
+                  ? { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } }
+                  : undefined,
+              );
               const file = {
                 path,
                 content: body.content,
@@ -164,11 +236,14 @@ describe("native push OKF companions", () => {
             });
             assertEquals(remote.get("remote-only.sql")?.content, "remote bytes");
             assertEquals(uploads.sort(), [
-              "acme/doc.md",
-              "acme/index.md",
-              "acme/references/query.sql",
+              "knowledge/acme/doc.md",
+              "knowledge/acme/index.md",
+              "knowledge/acme/references/query.sql",
             ]);
-            assertEquals(remote.get("acme/references/query.sql")?.content, "select 1;\r\n");
+            assertEquals(
+              remote.get("knowledge/acme/references/query.sql")?.content,
+              "select 1;\r\n",
+            );
             await pushCommand({
               projectSlug: "my-project",
               projectDir: directory,
@@ -176,14 +251,29 @@ describe("native push OKF companions", () => {
               quiet: true,
             });
             assertEquals(uploads.length, 3);
+            await Deno.writeTextFile(
+              join(directory, "knowledge/acme/doc.md"),
+              "---\ntype: Metric\ncomputation: /references/query.sql\nsources: [/references/branch-only.sql]\n---\nEdited\r\n",
+            );
+            await pushCommand({
+              projectSlug: "my-project",
+              projectDir: directory,
+              branch,
+              quiet: true,
+            });
+            assertEquals(uploads.length, 4);
+            assertEquals(
+              remote.get("knowledge/acme/doc.md")?.content,
+              "---\ntype: Metric\ncomputation: /references/query.sql\nsources: [/references/branch-only.sql]\n---\nEdited\r\n",
+            );
             if (branch !== "main") {
-              remote.set("acme/references/branch-only.sql", {
-                path: "acme/references/branch-only.sql",
+              remote.set("knowledge/acme/references/branch-only.sql", {
+                path: "knowledge/acme/references/branch-only.sql",
                 content: "select 2;",
                 version_id: "00000000-0000-4000-8000-000000000003",
               });
             }
-            await Deno.remove(join(directory, "acme/references/query.sql"));
+            await Deno.remove(join(directory, "knowledge/acme/references/query.sql"));
             await pushCommand({
               projectSlug: "my-project",
               projectDir: directory,
@@ -192,8 +282,8 @@ describe("native push OKF companions", () => {
               prune: true,
               force: true,
             });
-            assertEquals(remote.has("acme/references/query.sql"), false);
-            assertEquals(remote.has("acme/references/branch-only.sql"), false);
+            assertEquals(remote.has("knowledge/acme/references/query.sql"), false);
+            assertEquals(remote.has("knowledge/acme/references/branch-only.sql"), false);
           });
         } finally {
           keys.forEach((key, index) => {
