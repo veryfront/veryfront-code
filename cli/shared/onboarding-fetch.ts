@@ -23,7 +23,9 @@ function bindOnboardingResponse(response: Response): Response {
     ObjectDefineProperty(target, name, descriptor);
   };
   bind(response, "then", undefined);
-  bind(response, "body", apply(ResponseBodyGet, response, []));
+  const body = apply(ResponseBodyGet, response, []) as ReadableStream<Uint8Array> | null;
+  if (body) bind(body, "cancel", (reason?: unknown) => apply(StreamCancel, body, [reason]));
+  bind(response, "body", body);
   bind(response, "ok", apply(ResponseOkGet, response, []));
   bind(response, "status", apply(ResponseStatusGet, response, []));
   bind(response, "statusText", apply(ResponseStatusTextGet, response, []));

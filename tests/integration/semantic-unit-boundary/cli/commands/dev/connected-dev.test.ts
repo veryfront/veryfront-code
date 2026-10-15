@@ -1,3 +1,4 @@
+import { validateToken } from "../../../../../../cli/auth/login.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { createApiClient } from "../../../../../../cli/shared/config.ts";
 import { withOnboardingDeadline } from "../../../../../../cli/shared/onboarding-fetch.ts";
@@ -182,9 +183,17 @@ for (const path of ["project", "environment"]) {
 }
 
 for (const onboarding of [false, true]) {
-  for (const kind of ["json", "error", "empty", "binary", ...(onboarding ? ["auth"] : [])]) {
+  for (
+    const kind of [
+      "json",
+      "error",
+      "empty",
+      "binary",
+      ...(onboarding ? ["auth", "auth-rejection"] : []),
+    ]
+  ) {
     it(`consumes trusted ${kind} API responses after project prototype replacement (onboarding=${onboarding})`, async () => {
-      const response = kind === "error"
+      const response = kind === "error" || kind === "auth-rejection"
         ? Response.json({ detail: "trusted rejection" }, { status: 403 })
         : kind === "empty"
         ? new Response(null, { status: 204 })
@@ -209,6 +218,7 @@ for (const onboarding of [false, true]) {
       const headerDescriptors = headerFields.map((name) =>
         [name, Object.getOwnPropertyDescriptor(Headers.prototype, name)!] as const
       );
+      const cancelDescriptor = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "cancel")!;
       let poisonedCalls = 0;
       const poison = () => {
         poisonedCalls++;
@@ -217,6 +227,10 @@ for (const onboarding of [false, true]) {
       let result: unknown;
       let failure: unknown;
       try {
+        Object.defineProperty(ReadableStream.prototype, "cancel", {
+          ...cancelDescriptor,
+          value: poison,
+        });
         for (const [name, descriptor] of responseDescriptors) {
           Object.defineProperty(
             Response.prototype,
@@ -234,7 +248,13 @@ for (const onboarding of [false, true]) {
           projectSlug: "demo",
         }, onboarding ? withOnboardingDeadline(transport) : transport);
         try {
-          if (kind === "auth") {
+          if (kind === "auth-rejection") {
+            result = await validateToken("private", undefined, {
+              apiBaseUrl: "https://api.example.test",
+              transport: withOnboardingDeadline(transport),
+              throwOnCredentialValidationUnavailable: true,
+            });
+          } else if (kind === "auth") {
             const trusted = await withOnboardingDeadline(transport)("https://api.example.test/me");
             result = {
               ok: trusted.ok,
@@ -251,6 +271,7 @@ for (const onboarding of [false, true]) {
           failure = error;
         }
       } finally {
+        Object.defineProperty(ReadableStream.prototype, "cancel", cancelDescriptor);
         for (const [name, descriptor] of responseDescriptors) {
           Object.defineProperty(Response.prototype, name, descriptor);
         }
@@ -262,7 +283,8 @@ for (const onboarding of [false, true]) {
       if (kind === "error") assertEquals((failure as Error)?.message, "trusted rejection");
       else {
         if (failure) throw failure;
-        if (kind === "binary") {
+        if (kind === "auth-rejection") assertEquals(result, null);
+        else if (kind === "binary") {
           assertEquals(
             await new Response(result as ReadableStream<Uint8Array>).text(),
             "trusted bytes",
