@@ -6,6 +6,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { createConnectedLocalRuntime } from "./connected-local-runtime.ts";
 import type { ExternalAgentWorkerClient } from "../service/external-worker-client.ts";
 import { createEphemeralAgent } from "../factory.ts";
+import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { tool } from "#veryfront/tool/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -27,6 +28,7 @@ function fixture(
     registerFailureOnce?: boolean;
     heartbeatFailure?: boolean;
     abortBeforeWrite?: "register" | "heartbeat";
+    registerGate?: Promise<void>;
     completeFailure?: boolean;
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
@@ -55,7 +57,7 @@ function fixture(
       if (options.registerFailureOnce && registrations === 1) {
         return Promise.reject(new Error("registration offline"));
       }
-      return Promise.resolve({ id: "worker" });
+      return Promise.resolve(options.registerGate).then(() => ({ id: "worker" }));
     },
     heartbeatWorker: () => {
       if (options.abortBeforeWrite === "heartbeat") options.controller?.abort();
@@ -380,6 +382,7 @@ describe("connected local execution", () => {
         id: "coder",
         system: "Use the project tools.",
         tools: true,
+        knowledge: true,
         skills: false,
       });
       assertEquals(source.config.tools, true);
@@ -392,6 +395,7 @@ describe("connected local execution", () => {
       assertEquals(preparedTools[registered[0]!], true);
       assertEquals(preparedTools[registered[1]!], true);
       assertEquals(preparedTools[registered[2]!], undefined);
+      assertEquals(isAgentKnowledgeTool(preparedTools.search_knowledge), true);
       assertEquals(prepared.config.delegates, undefined);
     } finally {
       await runtime.dispose().catch(() => {});
@@ -857,7 +861,7 @@ describe("connected local execution", () => {
     }
   });
 
-  it("clears ambiguous admission keys when the runtime is disposed", async () => {
+  it("rejects admission after disposing an ambiguous request", async () => {
     const f = fixture({ lostResponseOnce: "/runs" });
     const input = {
       agentId: "assistant",
@@ -866,19 +870,10 @@ describe("connected local execution", () => {
       signal: new AbortController().signal,
     };
     await assertRejects(() => f.runtime.admit(input), Error, "accepted response lost");
-    const firstKey = f.requests.find((request) => request.path === "/runs")!.headers.get(
-      "Idempotency-Key",
-    );
+    const writes = f.requests.length;
     await f.runtime.dispose();
-    const run = await f.runtime.admit(input);
-    try {
-      const secondKey = f.requests.filter((request) => request.path === "/runs")[1]!.headers.get(
-        "Idempotency-Key",
-      );
-      assertEquals(firstKey === secondKey, false);
-    } finally {
-      await run.finish("completed");
-    }
+    await assertRejects(() => f.runtime.admit(input), Error, "runtime is closed");
+    assertEquals(f.requests.length, writes);
   });
 
   for (const path of ["/runs", "/conversations/conversation-1/messages"]) {
@@ -1047,6 +1042,53 @@ describe("connected local execution", () => {
     await assertRejects(() => disposal, Error, "first finalization failed");
     assertEquals(delayedFinished, true);
   });
+  it("drains in-flight admission and rejects new admissions during disposal", async () => {
+    let release!: () => void;
+    const registerGate = new Promise<void>((resolve) => release = resolve);
+    const f = fixture({ registerGate });
+    const input = {
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    };
+    const admission = f.runtime.admit(input);
+    await Promise.resolve();
+    let disposed = false;
+    const disposal = f.runtime.dispose().then(() => disposed = true);
+    await Promise.resolve();
+    assertEquals(disposed, false);
+    release();
+    const run = await admission;
+    await disposal;
+    assertEquals(run.signal.aborted, true);
+    assertEquals(f.completed, ["cancelled"]);
+    await assertRejects(() => f.runtime.admit(input), Error, "closed");
+    assertEquals(f.registeredWorkers.length, 1);
+  });
+  it("cancels upstream when failure finalization also rejects", async () => {
+    const f = fixture({ completeFailure: true });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"error"}\n\n'));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assertRejects(() => new Response(run.wrapStream(body)).text());
+    assertEquals(cancelled, true);
+    assertEquals(body.locked, false);
+    assertEquals(f.completed, ["failed"]);
+    await f.runtime.dispose();
+  });
   it("records explicit model errors as failed execution", async () => {
     const f = fixture();
     const run = await f.runtime.admit({
@@ -1099,6 +1141,43 @@ describe("connected local execution", () => {
     assertEquals(run.signal.aborted, true);
     assertEquals(f.completed, ["cancelled"]);
     await f.runtime.dispose();
+    assertEquals(f.completed, ["cancelled"]);
+  });
+  it("cancels a pending upstream read before waiting for stream cleanup", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        upstream = controller;
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const reader = run.wrapStream(body).getReader();
+    const read = reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const cancellation = reader.cancel();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      cancellation.then(() => true),
+      new Promise<boolean>((resolve) => timer = setTimeout(() => resolve(false), 100)),
+    ]);
+    clearTimeout(timer);
+    if (!settled) upstream.close();
+    await cancellation;
+    await read;
+    await f.runtime.dispose();
+    assertEquals(settled, true);
+    assertEquals(cancelled, true);
+    assertEquals(body.locked, false);
     assertEquals(f.completed, ["cancelled"]);
   });
   it("accepts completed tool output without requiring a text response", async () => {

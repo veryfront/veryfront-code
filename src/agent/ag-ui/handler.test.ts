@@ -980,6 +980,8 @@ describe("agent/ag-ui-handler", () => {
 
       assertEquals(response.status, 200);
       assertEquals(admittedMessages, testAgent.capturedMessages);
+      assertEquals(testAgent.capturedContext?.runId, "run-connected");
+      assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, true);
       assertEquals(admittedMessages[0]?.role, "user");
       const admittedText = admittedMessages[0]?.parts[0];
       assert(
@@ -992,6 +994,25 @@ describe("agent/ag-ui-handler", () => {
         false,
       );
       assertEquals(JSON.stringify(admittedMessages).includes('"trusted"'), false);
+      const explicitlyUnbound = await createAgUiHandler({
+        agent: testAgent.agent,
+        context: { runIdBindsToolAuthorization: false },
+      })(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{
+              id: "unbound-message",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+          }),
+        }),
+      );
+      await explicitlyUnbound.text();
+      assertEquals(testAgent.capturedContext?.runId, "run-connected");
+      assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
       await uninstall();
     }

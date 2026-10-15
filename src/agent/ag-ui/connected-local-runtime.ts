@@ -130,6 +130,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
   const active = new Set<ConnectedLocalRun>();
   let worker: Promise<{ id: string }> | undefined;
   let admissionTail: Promise<unknown> = Promise.resolve();
+  let closed = false;
   async function api(
     path: string,
     body: unknown,
@@ -175,7 +176,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       signal: AbortSignal;
     },
   ): Promise<ConnectedLocalRun> {
+    if (closed) throw new Error("Veryfront local runtime is closed.");
     const operation = admissionTail.then(async () => {
+      if (closed) throw new Error("Veryfront local runtime is closed.");
       input.signal.throwIfAborted();
       worker ??= client.registerWorker({
         projectReference: options.projectId,
@@ -492,7 +495,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             );
           },
           wrapStream(body) {
-            const iterator = streamDataStreamEvents(body);
+            const iterator = streamDataStreamEvents(body, controller.signal);
             let finished = false;
 
             return new ReadableStream<Uint8Array>({
@@ -544,15 +547,21 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                     new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
                   );
                 } catch (error) {
-                  await finish(controller.signal.aborted ? "cancelled" : "failed");
-                  streamController.error(error);
-                  await iterator.return(undefined);
+                  try {
+                    await finish(controller.signal.aborted ? "cancelled" : "failed");
+                    streamController.error(error);
+                  } finally {
+                    await iterator.return(undefined);
+                  }
                 }
               },
               async cancel() {
                 controller.abort();
-                await iterator.return(undefined);
-                await finish("cancelled");
+                try {
+                  await iterator.return(undefined);
+                } finally {
+                  await finish("cancelled");
+                }
               },
             });
           },
@@ -584,6 +593,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     runtimeId: workerKey,
     admit,
     async dispose() {
+      closed = true;
+      await admissionTail;
       pendingAdmissions.clear();
       const results = await Promise.allSettled([...active].map((run) => run.finish("cancelled")));
       const failure = results.find((result) => result.status === "rejected");
