@@ -351,7 +351,8 @@ export function renderSnippet(
             releaseId,
           );
         const projectId = dependencySource.projectId ?? options.projectId ?? options.projectDir;
-        const reactPeers = getRuntimeModuleLoader(adapter)
+        const prepared = getRuntimeModuleLoader(adapter);
+        const reactPeers = prepared
           ? undefined
           : options.reactPeers ?? ((isNode || isBun) ? captureLocalReactPeers() : undefined);
         const reactVersion = await resolveProjectReactVersion({
@@ -414,9 +415,13 @@ export function renderSnippet(
         });
 
         const moduleServerBase = getModuleServerBase(options.moduleServerUrl);
+        let modulePath = options.filePath ?? join(options.projectDir, "_snippets", `${hash}.tsx`);
+        // Prepared graphs address original source identifiers. Compiled input
+        // needs a TSX virtual path in that directory to skip Markdown parsing.
+        if (!prepared && options.filePath) modulePath += ".tsx";
         const module = await loadModuleFromSource(
           bundle.compiledCode,
-          options.filePath ?? join(options.projectDir, "_snippets", `${hash}.tsx`),
+          modulePath,
           options.projectDir,
           adapter,
           {

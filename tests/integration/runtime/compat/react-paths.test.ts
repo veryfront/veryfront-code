@@ -154,11 +154,21 @@ describe("react-paths", () => {
     }
   });
 
-  for (const variant of ["local", "local-swap", "prepared", "unknown-prepared"] as const) {
+  for (
+    const variant of [
+      "local",
+      "local-swap",
+      "local-file-mdx",
+      "local-file-md",
+      "prepared",
+      "unknown-prepared",
+    ] as const
+  ) {
     it(`renders snippet hooks offline on one runtime with graph ${variant}`, async () => {
       if (!isNode && !isBun) return;
       if (variant === "local-swap" && !isNode) return;
       const prepared = variant === "prepared" || variant === "unknown-prepared";
+      const fileBacked = variant === "local-file-mdx" || variant === "local-file-md";
       const { register, tryResolve, unregister } = await import(
         "#veryfront/extensions/contracts.ts"
       );
@@ -182,12 +192,22 @@ describe("react-paths", () => {
       const { withMockFetch } = await import("#veryfront/testing/mock-fetch.ts");
       const source = "# snippet hook";
       const slug = `snippet-graph-${variant}`;
-      const sourcePath = join(directory, "components", "button.snippet.mdx");
+      const sourcePath = join(
+        directory,
+        "components",
+        variant === "local-file-md" ? "button.snippet.md" : "button.snippet.mdx",
+      );
       const version = captureLocalReactPeers().versions.react;
-      const code =
-        'import React from "react"; export default function Snippet() { return React.createElement("p", null, React.useState("snippet hook")[0]); }';
+      const code = fileBacked
+        ? 'import React from "react"; import { label } from "./label.js"; export default function Snippet() { return React.createElement("p", null, React.useState(label)[0]); }'
+        : 'import React from "react"; export default function Snippet() { return React.createElement("p", null, React.useState("snippet hook")[0]); }';
       const restores: Array<() => void> = [];
+      let compileCalls = 0;
       const compileMdx: Processor["compileMdx"] = () => {
+        compileCalls++;
+        if (compileCalls > 1) {
+          throw new Error("Compiled snippet must not be parsed as Markdown again");
+        }
         if (variant === "local-swap") {
           restores.push(overrideInstalledVersion("react", "19.2.5"));
           restores.push(overrideInstalledVersion("react-dom", "19.2.5"));
@@ -204,6 +224,13 @@ describe("react-paths", () => {
           getRemarkPlugins: () => [],
           getRehypePlugins: () => [],
         });
+        if (fileBacked) {
+          fs.mkdirSync(join(directory, "components"));
+          const helper = join(directory, "components", "label.js");
+          const contents = 'export const label = "snippet hook";';
+          fs.writeFileSync(helper, contents);
+          adapter.fs.files.set(helper, contents);
+        }
         if (prepared) {
           const peers = captureLocalReactPeers();
           fs.mkdirSync(join(directory, "node_modules"));
@@ -288,7 +315,7 @@ describe("react-paths", () => {
                 projectId: slug,
                 projectSlug: slug,
                 contentSourceId: variant === "local" ? undefined : "snippet-test",
-                filePath: prepared ? sourcePath : undefined,
+                filePath: prepared || fileBacked ? sourcePath : undefined,
                 adapter,
                 isLocalProject: true,
                 moduleServerUrl: "http://127.0.0.1:1",
@@ -308,6 +335,7 @@ describe("react-paths", () => {
           if (variant === "local-swap") assertEquals(result.html.includes("react@19.2.5"), false);
         }
         assertEquals(fetches, 0);
+        assertEquals(compileCalls, 1);
       } finally {
         for (const restore of restores.reverse()) restore();
         clearReactPathsCache();
