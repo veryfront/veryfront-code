@@ -297,3 +297,15 @@ Deno.test("legacy association warnings preserve JSON command output", async () =
     }
   });
 });
+
+Deno.test("unchanged shared association preserves bytes without attempting a write", async () => {
+  await withTempProject(async (dir) => {
+    const path = join(dir, "veryfront.json");
+    const original =
+      '{ "projectSlug":"linked-project", "apiUrl":"https://api.veryfront.com", "port":3551 }';
+    await Deno.writeTextFile(path, original);
+    using _write = stub(Deno, "writeTextFile", () => Promise.reject(new Error("read-only source")));
+    await saveSharedProjectAssociation(dir, "linked-project", "https://api.veryfront.com");
+    assertEquals(await Deno.readTextFile(path), original);
+  });
+});

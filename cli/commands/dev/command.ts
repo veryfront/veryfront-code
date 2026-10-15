@@ -40,16 +40,15 @@ import { captureDevDisplayOptions } from "./display-options.ts";
 import { captureLocalWorkerName } from "./worker-name.ts";
 import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
 import {
+  applyConnectedDevProjectSlug,
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
+  resolveConnectedDevProject,
   stopDevServices,
 } from "./connected-dev.ts";
-import {
-  readProjectLinkForControlPlane,
-  saveSharedProjectAssociation,
-} from "../../shared/project-link.ts";
+import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
@@ -329,14 +328,18 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
                 "Veryfront Cloud credentials are unavailable. Run veryfront login and retry.",
               );
             }
-            await readProjectLinkForControlPlane(projectDir, runtimeAuth.apiBaseUrl);
             const controlPlane = createConnectedDevControlPlane({
               apiUrl: runtimeAuth.apiBaseUrl,
               apiToken: runtimeAuth.apiToken,
               apiTokenSource: runtimeAuth.apiTokenSource,
               projectSlug,
             });
-            const project = await controlPlane.getProject(projectSlug);
+            const project = await resolveConnectedDevProject(controlPlane, projectDir, {
+              apiUrl: runtimeAuth.apiBaseUrl,
+              apiToken: runtimeAuth.apiToken,
+              apiTokenSource: runtimeAuth.apiTokenSource,
+              projectSlug,
+            });
             const environment = await controlPlane.getEnvironment(project.id, environmentName);
             if (!environment) {
               throw new Error(
@@ -344,6 +347,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               );
             }
             await saveSharedProjectAssociation(projectDir, project.slug, runtimeAuth.apiBaseUrl);
+            runtimeAuth = applyConnectedDevProjectSlug(runtimeAuth, project.slug);
+            linkedProjectSlug = project.slug;
             return {
               projectId: project.id,
               projectSlug: project.slug,

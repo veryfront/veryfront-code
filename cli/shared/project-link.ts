@@ -12,6 +12,8 @@ export interface ProjectLink {
   controlPlane: string;
   projectId: string;
   projectSlug: string;
+  /** Previously selected slugs of this same canonical project, retained across renames. */
+  previousProjectSlugs?: string[];
 }
 
 function projectLinkPath(projectDir: string): string {
@@ -91,7 +93,10 @@ function isProjectLink(value: unknown): value is ProjectLink {
     isNonEmptyTrimmedString(link.controlPlane) &&
     isControlPlaneUrl(link.controlPlane) &&
     isNonEmptyTrimmedString(link.projectId) &&
-    isNonEmptyTrimmedString(link.projectSlug);
+    isNonEmptyTrimmedString(link.projectSlug) &&
+    (link.previousProjectSlugs === undefined ||
+      (Array.isArray(link.previousProjectSlugs) &&
+        link.previousProjectSlugs.every(isNonEmptyTrimmedString)));
 }
 
 function isNonEmptyTrimmedString(value: unknown): value is string {

@@ -31,6 +31,7 @@ import {
 } from "../service/external-worker-client.ts";
 import { createAgUiEncoderState, mapRuntimeStreamEventToAgUiEvents } from "./encoder.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
+import { createConversationRunMirror } from "../conversation/run-mirror.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import type { ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { buildExplicitAgUiSourceTools } from "./tool-shared.ts";
@@ -241,14 +242,14 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       if (!conversationId) {
         conversationId = (await write("/conversations", {
           project_reference: options.projectId,
-          idempotency_key: `${admissionKey}:conversation`,
           title: `Local ${input.agentId}`,
+          idempotency_key: `${admissionKey}:conversation`,
         })).id;
         conversations.set(input.threadId, conversationId);
         input.signal.throwIfAborted();
       }
       const lastUser = input.messages.findLast((message) => message.role === "user");
-      if (lastUser) {
+      if (lastUser && !pending.messageMayHaveCommitted) {
         await write(`/conversations/${conversationId}/messages`, {
           role: "user",
           parts: lastUser.parts,
@@ -313,8 +314,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         let sequence = claim.latest_external_event_sequence;
         let latestEventId = claim.latest_event_id;
         let appendTail: Promise<unknown> = Promise.resolve();
-        const append = (events: unknown[]) => {
-          if (finishing) return Promise.reject(new Error("Local run event writer has ended."));
+        const append = (events: unknown[], draining = false) => {
+          if (finishing && !draining) {
+            return Promise.reject(new Error("Local run event writer has ended."));
+          }
           const operation = appendTail.then(async () => {
             if (dependencies.append) {
               const result = await dependencies.append(events, sequence);
@@ -341,8 +344,39 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           void operation.catch(() => {});
           return operation;
         };
+        const pendingStreamEvents: unknown[] = [];
+        const streamQueueSnapshot = () => ({
+          latestEventId: latestEventId ?? 0,
+          latestExternalEventSequence: sequence,
+          pendingEventCount: pendingStreamEvents.length,
+          consecutiveFailures: 0,
+          disabled: false,
+        });
+        const streamMirror = createConversationRunMirror({
+          immediateFlushEventCount: 32,
+          flushDelayMs: 50,
+          queueController: {
+            enqueue(events) {
+              pendingStreamEvents.push(...events);
+            },
+            async flush() {
+              const events = pendingStreamEvents.splice(0);
+              try {
+                if (events.length) await append(events, true);
+              } catch (error) {
+                pendingStreamEvents.unshift(...events);
+                controller.abort(error);
+                throw error;
+              }
+              return { outcome: "flushed", ...streamQueueSnapshot() };
+            },
+            getSnapshot: streamQueueSnapshot,
+          },
+        });
         const loggedModels = new Set<string>();
         const sink: AgentRunEventSink = async (event) => {
+          if (finishing) throw new Error("Local run event writer has ended.");
+          await streamMirror.flush();
           const result = await append([event]);
           if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" && event.model?.id) {
             const model = normalizeText(event.model.id).slice(0, 256);
@@ -390,9 +424,12 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             await renewal;
             let appendError: unknown;
             try {
+              await streamMirror.flush();
               await appendTail;
             } catch (error) {
               appendError = error;
+            } finally {
+              streamMirror.dispose();
             }
             const terminalStatus = appendError || leaseFailed ? "failed" : status;
             try {
@@ -543,7 +580,12 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                           : encoded,
                     );
                     if (events.length) {
-                      await append(events);
+                      streamMirror.enqueue(events);
+                      // Bound backlog while allowing ordinary deltas to reach the browser
+                      // independently of the Cloud append round-trip.
+                      if (streamMirror.getSnapshot().pendingEventCount >= 64) {
+                        await streamMirror.flush();
+                      }
                     }
                   }
                   streamController.enqueue(
