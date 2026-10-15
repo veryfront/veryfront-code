@@ -51,7 +51,10 @@ import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
 } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
-import { createVeryfrontApiOriginBoundOutboundFetch, trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -305,7 +308,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           authenticate: async () => {
             preflightIdentity = await ensureAuthenticated(getEnvironmentConfig(), projectDir, {
               throwOnCredentialValidationUnavailable: true,
-              transport: createVeryfrontApiOriginBoundOutboundFetch(connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl)),
+              transport: createVeryfrontApiOriginBoundOutboundFetch(
+                connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+              ),
               timeoutMs: 10_000,
             });
             return Boolean(preflightIdentity);

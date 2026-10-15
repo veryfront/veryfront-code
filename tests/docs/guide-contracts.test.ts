@@ -72,7 +72,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "createExternalAgentWorkerClient",
       'import { Conversation, createConversationsApiTransport } from "veryfront/conversations";',
-      "{ projectReference: projectId, title: \"Runtime connection demo\" }",
+      '{ projectReference: projectId, title: "Runtime connection demo" }',
       'await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });',
       "registerWorker",
       "claimRun",

@@ -113,6 +113,7 @@ describe("connected local inference authority", () => {
         }
         const source = createEphemeralAgent({
           id: "assistant",
+          system: "You are a helpful assistant.",
           model: "veryfront-cloud/test-model",
         });
         await assertRejects(() => run.prepareAgent(source));
