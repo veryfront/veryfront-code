@@ -218,6 +218,8 @@ const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
 const responseJson = Response.prototype.json;
 const responseText = Response.prototype.text;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
 const stringIncludes = String.prototype.includes;
 function errorMessageIncludes(error: unknown, expected: string): boolean {
   if (error === null || typeof error !== "object") return false;
@@ -373,10 +375,10 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     });
 
-    if (!response.ok) {
+    if (!apply(responseOk, response, [])) {
       const body = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
       throw NETWORK_ERROR.create({
-        detail: body || `Veryfront API returned HTTP ${response.status}`,
+        detail: body || `Veryfront API returned HTTP ${apply(responseStatus, response, [])}`,
       });
     }
 

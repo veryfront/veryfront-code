@@ -67,6 +67,8 @@ export interface ConnectedLocalRun {
 }
 
 const responseJson = Response.prototype.json;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
 const apply = Reflect.apply;
 const timeoutSignal = AbortSignal.timeout.bind(AbortSignal);
 const anySignal = AbortSignal.any.bind(AbortSignal);
@@ -146,22 +148,23 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       body: JSON.stringify(body),
       signal: timeoutSignal(15_000),
     });
-    if (!response.ok) {
+    if (!apply(responseOk, response, [])) {
+      const status = apply(responseStatus, response, []) as number;
       const problem = await (apply(responseJson, response, []) as Promise<Record<string, unknown>>)
         .catch((): Record<string, unknown> => ({}));
       const detail = typeof problem.detail === "string" ? problem.detail : "";
-      const message = response.status === 401
+      const message = status === 401
         ? "Veryfront login expired. Run veryfront login, then npm run dev again."
-        : response.status === 403
+        : status === 403
         ? "You do not have access to this Veryfront project or environment."
         : detail.includes("selected environment has no deployed release")
         ? "The selected environment has no deployed release. Connected local execution requires an API that supports local source with environment selection."
         : detail.includes("account ownership")
         ? "Project billing is not ready. Complete the project account setup in Studio."
-        : `Veryfront local run admission failed (HTTP ${response.status}). Check your project, environment, and API version.`;
+        : `Veryfront local run admission failed (HTTP ${status}). Check your project, environment, and API version.`;
       log(message);
       throw new ConnectedLocalAdmissionError(
-        response.status >= 400 && response.status < 500 ? response.status : 502,
+        status >= 400 && status < 500 ? status : 502,
         message,
       );
     }

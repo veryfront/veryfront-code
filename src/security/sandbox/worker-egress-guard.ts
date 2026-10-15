@@ -49,6 +49,26 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectCreate = Object.create;
 
 function sealHostResponse(response: Response): Response {
+  const status = IntrinsicReflectApply(ResponseStatus, response, []);
+  const headers = IntrinsicReflectApply(ResponseHeaders, response, []) as Headers;
+  const body = IntrinsicReflectApply(ResponseBody, response, []) as ReadableStream | null;
+  defineOwnDataProperty(response, "status", status, { configurable: true });
+  defineOwnDataProperty(response, "headers", headers, { configurable: true });
+  defineOwnDataProperty(response, "body", body, { configurable: true });
+  defineOwnDataProperty(
+    headers,
+    "get",
+    (name: string) => IntrinsicReflectApply(HeadersGet, headers, [name]),
+    { configurable: true },
+  );
+  if (body) {
+    defineOwnDataProperty(
+      body,
+      "cancel",
+      (reason?: unknown) => IntrinsicReflectApply(StreamCancel, body, [reason]),
+      { configurable: true },
+    );
+  }
   return defineOwnDataProperty(response, "then", undefined, { configurable: true });
 }
 
@@ -66,6 +86,10 @@ function bindResponseMetadata(response: Response, url: string, redirected: boole
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeResponse = Response;
+const ResponseStatus = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
+const ResponseHeaders = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!.get!;
+const ResponseBody = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
+const StreamCancel = ReadableStream.prototype.cancel;
 const NativeURL = URL;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersGet = NativeHeaders.prototype.get;
