@@ -57,6 +57,11 @@ UTF-16 code units, valid Unicode, and no control characters. The name header use
 `encodeURIComponent` encoding. These headers identify the accepting process;
 they do not grant access. Existing runtime-owner URL headers remain unchanged.
 
+Signed managed agent streams report the same process identity on HTTP 200 SSE
+responses. Identity is captured from the host before loading project environment
+values. The API records it for the exact dispatched execution, including streams
+without a runtime-owner URL. Error responses do not supply process attribution.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

@@ -1,3 +1,9 @@
+import {
+  getServiceRuntimeIdentity,
+  RUNTIME_ID_HEADER,
+  RUNTIME_MODE_HEADER,
+  RUNTIME_NAME_HEADER,
+} from "#veryfront/agent/service/runtime-identity.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
   createPlatformMcpCatalogSource,
@@ -1216,6 +1222,8 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
+      // Capture host process identity before entering project-controlled environment scopes.
+      const runtimeIdentity = getServiceRuntimeIdentity();
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
@@ -1542,7 +1550,28 @@ export class AgentStreamHandler extends BaseHandler {
                               )
                               : await runWithProjectEnv(agentEnv, runAgentStream)
                             : await runAgentStream();
-                        const response = await executeStream();
+                        let response = await executeStream();
+                        if (
+                          response.status === 200 && response.body &&
+                          response.headers.get("content-type")?.split(";", 1)[0].trim()
+                              .toLowerCase() === "text/event-stream"
+                        ) {
+                          response = setResponseHeader(
+                            response,
+                            RUNTIME_ID_HEADER,
+                            runtimeIdentity.id,
+                          );
+                          response = setResponseHeader(
+                            response,
+                            RUNTIME_NAME_HEADER,
+                            encodeURIComponent(runtimeIdentity.name),
+                          );
+                          response = setResponseHeader(
+                            response,
+                            RUNTIME_MODE_HEADER,
+                            runtimeIdentity.mode,
+                          );
+                        }
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,
                           threadId: payload.threadId,

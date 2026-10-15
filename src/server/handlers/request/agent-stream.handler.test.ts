@@ -1,3 +1,4 @@
+import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
@@ -619,6 +620,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.authToken, "run-scoped-token");
     assertEquals(result.response.headers.get("content-type"), "text/event-stream");
+    const runtimeIdentity = getServiceRuntimeIdentity();
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), runtimeIdentity.id);
+    assertEquals(
+      result.response.headers.get("x-veryfront-runtime-name"),
+      encodeURIComponent(runtimeIdentity.name),
+    );
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
     assertEquals(
       result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
       "http://10.0.0.7:20000/channels/invoke",
@@ -6499,6 +6507,7 @@ describe("agent stream handler application-error reporting", () => {
       assertExists(result.response);
       await result.response.body?.cancel();
       assertEquals(result.response.status, 503);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
 
       assertEquals(captures.length, 1);
       const captured = captures[0];
