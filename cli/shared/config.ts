@@ -677,6 +677,7 @@ async function resolveConfigBase(
   interactive: boolean,
   allowModuleConfigExecution: boolean,
   allowAuthPrompt: boolean,
+  authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
   const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
@@ -699,7 +700,7 @@ async function resolveConfigBase(
   }
 
   if (!apiToken && interactive && allowAuthPrompt) {
-    const userInfo = await ensureAuthenticated(env, dir);
+    const userInfo = await ensureAuthenticated(env, dir, authOptions);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
@@ -786,13 +787,18 @@ function createConfigResolver(
   allowModuleConfigExecution = true,
   allowAuthPrompt = true,
 ) {
-  return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+  return async (
+    projectDir?: string,
+    env?: EnvironmentConfig,
+    authOptions: { transport?: typeof fetch } = {},
+  ): Promise<ResolvedConfig> =>
     (await resolveConfigByMode(
       projectDir,
       env,
       interactive,
       allowModuleConfigExecution,
       allowAuthPrompt,
+      authOptions,
     )).config;
 }
 
@@ -834,6 +840,7 @@ function resolveConfigByMode(
   interactive: boolean,
   allowModuleConfigExecution = true,
   allowAuthPrompt = true,
+  authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(
     projectDir,
@@ -841,6 +848,7 @@ function resolveConfigByMode(
     interactive,
     allowModuleConfigExecution,
     allowAuthPrompt,
+    authOptions,
   );
 }
 
@@ -884,7 +892,10 @@ export function formatApiError(data: ApiError, fallback: string): string {
   return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
 }
 
-export function createApiClient(config: ResolvedConfig): ApiClient {
+export function createApiClient(
+  config: ResolvedConfig,
+  transport: typeof fetch = fetch,
+): ApiClient {
   const { apiUrl, apiToken } = config;
 
   function addTokenSourceHint(message: string, status: number): string {
@@ -901,7 +912,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     signal?: AbortSignal,
     binary = false,
   ): Promise<T> {
-    const response = await fetch(url, {
+    const response = await transport(url, {
       method,
       ...(binary ? { redirect: "error" as const } : {}),
       ...(signal ? { signal } : {}),

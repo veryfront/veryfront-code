@@ -1,3 +1,4 @@
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 /*******************************
  * Main init command implementation
  * @module
@@ -172,6 +173,7 @@ export async function initCommand(
   options: InitOptions,
   dependencies: InitCommandDependencies = {},
 ): Promise<InitCommandResult> {
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const { name, quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -261,6 +263,22 @@ export async function initCommand(
     },
     {
       observer: installObserver,
+      beforeGitInitialization: async (projectDir) => {
+        if (!quiet && !options.deploy && isTTY() && isInteractive()) {
+          try {
+            await chooseCloudProject(projectDir);
+          } catch (error) {
+            log(
+              `  Cloud setup could not finish: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`,
+            );
+            log(
+              "  Your local project is ready. Run veryfront push to create or link a Cloud project later.",
+            );
+          }
+        }
+      },
       resolveEnvironmentFiles: (variables, values) =>
         promptForEnvVars(variables, {
           skipPrompt: options.skipEnvPrompt,
@@ -274,21 +292,6 @@ export async function initCommand(
   }
 
   const createdProjectDir = result.projectDir;
-
-  if (!quiet && !options.deploy && isTTY() && isInteractive()) {
-    try {
-      await chooseCloudProject(createdProjectDir);
-    } catch (error) {
-      log(
-        `  Cloud setup could not finish: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-      log(
-        "  Your local project is ready. Run veryfront push to create or link a Cloud project later.",
-      );
-    }
-  }
 
   // Deploy to cloud if --deploy flag is set
   let deployedUrl: string | undefined;

@@ -46,8 +46,8 @@ npm run dev
 The CLI confirms the server and available inference path:
 
 ```text
-✓ Ready in 1.3s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 Inference OpenAI direct
 ```
 

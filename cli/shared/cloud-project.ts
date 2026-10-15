@@ -1,3 +1,5 @@
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import { getApiUrl } from "./constants.ts";
 import { createApiClient, resolveConfigWithAuthNoModule } from "./config.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import { inferProjectSlugFromDirectory, persistProjectLink } from "./project-resolution.ts";
@@ -26,11 +28,13 @@ export async function chooseCloudProject(
   ], 0);
   if (!mode) return;
 
+  const env = getEnvironmentConfig();
   const config = await resolveConfigWithAuthNoModule(projectDir, {
-    ...getEnvironmentConfig(),
+    ...env,
     projectSlug: await inferProjectSlugFromDirectory(projectDir),
-  });
-  const client = createApiClient(config);
+  }, { transport: createVeryfrontApiOriginBoundOutboundFetch(getApiUrl(env)) });
+  const transport = createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl);
+  const client = createApiClient(config, transport);
   let project: { id: string; slug: string };
   if (mode === "new") {
     const reserved = await reserveProjectSlug(
@@ -38,6 +42,7 @@ export async function chooseCloudProject(
       config.apiToken,
       undefined,
       config.apiUrl,
+      { transport },
     );
     project = { id: reserved.projectId, slug: reserved.slug };
   } else {

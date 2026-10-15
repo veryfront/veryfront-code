@@ -180,8 +180,10 @@ export async function saveSharedProjectAssociation(
 ): Promise<void> {
   const path = join(projectDir, "veryfront.json");
   let existing: Record<string, unknown> = {};
+  let existingMode: number | undefined;
   try {
     const info = await Deno.lstat(path);
+    existingMode = info.mode === null ? undefined : info.mode & 0o777;
     if (info.isSymlink || !info.isFile) {
       throw new Error("veryfront.json must be a regular file to save the project association.");
     }
@@ -205,7 +207,9 @@ export async function saveSharedProjectAssociation(
     await Deno.writeTextFile(
       temporary,
       `${JSON.stringify({ ...existing, projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
+      { createNew: true, mode: existingMode ?? 0o600 },
     );
+    if (existingMode !== undefined) await Deno.chmod(temporary, existingMode);
     await Deno.rename(temporary, path);
   } catch (error) {
     try {

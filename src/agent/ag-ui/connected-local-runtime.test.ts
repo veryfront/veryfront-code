@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -129,6 +130,107 @@ function fixture(
 }
 
 describe("connected local execution", () => {
+  it("logs the actual model when a model call is recorded", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await run.execute(async () => {
+      const sink = getActiveRunEventSink()!;
+      for (
+        const id of ["provider/selected-model", "provider/selected-model", "provider/fallback"]
+      ) {
+        await sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", model: { id }, messages: [] });
+      }
+    });
+    await run.finish("completed");
+    assertEquals(
+      f.logs.filter((line) => line.includes("model provider/")).map((line) => line.slice(10)),
+      ["assistant model provider/selected-model run-1", "assistant model provider/fallback run-1"],
+    );
+  });
+  for (
+    const visible of [
+      { type: "reasoning-delta", delta: "Thinking" },
+      { type: "source-url", sourceId: "source", url: "https://example.com" },
+      { type: "source-document", sourceId: "source", mediaType: "text/plain", title: "Source" },
+      { type: "file", mediaType: "image/png", url: "https://example.com/image.png" },
+      { type: "data-result", data: { answer: 42 } },
+    ]
+  ) {
+    it(`completes a ${visible.type}-only response`, async () => {
+      const f = fixture();
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const event of [visible, { type: "message-finish" }]) {
+            c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+          }
+          c.close();
+        },
+      });
+      await new Response(run.wrapStream(body)).text();
+      assertEquals(f.completed, ["completed"]);
+    });
+  }
+  for (const object of [{ normalized: 42 }, null, false, 0]) {
+    it(`preserves parsed terminal structured output ${JSON.stringify(object)}`, async () => {
+      let completedOutput: unknown = "not completed";
+      const f = fixture({
+        complete: (input) => {
+          completedOutput = (input as { output?: unknown }).output;
+          return Promise.resolve();
+        },
+      });
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          for (
+            const event of [{ type: "text-delta", delta: '{"raw":42}' }, {
+              type: "message-finish",
+              object,
+            }]
+          ) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+          c.close();
+        },
+      });
+      await new Response(run.wrapStream(body)).text();
+      assertEquals(completedOutput, object);
+    });
+  }
+  it("completes object-only output without text", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode('data: {"type":"message-finish","object":{"answer":42}}\n\n'),
+        );
+        c.close();
+      },
+    });
+    await new Response(run.wrapStream(body)).text();
+    assertEquals(f.completed, ["completed"]);
+  });
+
   it("prepares a tools-true agent with its bounded single-agent catalog", async () => {
     using _catalog = useServedCatalogForTests();
     const workerId = "11111111-1111-4111-8111-111111111111";

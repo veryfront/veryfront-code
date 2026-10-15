@@ -8,6 +8,7 @@ import {
   type ProjectLink,
   readProjectLink,
   readProjectLinkForControlPlane,
+  saveSharedProjectAssociation,
   writeProjectLink,
 } from "./project-link.ts";
 
@@ -232,5 +233,16 @@ describe("project link persistence", () => {
 
       assertEquals(await readProjectLink(projectDir), null);
     });
+  });
+});
+
+Deno.test("shared association preserves restrictive existing file permissions", async () => {
+  if (Deno.build.os === "windows") return;
+  await withTempProject(async (dir) => {
+    const path = join(dir, "veryfront.json");
+    await Deno.writeTextFile(path, JSON.stringify({ apiToken: "private-token" }), { mode: 0o600 });
+    await saveSharedProjectAssociation(dir, "linked-project", "https://api.veryfront.com");
+    assertEquals((await Deno.stat(path)).mode! & 0o777, 0o600);
+    assertEquals(JSON.parse(await Deno.readTextFile(path)).apiToken, "private-token");
   });
 });

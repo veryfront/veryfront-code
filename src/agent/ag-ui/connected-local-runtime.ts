@@ -27,6 +27,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
+import { createAgUiEncoderState, mapRuntimeStreamEventToAgUiEvents } from "./encoder.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import type { ChatStreamEvent } from "#veryfront/chat/protocol.ts";
@@ -281,14 +282,23 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           void operation.catch(() => {});
           return operation;
         };
+        const loggedModels = new Set<string>();
         const sink: AgentRunEventSink = async (event) => {
           const result = await append([event]);
+          if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" && event.model?.id) {
+            const model = normalizeText(event.model.id).slice(0, 256);
+            if (!loggedModels.has(model)) {
+              loggedModels.add(model);
+              log(`${timestamp()} ${agentLabel} model ${model} ${accepted.id}`);
+            }
+          }
           return event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
             ? result.modelCallCaptures?.find((receipt) => receipt.modelCallId === event.modelCallId)
             : undefined;
         };
         const encoder = new ConversationRunEventEncoder();
         encoder.encode({ type: "start", messageId: claim.message_id });
+        const streamState = createAgUiEncoderState();
         let leaseFailed = false;
         const failLease = (message: string) => {
           leaseFailed = true;
@@ -330,7 +340,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               await client.completeRun({
                 runId: claim!.run_id,
                 status: terminalStatus,
-                output,
+                output: streamState.finishObject !== undefined
+                  ? streamState.finishObject.value
+                  : output,
                 ...(terminalStatus === "failed"
                   ? {
                     terminalErrorCode: "LOCAL_EXECUTION_FAILED",
@@ -429,14 +441,17 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           wrapStream(body) {
             const iterator = streamDataStreamEvents(body);
             let finished = false;
-            let visibleOutput = false;
+
             return new ReadableStream<Uint8Array>({
               async pull(streamController) {
                 try {
                   controller.signal.throwIfAborted();
                   const next = await iterator.next();
                   if (next.done) {
-                    if (!finished || !visibleOutput) {
+                    if (
+                      !finished ||
+                      (!streamState.sawVisibleOutput && streamState.finishObject === undefined)
+                    ) {
                       throw new Error(
                         "Local model stream ended before producing completed output.",
                       );
@@ -449,9 +464,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                   if (event.type === "error") throw new Error("Local model execution failed.");
                   if (event.type === "text-delta" && typeof event.delta === "string") {
                     output += event.delta;
-                    visibleOutput ||= event.delta.length > 0;
                   }
-                  if (event.type === "tool-output-available") visibleOutput = true;
+                  mapRuntimeStreamEventToAgUiEvents(streamState, event);
                   if (event.type === "message-finish") finished = true;
                   const type = event.type === "step-start"
                     ? "start-step"

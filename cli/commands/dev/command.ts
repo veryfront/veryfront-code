@@ -13,7 +13,7 @@ import { startDevServer } from "veryfront/server";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { isPersistentLocalCacheEnabled } from "veryfront/cache";
 import { validateProviderConfig } from "veryfront/discovery";
-import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
+import { brand, dim, error as errorColor, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
@@ -37,6 +37,7 @@ import { advertisesCloudGateway, listInferenceOptions } from "./inference-status
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
+import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
 import { connectedDevApiBaseUrl, prepareConnectedDev, stopDevServices } from "./connected-dev.ts";
 import { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
 import {
@@ -50,7 +51,7 @@ import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
 } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
-import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
+import { createVeryfrontApiOriginBoundOutboundFetch, trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -91,6 +92,10 @@ export interface DevCommandResult {
   port: number;
   /** Stop the dev server programmatically (for demo mode) */
   stop: () => Promise<void>;
+}
+
+function authDisplayName(identity: AuthIdentity): string {
+  return isApiKeyIdentity(identity) ? "API key" : identity.email;
 }
 
 function authStatus(identity: AuthIdentity): string {
@@ -243,7 +248,6 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         demoMode = false,
         clearLocalCaches = false,
       } = options;
-      const startTime = Date.now();
 
       const displayOptions = captureDevDisplayOptions();
       captureHostApiEnvironment();
@@ -301,6 +305,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           authenticate: async () => {
             preflightIdentity = await ensureAuthenticated(getEnvironmentConfig(), projectDir, {
               throwOnCredentialValidationUnavailable: true,
+              transport: createVeryfrontApiOriginBoundOutboundFetch(connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl)),
               timeoutMs: 10_000,
             });
             return Boolean(preflightIdentity);
@@ -485,36 +490,28 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const serverUrl = `http://localhost:${boundPort}`;
-      const elapsed = Date.now() - startTime;
-
+      const studioBase = displayOptions.studioUrl ??
+        `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`;
       console.log();
-      console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
-      console.log(`  ${brand(serverUrl)}`);
-      console.log(
-        `  ${dim("Runtime")} local${
-          connectedTarget ? ` (${getConnectedLocalRuntime()?.runtimeId})` : ""
-        }`,
-      );
-      if (connectedTarget) {
-        if (preflightIdentity) console.log(`  ${dim("Account")} ${authStatus(preflightIdentity)}`);
-        console.log(`  ${dim("Cloud project")} ${brand(connectedTarget.projectSlug)}`);
-        console.log(
-          `  ${dim("Cloud environment")} ${brand(connectedTarget.environmentName)} (shared)`,
-        );
-        console.log(`  ${dim("API")} ${runtimeAuth.apiBaseUrl}`);
-        const studioBase = displayOptions.studioUrl ??
-          `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`;
-        console.log(
-          `  ${dim("Studio")} ${studioBase.replace(/\/$/, "")}/projects/${
-            encodeURIComponent(connectedTarget.projectSlug)
-          }?panels=runs`,
-        );
-      } else {
-        console.log(
-          `  ${
-            dim("Cloud")
-          } Not linked. Cloud inference and Studio runs require a linked project. Run veryfront push to create or link one.`,
-        );
+      for (
+        const line of devReadinessLines({
+          appUrl: serverUrl,
+          connection: connectedTarget
+            ? {
+              apiUrl: connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+              project: connectedTarget.projectSlug,
+              environment: connectedTarget.environmentName,
+              signedIn: preflightIdentity ? authDisplayName(preflightIdentity) : undefined,
+              studioUrl: `${studioBase.replace(/\/$/, "")}/projects/${
+                encodeURIComponent(connectedTarget.projectSlug)
+              }?panels=runs`,
+            }
+            : undefined,
+        })
+      ) console.log(line);
+      if (isVerbose()) {
+        const runtimeId = getConnectedLocalRuntime()?.runtimeId;
+        if (runtimeId) console.log(`    ${dim("Runtime")} ${runtimeId}`);
       }
       const inferenceOptions = listInferenceOptions({
         apiToken: runtimeAuth.apiToken,
@@ -526,12 +523,25 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         mistralApiKey: getEnv("MISTRAL_API_KEY"),
       });
       if (inferenceOptions.length > 0) {
-        console.log(`  ${dim("Inference")} ${brand(inferenceOptions.join(", "))}`);
         console.log(
-          displayOptions.defaultModel
-            ? `  ${dim("Default model")} ${brand(displayOptions.defaultModel)} (configured)`
-            : `  ${dim("Model")} selected per agent`,
+          `  ${dim("Inference")} ${
+            brand(
+              inferenceOptions.map((option) =>
+                option.replace(
+                  "Veryfront Cloud AI Gateway",
+                  `${
+                    veryfrontServiceName(connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl))
+                  } AI Gateway`,
+                )
+              ).join(", "),
+            )
+          }`,
         );
+        if (displayOptions.defaultModel) {
+          console.log(
+            `  ${dim("Default model")} ${brand(displayOptions.defaultModel)} (configured)`,
+          );
+        }
       }
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored
@@ -552,9 +562,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);
       }
-      if (isTTY()) {
-        console.log(devShortcuts());
-      }
+      console.log(`  Waiting for requests…${isTTY() ? "  Press ? for shortcuts." : ""}`);
       console.log();
 
       if (open) {

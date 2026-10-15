@@ -110,8 +110,8 @@ veryfront dev
 The CLI prints the URL it is serving on:
 
 ```
-✓ Ready in 1.3s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 ```
 
 Open [http://localhost:3000](http://localhost:3000). `localhost` resolves to
@@ -153,8 +153,8 @@ scans forward for the first free port, reports the switch, and serves there:
 ```
   ! Port 3000 is in use, using 3001 instead
 
-  ✓ Ready in 925ms
-  http://localhost:3001
+  ✓ App ready       http://localhost:3001
+  Execution       This machine
 ```
 
 Open the URL the CLI prints, not the one in the examples above. The development
@@ -233,6 +233,10 @@ Claude Code, Cursor, Codex, or another MCP-aware agent.
 
 ## Verify it worked
 
-`veryfront dev` prints a `Ready in <duration>` line followed by
-`http://localhost:3000`. Open that URL and save a source file. The browser
-should hot-reload.
+`veryfront dev` prints `App ready` with the local URL and identifies execution
+as `This machine`. Linked projects also show the connected Veryfront service,
+project, shared environment, signed-in account, and Studio run list URL.
+A local API is labeled `Local Veryfront`; hosted APIs use `Veryfront Cloud`.
+Press `?` for shortcuts; use verbose logs for cache and runtime diagnostics.
+
+Open the app URL and save a source file. The browser should hot-reload.
