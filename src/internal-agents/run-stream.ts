@@ -1550,6 +1550,9 @@ export async function createRuntimeAgentStreamResponse(
     const runtimeContext = {
       threadId: input.threadId,
       runId: input.runId,
+      ...(deps.projectAgentSandbox?.projectId
+        ? { projectId: deps.projectAgentSandbox.projectId }
+        : {}),
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
         : {}),

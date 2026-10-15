@@ -31,7 +31,8 @@ const StringSlice = String.prototype.slice;
 const ObjectFreeze = Object.freeze;
 
 type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
-const verifiedHostedWriterScopes = createPrivateWeakStore<object, PlatformDependencyScope>();
+type HostedWriterScope = Readonly<{ projectId: string; runId: string; agentId?: string }>;
+const verifiedHostedWriterScopes = createPrivateWeakStore<object, HostedWriterScope>();
 const verifiedPlatformDependencies = createPrivateWeakStore<
   object,
   PlatformDependencyScope & { dependencies: VerifiedPlatformToolDependencies }
@@ -165,11 +166,11 @@ export function getActivePlatformToolDependencies(
 /** Check original verified writer provenance even when this run declares no dependencies. */
 export function hasVerifiedHostedPlatformDependencyWriter(
   verification: HostedServiceRunEventAppendTokenResult,
-  scope: PlatformDependencyScope,
+  scope: HostedWriterScope,
 ): boolean {
   const verified = verifiedHostedWriterScopes.get(verification);
   return verified?.projectId === scope.projectId && verified.runId === scope.runId &&
-    verified.agentId === scope.agentId;
+    (scope.agentId === undefined || verified.agentId === scope.agentId);
 }
 
 /** Read host-owned grants only from the original signature-verification result and exact scope. */
@@ -491,7 +492,7 @@ async function getDefaultAuthProvider(): Promise<HostedServiceJwtVerifier> {
 async function readOperatorWriterDependencies(input: HostedServiceRunEventAppendTokenInput) {
   const publicKey = getHostBootEnv("OAUTH_PUBLIC_KEY");
   const serviceAccountId = getHostBootEnv("SERVICE_ACCOUNT_VERYFRONT_SERVER_ID");
-  if (!publicKey || !serviceAccountId || !input.agentId) return undefined;
+  if (!publicKey || !serviceAccountId) return undefined;
   try {
     const verifier = await getDefaultAuthProvider();
     const payload = await verifier.verifyWithPublicKey(input.token, publicKey, {
@@ -508,11 +509,15 @@ async function readOperatorWriterDependencies(input: HostedServiceRunEventAppend
       read("actorType") !== "service_account" || read("tokenUse") !== RUN_EVENT_WRITER_TOKEN_USE ||
       read("serviceAccountId") !== serviceAccountId || read("userId") !== serviceAccountId ||
       read("projectId") !== input.projectId || read("runId") !== input.runId ||
-      read("agentId") !== input.agentId || !exactScopes ||
+      (input.agentId !== undefined && read("agentId") !== input.agentId) || !exactScopes ||
       read("runEventWriterTokenPurpose") !== undefined
     ) return undefined;
     const claim = read("platformToolDependencies");
-    return { dependencies: claim === undefined ? undefined : readPlatformToolDependencies(claim) };
+    const agentId = read("agentId");
+    return {
+      ...(typeof agentId === "string" && agentId.length > 0 ? { agentId } : {}),
+      dependencies: claim === undefined ? undefined : readPlatformToolDependencies(claim),
+    };
   } catch {
     return undefined;
   }
@@ -966,13 +971,13 @@ export function createHostedServiceAuth(
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         };
         const operatorWriter = await readOperatorWriterDependencies(input);
-        if (operatorWriter && input.agentId) {
+        if (operatorWriter) {
           verifiedHostedWriterScopes.set(
             result,
             ObjectFreeze({
               projectId: input.projectId,
               runId: input.runId,
-              agentId: input.agentId,
+              ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
             }),
           );
         }

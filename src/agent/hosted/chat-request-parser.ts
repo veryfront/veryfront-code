@@ -448,11 +448,11 @@ async function withVerifiedRunEventAppendToken(
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
-  if (parsedRequest.agentId && verifyRunEventAppendToken) {
+  if (verifyRunEventAppendToken) {
     registerHostedPlatformDependencyRequest(
       verifiedRequest,
       verification,
-      { projectId, runId, agentId: parsedRequest.agentId },
+      { projectId, runId, ...(parsedRequest.agentId ? { agentId: parsedRequest.agentId } : {}) },
       verifyRunEventAppendToken,
       parsedRequest.authToken,
     );

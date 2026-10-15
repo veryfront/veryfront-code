@@ -22,6 +22,7 @@ import {
 } from "../service/auth.ts";
 
 type Scope = Readonly<{ projectId: string; runId: string; agentId: string }>;
+type WriterScope = Readonly<{ projectId: string; runId: string; agentId?: string }>;
 type Verifier = (
   input: HostedServiceRunEventAppendTokenInput,
 ) => Promise<HostedServiceRunEventAppendTokenVerification>;
@@ -32,7 +33,7 @@ type SourceFactory = (
 ) => Promise<RemoteToolSource | undefined>;
 type Runner = ReturnType<typeof createVerifiedPlatformToolDependencyRunner>;
 type Authority = {
-  scope: Scope;
+  scope: WriterScope;
   verify: Verifier;
   authToken: string;
   runner?: Runner;
@@ -52,18 +53,25 @@ const Freeze = Object.freeze;
 export function registerHostedPlatformDependencyRequest(
   owner: HostedPlatformDependencyOwner,
   verification: HostedServiceRunEventAppendTokenResult,
-  scope: Scope,
+  scope: WriterScope,
   verify: Verifier,
   authToken: string,
 ): void {
   if (!hasVerifiedHostedPlatformDependencyWriter(verification, scope)) return;
-  const dependencies = getVerifiedPlatformToolDependencies(verification, scope);
+  const dependencies = scope.agentId
+    ? getVerifiedPlatformToolDependencies(verification, { ...scope, agentId: scope.agentId })
+    : undefined;
   owners.set(owner, {
     scope: Freeze({ ...scope }),
     verify,
     authToken,
-    ...(dependencies !== undefined
-      ? { runner: createVerifiedPlatformToolDependencyRunner(verification, scope) }
+    ...(dependencies !== undefined && scope.agentId
+      ? {
+        runner: createVerifiedPlatformToolDependencyRunner(verification, {
+          ...scope,
+          agentId: scope.agentId,
+        }),
+      }
       : {}),
     active: true,
     children: [],
@@ -78,8 +86,12 @@ export async function configureHostedPlatformDependencySource(
   const authority = owners.get(owner);
   if (!authority?.active) return;
   authority.sourceFactory = factory;
-  if (authority.runner) {
-    const source = await factory(authority.scope, authority.authToken, owner);
+  if (authority.runner && authority.scope.agentId) {
+    const source = await factory(
+      { ...authority.scope, agentId: authority.scope.agentId },
+      authority.authToken,
+      owner,
+    );
     if (source) authority.runner.captureSource(source);
   }
 }
@@ -191,8 +203,8 @@ export function hostedPlatformDependencyRuntimeContext(
 ): Scope | undefined {
   const authority = runtimeOwners.get(input);
   if (!authority) return undefined;
-  if (!authority.active || authority.scope.projectId !== projectId) {
+  if (!authority.active || authority.scope.projectId !== projectId || !authority.scope.agentId) {
     throw new Error("Hosted platform dependency runtime binding mismatch");
   }
-  return authority.scope;
+  return Freeze({ ...authority.scope, agentId: authority.scope.agentId });
 }
