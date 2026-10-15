@@ -126,7 +126,10 @@ export interface VeryfrontApiStyleArtifacts {
  * `writeReleaseAssetManifest()` and `updateReleaseAssetManifestState()` build a release's
  * asset manifest; `beginReleaseAssetManifestBuild()`, `uploadReleaseAsset()`,
  * `putReleaseAssetManifest()` and `reportReleaseAssetManifestState()` are their deprecated
- * aliases.
+ * aliases. `listEnvironmentFiles()`, `listAllEnvironmentFiles()` and
+ * `getEnvironmentFile()` read the files an environment serves, addressed by environment
+ * name; `lookupProjectByDomain()` finds the project and environment behind a custom
+ * domain. See https://veryfront.com/docs/cloud/apis/environments.
  */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
@@ -396,10 +399,18 @@ export class VeryfrontApiClient {
   // Project Operations
   // =============================================================================
 
+  /**
+   * Lists the projects the credential can read (`listProjects`, `GET /projects`).
+   * Returns the first page only; the response's page cursor is not followed.
+   */
   listProjects() {
     return this.operations.listProjects();
   }
 
+  /**
+   * Reads one project by UUID or slug (`getProject`, `GET /projects/{project_reference}`).
+   * Defaults to the client's configured project slug.
+   */
   getProject(projectRef?: string, signal?: AbortSignal) {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
@@ -554,6 +565,11 @@ export class VeryfrontApiClient {
   // Environment-specific Operations
   // =============================================================================
 
+  /**
+   * List one page of the files an environment serves (its deployed release).
+   * Calls `GET /projects/{project_reference}/environments/{environment_name}/files`
+   * for the client's project; the environment is addressed by name.
+   */
   listEnvironmentFiles(environmentName = "production", options: ListFilesOptions = {}) {
     return this.operations.listEnvironmentFiles(
       this.requireProjectSlug(),
@@ -562,6 +578,7 @@ export class VeryfrontApiClient {
     );
   }
 
+  /** List every file an environment serves, following `page_info` cursors. */
   listAllEnvironmentFiles(
     environmentName = "production",
     options: Omit<ListFilesOptions, "cursor"> = {},
@@ -573,6 +590,10 @@ export class VeryfrontApiClient {
     );
   }
 
+  /**
+   * Read one file an environment serves, by path or file ID. Calls
+   * `GET /projects/{project_reference}/environments/{environment_name}/files/{file_path}`.
+   */
   getEnvironmentFile(environmentName: string, pathOrId: string) {
     return this.operations.getEnvironmentFile(this.requireProjectSlug(), environmentName, pathOrId);
   }
@@ -601,6 +622,11 @@ export class VeryfrontApiClient {
   // Domain Lookup
   // =============================================================================
 
+  /**
+   * Find the project and environment a custom domain serves. Passes the domain
+   * (without a port) as `project_reference` to `GET /projects/{project_reference}`
+   * and resolves `null` when the API answers 404.
+   */
   lookupProjectByDomain(domain: string, options: { signal?: AbortSignal } = {}) {
     return this.operations.lookupProjectByDomain(domain, options);
   }

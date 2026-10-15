@@ -1348,7 +1348,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           description: "Uses project-scoped tools with skills disabled.",
           instructions: "Use project-scoped instructions.",
           skills: [],
-          tools: ["search_knowledge", "get_file"],
+          tools: ["veryfront__search_knowledge", "veryfront__get_file"],
         },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1381,11 +1381,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         "Use project-scoped instructions.",
       );
       assertEquals(capturedSkills, []);
-      assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
-      assertEquals((capturedTools as Record<string, unknown>).get_file, true);
+      assertEquals((capturedTools as Record<string, unknown>).veryfront__search_knowledge, true);
+      assertEquals((capturedTools as Record<string, unknown>).veryfront__get_file, true);
       assertEquals(capturedAllowedRemoteTools, [
-        "get_file",
-        "search_knowledge",
         "veryfront__get_file",
         "veryfront__search_knowledge",
       ]);
@@ -1488,7 +1486,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             description: "Ends its own run.",
             instructions: "Fail the run.",
             skills: [],
-            tools: ["finalize"],
+            tools: ["veryfront__finalize"],
           },
         });
         const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1516,7 +1514,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         await source.listTools({ runId: "run_1" });
         for (const runId of ["run_1", "run_other"]) {
           await source.executeTool(
-            "finalize",
+            "veryfront__finalize",
             { runId, status: "failed" },
             createTerminalRunControl({ runId }).context,
           );
@@ -1524,7 +1522,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         const root = createTerminalRunControl({ runId: "run_1" }).context;
         const child = createTerminalRunControl({ runId: "run_child" }).context;
         const inherited = bindRuntimeRemoteToolSourcesToCredentialOwner([source], root)![0]!;
-        await inherited.executeTool("finalize", { runId: "run_1", status: "failed" }, child);
+        await inherited.executeTool(
+          "veryfront__finalize",
+          { runId: "run_1", status: "failed" },
+          child,
+        );
         assertEquals(finalizeCalls, [
           { runId: "run_1", authorization, terminal: expected },
           { runId: "run_other", authorization, terminal: null },
@@ -1614,7 +1616,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             description: "Ends its own run.",
             instructions: "Fail the run.",
             skills: [],
-            tools: ["update_file", "get_file"],
+            tools: ["veryfront__update_file", "veryfront__get_file"],
           },
         });
         const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -2642,7 +2644,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 toolPolicy: { allow: ["studio_todo_write"] },
@@ -2702,8 +2704,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200, await result.response.clone().text());
-      assertEquals(capturedRemoteToolNames, ["studio_todo_write"]);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedRemoteToolNames, ["veryfront__studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2786,7 +2788,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       );
 
       assertEquals(result.response?.status, 200);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2883,7 +2885,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(requestCount, 2);
-      assertEquals(capturedAllowedRemoteTools, ["studio_panel_control", "studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, [
+        "veryfront__studio_panel_control",
+        "veryfront__studio_todo_write",
+      ]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2975,7 +2980,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () =>
             createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 required: false,
@@ -3029,9 +3034,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 200, await result.response.clone().text());
         assertEquals(remoteSources, 0);
-        assertEquals(unavailableNames, ["studio_todo_write"]);
-        assertEquals(unavailablePrefixes, ["studio_"]);
-        assertEquals(availableToolNames?.includes("studio_todo_write"), false);
+        assertEquals(unavailableNames, ["studio_todo_write", "veryfront__studio_todo_write"]);
+        assertEquals(unavailablePrefixes, ["studio_", "veryfront__studio_"]);
+        assertEquals(availableToolNames?.includes("veryfront__studio_todo_write"), false);
       }
     } finally {
       if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -3531,7 +3536,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     ]
   ) {
     it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, canonical allow: ${canonicalAllow}, owned denial: ${ownedProjectDenial})`, async () => {
-      const selectedName = canonical ? "veryfront__list_uploads" : "list_uploads";
+      const selectedName = "veryfront__list_uploads";
       let capturedAllowedRemoteTools: string[] | undefined;
       let capturedRemoteToolNames: string[] = [];
       let capturedToolArguments: Record<string, unknown> | undefined;
@@ -3740,19 +3745,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(result.response.status, 200);
         assertEquals(
           capturedAllowedRemoteTools?.slice().sort(),
-          denied
-            ? []
-            : ownedProjectDenial
-            ? [selectedName]
-            : ["list_uploads", "veryfront__list_uploads"],
+          denied ? [] : ownedProjectDenial ? [selectedName] : ["veryfront__list_uploads"],
         );
         assertEquals(
           capturedRemoteToolNames.slice().sort(),
-          denied
-            ? []
-            : ownedProjectDenial
-            ? [selectedName]
-            : ["list_uploads", "veryfront__list_uploads"],
+          denied ? [] : ownedProjectDenial ? [selectedName] : ["veryfront__list_uploads"],
         );
         assertEquals(
           capturedToolArguments,
@@ -3785,7 +3782,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         capturedProjectContextToken = getCurrentRequestContext()?.token;
         return `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`;
       },
-      tools: { search_knowledge: true, list_projects: true },
+      tools: { veryfront__search_knowledge: true, veryfront__list_projects: true },
     });
 
     const handler = new AgentStreamHandler({
@@ -3995,14 +3992,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
       authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, [
-      "list_projects",
-      "search_knowledge",
       "veryfront__list_projects",
       "veryfront__search_knowledge",
     ]);
     assertEquals(capturedRemoteToolNames, [
-      "search_knowledge",
-      "list_projects",
       "veryfront__search_knowledge",
       "veryfront__list_projects",
     ]);

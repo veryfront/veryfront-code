@@ -275,8 +275,11 @@ export function resolveHostedRuntimeAllowedTools(input: {
 
   const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
   const deniedToolNames = createPrivateSet(input.configuredDeniedTools ?? []);
-  if (isKnowledgeEnabled(input.configuredKnowledge) && !deniedToolNames.has("search_knowledge")) {
-    configuredToolNames.add("search_knowledge");
+  if (
+    isKnowledgeEnabled(input.configuredKnowledge) &&
+    !deniedToolNames.has("veryfront__search_knowledge") && !deniedToolNames.has("search_knowledge")
+  ) {
+    configuredToolNames.add("veryfront__search_knowledge");
   }
   addConfiguredDelegateToolNames(configuredToolNames, input.configuredDelegates ?? []);
   if (input.requestedTools === undefined) {

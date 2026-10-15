@@ -1,7 +1,11 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
-import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  getLocalReactPath,
+  type LocalReactPeerSnapshot,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -19,24 +23,28 @@ function getVeryfrontModulePaths(): Record<string, string> {
 export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
-  reactVersion: string = DEFAULT_REACT_VERSION,
+  reactVersion?: string,
+  reactPeers?: LocalReactPeerSnapshot,
 ): Promise<string> {
+  if (forSSR) reactPeers ??= captureLocalReactPeers();
+  reactVersion ??= reactPeers?.versions.react ??
+    (forSSR ? resolveInstalledReactRange() : undefined) ?? DEFAULT_REACT_VERSION;
   const reactImports = getReactImportMap(reactVersion);
 
   if (!forSSR) {
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  const ssrReactImports = isDeno || isNode
-    ? reactImports
-    : { ...reactImports, ...getLocalReactPaths() };
-
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...ssrReactImports,
+    ...reactImports,
   };
 
-  return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);
+  return replaceSpecifiers(
+    code,
+    (specifier) =>
+      getLocalReactPath(specifier, reactVersion, reactPeers) ?? ssrImports[specifier] ?? null,
+  );
 }
 
 export function addDepsToEsmShUrls(

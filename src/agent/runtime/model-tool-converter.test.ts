@@ -478,13 +478,13 @@ describe("model-tool-converter", () => {
       required: ["query"],
     };
     const result = convertToolsToRuntimeTools(
-      [{ name: "tool_search", description: "Find a tool", parameters }] as never,
+      [{ name: "veryfront__tool_search", description: "Find a tool", parameters }] as never,
       {
         model: "veryfront-cloud/google/local-model",
         wireSurface: "openai",
       },
     );
-    assertEquals(getRuntimeToolSchema(result?.tool_search), parameters);
+    assertEquals(getRuntimeToolSchema(result?.veryfront__tool_search), parameters);
   });
 
   it("normalizes Moonshot-compatible runtime tool schemas", () => {

@@ -4,7 +4,10 @@ import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
-import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
+import {
+  platformMcpLegacyName,
+  withPlatformMcpToolNameAliases,
+} from "../platform-mcp-tool-source.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import type {
   AgentServiceSandboxToolsOptions,
@@ -125,6 +128,8 @@ export type DefaultHostedInvokeAgentConfig = {
 /** Resolved project-agent settings applied to a fixed hosted child run. */
 export type DefaultHostedChildAgentExecutionConfig = {
   system: AgentSystem;
+  /** Canonical startup skill authored by the target agent, never inherited. */
+  bootstrapSkill?: string;
   model?: string;
   temperature?: number;
   parallelToolCalls?: boolean;
@@ -448,6 +453,8 @@ function withoutProviderOnlyForkTools(
     forkTools: Object.fromEntries(
       Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
         !providerOnly.has(toolName) &&
+        !(hasTrustedHostToolProvenance(tool) &&
+          providerOnly.has(platformMcpLegacyName(toolName)) && !selected.has(toolName)) &&
         (tool.shortName === undefined || !providerOnly.has(tool.shortName) ||
           selected.has(toolName))
       ),
@@ -467,7 +474,10 @@ function getUnavailableOptionalStudioToolNames(
   for (const server of config.mcpServers ?? []) {
     if (server.kind !== "veryfront-studio" || server.required !== false) continue;
     unavailableNames.add("studio_*");
-    for (const toolName of server.toolPolicy?.allow ?? []) unavailableNames.add(toolName);
+    unavailableNames.add("veryfront__studio_*");
+    for (const toolName of withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? [])) {
+      unavailableNames.add(toolName);
+    }
   }
 
   return unavailableNames.size === 0 ? undefined : unavailableNames;
@@ -478,7 +488,9 @@ function isUnavailableOptionalStudioTool(
   unavailableNames: ReadonlySet<string> | undefined,
 ): boolean {
   return unavailableNames?.has(toolName) === true ||
-    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_"));
+    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_")) ||
+    (unavailableNames?.has("veryfront__studio_*") === true &&
+      toolName.startsWith("veryfront__studio_"));
 }
 
 function withoutUnavailableOptionalStudioRequestedTools(input: {
@@ -564,6 +576,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     hostedModel: input.hostedModel,
     effectivePrompt: input.effectivePrompt,
     requestedTools,
+    allowedTools: input.childConfig?.toolNames,
     ...(input.childConfig?.deniedToolNames?.length
       ? { excludedTools: new Set(input.childConfig.deniedToolNames) }
       : {}),
@@ -675,6 +688,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         : {}),
       projectId: scopedOptions.context.projectId || null,
       forkInput,
+      ...(runtimeOptions.childConfig?.bootstrapSkill === undefined
+        ? {}
+        : { bootstrapSkill: runtimeOptions.childConfig.bootstrapSkill }),
       ...(runtimeOptions.childConfig?.parallelToolCalls === undefined
         ? {}
         : { parallelToolCalls: runtimeOptions.childConfig.parallelToolCalls }),
@@ -790,9 +806,13 @@ function applyChildAgentExecutionConfig(
   const allowedToolNames = childConfig.toolNames === undefined
     ? undefined
     : new Set(childConfig.toolNames);
+  // Alias candidates survive until the assembled catalog can establish their
+  // provenance. Final selection intersects the resolved child and parent lists.
   const requestedTools = input.tools?.filter((toolName) =>
     deniedToolNames?.includes(toolName) !== true &&
-    (allowedToolNames === undefined || allowedToolNames.has(toolName))
+    (allowedToolNames === undefined || allowedToolNames.has(toolName) ||
+      allowedToolNames.has(platformMcpLegacyName(toolName)) ||
+      (!toolName.includes("__") && allowedToolNames.has(`veryfront__${toolName}`)))
   );
 
   return {

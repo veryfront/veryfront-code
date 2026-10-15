@@ -59,6 +59,7 @@ export function handlePageModule(
           url: applicationUrl,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
           dependencyPinningSource,
         });
 

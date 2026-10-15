@@ -26,7 +26,7 @@ it("tool-search inventory keeps validated filters without inherited option hooks
     return {
       toolCalls: [{
         id: "inventory",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { inventory: "all" },
       }],
     };

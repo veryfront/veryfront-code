@@ -110,6 +110,9 @@ export async function transformModuleToServable(
         transformOpts.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.ssrRewriteOptions.dependencyPinningDependencies ??
         transformOpts.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions:
+        options.ssrRewriteOptions.dependencyPinningConfiguredVersions ??
+          transformOpts.dependencyPinningConfiguredVersions,
       dependencyPinningSource: options.ssrRewriteOptions.dependencyPinningSource ??
         transformOpts.dependencyPinningSource,
       onDependencyResolutionObserved: options.ssrRewriteOptions.onDependencyResolutionObserved ??

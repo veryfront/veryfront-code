@@ -219,15 +219,15 @@ export interface AgentConfig<TOutput = any> {
    * Project tools available to this agent.
    *
    * Omit to expose no project tools. `true` authorizes the current scoped
-   * catalog behind `tool_search`; an explicit map exposes only those selected
+   * catalog behind `veryfront__tool_search`; an explicit map exposes only those selected
    * schemas immediately.
    */
   tools?: true | Record<string, Tool | boolean>;
-  /** Load selected tool schemas immediately or discover them through tool_search. */
+  /** Load selected tool schemas immediately or discover them through veryfront__tool_search. */
   toolLoading?: "eager" | "deferred";
   /**
    * Expose up to 16 exact authorized tool schemas immediately in deferred mode.
-   * Other tools stay discoverable through `tool_search`. In eager mode these
+   * Other tools stay discoverable through `veryfront__tool_search`. In eager mode these
    * tools are kept when a provider's schema limit caps the catalog. This does
    * not grant tool access or replace the trusted skill loader. Applies to root
    * runs; hosted `invoke_agent` child runs do not apply it. Omit to keep the
@@ -236,7 +236,7 @@ export interface AgentConfig<TOutput = any> {
   bootstrapTools?: string[];
   /**
    * Return references for oversized model-facing tool results, with bounded
-   * get_tool_result reads. Raw results remain available to events and callbacks.
+   * veryfront__get_tool_result reads. Raw results remain available to events and callbacks.
    * Omit or false to preserve inline result behavior.
    */
   toolResultContext?: boolean | ToolResultContextLimits;
@@ -324,21 +324,22 @@ export interface AgentConfig<TOutput = any> {
   onToolResult?: ToolExecutionResultHandler;
   /**
    * Select visible skill IDs or this agent's own skill short names advertised
-   * in this agent's system prompt and authorized for `load_skill`.
+   * in this agent's system prompt and authorized for `veryfront__load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
    * - string or string[]: select visible IDs, own short names, or glob patterns
    * - boolean map: positive grants minus exclusions; exclusions win
    * - empty selections, exclusion-only maps, or false: advertise no skills and do not authorize project or
-   *   configured skills for `load_skill`
+   *   configured skills for `veryfront__load_skill`
    *
    * Discovery happens at startup via discoverAll().
    */
   skills?: SkillSelector;
   /**
    * Load one authorized skill root through the framework skill loader before
-   * the first model call. Skill references remain deferred. Applies to root
-   * runs; hosted `invoke_agent` child runs do not apply it. Omit to start
-   * without a preloaded skill.
+   * the first model call. Use an exact skill ID or the agent's own short name.
+   * Skill references remain deferred. Hosted children
+   * load only their own configured skill, never the parent's startup skill.
+   * Omit to start without a preloaded skill.
    */
   bootstrapSkill?: string;
   /**

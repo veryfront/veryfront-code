@@ -213,8 +213,8 @@ describe("agent runtime tool result context message adapter", () => {
       "long canonical skill instructions",
       "veryfront__load_skill",
     );
-    const toolSearch = toolMessage("long schema catalog", "tool_search");
-    const getToolResult = toolMessage("long retrieved section", "get_tool_result");
+    const toolSearch = toolMessage("long schema catalog", "veryfront__tool_search");
+    const getToolResult = toolMessage("long retrieved section", "veryfront__get_tool_result");
 
     const transformed = createModelToolResultContextMessages(
       [loadSkill, canonicalLoadSkill, toolSearch, getToolResult],

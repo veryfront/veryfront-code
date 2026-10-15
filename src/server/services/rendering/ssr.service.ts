@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   getRendererForProject,
@@ -124,6 +125,7 @@ export interface SSRRenderOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace paired with the immutable snapshot. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Verified application identity admitted by the host-owned auth boundary. */
@@ -317,6 +319,7 @@ export class SSRService implements SSRServiceLike {
                 renderSessionId,
                 dependencyPinningCacheKey: options.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options.dependencyPinningDependencies,
+                dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
                 dependencyPinningSource: options.dependencyPinningSource,
                 applicationIdentity: options.applicationIdentity ?? null,
               })),

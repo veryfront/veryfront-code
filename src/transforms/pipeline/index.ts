@@ -1,3 +1,5 @@
+import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Transforms Pipeline
  *
@@ -219,6 +221,13 @@ export function runPipeline(
     throw new TypeError("Logical SSR references require an SSR transform");
   }
 
+  options = {
+    ...options,
+    reactVersion: options.reactVersion ??
+      (ssrImports === "references" ? DEFAULT_REACT_VERSION : undefined),
+    reactPeers: options.reactPeers ??
+      (options.ssr && ssrImports === "files" ? captureLocalReactPeers() : undefined),
+  };
   return withSpan(
     "transform.pipeline",
     async () => {
@@ -231,6 +240,7 @@ export function runPipeline(
         options.dependencyPinningSource ?? projectDir,
         options.dependencyPinningCacheKey,
         options.dependencyPinningDependencies,
+        options.dependencyPinningConfiguredVersions,
       );
       const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
       // Keep the cache key and dependency map atomic for every later stage and
@@ -240,6 +250,7 @@ export function runPipeline(
         ...options,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       };
 
       const ctx = await createTransformContext(source, filePath, projectDir, effectiveOptions);
@@ -261,6 +272,7 @@ export function runPipeline(
           computePipelineConfigIdentity({
             ssrImports,
             reactVersion: ctx.reactVersion,
+            reactPeers: ctx.reactPeers,
             jsxImportSource: ctx.jsxImportSource,
             moduleServerUrl: ctx.moduleServerUrl,
             moduleServerOrigin: ctx.moduleServerOrigin,

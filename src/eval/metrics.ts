@@ -69,7 +69,8 @@ type JudgeRubricInput = {
   }) => Promise<{ score: number; pass?: boolean; explanation?: string }>;
 };
 
-const DEFAULT_KNOWLEDGE_TOOL = "search_knowledge";
+const DEFAULT_KNOWLEDGE_TOOL = "veryfront__search_knowledge";
+const LEGACY_KNOWLEDGE_TOOL = "search_knowledge";
 const DEFAULT_EXPECTED_KNOWLEDGE_PATH = "metadata.expectedKnowledge";
 const DEFAULT_GROUNDEDNESS_RUBRIC =
   "Rate whether the answer is grounded in the retrieved evidence and avoids unsupported claims.";
@@ -317,6 +318,13 @@ function getKnowledgeEntries(record: EvalRecord, tool = DEFAULT_KNOWLEDGE_TOOL):
     .filter((entry): entry is KnowledgeEntry => entry !== null);
 }
 
+function resolveKnowledgeTool(record: EvalRecord, configuredTool?: string): string {
+  if (configuredTool !== undefined) return configuredTool;
+  return findEvalToolCalls(record, DEFAULT_KNOWLEDGE_TOOL).length > 0
+    ? DEFAULT_KNOWLEDGE_TOOL
+    : LEGACY_KNOWLEDGE_TOOL;
+}
+
 function extractCitationItems(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   if (!isRecord(value)) return [];
@@ -424,6 +432,7 @@ function createKnowledgeMetricConfig(
 function resolveCitationReferenceSet(
   record: EvalRecord,
   options: EvalKnowledgeCitationMetricOptions,
+  tool: string,
 ): CitationReferenceSet {
   const expectedResult = resolveExpectedKnowledgeSources(record, options);
   if (expectedResult.expected.length > 0) {
@@ -434,7 +443,6 @@ function resolveCitationReferenceSet(
     };
   }
 
-  const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
   const allEntries = getKnowledgeEntries(record, tool);
   const retrieved = options.k === undefined ? allEntries : allEntries.slice(0, options.k);
   return { retrieved };
@@ -847,8 +855,8 @@ export const metrics = {
         throw createEvalValidationError("answer.groundedness options must be an object");
       }
       const groundednessOptions = options as EvalAnswerGroundednessMetricOptions;
-      const tool = groundednessOptions.tool === undefined
-        ? DEFAULT_KNOWLEDGE_TOOL
+      const configuredTool = groundednessOptions.tool === undefined
+        ? undefined
         : normalizeEvalString(groundednessOptions.tool, "answer.groundedness tool");
       const rubric = groundednessOptions.rubric === undefined
         ? DEFAULT_GROUNDEDNESS_RUBRIC
@@ -860,6 +868,7 @@ export const metrics = {
         throw createEvalValidationError("answer.groundedness judge must be a function");
       }
       return createMetric("answer.groundedness", "answer", async (record, context) => {
+        const tool = resolveKnowledgeTool(record, configuredTool);
         const entries = getKnowledgeEntries(record, tool);
         const evidence = uniqueStrings(entries.flatMap((entry) => entry.evidenceCandidates));
         const sources = uniqueStrings(retrievedSources(entries));
@@ -903,7 +912,7 @@ export const metrics = {
           evidence: { tool, evidenceCount: evidence.length, sources },
         };
       }, {
-        ...(groundednessOptions.tool ? { tool } : {}),
+        ...(configuredTool ? { tool: configuredTool } : {}),
         rubric,
       });
     },
@@ -979,7 +988,7 @@ export const metrics = {
     recallAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
       const k = normalizeKnowledgeK(options?.k, "knowledge.recallAtK k");
       return createKnowledgeMetric("knowledge.recallAtK", (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const tool = resolveKnowledgeTool(record, options.tool);
         const entries = getKnowledgeEntries(record, tool).slice(0, k);
         const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
         if (expected.length === 0) {
@@ -1016,7 +1025,7 @@ export const metrics = {
     precisionAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
       const k = normalizeKnowledgeK(options?.k, "knowledge.precisionAtK k");
       return createKnowledgeMetric("knowledge.precisionAtK", (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const tool = resolveKnowledgeTool(record, options.tool);
         const entries = getKnowledgeEntries(record, tool).slice(0, k);
         const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
         if (expected.length === 0) {
@@ -1058,7 +1067,7 @@ export const metrics = {
       return createKnowledgeMetric(
         "knowledge.mrr",
         (record) => {
-          const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+          const tool = resolveKnowledgeTool(record, options.tool);
           const allEntries = getKnowledgeEntries(record, tool);
           const k = configuredK ?? allEntries.length;
           const entries = allEntries.slice(0, k);
@@ -1107,9 +1116,9 @@ export const metrics = {
       const k = normalizeOptionalKnowledgeK(options.k, "knowledge.citationPrecision k");
       const normalizedOptions = { ...options, ...(k === undefined ? {} : { k }) };
       return createKnowledgeMetric("knowledge.citationPrecision", (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const tool = resolveKnowledgeTool(record, options.tool);
         const citations = getCitationEntries(record, normalizedOptions);
-        const references = resolveCitationReferenceSet(record, normalizedOptions);
+        const references = resolveCitationReferenceSet(record, normalizedOptions, tool);
         const labels = referenceLabels(references);
         if (labels.length === 0) {
           return missingCitationReferencesResult("knowledge.citationPrecision", tool, citations);
@@ -1151,9 +1160,9 @@ export const metrics = {
       const k = normalizeOptionalKnowledgeK(options.k, "knowledge.citationRecall k");
       const normalizedOptions = { ...options, ...(k === undefined ? {} : { k }) };
       return createKnowledgeMetric("knowledge.citationRecall", (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const tool = resolveKnowledgeTool(record, options.tool);
         const citations = getCitationEntries(record, normalizedOptions);
-        const references = resolveCitationReferenceSet(record, normalizedOptions);
+        const references = resolveCitationReferenceSet(record, normalizedOptions, tool);
         const labels = referenceLabels(references);
         if (labels.length === 0) {
           return missingCitationReferencesResult("knowledge.citationRecall", tool, citations);

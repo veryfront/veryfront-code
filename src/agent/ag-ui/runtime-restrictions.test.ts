@@ -158,7 +158,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     // Replacing `tools: true` with an explicit map must not flip the run from
     // deferred to eager loading, or a restricted run would send every
     // allowlisted schema on the first provider call instead of exposing
-    // `tool_search`.
+    // `veryfront__tool_search`.
     const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
       allowedTools: ["web_search", "read_file"],
     });
@@ -494,9 +494,9 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.skills, true);
     assertEquals(restricted.tools, {
       load_skill: true,
+      veryfront__load_skill: true,
       load_skill_reference: false,
       execute_skill_script: false,
-      veryfront__load_skill: false,
       veryfront__load_skill_reference: false,
       veryfront__execute_skill_script: false,
     });
@@ -516,16 +516,15 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
     assertEquals(Object.keys(tools).sort(), [
       "execute_skill_script",
-      "load_skill",
       "load_skill_reference",
       "veryfront__execute_skill_script",
       "veryfront__load_skill",
       "veryfront__load_skill_reference",
     ]);
-    assertEquals(typeof tools.load_skill, "object");
+    assertEquals(tools.load_skill, undefined);
     assertEquals(tools.load_skill_reference, false);
     assertEquals(tools.execute_skill_script, false);
-    assertEquals(tools.veryfront__load_skill, false);
+    assertEquals(typeof tools.veryfront__load_skill, "object");
     assertEquals(tools.veryfront__load_skill_reference, false);
     assertEquals(tools.veryfront__execute_skill_script, false);
   });
@@ -541,8 +540,8 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       load_skill: true,
       load_skill_reference: true,
       veryfront__execute_skill_script: false,
-      veryfront__load_skill: false,
-      veryfront__load_skill_reference: false,
+      veryfront__load_skill: true,
+      veryfront__load_skill_reference: true,
     });
   });
 
@@ -555,7 +554,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
 
     const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
     assertEquals(restrictedAgent.config.skills, true);
-    assertEquals(tools.load_skill, false);
+    assertEquals(tools.load_skill, undefined);
     assertEquals(tools.load_skill_reference, false);
     assertEquals(tools.execute_skill_script, false);
     assertEquals(typeof tools.veryfront__load_skill, "object");
@@ -683,13 +682,13 @@ describe("agent/ag-ui/runtime-restrictions", () => {
   it("retains scoped framework knowledge only when the tool ceiling allows it", () => {
     const allowed = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, knowledge: "knowledge/public/**" }),
-      { allowedTools: ["search_knowledge"] },
+      { allowedTools: ["veryfront__search_knowledge"] },
     );
     const allowedTools = allowed.tools;
     if (allowedTools === true || allowedTools === undefined) {
       throw new Error("Expected explicit restricted tool map");
     }
-    assertEquals(typeof allowedTools.search_knowledge, "object");
+    assertEquals(typeof allowedTools.veryfront__search_knowledge, "object");
 
     const denied = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, knowledge: "knowledge/public/**" }),

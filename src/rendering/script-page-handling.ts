@@ -1,3 +1,7 @@
+import { pathToFileURL } from "node:url";
+import { isBuiltin } from "node:module";
+import type { LocalReactPeerSnapshot } from "#veryfront/platform/compat/react-paths.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Script Page Handling (TS/JS files)
  *
@@ -44,6 +48,8 @@ type ScriptModuleOutput =
 
 interface ScriptPageOptions {
   mode: string;
+  /** Captured peers for browser imports; local script execution uses the native loader. */
+  reactPeers?: LocalReactPeerSnapshot;
   config: VeryfrontConfig;
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -56,6 +62,7 @@ interface ScriptPageOptions {
   /** Immutable dependency snapshot that owns all browser work for this document. */
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 const ESBUILD_EXTERNALS = [
@@ -181,7 +188,12 @@ export async function handleScriptPage(
   try {
     logger.debug(`Loading TS/JS page module: ${pageInfo.entity.path}`);
 
-    const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
+    const mod = await loadScriptModule(
+      pageInfo.entity.path,
+      options.projectDir,
+      options.adapter,
+      options.mode,
+    );
     const ctx = buildPageContext(pageInfo, slug, options.params, options.url);
 
     let output = await executeModuleRender(mod, ctx);
@@ -254,13 +266,17 @@ async function generateFullHtml(
 
   if (isFullHTMLDocument(htmlBody)) {
     const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
-    const importMapJson = hasEnabledDependencySnapshot
+    const importMapJson = hasEnabledDependencySnapshot || options.reactPeers !== undefined ||
+        getRuntimeModuleLoader(options.adapter) !== undefined
       ? await buildImportMapJson({
+        adapter: options.adapter,
+        reactPeers: options.reactPeers,
         projectDir: options.projectDir,
         config: options.config,
         moduleServerOrigin: options.url?.origin,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       })
       : undefined;
     return injectHTMLContent(htmlBody, "", metadata, {
@@ -280,6 +296,8 @@ async function generateFullHtml(
     (options.mode === "production" ? getProdHydrationModulePath() : undefined);
 
   const htmlOptions: HTMLGenerationOptions = {
+    adapter: options.adapter,
+    reactPeers: options.reactPeers,
     mode: options.mode as "development" | "production",
     config: options.config,
     moduleServerOrigin: options.url?.origin,
@@ -293,6 +311,7 @@ async function generateFullHtml(
         projectDir: options.projectDir,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       }
       : {}),
   };
@@ -331,9 +350,10 @@ function normalizeModulePath(modulePath: string, projectDir: string): string {
   return normalized;
 }
 
-function createFileUrl(path: string): string {
-  const cacheBuster = `?v=${Date.now()}`;
-  return path.startsWith("file://") ? `${path}${cacheBuster}` : `file://${path}${cacheBuster}`;
+function createFileUrl(path: string, mode: string): string {
+  const url = pathToFileURL(path);
+  if (mode !== "production") url.searchParams.set("v", String(Date.now()));
+  return url.href;
 }
 
 async function readFileWithFallback(
@@ -377,6 +397,18 @@ async function transpileWithEsbuild(
     jsxImportSource: "react",
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
     external: ESBUILD_EXTERNALS,
+    plugins: [{
+      name: "node-builtins",
+      setup(build) {
+        build.onResolve(
+          { filter: /.*/ },
+          ({ path }) =>
+            isBuiltin(path)
+              ? { path: path.startsWith("node:") ? path : `node:${path}`, external: true }
+              : undefined,
+        );
+      },
+    }],
     stdin: {
       contents: source,
       loader,
@@ -408,7 +440,7 @@ async function importFromTempFile(
   await fs.writeTextFile(tempFile, code);
 
   try {
-    return (await import(createFileUrl(tempFile))) as ScriptPageModule;
+    return (await import(createFileUrl(tempFile, "production"))) as ScriptPageModule;
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
@@ -418,6 +450,7 @@ async function loadScriptModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  mode: string,
 ): Promise<ScriptPageModule> {
   const prepared = getRuntimeModuleLoader(adapter);
   if (prepared) {
@@ -430,7 +463,7 @@ async function loadScriptModule(
 
   if (await fs.exists(normalizedPath)) {
     logger.debug(`File exists locally, using direct import: ${normalizedPath}`);
-    return (await import(createFileUrl(normalizedPath))) as ScriptPageModule;
+    return (await import(createFileUrl(normalizedPath, mode))) as ScriptPageModule;
   }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);

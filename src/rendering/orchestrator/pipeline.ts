@@ -1,3 +1,11 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Render Pipeline
  *
@@ -217,7 +225,6 @@ export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
   private moduleLoaderConfig: ModuleLoaderConfig;
-  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
@@ -247,24 +254,30 @@ export class RenderPipeline {
   private getReactVersion(
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
+    reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions,
+        reactPeers,
       });
     }
 
-    this.reactVersionPromise ??= resolveProjectReactVersion({
+    return resolveProjectReactVersion({
+      adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
+      reactPeers,
     });
-    return this.reactVersionPromise;
   }
 
   private planClientPageIsland(
@@ -306,7 +319,9 @@ export class RenderPipeline {
       | "url"
       | "dependencyPinningCacheKey"
       | "dependencyPinningDependencies"
+      | "dependencyPinningConfiguredVersions"
       | "dependencyPinningSource"
+      | "reactPeers"
     >,
   ): Promise<ModuleLoaderConfig> {
     const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -315,13 +330,17 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     const reactVersion = await this.getReactVersion(
       dependencySnapshot.cacheKey,
       dependencySnapshot.dependencies,
+      dependencySnapshot.configuredVersions,
+      options?.reactPeers,
     );
     return {
       ...this.moduleLoaderConfig,
+      reactPeers: options?.reactPeers,
       projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
       contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
       reactVersion,
@@ -331,6 +350,7 @@ export class RenderPipeline {
       serverExternalPackages: this.config.config?.build?.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
   }
@@ -386,6 +406,7 @@ export class RenderPipeline {
       | "url"
       | "dependencyPinningCacheKey"
       | "dependencyPinningDependencies"
+      | "dependencyPinningConfiguredVersions"
       | "dependencyPinningSource"
     >,
     timeoutControl?: ProgressTimeoutControl,
@@ -741,6 +762,16 @@ export class RenderPipeline {
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    const reactPeers = (!isNode && !isBun) || getRuntimeModuleLoader(this.config.adapter)
+      ? undefined
+      : options?.reactPeers ?? captureLocalReactPeers();
+    options = {
+      ...options,
+      reactPeers,
+      reactRuntimeCacheScope: reactPeers
+        ? await getSSRReactRuntimeCacheScope(reactPeers)
+        : undefined,
+    };
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
     const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -749,12 +780,14 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
     options = {
       ...options,
       dependencyPinningCacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
@@ -841,6 +874,8 @@ export class RenderPipeline {
                   options?.url?.origin,
                   options?.abortSignal,
                   options?.environment,
+                  options?.dependencyPinningConfiguredVersions,
+                  options?.reactPeers,
                 )
                 : Promise.resolve();
 
@@ -1013,6 +1048,8 @@ export class RenderPipeline {
                         options?.dependencyPinningSource,
                         options?.abortSignal,
                         options?.environment,
+                        options?.dependencyPinningConfiguredVersions,
+                        options?.reactPeers,
                       ),
                     {
                       "render.slug": slug,
@@ -1153,11 +1190,13 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     options = {
       ...options,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
 
@@ -1508,6 +1547,7 @@ export class RenderPipeline {
     const composition: RenderCacheKeyComposition = {
       ...(this.config.renderCacheKeyComposition ?? {}),
       colorScheme: options?.colorScheme,
+      reactRuntimeScope: options?.reactRuntimeCacheScope,
     };
     const environment = options?.environment === "preview" ? "preview" : "production";
     if (options?.cacheKey) {

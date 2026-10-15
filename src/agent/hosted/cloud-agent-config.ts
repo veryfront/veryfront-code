@@ -1,3 +1,4 @@
+import { initializeServiceRuntimeIdentity } from "../service/runtime-identity.ts";
 /** Agent-config resolution, context creation, and project-steering accessor for the cloud agent service. */
 import { AGENT_NOT_FOUND, CONFIG_INVALID, INITIALIZATION_ERROR } from "#veryfront/errors";
 import { createNodeAgentServiceRuntimeInfrastructure } from "../service/node-runtime-infrastructure.ts";
@@ -86,10 +87,17 @@ export function resolveRuntimeObservationCaptureBootstrap(input: {
 export function createNodeVeryfrontCloudAgentServiceContext(
   options: ResolvedNodeVeryfrontCloudAgentServiceOptions,
 ) {
-  const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
+  const defaultProcessTarget = resolveDefaultProcessTarget();
+  const processTarget = options.processTarget ?? defaultProcessTarget;
+  const environment = resolveEnvironment({ env: options.env, processTarget });
+  // The default target is the same process object, whose env may include project env files.
+  // Use the operator-only reader for it; explicit env and custom targets are caller-trusted.
+  initializeServiceRuntimeIdentity(
+    options.env ?? (processTarget !== defaultProcessTarget ? processTarget?.env : undefined),
+  );
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
     serviceName: options.serviceName,
-    env: resolveEnvironment({ env: options.env, processTarget }),
+    env: environment,
     processTarget,
   });
   function trace<TResult>(

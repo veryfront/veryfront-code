@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Final module-loader persistence phase.
  *
@@ -180,6 +181,7 @@ export interface PersistTransformedModuleInput {
   serverExternalPackages?: readonly string[];
   /** Compile mode of `transformedCode`, kept in the artifact cache identity. */
   dev?: boolean;
+  runtimeScope?: string;
   /** Tenant-authored imports left unresolved in this module subtree. */
   unresolvedSpecifiers?: readonly string[];
   /** Exact graph-content-addressed path for a cycle-dependent artifact. */
@@ -616,6 +618,7 @@ function isIdentifierPart(char: string | undefined): boolean {
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
+  input = { ...input, runtimeScope: input.runtimeScope ?? await getSSRReactRuntimeCacheScope() };
   const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort(compareStrings);
   const serializedUnresolvedSpecifiers = JSON.stringify(unresolvedSpecifiers);
   // Evidence changes the artifact identity only when evidence exists. This
@@ -705,6 +708,7 @@ export async function persistTransformedModule(
             input.moduleServerOrigin,
             input.serverExternalPackages,
             input.dev,
+            input.runtimeScope,
           ),
         );
         const cache = await getModulePathCache(input.tmpDir);

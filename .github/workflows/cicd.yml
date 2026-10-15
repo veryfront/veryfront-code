@@ -447,6 +447,11 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
             scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
+      - name: Install runtime resolver fixture
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Archive npm runtime workspace
         run: tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz
       - name: Upload tested npm compatibility artifact
@@ -687,6 +692,10 @@ jobs:
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts

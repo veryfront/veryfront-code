@@ -1,3 +1,5 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { getMdxModuleCacheVariant } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -15,7 +17,6 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   buildMdxEsmPathCacheKey,
-  MDX_MODULE_DEV_COMPILE_VARIANT,
   UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
@@ -102,7 +103,17 @@ describe("module-loader/module-persistence", () => {
       );
 
       const pathCache = await getModulePathCache(tmpDir);
-      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const mdxCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/app/page.js",
+        "19.1.1",
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      );
       assertEquals(pathCache.get(mdxCacheKey), result);
     } finally {
       await remove(projectDir, { recursive: true }).catch(() => undefined);
@@ -186,7 +197,17 @@ describe("module-loader/module-persistence", () => {
       });
 
       const pathCache = await getModulePathCache(tmpDir);
-      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const mdxCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/app/page.js",
+        "19.1.1",
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      );
       assertEquals(moduleCache.has("deferred"), false);
       assertEquals(pathCache.has(mdxCacheKey), false);
 
@@ -393,9 +414,25 @@ describe("module-loader/module-persistence", () => {
       const developmentKey = buildMdxEsmPathCacheKey(
         "_vf_modules/app/page.js",
         "19.1.1",
-        MDX_MODULE_DEV_COMPILE_VARIANT,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          true,
+          await getSSRReactRuntimeCacheScope(),
+        ),
       );
-      const productionKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const productionKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/app/page.js",
+        "19.1.1",
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      );
 
       // A production reader resolves the production key, so the two artifacts
       // must sit under separate entries rather than overwriting each other.
@@ -1039,7 +1076,17 @@ describe("module-loader/module-persistence", () => {
       assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
 
       const pathCache = await getModulePathCache(tmpDir);
-      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/lib/evidence.js", "19.1.1");
+      const mdxCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/lib/evidence.js",
+        "19.1.1",
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      );
       assertEquals(pathCache.has(mdxCacheKey), false);
     } finally {
       await remove(projectDir, { recursive: true }).catch(() => undefined);

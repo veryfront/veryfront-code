@@ -5,6 +5,7 @@ import {
   filterVeryfrontApiToolDefinitionsByAccessProfile,
   filterVeryfrontApiToolDefinitionsWithAccessProfile,
   parseVeryfrontApiToolAccessProfile,
+  resolveVeryfrontApiToolAccessProfileToolName,
 } from "./veryfront-api-tool-access.ts";
 
 function remoteTool(name: string): ToolDefinition {
@@ -143,7 +144,10 @@ Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile hides mapped tools w
   );
 });
 
-function collaborationProfile(createInviteVisibility: "visible" | "hidden") {
+function collaborationProfile(
+  createInviteVisibility: "visible" | "hidden",
+  deleteMemberVisibility: "visible" | "hidden" = "visible",
+) {
   return {
     version: 1,
     freshness: {
@@ -161,6 +165,13 @@ function collaborationProfile(createInviteVisibility: "visible" | "hidden") {
             decision: {
               visibility: createInviteVisibility,
               reason_code: createInviteVisibility === "visible" ? "allowed" : "role_restriction",
+            },
+          },
+          {
+            action: "delete_member",
+            decision: {
+              visibility: deleteMemberVisibility,
+              reason_code: deleteMemberVisibility === "visible" ? "allowed" : "role_restriction",
             },
           },
         ],
@@ -199,6 +210,47 @@ describe("filterVeryfrontApiToolDefinitionsByAccessProfile", () => {
       ],
     );
   });
+
+  it("gates delete_project_member and its delete_member alias by the delete_member action", () => {
+    const toolDefinitions = [
+      remoteTool("delete_member"),
+      remoteTool("delete_project_member"),
+      remoteTool("veryfront__delete_project_member"),
+      remoteTool("update_file"),
+    ];
+
+    assertEquals(
+      filterVeryfrontApiToolDefinitionsByAccessProfile({
+        toolDefinitions,
+        profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("visible", "hidden")),
+      }).map((tool) => tool.name),
+      ["update_file"],
+      "a hidden delete_member action must hide the canonical member removal tool as well as the alias",
+    );
+    assertEquals(
+      filterVeryfrontApiToolDefinitionsByAccessProfile({
+        toolDefinitions,
+        profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("visible", "visible")),
+      }).map((tool) => tool.name),
+      [
+        "delete_member",
+        "delete_project_member",
+        "veryfront__delete_project_member",
+        "update_file",
+      ],
+    );
+  });
+
+  it("hides delete_project_member when the profile cannot be resolved in closed mode", () => {
+    assertEquals(
+      filterVeryfrontApiToolDefinitionsByAccessProfile({
+        toolDefinitions: [remoteTool("delete_project_member"), remoteTool("update_file")],
+        profile: null,
+        mode: "closed",
+      }).map((tool) => tool.name),
+      ["update_file"],
+    );
+  });
 });
 
 Deno.test("filterVeryfrontApiToolDefinitionsWithAccessProfile fails closed for mapped tools when the profile is stale", async () => {
@@ -226,5 +278,30 @@ Deno.test("filterVeryfrontApiToolDefinitionsWithAccessProfile fails closed for m
       ],
     })).map((tool) => tool.name),
     ["update_file"],
+  );
+});
+
+Deno.test("resolveVeryfrontApiToolAccessProfileToolName prefers the operation's published spelling", () => {
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([
+      remoteTool("veryfront__update_file"),
+      remoteTool("get_tool_access_profile"),
+    ]),
+    "get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([
+      remoteTool("get_tool_access_profile"),
+      remoteTool("veryfront__get_tool_access_profile"),
+    ]),
+    "veryfront__get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([remoteTool("veryfront__update_file")]),
+    "veryfront__get_tool_access_profile",
+  );
+  assertEquals(
+    resolveVeryfrontApiToolAccessProfileToolName([remoteTool("update_file")]),
+    "get_tool_access_profile",
   );
 });

@@ -277,6 +277,36 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps service attribution intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain service attribution intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+        ),
+        `${suite} must retain standalone identity startup coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+        ),
+        `${suite} must retain processTarget identity startup coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
+        ),
+        `${suite} must retain env-file identity startup coverage`,
+      );
+    }
+  });
+
   it("keeps hosted executor intrinsics in Node and Bun runtime suites", async () => {
     const fixture =
       "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
@@ -961,6 +991,9 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
   const patterns = runtime === "node"
     ? [
       "src/**/*.test.ts",
+      "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
+      "tests/integration/transforms/ssr-local-react.test.ts",
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
@@ -979,6 +1012,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
@@ -993,6 +1030,9 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
     ]
     : [
       "src/",
+      "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
+      "tests/integration/transforms/ssr-local-react.test.ts",
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
@@ -1012,6 +1052,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",

@@ -553,6 +553,7 @@ async function handleModuleEndpoint({
             moduleServerOrigin,
             dependencyPinningCacheKey: bundle.dependencyPinningCacheKey,
             dependencyPinningDependencies: bundle.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: bundle.dependencyPinningConfiguredVersions,
             dependencyPinningSource,
           },
         });

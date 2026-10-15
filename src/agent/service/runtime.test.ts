@@ -335,8 +335,10 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(tools?.search_knowledge, true);
     assertEquals(tools?.get_file, true);
     assertEquals(tools?.load_skill, false);
-    assertEquals(typeof tools?.load_skill_reference, "object");
-    assertEquals(typeof tools?.execute_skill_script, "object");
+    assertEquals(tools?.load_skill_reference, undefined);
+    assertEquals(tools?.execute_skill_script, undefined);
+    assertEquals(typeof tools?.veryfront__load_skill_reference, "object");
+    assertEquals(typeof tools?.veryfront__execute_skill_script, "object");
     assertEquals(serviceAgent?.config.providerTools, ["web_fetch"]);
   });
 

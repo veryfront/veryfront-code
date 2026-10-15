@@ -1,5 +1,27 @@
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import {
+  isExplicitlyLocalProject,
+  isHostProjectCodeExecutionAllowed,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import {
+  captureLocalReactPeers,
+  type LocalReactPeerSnapshot,
+} from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { loadModuleFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import {
+  getProjectReact,
+  getReactDOMServer,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import { renderToStringAdapter } from "#veryfront/react";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { computeHash, rendererLogger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors";
+import { PROJECT_EXECUTION_UNAVAILABLE, RENDER_ERROR } from "#veryfront/errors";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
@@ -32,15 +54,19 @@ const SNIPPET_CACHE_CLEANUP_INTERVAL_MS = 60_000;
 
 export interface SnippetRenderOptions {
   mode: "development" | "production";
+  reactPeers?: LocalReactPeerSnapshot;
   projectDir: string;
   adapter?: RuntimeAdapter;
   isLocalProject?: boolean;
+  /** Host-owned grant for an operator-admitted shared executor. */
+  allowHostProjectCodeExecution?: boolean;
   projectId?: string;
   contentSourceId?: string;
   /** Release that owns the immutable hydration runtime for this shell. */
   releaseId?: string;
   /** Canonical request-scoped dependency source supplied by server handlers. */
   dependencyPinningSource?: DependencyPinningSource;
+  /** Required original admitted source identifier for prepared module loaders. */
   filePath?: string;
   nonce?: string;
   /** Base URL for module server (e.g., http://localhost:3002) */
@@ -68,6 +94,7 @@ export async function wrapSnippetInHTMLShell(
     moduleServerBase: string;
     dependencyPinningCacheKey: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   },
 ): Promise<string> {
   const serverPort = getServerPort(options.moduleServerUrl);
@@ -88,6 +115,8 @@ export async function wrapSnippetInHTMLShell(
     })
     : undefined;
   const htmlOptions: HTMLGenerationOptions = {
+    adapter: options.adapter,
+    reactPeers: options.reactPeers,
     mode: options.mode,
     config: snippetConfig,
     projectDir: options.projectDir,
@@ -100,6 +129,7 @@ export async function wrapSnippetInHTMLShell(
     prodHydrationModulePath,
     dependencyPinningCacheKey: context.dependencyPinningCacheKey,
     dependencyPinningDependencies: context.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
   };
   return await wrapInHTMLShell(bodyHtml, meta, htmlOptions);
 }
@@ -280,28 +310,65 @@ export function renderSnippet(
   return withSpan(
     "rendering.renderSnippet",
     async () => {
+      const adapter = options.adapter ?? await getLocalAdapter();
+      if (
+        requiresIsolatedProjectRuntime({
+          adapter,
+          allowHostProjectCodeExecution: isHostProjectCodeExecutionAllowed(options),
+        })
+      ) {
+        throw PROJECT_EXECUTION_UNAVAILABLE.create({
+          detail:
+            "Snippet rendering requires a dedicated isolated project runtime or an explicit host grant",
+        });
+      }
+      const prepared = getRuntimeModuleLoader(adapter);
+      if (prepared && !options.filePath) {
+        throw new TypeError("Prepared snippet rendering requires an admitted filePath");
+      }
       logger.debug("Starting render", {
         contentLength: mdxContent.length,
         filePath: options.filePath,
       });
 
-      const dependencySnapshot = await getDependencyPinningSnapshot(
-        options.dependencyPinningSource ??
-          createDependencyPinningSource({
-            projectDir: options.projectDir,
-            adapter: options.adapter,
-            isLocalProject: options.isLocalProject,
-            projectId: options.projectId,
-            projectSlug: options.projectSlug,
-            contentSourceId: options.contentSourceId,
-            config: options.config,
-          }),
-      );
+      const dependencySource = options.dependencyPinningSource ?? createDependencyPinningSource({
+        projectDir: options.projectDir,
+        adapter,
+        isLocalProject: options.isLocalProject,
+        projectId: options.projectId,
+        projectSlug: options.projectSlug,
+        contentSourceId: options.contentSourceId,
+        releaseId: options.releaseId,
+        config: options.config,
+      });
+      const dependencySnapshot = await getDependencyPinningSnapshot(dependencySource);
       if (dependencySnapshot.cacheKey === "on:unknown") {
         throw new Error("Dependency pinning snapshot is unavailable: on:unknown");
       }
 
       try {
+        const releaseId = dependencySource.releaseId ?? options.releaseId;
+        const contentSourceId = dependencySource.contentSourceId ?? options.contentSourceId ??
+          computeContentSourceId(
+            isExplicitlyLocalProject(options),
+            releaseId ? "production" : "preview",
+            dependencySource.branch,
+            releaseId,
+          );
+        const projectId = dependencySource.projectId ?? options.projectId ?? options.projectDir;
+        const reactPeers = prepared
+          ? undefined
+          : options.reactPeers ?? ((isNode || isBun) ? captureLocalReactPeers() : undefined);
+        const reactVersion = await resolveProjectReactVersion({
+          adapter,
+          reactPeers,
+          projectDir: options.projectDir,
+          config: options.config,
+          dependencyPinningSource: dependencySource,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
+        });
         const { compileContent } = await import(
           "#veryfront/transforms/mdx/compiler/index.ts"
         );
@@ -352,33 +419,50 @@ export function renderSnippet(
         });
 
         const moduleServerBase = getModuleServerBase(options.moduleServerUrl);
-        const cacheBuster = Date.now();
-        const snippetUrl = buildSnippetModuleUrl(
-          moduleServerBase,
-          hash,
-          cacheBuster,
-          dependencySnapshot.cacheKey,
+        let modulePath = options.filePath ?? join(options.projectDir, "_snippets", `${hash}.tsx`);
+        // Prepared graphs address original source identifiers. Compiled input
+        // needs a TSX virtual path in that directory to skip Markdown parsing.
+        if (!prepared && options.filePath) modulePath += ".tsx";
+        const module = await loadModuleFromSource(
+          bundle.compiledCode,
+          modulePath,
+          options.projectDir,
+          adapter,
+          {
+            dev: options.mode === "development",
+            ssr: true,
+            mode: options.mode,
+            projectId,
+            projectSlug: options.projectSlug,
+            contentSourceId,
+            reactVersion,
+            reactPeers,
+            moduleServerOrigin: new URL(moduleServerBase).origin,
+            serverExternalPackages: options.config?.build?.serverExternalPackages,
+            dependencyPinningSource: dependencySource,
+            dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+            dependencyPinningDependencies: dependencySnapshot.dependencies,
+            dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
+          },
         );
-
-        logger.debug("Loading snippet module", {
-          snippetUrl,
-          moduleServerBase,
-          providedUrl: options.moduleServerUrl,
-        });
-
-        const module = await import(snippetUrl);
         const MDXContent = module.default || module.MDXContent;
         if (!MDXContent) {
           throw RENDER_ERROR.create({ detail: "No MDXContent export found in compiled snippet" });
         }
 
-        const [{ renderToString }, React] = await Promise.all([
-          import("react-dom/server"),
-          import("react"),
+        const [React, server] = await Promise.all([
+          getProjectReact(reactVersion, adapter, reactPeers),
+          getReactDOMServer(reactVersion, adapter, reactPeers),
         ]);
-
-        const element = React.createElement(MDXContent, { frontmatter });
-        const bodyHtml = renderToString(element);
+        const element = React.createElement(
+          MDXContent as import("react").ComponentType<{ frontmatter: Record<string, unknown> }>,
+          { frontmatter },
+        );
+        const bodyHtml = await renderToStringAdapter(element, {
+          reactVersion,
+          reactPeers,
+          reactRuntime: { react: React, server },
+        }, adapter);
 
         logger.debug("SSR complete", {
           bodyHtmlLength: bodyHtml.length,
@@ -390,11 +474,17 @@ export function renderSnippet(
           frontmatter: bundle.frontmatter as RenderMetadata["frontmatter"],
         };
 
-        const html = await wrapSnippetInHTMLShell(bodyHtml, meta, options, {
+        const html = await wrapSnippetInHTMLShell(bodyHtml, meta, {
+          ...options,
+          adapter,
+          reactPeers,
+          releaseId,
+        }, {
           hash,
           moduleServerBase,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
         });
 
         return { html, frontmatter };
