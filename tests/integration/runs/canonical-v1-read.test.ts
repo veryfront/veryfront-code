@@ -65,6 +65,94 @@ async function fixture(
   }
 }
 describe("canonical-v1 real HTTP and SSE reads", () => {
+  it("reads contract-sized diagnostic model inputs through get, list and SSE", async () => {
+    for (
+      const content of ["x".repeat(1_500_000), "😀".repeat(1_200_000), "x".repeat(9 * 1024 * 1024)]
+    ) {
+      const type = "com.veryfront.model-call.input.captured";
+      const member = {
+        ...canonical,
+        metadata: { ...metadata, view: "diagnostic" },
+        event: {
+          ...canonical.event,
+          type,
+          dataschema: "urn:veryfront:events:1:data:model-call.input.captured:diagnostic",
+          data: { type, messages: [{ role: "system", content }] },
+        },
+      };
+      await fixture((request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/stream")) {
+          return new Response(`id: 41\nevent: ${type}\ndata: ${JSON.stringify(member)}\n\n`, {
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return Response.json(
+          path.endsWith("/41") ? member : { entries: [member], next_cursor: null, has_more: false },
+        );
+      }, async (sdk) => {
+        assertEquals<unknown>(await sdk.canonicalEventsV1.get("run_demo", "41"), member);
+        assertEquals<unknown>((await sdk.canonicalEventsV1.list("run_demo")).entries, [member]);
+        const observed = [];
+        for await (const value of sdk.canonicalEventsV1.stream("run_demo")) observed.push(value);
+        assertEquals<unknown>(observed, [member]);
+      });
+    }
+  });
+
+  it("rejects oversized canonical strings and aggregate JSON through every read path", async () => {
+    const type = "com.veryfront.model-call.input.captured";
+    for (
+      const messages of [
+        [{ role: "system", content: "x".repeat(10 * 1024 * 1024 + 1) }],
+        Array.from({ length: 2 }, () => ({ role: "system", content: "x".repeat(6 * 1024 * 1024) })),
+      ]
+    ) {
+      const member = {
+        ...canonical,
+        metadata: { ...metadata, view: "diagnostic" },
+        event: {
+          ...canonical.event,
+          type,
+          dataschema: "urn:veryfront:events:1:data:model-call.input.captured:diagnostic",
+          data: { type, messages },
+        },
+      };
+      await fixture((request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/stream")) {
+          return new Response(`id: 41\nevent: ${type}\ndata: ${JSON.stringify(member)}\n\n`);
+        }
+        return Response.json(
+          path.endsWith("/41") ? member : { entries: [member], next_cursor: null, has_more: false },
+        );
+      }, async (sdk) => {
+        await assertRejects(() => sdk.canonicalEventsV1.get("run_demo", "41"), TypeError);
+        await assertRejects(() => sdk.canonicalEventsV1.list("run_demo"), TypeError);
+        await assertRejects(async () => {
+          for await (
+            const _ of sdk.canonicalEventsV1.stream("run_demo")
+          ) { /* No accepted oversized member. */ }
+        }, TypeError);
+      });
+    }
+  });
+  it("bounds canonical SSE frames by UTF-8 bytes before parsing", async () => {
+    await fixture(
+      () => new Response(new TextEncoder().encode(`:${"😀".repeat(3_150_000)}\n\n`)),
+      async (sdk) => {
+        await assertRejects(
+          async () => {
+            for await (const _ of sdk.canonicalEventsV1.stream("run_demo")) {
+              /* No accepted oversized frame. */
+            }
+          },
+          TypeError,
+          "canonical-v1 SSE frame is too large",
+        );
+      },
+    );
+  });
   it("selects the binding explicitly and preserves mixed history and exact returned cursor", async () => {
     await fixture((request) => {
       const url = new URL(request.url);

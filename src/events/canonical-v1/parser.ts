@@ -1,3 +1,4 @@
+import { CANONICAL_V1_MAX_MEMBER_BYTES, CANONICAL_V1_MAX_STRING_BYTES } from "./limits.ts";
 import { isCloudEventsString, isTraceState } from "../string-validation.ts";
 import type {
   JsonSchema,
@@ -98,7 +99,10 @@ async function decode<T>(input: unknown, definition: string): Promise<T> {
     compiledValidators.clear();
     validatorVersion = version;
   }
-  let validate = compiledValidators.get(definition);
+  const canonical = input !== null && typeof input === "object" &&
+    Object.getOwnPropertyDescriptor(input, "kind")?.value === "canonical";
+  const cacheKey = `${definition}:${canonical ? "canonical" : "default"}`;
+  let validate = compiledValidators.get(cacheKey);
   if (!validate) {
     const compiler = adapter.compileJsonSchema;
     if (!compiler) throw new TypeError("canonical-v1 needs compileJsonSchema support");
@@ -107,8 +111,18 @@ async function decode<T>(input: unknown, definition: string): Promise<T> {
       $ref: `#/$defs/resource${keys.indexOf(reads.$id)}/$defs/${definition}`,
       $defs: normalizedDefinitions,
     } as JsonSchema;
-    validate = compiler(schema);
-    compiledValidators.set(definition, validate);
+    validate = compiler(
+      schema,
+      canonical
+        ? {
+          instanceLimits: {
+            maxSerializedBytes: CANONICAL_V1_MAX_MEMBER_BYTES,
+            maxStringBytes: CANONICAL_V1_MAX_STRING_BYTES,
+          },
+        }
+        : undefined,
+    );
+    compiledValidators.set(cacheKey, validate);
   }
   const result = await validate(input);
   if (!result.success) throw new TypeError("Invalid canonical-v1 read value");

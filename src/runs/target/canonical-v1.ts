@@ -17,7 +17,12 @@ import type {
   RunReadPageV1,
   StreamMemberV1,
 } from "#veryfront/events/canonical-v1/index.ts";
-import { MAX_SSE_FRAME_CHARS, normalizeNewlines } from "#veryfront/utils/sse-frames.ts";
+import { normalizeNewlines } from "#veryfront/utils/sse-frames.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import { CANONICAL_V1_MAX_MEMBER_BYTES } from "#veryfront/events/canonical-v1/limits.ts";
+
+// Leave room for SSE field names and framing around one bounded canonical member.
+const MAX_CANONICAL_SSE_FRAME_BYTES = CANONICAL_V1_MAX_MEMBER_BYTES + 4096;
 import type { RunsCallOptions } from "./client.ts";
 
 export interface CanonicalEventsV1ListOptions {
@@ -276,7 +281,9 @@ async function* readCanonicalMembers(
   const reader = body.pipeThrough(new TextDecoderStream("utf-8", { fatal: true }), { signal })
     .getReader();
   let buffer = "";
+  let bufferBytes = 0;
   let pendingCR = false;
+  let primaryFailure = false;
   try {
     while (true) {
       signal?.throwIfAborted();
@@ -290,20 +297,24 @@ async function* readCanonicalMembers(
         text = text.slice(0, -1);
         pendingCR = true;
       }
-      buffer += normalizeNewlines(text);
+      const normalized = normalizeNewlines(text);
+      buffer += normalized;
+      bufferBytes += utf8ByteLength(normalized);
       let end: number;
       while ((end = buffer.indexOf("\n\n")) >= 0) {
         signal?.throwIfAborted();
         const frame = buffer.slice(0, end);
-        if (frame.length > MAX_SSE_FRAME_CHARS) {
+        const frameBytes = utf8ByteLength(frame);
+        if (frameBytes > MAX_CANONICAL_SSE_FRAME_BYTES) {
           throw new TypeError("canonical-v1 SSE frame is too large");
         }
         buffer = buffer.slice(end + 2);
+        bufferBytes -= frameBytes + 2;
         const member = await decodeCanonicalSseFrame(frame);
         signal?.throwIfAborted();
         if (member !== undefined) yield member;
       }
-      if (buffer.length > MAX_SSE_FRAME_CHARS) {
+      if (bufferBytes > MAX_CANONICAL_SSE_FRAME_BYTES) {
         throw new TypeError("canonical-v1 SSE frame is too large");
       }
       if (chunk.done) {
@@ -311,8 +322,17 @@ async function* readCanonicalMembers(
         break;
       }
     }
+  } catch (error) {
+    primaryFailure = true;
+    throw error;
   } finally {
-    await reader.cancel();
-    reader.releaseLock();
+    try {
+      await reader.cancel().catch((error: unknown) => {
+        // Cancellation must not mask an earlier decoding or admission failure.
+        if (!primaryFailure) throw error;
+      });
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
