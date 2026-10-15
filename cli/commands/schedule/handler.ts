@@ -14,9 +14,9 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import {
   createRunsClient,
   type CreateScheduleRunFromSourceResult,
-  type Run,
   type VeryfrontRunsClient,
 } from "veryfront/runs";
+import type { RunsOutput } from "veryfront/runs/target";
 import {
   discoverSchedules,
   legacyScheduleTargetDiagnostic,
@@ -261,11 +261,14 @@ export function toScheduleAgentOptions(
   };
 }
 
+/** The grouped run resource `VeryfrontRunsClient.getRun()` returns. */
+export type RemoteScheduleRun = RunsOutput<"getRun">;
+
 export async function waitForRemoteScheduleRun(
-  client: Pick<VeryfrontRunsClient, "get">,
+  client: Pick<VeryfrontRunsClient, "getRun">,
   accepted: CreateScheduleRunFromSourceResult,
   options: RemoteSchedulePollOptions = {},
-): Promise<Run> {
+): Promise<RemoteScheduleRun> {
   if (
     !Number.isSafeInteger(accepted.timeoutSeconds) ||
     accepted.timeoutSeconds <= 0
@@ -280,7 +283,7 @@ export async function waitForRemoteScheduleRun(
   const queueDeadline = acceptedAt + REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS;
   let executionStartedAtMs: number | undefined;
   while (true) {
-    const run = await client.get(runId);
+    const run = await client.getRun(runId);
     const observedAt = now();
     const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : NaN;
     if (executionStartedAtMs === undefined && Number.isFinite(parsedStartedAt)) {
@@ -299,9 +302,9 @@ export async function waitForRemoteScheduleRun(
     if (run.status === "cancelled") {
       throw DEPLOYMENT_ERROR.create({ detail: `Scheduled run was cancelled: ${runId}` });
     }
-    const recordedTimeoutSeconds = run.timeout_seconds;
+    const recordedTimeoutSeconds = run.execution?.timeout_seconds;
     const executionTimeoutSeconds = Number.isSafeInteger(recordedTimeoutSeconds) &&
-        recordedTimeoutSeconds !== null &&
+        recordedTimeoutSeconds !== undefined &&
         recordedTimeoutSeconds > 0
       ? recordedTimeoutSeconds
       : accepted.timeoutSeconds;
@@ -323,31 +326,28 @@ export async function waitForRemoteScheduleRun(
   }
 }
 
-export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown> {
+export function formatRemoteScheduleRunOutput(run: RemoteScheduleRun): Record<string, unknown> {
+  const waitingReason = run.control?.waiting?.reason;
   return {
-    runId: run.run_id,
+    runId: run.id,
     status: run.status,
-    ...(run.waiting_reason ? { waitingReason: run.waiting_reason } : {}),
+    ...(waitingReason ? { waitingReason } : {}),
     result: run.output,
   };
 }
 
 export function resolveRemoteScheduleTarget(
-  run: Run,
+  run: RemoteScheduleRun,
   fallback: TriggerTarget,
 ): ResolvedTriggerTarget {
   const fallbackTarget = isTriggerTarget(fallback) ? { ...fallback } : null;
-  if (!run.target) {
+  const kind = run.target?.type;
+  const recordedId = run.target?.id;
+  if (typeof kind !== "string" || kind.length === 0 || typeof recordedId !== "string") {
     if (fallbackTarget !== null) return fallbackTarget;
     throw new Error("Remote schedule returned an invalid target.");
   }
-  const separator = run.target.indexOf(":");
-  if (separator < 1) {
-    if (fallbackTarget !== null) return fallbackTarget;
-    throw new Error("Remote schedule returned an invalid target.");
-  }
-  const kind = run.target.slice(0, separator);
-  const id = run.target.slice(separator + 1).trim();
+  const id = recordedId.trim();
   const candidate = { kind, id };
   if (isTriggerTarget(candidate)) {
     if (
@@ -393,7 +393,7 @@ async function runRemoteSchedule(
     triggerId: opts.id,
     target: resolveRemoteScheduleTarget(remoteRun, accepted.target),
     output: formatRemoteScheduleRunOutput(remoteRun),
-    durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
+    durationMs: remoteRun.execution?.duration_ms ?? Date.now() - startedAt,
   });
 }
 

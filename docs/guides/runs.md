@@ -127,19 +127,19 @@ for (const entry of events.data) {
 }
 ```
 
-Read the current run summary:
+Read the current run:
 
 ```ts
-const run = await runs.get(accepted.run.run_id);
+const run = await runs.getRun(accepted.run.run_id);
 console.log(run.status);
 console.log(run.output);
 ```
 
-Both `get()` and `getRun()` require the canonical run UUID. `get()` adapts the
-resource for existing framework callers. `getRun()` exposes the full grouped
-response: its `id` is the UUID, `target` is
-an object, labels stay available, and execution diagnostics live in `execution`.
-Retain its ETag when preparing a metadata update:
+`getRun()` requires the canonical run UUID and returns the grouped run
+resource: its `id` is the UUID, `target` is an object, labels stay available,
+and execution diagnostics live in `execution`. The older `get()` is deprecated:
+it reads the same resource and adapts it to the flat shape existing framework
+callers use. Retain the ETag when preparing a metadata update:
 
 ```ts
 let etag: string | null = null;
@@ -243,7 +243,7 @@ serves it. The legacy client at
 resource for existing framework callers. Creation returns either this full
 resource or a compact receipt with only `run_id` and `status`. Both variants
 use `run_id` as the canonical UUID. Narrow with `"output" in accepted.run`
-before reading full-resource fields, or call `runs.get(accepted.run.run_id)`
+before reading full-resource fields, or call `runs.getRun(accepted.run.run_id)`
 to read the current run.
 Caller-selected aliases and workflow `startMode` are rejected; retries use
 `Idempotency-Key`. Use the target SDK for the complete grouped resource.
@@ -311,6 +311,28 @@ compiles, so update the validator when the pinned contract changes. Error
 responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
 RFC 9457 problem body.
 
+### Error codes
+
+Runs Problems carry an uppercase `RUN_*` code. Each maps to one shared error
+kind, and REST, GraphQL and MCP report the same code for the same failure:
+
+| Run code                      | Error kind        | Meaning                                                                       |
+| ----------------------------- | ----------------- | ----------------------------------------------------------------------------- |
+| `RUN_INVALID_INPUT`           | `invalid_input`   | The request failed validation.                                                |
+| `RUN_UNAUTHENTICATED`         | `unauthenticated` | No valid credential was supplied.                                             |
+| `RUN_FORBIDDEN`               | `forbidden`       | The credential cannot perform this action on the run.                         |
+| `RUN_NOT_FOUND`               | `not_found`       | The run, event or input request does not exist.                               |
+| `RUN_GONE`                    | `not_found`       | The resource is no longer available (HTTP 410), for example after it expired. |
+| `RUN_CONFLICT`                | `conflict`        | A state, idempotency, precondition (409, 412, 428) or duplicate conflict.     |
+| `RUN_SNAPSHOT_LIMIT_EXCEEDED` | `limit_exceeded`  | The snapshot is over 5,000 events or 10 MiB; page through the run events.     |
+| `RUN_EVENT_IDENTITY_PENDING`  | `not_ready`       | Run events are temporarily unavailable (HTTP 503); retry the request.         |
+| `RUN_INTERNAL_ERROR`          | `internal`        | The service failed.                                                           |
+| `RUN_ERROR`                   | `internal`        | A failure without a more specific run code.                                   |
+
+HTTP 413 and 429 responses map to `limit_exceeded` as well.
+
+Match on the `RUN_*` code from `runsProblemOf(error)?.code`.
+
 A `RUN_CONFLICT` may include an optional `cause`:
 `schedule_concurrency_forbidden` means the schedule forbids a new run while an
 earlier fire is active; `schedule_fire_in_progress` means the same fire is
@@ -336,7 +358,7 @@ console.log("created", accepted.run.run_id);
 
 // Poll status until terminal
 while (true) {
-  const { status } = await runs.get(accepted.run.run_id);
+  const { status } = await runs.getRun(accepted.run.run_id);
   if (status === "completed" || status === "failed" || status === "cancelled") {
     break;
   }
@@ -362,7 +384,7 @@ own result.
 
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.8
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.9
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -446,12 +468,12 @@ veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
 veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
   --body '{"project_id":"<PROJECT_ID>","source":{"type":"schedule","id":"<SCHEDULE_ID>"}}'
 veryfront project runs stream --run-id <RUN_ID> --last-event-id <EVENT_ID> --json
-veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
-  --json --body '{"status":"completed","output":null}'
 veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"output":null}'
 veryfront project runs fail --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"error":{"code":"TASK_FAILED","message":"Task failed"}}'
+veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
+  --json --body '{"status":"completed","output":null}'
 ```
 
 To run a webhook manually, use `create` with `source.type` set to `webhook`.
@@ -499,9 +521,10 @@ the CLI's normal usage-error envelope.
 
 The target CLI includes children, individual events, event types, all input
 request actions, finalization, heartbeats, and event-writer credentials.
-Use `finalize` to select completion with output or failure, `succeed` with
-`{"output":<JSON>}`, or `fail` with `{"error":{"code":"<CODE>","message":"<MESSAGE>"}}`.
-Supply explicit `null` when there is no output.
+Complete a run with `succeed` and `{"output":<JSON>}`, or fail it with `fail`
+and `{"error":{"code":"<CODE>","message":"<MESSAGE>"}}`. Supply explicit `null`
+when there is no output. `finalize` remains for compatibility: it selects
+completion or failure through its `status` field.
 
 For these terminal actions, your user token or API key requires project run write
 permission and editor access to any bound conversation. Execution credentials
@@ -517,4 +540,4 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.8 contract. These tests do not prove deployed parity.
+for the 0.8.9 contract. These tests do not prove deployed parity.
