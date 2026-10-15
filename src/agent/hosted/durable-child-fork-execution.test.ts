@@ -93,6 +93,12 @@ type InjectedRunLifecycle = NonNullable<
 >;
 
 function runForkWithInjectedLifecycle(input: {
+  resolveModelId?: Parameters<
+    typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+  >[0]["resolveModelId"];
+  resolveProvider?: Parameters<
+    typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+  >[0]["resolveProvider"];
   replay?: BootstrapHostedChildRunResult;
   childCanonicalRunId?: string;
   createLifecycleAdapter?: HostedDurableChildRuntimeDependencies["createLifecycleAdapter"];
@@ -138,8 +144,8 @@ function runForkWithInjectedLifecycle(input: {
         parentMessageId: PARENT_MESSAGE_ID,
         getProjectId: () => PROJECT_ID,
         defaultModel: "opus",
-        resolveModelId: (model) => `resolved-${model}`,
-        resolveProvider: () => "anthropic",
+        resolveModelId: input.resolveModelId ?? ((model) => `resolved-${model}`),
+        resolveProvider: input.resolveProvider ?? (() => "anthropic"),
         contextUnavailableMessage: "missing context",
         setupFailedCode: "SETUP_FAILED",
         executionFailedCode: "INVOKE_AGENT_FAILED",
@@ -243,6 +249,56 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(result.failure.terminalErrorCode, "CHILD_AGENT_NOT_FOUND");
     assertEquals(result.failure.identifiers.childRunId, INJECTED_CHILD_IDENTIFIERS.childRunId);
   });
+
+  for (const failingResolution of ["model", "provider"]) {
+    it(`finalizes an admitted child when prepared ${failingResolution} resolution throws`, async () => {
+      const failed: unknown[] = [];
+      let lifecycleCalls = 0;
+      const resolutionError = new Error("Saved child model is unavailable");
+      await assertRejects(
+        () =>
+          runForkWithInjectedLifecycle({
+            resolveModelId: (model) => {
+              if (failingResolution === "model" && model === "retired-model") throw resolutionError;
+              return `resolved-${model}`;
+            },
+            resolveProvider: (model) => {
+              if (failingResolution === "provider" && model === "resolved-retired-model") {
+                throw resolutionError;
+              }
+              return "anthropic";
+            },
+            createLifecycleAdapter: () => ({
+              failed: (state) => {
+                failed.push(state);
+                return Promise.resolve();
+              },
+            }),
+            prepareAdmittedExecution: () =>
+              Promise.resolve({
+                forkInput: {
+                  description: "Inspect logs",
+                  prompt: "Find logs",
+                  model: "retired-model",
+                },
+              }),
+            runLifecycle: () => {
+              lifecycleCalls += 1;
+              throw new Error("Child must not execute after resolution failure");
+            },
+            buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+          }),
+        Error,
+        resolutionError.message,
+      );
+      assertEquals(lifecycleCalls, 0);
+      assertEquals(failed, [{
+        status: "failed",
+        terminalErrorCode: "SETUP_FAILED",
+        terminalErrorMessage: resolutionError.message,
+      }]);
+    });
+  }
 
   it("runs an admitted child with its prepared execution inputs", async () => {
     const models: unknown[] = [];

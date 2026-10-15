@@ -1133,6 +1133,15 @@ async function executeHostedDurableChildForkWithCapability<
     try {
       throwIfChildRunAborted(input.executionOptions.abortSignal);
       preparation = await input.prepareAdmittedExecution();
+      if ("forkInput" in preparation) {
+        admittedInput = { ...input, forkInput: preparation.forkInput };
+        const resolvedModel = input.resolveModelId(resolveContextModel(admittedInput));
+        admittedBootstrapContext = {
+          ...bootstrapContext,
+          resolvedModel,
+          provider: input.resolveProvider(resolvedModel),
+        };
+      }
     } catch (error) {
       const cancelled = isChildRunAbortError(error) ||
         input.executionOptions.abortSignal?.aborted === true;
@@ -1168,13 +1177,6 @@ async function executeHostedDurableChildForkWithCapability<
       );
       return input.buildTerminalFailureResult({ ...terminalState, identifiers, targets });
     }
-    admittedInput = { ...input, forkInput: preparation.forkInput };
-    const resolvedModel = input.resolveModelId(resolveContextModel(admittedInput));
-    admittedBootstrapContext = {
-      ...bootstrapContext,
-      resolvedModel,
-      provider: input.resolveProvider(resolvedModel),
-    };
   }
 
   let childRunEventWriterCapability: HostedRunEventWriterCapability;
