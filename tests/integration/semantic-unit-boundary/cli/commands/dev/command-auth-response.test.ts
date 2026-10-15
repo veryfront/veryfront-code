@@ -91,8 +91,7 @@ it("embedded management API client ignores project fetch and refuses cross-origi
   const response = Response.json({ secret: "trusted" });
   let ambientCalls = 0;
   await withMockFetch(() => Promise.resolve(response), async () => {
-    let restoreAmbientFetch = () => {};
-    restoreAmbientFetch = replaceAmbientFetchForFaultInjection(() => {
+    const restoreAmbientFetch = replaceAmbientFetchForFaultInjection(() => {
       ambientCalls++;
       throw new Error("project received token");
     });
