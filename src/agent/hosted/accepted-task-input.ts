@@ -25,7 +25,7 @@ export function snapshotHostedAcceptedTaskInputEvent(
     payload: value,
   }).payload as HostedAcceptedTaskInputEvent;
   if (
-    Object.keys(snapshot).sort().join(",") !==
+    Object.keys(snapshot).sort((left, right) => left.localeCompare(right, "en")).join(",") !==
       "artifactVersions,payload,sourceEventIds,targetAgentId,type,version" ||
     snapshot.type !== ACCEPTED_TASK_INPUT_EVENT_TYPE || snapshot.version !== 1 ||
     typeof snapshot.targetAgentId !== "string" || !snapshot.targetAgentId ||
@@ -38,7 +38,8 @@ export function snapshotHostedAcceptedTaskInputEvent(
   ) throw new Error("Invalid accepted task input receipt");
   for (const ref of snapshot.artifactVersions) {
     if (
-      Object.keys(ref).sort().join(",") !== "path,sha256,size_bytes,version_id" ||
+      Object.keys(ref).sort((left, right) => left.localeCompare(right, "en")).join(",") !==
+        "path,sha256,size_bytes,version_id" ||
       typeof ref.path !== "string" || !ref.path || ref.path.length > 512 ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref.version_id) ||
       !/^[a-f0-9]{64}$/.test(ref.sha256) || !Number.isSafeInteger(ref.size_bytes) ||
