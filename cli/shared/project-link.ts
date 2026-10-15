@@ -202,6 +202,11 @@ export async function saveSharedProjectAssociation(
     );
     return;
   }
+  if (typeof existing.apiToken === "string" && existing.apiToken.length > 0) {
+    console.warn(
+      "veryfront.json contains a legacy apiToken. Run veryfront login, then remove apiToken before committing this shared project association.",
+    );
+  }
   const temporary = join(projectDir, `.veryfront-association-${crypto.randomUUID()}.tmp`);
   try {
     await Deno.writeTextFile(

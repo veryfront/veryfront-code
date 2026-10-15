@@ -35,7 +35,8 @@ when you run `npm run dev`.
 
 The cloud project link is saved in `veryfront.json`; linking adds no credentials
 and preserves existing configuration. Never commit credentials: before committing
-that file, remove any existing `apiToken` or other secrets. Use `veryfront login`
+that file, remove any existing `apiToken` or other secrets. The CLI warns if a saved
+association still contains a legacy `apiToken`; it preserves existing configuration. Use `veryfront login`
 (the private login store) or environment variables for authentication instead.
 Commit the credential-free file so teammates can reuse the cloud project after
 cloning. Each teammate signs in with their own account.

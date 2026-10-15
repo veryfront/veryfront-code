@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { stub } from "#std/testing/mock";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import {
@@ -244,5 +245,24 @@ Deno.test("shared association preserves restrictive existing file permissions", 
     await saveSharedProjectAssociation(dir, "linked-project", "https://api.veryfront.com");
     assertEquals((await Deno.stat(path)).mode! & 0o777, 0o600);
     assertEquals(JSON.parse(await Deno.readTextFile(path)).apiToken, "private-token");
+  });
+});
+
+Deno.test("shared association warns about legacy credentials without exposing or removing them", async () => {
+  await withTempProject(async (dir) => {
+    const path = join(dir, "veryfront.json");
+    await Deno.writeTextFile(path, JSON.stringify({ apiToken: "private-token", port: 3551 }));
+    const warnings: string[] = [];
+    using _warning = stub(console, "warn", (...args: unknown[]) => warnings.push(args.join(" ")));
+    await saveSharedProjectAssociation(dir, "linked-project");
+    assertEquals(warnings.length, 1);
+    assertEquals(warnings[0]!.includes("veryfront login"), true);
+    assertEquals(warnings[0]!.includes("before committing"), true);
+    assertEquals(warnings[0]!.includes("private-token"), false);
+    assertEquals(JSON.parse(await Deno.readTextFile(path)), {
+      apiToken: "private-token",
+      port: 3551,
+      projectSlug: "linked-project",
+    });
   });
 });
