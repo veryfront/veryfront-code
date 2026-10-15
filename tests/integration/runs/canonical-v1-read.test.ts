@@ -65,6 +65,107 @@ async function fixture(
   }
 }
 describe("canonical-v1 real HTTP and SSE reads", () => {
+  for (
+    const testCase of [
+      {
+        name: "JSON context UTF-8 bytes",
+        valid: { context: [{ type: "json", data: { text: "x".repeat(16373) } }] },
+        invalid: { context: [{ type: "json", data: { text: "x".repeat(16374) } }] },
+      },
+      {
+        name: "source UTF-16 string length",
+        valid: { context: [{ type: "text", text: "😀".repeat(8192) }] },
+        invalid: { context: [{ type: "text", text: "😀".repeat(8193) }] },
+      },
+      {
+        name: "source trim parse output",
+        valid: {
+          integrationConnectionBindings: [{
+            integration: "github",
+            connectionId: "00000000-0000-4000-8000-000000000001",
+            connectionGenerationId: "00000000-0000-4000-8000-000000000002",
+            ownerId: "00000000-0000-4000-8000-000000000003",
+            scope: "user",
+            ownerKind: "user",
+          }],
+        },
+        invalid: {
+          integrationConnectionBindings: [{
+            integration: " github ",
+            connectionId: "00000000-0000-4000-8000-000000000001",
+            connectionGenerationId: "00000000-0000-4000-8000-000000000002",
+            ownerId: "00000000-0000-4000-8000-000000000003",
+            scope: "user",
+            ownerKind: "user",
+          }],
+        },
+      },
+    ]
+  ) {
+    it(`enforces ${testCase.name} through get, list and SSE without mutating history`, async () => {
+      for (
+        const view of testCase.name === "source trim parse output"
+          ? ["diagnostic"]
+          : ["public", "diagnostic"]
+      ) {
+        for (const accepted of [true, false]) {
+          const type = "com.veryfront.run.requested";
+          const member = {
+            ...canonical,
+            metadata: { ...metadata, view },
+            event: {
+              ...canonical.event,
+              type,
+              dataschema: `urn:veryfront:events:1:data:run.requested:${view}`,
+              data: {
+                type,
+                messages: [],
+                agentSource: { type: "branch", branch: "main" },
+                tools: [],
+                context: [],
+                ...(view === "diagnostic" ? { integrationConnectionBindings: [] } : {}),
+                ...(accepted ? testCase.valid : testCase.invalid),
+              },
+            },
+          };
+          await fixture((request) => {
+            const path = new URL(request.url).pathname;
+            if (path.endsWith("/stream")) {
+              return new Response(`id: 41\nevent: ${type}\ndata: ${JSON.stringify(member)}\n\n`);
+            }
+            return Response.json(
+              path.endsWith("/41") ? member : {
+                entries: [member],
+                next_cursor: null,
+                has_more: false,
+              },
+            );
+          }, async (sdk) => {
+            if (accepted) {
+              assertEquals<unknown>(await sdk.canonicalEventsV1.get("run_demo", "41"), member);
+              assertEquals<unknown>((await sdk.canonicalEventsV1.list("run_demo")).entries, [
+                member,
+              ]);
+              const observed = [];
+              for await (const value of sdk.canonicalEventsV1.stream("run_demo")) {
+                observed.push(value);
+              }
+              assertEquals<unknown>(observed, [member]);
+            } else {
+              await assertRejects(() => sdk.canonicalEventsV1.get("run_demo", "41"), TypeError);
+              await assertRejects(() => sdk.canonicalEventsV1.list("run_demo"), TypeError);
+              await assertRejects(async () => {
+                for await (const _ of sdk.canonicalEventsV1.stream("run_demo")) {
+                  /* No accepted member outside its selected source contract. */
+                }
+              }, TypeError);
+            }
+          });
+        }
+      }
+    });
+  }
+
   it("reads contract-sized diagnostic model inputs through get, list and SSE", async () => {
     for (
       const content of ["x".repeat(1_500_000), "😀".repeat(1_200_000), "x".repeat(9 * 1024 * 1024)]

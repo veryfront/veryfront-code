@@ -67,6 +67,10 @@ describe("canonical-v1 physical-store producing sources", () => {
         "https://events.test.invalid",
         "https://events.test.invalid/store-unit",
         "https://events.test.invalid/stores/store-1",
+        "https://events.test.invalid/Case%20Sensitive",
+        "https://events.test.invalid/store%3Aname",
+        "https://events.test.invalid/store%3Fname",
+        "https://events.test.invalid/%C3%A9",
       ]
     ) {
       const member = durable(`${base}/runs/run_test`);
@@ -118,7 +122,11 @@ describe("canonical-v1 physical-store producing sources", () => {
         "https://events.test.invalid/store-unit//runs/run_test",
         "https://events.test.invalid/store-unit\\runs/run_test",
         "https://events.test.invalid/store%2Funit/runs/run_test",
+        "https://events.test.invalid/%73tore/runs/run_test",
+        "https://events.test.invalid/store%2dunit/runs/run_test",
         "https://events.test.invalid/store%ZZ/runs/run_test",
+        "https://events.test.invalid/%c3%a9/runs/run_test",
+        "https://events.test.invalid/store%00name/runs/run_test",
       ]
     ) {
       await assertRejects(() => parseRunReadMemberV1(durable(source)), TypeError);
