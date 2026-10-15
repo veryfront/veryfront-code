@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  replaceAmbientFetchForFaultInjection,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { validateToken } from "../../../../../../cli/auth/login.ts";
 import { createConnectedDevAuthenticationOptions } from "../../../../../../cli/commands/dev/command.ts";
 
@@ -18,9 +21,9 @@ it("dev command authentication protects responses after project configuration ex
   };
   let result: unknown;
   await withMockFetch(() => Promise.resolve(response), async () => {
-    const originalFetch = globalThis.fetch;
+    let restoreAmbientFetch = () => {};
     try {
-      globalThis.fetch = poison;
+      restoreAmbientFetch = replaceAmbientFetchForFaultInjection(poison);
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(
           Response.prototype,
@@ -33,7 +36,7 @@ it("dev command authentication protects responses after project configuration ex
         ...createConnectedDevAuthenticationOptions("https://api.veryfront.com"),
       });
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreAmbientFetch();
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(Response.prototype, name, descriptor);
       }
@@ -60,9 +63,9 @@ it("dev preload protects both user and project responses after configuration exe
   };
   let result: Awaited<ReturnType<typeof preloadDevAuth>> | undefined;
   await withMockFetch(() => Promise.resolve(responses.shift()!), async () => {
-    const originalFetch = globalThis.fetch;
+    let restoreAmbientFetch = () => {};
     try {
-      globalThis.fetch = poison;
+      restoreAmbientFetch = replaceAmbientFetchForFaultInjection(poison);
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(
           Response.prototype,
@@ -72,7 +75,7 @@ it("dev preload protects both user and project responses after configuration exe
       }
       result = await preloadDevAuth("user-token");
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreAmbientFetch();
       for (const [name, descriptor] of descriptors) {
         Object.defineProperty(Response.prototype, name, descriptor);
       }
@@ -88,11 +91,11 @@ it("embedded management API client ignores project fetch and refuses cross-origi
   const response = Response.json({ secret: "trusted" });
   let ambientCalls = 0;
   await withMockFetch(() => Promise.resolve(response), async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => {
+    let restoreAmbientFetch = () => {};
+    restoreAmbientFetch = replaceAmbientFetchForFaultInjection(() => {
       ambientCalls++;
       throw new Error("project received token");
-    };
+    });
     try {
       const client = createApiClient({
         apiUrl: "https://api.veryfront.com",
@@ -101,7 +104,7 @@ it("embedded management API client ignores project fetch and refuses cross-origi
       }, createConnectedDevAuthenticationOptions("https://api.veryfront.com").transport);
       assertEquals(await client.get("/projects"), { secret: "trusted" });
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreAmbientFetch();
     }
   });
   assertEquals(ambientCalls, 0);

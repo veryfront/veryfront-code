@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  replaceAmbientFetchForFaultInjection,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import {
   deleteEnv,
   getEnv,
@@ -24,7 +28,7 @@ for (const command of [pullCommand, pushCommand]) {
       it(`${command.name} preserves operator private HTTPS API access (embedded=${embedded}, newProject=${newProject})`, async () => {
         const keys = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL", "VERYFRONT_API_TOKEN"];
         const previous = keys.map(getEnv);
-        const projectDir = await Deno.makeTempDir();
+        const projectDir = await makeTempDir();
         let dispatched = 0;
         let reservations = 0;
         const projectPaths: string[] = [];
@@ -80,14 +84,14 @@ for (const command of [pullCommand, pushCommand]) {
               },
               resolveHost: () => Promise.resolve(["10.0.0.8"]),
             }, async () => {
-              const originalFetch = globalThis.fetch;
+              let restoreAmbientFetch = () => {};
               let ambientCalls = 0;
               if (embedded) {
                 trustOperatorConfiguredVeryfrontApiOrigins();
-                globalThis.fetch = () => {
+                restoreAmbientFetch = replaceAmbientFetchForFaultInjection(() => {
                   ambientCalls++;
                   throw new Error("project received token");
-                };
+                });
                 if (newProject) {
                   for (const [name, descriptor] of descriptors) {
                     const poison = () => {
@@ -118,7 +122,7 @@ for (const command of [pullCommand, pushCommand]) {
                 commandFailure = error;
                 /* Probe stops at a deliberate API rejection. */
               } finally {
-                globalThis.fetch = originalFetch;
+                restoreAmbientFetch();
                 if (newProject) {
                   for (const [name, descriptor] of descriptors) {
                     Object.defineProperty(Response.prototype, name, descriptor);

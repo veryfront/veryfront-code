@@ -5,7 +5,11 @@ import { withOnboardingDeadline } from "../../../../../../cli/shared/onboarding-
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  observeFetchRequestInit,
+  replaceAmbientFetchForFaultInjection,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import {
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
@@ -111,11 +115,10 @@ it("connected preflight ignores a project-replaced global fetch", async () => {
     throw new Error("host transport reached");
   }, async () => {
     // Fault injection models project config replacing the global, not a network stub.
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => {
+    const restoreAmbientFetch = replaceAmbientFetchForFaultInjection(() => {
       projectRequests++;
       throw new Error("project transport reached");
-    };
+    });
     try {
       const controlPlane = createConnectedDevControlPlane({
         apiUrl: "https://api.example.com",
@@ -126,7 +129,7 @@ it("connected preflight ignores a project-replaced global fetch", async () => {
       assertEquals(hostRequests, 1);
       assertEquals(projectRequests, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreAmbientFetch();
     }
   });
 });
