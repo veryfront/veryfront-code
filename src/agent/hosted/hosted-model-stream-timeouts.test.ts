@@ -28,25 +28,25 @@ describe("host-owned model stream timeouts", () => {
   });
 
   it("names the env vars and effective values when an explicit budget does not fit", () => {
-    const error = <Error> assertThrows(
+    const error = assertThrows(
       () =>
         resolveHostedModelStreamTimeouts(
           parseAgentServiceConfig({ VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: "60000" }),
           120_000,
         ),
       TypeError,
-    );
+    ) as Error;
     assertStringIncludes(error.message, "VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS=60000");
     assertStringIncludes(error.message, "= 120000ms");
     assertStringIncludes(error.message, "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000ms");
-    const idleError = <Error> assertThrows(
+    const idleError = assertThrows(
       () =>
         resolveHostedModelStreamTimeouts(
           parseAgentServiceConfig({ VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: "150000" }),
           150_000,
         ),
       TypeError,
-    );
+    ) as Error;
     assertStringIncludes(
       idleError.message,
       "VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS=150000ms",
