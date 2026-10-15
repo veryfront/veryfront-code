@@ -226,6 +226,7 @@ import {
   resolveRuntimeSkillBootstrapId,
   validateRuntimeSkillBootstrapResult,
 } from "./skill-bootstrap.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import {
   prepareFrameworkSkillBootstrap,
   runWithFrameworkSkillBootstrap,
@@ -3497,6 +3498,12 @@ export class AgentRuntime {
     let retainedLoader = false;
     for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
       if (tools[toolName]) {
+        // A replacement that already carries a trusted framework loader keeps
+        // startup available, exactly like one this helper inserts.
+        if (
+          isLoadSkillToolName(toolName) && hasTrustedHostToolProvenance(tools[toolName]) &&
+          prepareFrameworkSkillBootstrap(tools[toolName], toolName) !== undefined
+        ) retainedLoader = true;
         continue;
       }
       const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {

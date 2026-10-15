@@ -882,4 +882,41 @@ describe("startup skill and tool bootstrap", () => {
       }
     });
   }
+  it("replacement tools that already carry the framework loader still load the startup skill", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("carried-plan", {
+      id: "carried-plan",
+      rootPath: "/skills/carried-plan",
+      metadata: { name: "carried-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({ "/skills/carried-plan/SKILL.md": "# Carried guidance" }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Carried guidance");
+      return { text: "Ready" };
+    }], { only: "generate" });
+    const loader = createLoadSkillTool();
+    const trusted = markTrustedHostToolProvenance(createLoadSkillTool());
+    const assistant = agent({
+      id: "eval-carried-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "carried-plan",
+      skills: ["carried-plan"],
+      tools: { load_skill: loader },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      await assistant.generate({
+        input: "Go",
+        // Both framework aliases are already present, so none is inserted.
+        tools: { load_skill: trusted, veryfront__load_skill: trusted },
+        retainSkillLoaderTools: true,
+      });
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
 });
