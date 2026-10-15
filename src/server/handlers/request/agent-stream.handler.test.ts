@@ -526,7 +526,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
-  for (const replacement of ["headers", "response", "strings", "constructors"] as const) {
+  for (
+    const replacement of ["headers", "response", "strings", "constructors", "encoder"] as const
+  ) {
     it(`preserves managed SSE identity after project-mutated ${replacement}`, async () => {
       const responseFields = ["status", "statusText", "headers", "body"] as const;
       const responseDescriptors = responseFields.map((field) =>
@@ -611,6 +613,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
       let result: Awaited<ReturnType<AgentStreamHandler["handle"]>>;
       try {
+        if (replacement === "encoder") globalThis.encodeURIComponent = poison;
         result = await handler.handle(
           new Request("https://example.com/api/control-plane/runs/run_1/stream", {
             method: "POST",

@@ -195,6 +195,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
 const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
 const IntrinsicReflectApply = Reflect.apply;
+const EncodeURIComponent = encodeURIComponent;
 const NativeResponse = Response;
 const NativeObjectPrototype = Object.prototype;
 const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
@@ -1260,7 +1261,7 @@ export class AgentStreamHandler extends BaseHandler {
       });
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
-      const runtimeNameHeader = encodeURIComponent(runtimeIdentity.name);
+      const runtimeNameHeader = EncodeURIComponent(runtimeIdentity.name);
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
