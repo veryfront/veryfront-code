@@ -1,6 +1,10 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { getServiceRuntimeIdentity, resolveServiceRuntimeName } from "./runtime-identity.ts";
+import {
+  getServiceRuntimeIdentity,
+  initializeServiceRuntimeIdentity,
+  resolveServiceRuntimeName,
+} from "./runtime-identity.ts";
 
 it("service display names use an explicit override or the machine hostname", () => {
   assertEquals(resolveServiceRuntimeName("  Agent service 2  ", () => "host-1"), "Agent service 2");
@@ -27,6 +31,10 @@ it("service display names reject values that cannot be safely reported", () => {
 it("the service process identity is immutable and stable", () => {
   const identity = getServiceRuntimeIdentity();
   assertEquals(getServiceRuntimeIdentity(), identity);
+  assertEquals(
+    initializeServiceRuntimeIdentity({ VERYFRONT_RUNTIME_NAME: "Later runtime" }),
+    identity,
+  );
   assertEquals(Object.isFrozen(identity), true);
   assertEquals(identity.mode, "service");
 });
