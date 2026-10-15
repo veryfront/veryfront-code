@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stub } from "#std/testing/mock";
 import {
@@ -185,7 +186,7 @@ Deno.test("connected development resolves a renamed linked project by canonical 
   const { resolveConnectedDevProject } = await import(
     "../../../../../../cli/commands/dev/connected-dev.ts"
   );
-  const projectDir = await Deno.makeTempDir();
+  const projectDir = await makeTempDir();
   try {
     await writeProjectLink(projectDir, {
       controlPlane: "https://api.veryfront.com",
@@ -255,7 +256,7 @@ Deno.test("connected development resolves shared configuration without a private
   const { resolveConnectedDevProject } = await import(
     "../../../../../../cli/commands/dev/connected-dev.ts"
   );
-  const projectDir = await Deno.makeTempDir();
+  const projectDir = await makeTempDir();
   try {
     const project = await resolveConnectedDevProject(
       {
