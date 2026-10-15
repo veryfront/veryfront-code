@@ -11,6 +11,7 @@ export async function bindScriptModuleImports(
   path: string,
   peers: LocalReactPeerSnapshot,
   runtimeUrl: string,
+  onGlob?: () => void,
 ): Promise<string> {
   if (!code.includes("require") && !code.includes("import")) return code;
   let parser = tryResolve<CodeParser>("CodeParser");
@@ -45,7 +46,10 @@ export async function bindScriptModuleImports(
       : prefix.type === "StringLiteral"
       ? prefix.value
       : undefined;
-    if (typeof literalPrefix === "string" && /^\.\.?\//.test(literalPrefix)) return;
+    if (typeof literalPrefix === "string" && /^\.\.?\//.test(literalPrefix)) {
+      onGlob?.();
+      return;
+    }
     if (typeof argument.start !== "number" || typeof argument.end !== "number") {
       throw new TypeError("Script parser omitted dynamic import source positions");
     }

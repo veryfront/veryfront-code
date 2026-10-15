@@ -2,6 +2,7 @@ import {
   buildSourceModuleMetaBinding,
   getSourceModuleRuntimeUrl,
 } from "#veryfront/transforms/shared/source-module-location.ts";
+import { ScriptCompilationInputs } from "./script-compilation-inputs.ts";
 import { bindScriptModuleImports } from "./script-module-imports.ts";
 import { isBuiltin } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,7 +21,7 @@ import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/
 
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, extname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createError, RENDER_ERROR, toError } from "#veryfront/errors";
 import { flattenRouteParams } from "#veryfront/routing";
@@ -49,7 +50,37 @@ import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-load
 
 const logger = rendererLogger.component("script");
 const SCRIPT_MODULE_CACHE_LIMIT = 256;
+const scriptCompilations = new Map<
+  string,
+  { load: Promise<ScriptPageModule>; inputs: ScriptCompilationInputs; pending: boolean }
+>();
+
+// Preserve native-like module instance reuse even for graphs that require recompilation.
 const scriptModules = new Map<string, { load: Promise<ScriptPageModule> }>();
+
+async function reuseScriptModule(
+  key: string,
+  load: () => Promise<ScriptPageModule>,
+): Promise<ScriptPageModule> {
+  const cached = scriptModules.get(key);
+  if (cached) {
+    scriptModules.delete(key);
+    scriptModules.set(key, cached);
+    return await cached.load;
+  }
+  const entry = { load: load() };
+  scriptModules.set(key, entry);
+  while (scriptModules.size > SCRIPT_MODULE_CACHE_LIMIT) {
+    const oldest = scriptModules.keys().next().value;
+    if (oldest !== undefined) scriptModules.delete(oldest);
+  }
+  try {
+    return await entry.load;
+  } catch (error) {
+    if (scriptModules.get(key) === entry) scriptModules.delete(key);
+    throw error;
+  }
+}
 
 type ScriptModuleOutput =
   | string
@@ -402,6 +433,7 @@ async function transpileWithEsbuild(
   resolveDir: string,
   reactPeers?: LocalReactPeerSnapshot,
   serverExternalPackages?: readonly string[],
+  inputs?: ScriptCompilationInputs,
 ): Promise<string> {
   const { build, transform } = await import("veryfront/extensions/bundler");
   const loader = getEsbuildLoader(modulePath);
@@ -410,6 +442,7 @@ async function transpileWithEsbuild(
   if (runtime) await runtime.prepareSourceModuleMeta(sourceUrl, reactPeers);
   const conditions = runtime?.getSourceModuleConditions(sourceUrl);
   const preserveSourceUrl = async (contents: string, path: string) => {
+    await inputs?.record(path, contents);
     const sourceUrl = pathToFileURL(path).href;
     const meta = await buildSourceModuleMetaBinding(
       contents,
@@ -433,6 +466,9 @@ async function transpileWithEsbuild(
         path,
         reactPeers,
         getSourceModuleRuntimeUrl(),
+        () => {
+          if (inputs) inputs.reusable = false;
+        },
       )
       : transformed.code;
     const code = bound.includes(meta.name)
@@ -472,6 +508,17 @@ ${bound}`
             if (isBun && (args.path === "bun" || args.path.startsWith("bun:"))) {
               return { path: args.path, external: true };
             }
+            // Package lookup can change through unobserved fallback candidates. Only reuse
+            // graphs of explicit file imports, builtins, and already captured peer URLs.
+            if (
+              !/^(?:\.{1,2}\/|\/|file:)/.test(args.path) &&
+              typeof reactPeers.paths[args.path] !== "string" && inputs
+            ) {
+              inputs.reusable = false;
+            }
+            if (/^(?:\.{1,2}\/|\/|file:)/.test(args.path)) {
+              await inputs?.verifyFileLookup(args.path, args.resolveDir || resolveDir);
+            }
             const configured = !/^react(?:-dom)?(?:\/|$)/.test(args.path) &&
               serverExternalPackages?.some((name) =>
                 args.path === name || args.path.startsWith(`${name}/`)
@@ -495,6 +542,7 @@ ${bound}`
                     : [{ text: "Native script dependency is unavailable" }],
                 };
               }
+              await inputs?.recordResolution(resolved.path);
               return {
                 path: args.kind === "require-call"
                   ? resolved.path
@@ -504,14 +552,24 @@ ${bound}`
             }
             return undefined;
           });
-          pluginBuild.onLoad({ filter: /\.[cm]?[jt]sx?$/, namespace: "file" }, async (args) => ({
-            contents: await preserveSourceUrl(
-              await createFileSystem().readTextFile(args.path),
-              args.path,
-            ),
-            loader: getEsbuildLoader(args.path),
-            resolveDir: dirname(args.path),
-          }));
+          pluginBuild.onLoad({ filter: /.*/, namespace: "file" }, async (args) => {
+            const extension = extname(args.path).toLowerCase();
+            const contents = await createFileSystem().readTextFile(args.path);
+            if (extension === ".json") {
+              await inputs?.record(args.path, contents);
+              return { contents, loader: "json", resolveDir: dirname(args.path) };
+            }
+            if (!extension || /\.[cm]?[jt]sx?$/.test(extension)) {
+              return {
+                contents: await preserveSourceUrl(contents, args.path),
+                loader: getEsbuildLoader(args.path),
+                resolveDir: dirname(args.path),
+              };
+            }
+            // Let the native loader own other file kinds; their graph cannot be reused safely.
+            if (inputs) inputs.reusable = false;
+            return undefined;
+          });
           pluginBuild.onResolve({ filter: /^react(?:-dom)?(?:\/|$)/ }, (args) => {
             const path = getLocalReactPath(args.path, reactPeers.versions.react, reactPeers);
             if (!path) throw new TypeError("Captured React script import is unavailable");
@@ -541,6 +599,7 @@ ${bound}`
                     : [{ text: "Script external import is unavailable" }],
                 };
               }
+              await inputs?.recordResolution(resolved.path);
               return {
                 path: args.kind === "require-call"
                   ? resolved.path
@@ -638,36 +697,57 @@ async function loadScriptModule(
   logger.debug(`Read ${source.length} bytes from adapter`);
 
   const resolveDir = dirname(normalizedPath) || projectDir;
-  const transpiled = await transpileWithEsbuild(
-    source,
-    reactPeers ? normalizedPath : modulePath,
-    resolveDir,
+  const compile = async (inputs?: ScriptCompilationInputs) => {
+    const transpiled = await transpileWithEsbuild(
+      source,
+      reactPeers ? normalizedPath : modulePath,
+      resolveDir,
+      reactPeers,
+      serverExternalPackages,
+      inputs,
+    );
+    const code = rewriteNpmImports(transpiled, projectDir);
+    if (!reactPeers || productionIdentity === undefined) return await importFromTempFile(fs, code);
+    const moduleKey = await computeHash(
+      JSON.stringify([normalizedPath, productionIdentity, reactPeers, code]),
+    );
+    return await reuseScriptModule(moduleKey, () => importFromTempFile(fs, code));
+  };
+  if (!reactPeers || productionIdentity === undefined) return await compile();
+  const key = await computeHash(JSON.stringify([
+    normalizedPath,
+    projectDir,
+    productionIdentity,
     reactPeers,
     serverExternalPackages,
-  );
-  logger.debug(`Transpiled ${modulePath}`);
-
-  const code = rewriteNpmImports(transpiled, projectDir);
-  if (!reactPeers || productionIdentity === undefined) return importFromTempFile(fs, code);
-  const key = await computeHash(
-    JSON.stringify([normalizedPath, productionIdentity, reactPeers, code]),
-  );
-  const cached = scriptModules.get(key);
+    source,
+  ]));
+  const cached = scriptCompilations.get(key);
   if (cached) {
-    scriptModules.delete(key);
-    scriptModules.set(key, cached);
-    return await cached.load;
+    if (cached.pending) return await cached.load;
+    if (await cached.inputs.unchanged()) {
+      scriptCompilations.delete(key);
+      scriptCompilations.set(key, cached);
+      return await cached.load;
+    }
+    // Another request may have refreshed this graph while its fingerprints were read.
+    const current = scriptCompilations.get(key);
+    if (current && current !== cached) return await current.load;
+    scriptCompilations.delete(key);
   }
-  const pending = { load: importFromTempFile(fs, code) };
-  scriptModules.set(key, pending);
-  while (scriptModules.size > SCRIPT_MODULE_CACHE_LIMIT) {
-    const oldest = scriptModules.keys().next().value;
-    if (oldest !== undefined) scriptModules.delete(oldest);
+  const inputs = new ScriptCompilationInputs(normalizeModulePath(".", projectDir));
+  const pending = { load: compile(inputs), inputs, pending: true };
+  scriptCompilations.set(key, pending);
+  while (scriptCompilations.size > SCRIPT_MODULE_CACHE_LIMIT) {
+    const oldest = scriptCompilations.keys().next().value;
+    if (oldest !== undefined) scriptCompilations.delete(oldest);
   }
   try {
     return await pending.load;
   } catch (error) {
-    if (scriptModules.get(key) === pending) scriptModules.delete(key);
+    if (scriptCompilations.get(key) === pending) scriptCompilations.delete(key);
     throw error;
+  } finally {
+    pending.pending = false;
   }
 }
