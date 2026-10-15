@@ -516,12 +516,9 @@ async function createDirectAgentUpstream(options: {
   const result = await (options.localRun ? options.localRun.execute(startStream) : startStream());
 
   const upstream = result.toDataStreamResponse();
+  const body = upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body;
   return {
-    body: upstream.body
-      ? options.toolDataEvents.wrapStream(
-        options.localRun ? options.localRun.wrapStream(upstream.body) : upstream.body,
-      )
-      : upstream.body,
+    body: body && options.localRun ? options.localRun.wrapStream(body) : body,
     status: upstream.status,
     statusText: upstream.statusText,
   };
