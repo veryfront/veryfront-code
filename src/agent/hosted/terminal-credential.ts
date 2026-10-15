@@ -217,20 +217,29 @@ export function hostedTerminalToolSourceFactory(
   };
 }
 
+type HostedInheritedRunAdmitter<Result> = (toolCallId: string, prompt: string) => (
+  input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
+    conversationId?: string;
+  },
+) => Promise<Result>;
+type InheritedAdmissionTransport = { apiUrl: string; fetch?: typeof globalThis.fetch };
+
 /** Build an inherited admission transport bound to an authentic parent capability. */
 export function hostedInheritedRunAdmitter(
   request: ParsedHostedChatRequest | HostedTerminalDescriptor,
-  transport: { apiUrl: string; fetch?: typeof globalThis.fetch },
-):
-  | ((
-    toolCallId: string,
-    prompt: string,
-  ) => (
-    input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
-      conversationId?: string;
-    },
-  ) => Promise<ConversationRunProjection>)
-  | undefined {
+  transport: InheritedAdmissionTransport,
+  terminalReplay: true,
+): HostedInheritedRunAdmitter<ConversationRunProjection | InheritedRunResult> | undefined;
+export function hostedInheritedRunAdmitter(
+  request: ParsedHostedChatRequest | HostedTerminalDescriptor,
+  transport: InheritedAdmissionTransport,
+  terminalReplay?: false,
+): HostedInheritedRunAdmitter<ConversationRunProjection> | undefined;
+export function hostedInheritedRunAdmitter(
+  request: ParsedHostedChatRequest | HostedTerminalDescriptor,
+  transport: InheritedAdmissionTransport,
+  terminalReplay = false,
+): HostedInheritedRunAdmitter<ConversationRunProjection | InheritedRunResult> | undefined {
   const parent = credentials.get(request);
   if (!parent?.authToken) return undefined;
   const parentId = terminalRoute(parent.token, parent.runId).id;
@@ -259,7 +268,10 @@ export function hostedInheritedRunAdmitter(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    return acceptInheritedRunAdmission(response, {
+    const decode = terminalReplay
+      ? acceptWorkflowInheritedRunAdmission
+      : acceptInheritedRunAdmission;
+    return decode(response, {
       projectId: parent.projectId,
       conversationId: input.conversationId,
       parentRunId: parentId,

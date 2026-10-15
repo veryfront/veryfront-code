@@ -80,7 +80,7 @@ export async function runInheritedLocalAgent(
   if ("terminalReceipt" in child) throw new Error("Inherited terminal receipt is missing");
   const writer = hostedInheritedEventWriter(child);
   const finalize = hostedTerminalRunFinalizer(child);
-  const admit = hostedInheritedRunAdmitter(child, transport);
+  const admit = hostedInheritedRunAdmitter(child, transport, true);
   const mirror = createHostedConversationRunChunkMirrorFromCapability(writer, {
     expectedRunId: child.runId,
     conversationId: child.conversationId,
@@ -212,12 +212,14 @@ export async function runInheritedLocalAgent(
                       async (childSignal, onEvent) => {
                         const output = await invocation.execute({
                           signal: childSignal,
-                          runId: delegated.runId,
+                          runId: "terminalReceipt" in delegated ? undefined : delegated.runId,
                           onEvent,
-                          resolveModelRuntime: hostedInheritedInferenceModelResolver(delegated, {
-                            projectModels: resolveProjectModels,
-                            signal: childSignal,
-                          }),
+                          resolveModelRuntime: "terminalReceipt" in delegated
+                            ? undefined
+                            : hostedInheritedInferenceModelResolver(delegated, {
+                              projectModels: resolveProjectModels,
+                              signal: childSignal,
+                            }),
                         });
                         return { success: output.status !== "error", output, executionTime: 0 };
                       },
