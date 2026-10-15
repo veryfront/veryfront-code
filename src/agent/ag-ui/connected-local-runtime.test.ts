@@ -19,6 +19,7 @@ function fixture(
     apiFailure?: { path: string; status: number; detail?: string; invalidJson?: boolean };
     registerFailureOnce?: boolean;
     completeFailure?: boolean;
+    complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
   } = {},
 ) {
@@ -63,8 +64,9 @@ function fixture(
       batches.push(input.events);
       return Promise.resolve();
     },
-    completeRun: (input: { status: string }) => {
+    completeRun: (input: { runId: string; status: string }) => {
       completed.push(input.status);
+      if (options.complete) return options.complete(input);
       return options.completeFailure
         ? Promise.reject(new Error("finalization offline"))
         : Promise.resolve();
@@ -471,9 +473,11 @@ describe("connected local execution", () => {
     await second.finish("completed");
     assertEquals(first.conversationId, second.conversationId);
     assertEquals(f.requests.filter((r) => r.path === "/conversations").length, 1);
+    const latestMessage = input.messages.at(-1);
+    if (!latestMessage) throw new Error("Expected the latest user message fixture");
     assertEquals(f.requests.filter((r) => r.path.endsWith("/messages")).map((r) => r.body.parts), [
-      input.messages[2].parts,
-      input.messages[2].parts,
+      latestMessage.parts,
+      latestMessage.parts,
     ]);
     assertEquals(f.requests.filter((r) => r.path === "/runs").map((r) => r.body.input), [
       "first\nsecond",
@@ -536,6 +540,41 @@ describe("connected local execution", () => {
     await f.runtime.dispose();
     assertEquals(f.completed, ["completed"]);
     assertEquals(f.logs.some((line) => line.includes("run persistence failed")), true);
+  });
+  it("waits for every active finalization before reporting a disposal failure", async () => {
+    let releaseDelayed!: () => void;
+    const delayed = new Promise<void>((resolve) => releaseDelayed = resolve);
+    let delayedFinished = false;
+    const f = fixture({
+      complete: ({ runId }) =>
+        runId === "run-1"
+          ? Promise.reject(new Error("first finalization failed"))
+          : delayed.then(() => {
+            delayedFinished = true;
+          }),
+    });
+    await Promise.all(
+      ["first", "second"].map((threadId) =>
+        f.runtime.admit({
+          agentId: "assistant",
+          threadId,
+          messages: [],
+          signal: new AbortController().signal,
+        })
+      ),
+    );
+
+    let disposalSettled = false;
+    const disposal = f.runtime.dispose().finally(() => disposalSettled = true);
+    void disposal.catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(disposalSettled, false);
+    assertEquals(delayedFinished, false);
+
+    releaseDelayed();
+    await assertRejects(() => disposal, Error, "first finalization failed");
+    assertEquals(delayedFinished, true);
   });
   it("records explicit model errors as failed execution", async () => {
     const f = fixture();

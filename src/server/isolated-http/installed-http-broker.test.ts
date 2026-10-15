@@ -96,19 +96,22 @@ describe("installed HTTP broker", () => {
     }
   });
   it("orders a request by when its authorization began, not when it finished", async () => {
-    let began = 0;
+    const originalNow = Date.now;
+    let now = 1_000;
     const b = fixture(async () => {
-      began = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      now += 40;
+      await Promise.resolve();
     });
+    Date.now = () => now;
     try {
       const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
       const request = input.session.request;
-      assertEquals(request.requestedAt <= began, true);
+      assertEquals(request.requestedAt, 1_000);
       // The configured lifetime still runs from the end of authorization.
-      assertEquals(request.hardDeadlineAt >= began + 40 + 75_000, true);
-      assertEquals(request.prepareDeadlineAt >= began + 40 + 30_000, true);
+      assertEquals(request.hardDeadlineAt, 1_040 + 75_000);
+      assertEquals(request.prepareDeadlineAt, 1_040 + 30_000);
     } finally {
+      Date.now = originalNow;
       await b.shutdown();
     }
   });

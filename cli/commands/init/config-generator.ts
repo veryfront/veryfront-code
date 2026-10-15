@@ -136,8 +136,7 @@ export async function createPackageJson(
   logger.debug('Created package.json with "type": "module"');
 }
 
-export async function createTypeScriptConfig(projectDir: string): Promise<void> {
-  const fs = createFileSystem();
+export function buildTypeScriptConfig(): string {
   const tsConfig = {
     compilerOptions: {
       target: "ES2022",
@@ -153,8 +152,12 @@ export async function createTypeScriptConfig(projectDir: string): Promise<void> 
     exclude: ["node_modules"],
   };
 
-  await fs.writeTextFile(
+  return `${JSON.stringify(tsConfig, null, 2)}\n`;
+}
+
+export async function createTypeScriptConfig(projectDir: string): Promise<void> {
+  await createFileSystem().writeTextFile(
     join(projectDir, "tsconfig.json"),
-    `${JSON.stringify(tsConfig, null, 2)}\n`,
+    buildTypeScriptConfig(),
   );
 }

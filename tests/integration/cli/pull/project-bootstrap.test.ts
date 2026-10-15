@@ -185,3 +185,33 @@ it("restores an existing config association when later bootstrap fails", async (
     await Deno.remove(projectDir, { recursive: true });
   }
 });
+
+for (const file of ["package.json", "tsconfig.json"]) {
+  it(`preserves ${file} created after planning and rolls back only owned files`, async () => {
+    const projectDir = await makeTempDirWithOptions();
+    try {
+      const options = {
+        projectDir,
+        config: { apiUrl: "http://localhost:4400", apiToken: "private-token", projectSlug: "demo" },
+        project: { id: "project", slug: "demo" },
+        pulledPaths: new Set<string>(),
+        deletedPaths: new Set<string>(),
+        dryRun: false,
+        quiet: true,
+      };
+      const plan = await planPulledProjectBootstrap(options);
+      const content = '{"custom":"keep"}\n';
+      await Deno.writeTextFile(`${projectDir}/${file}`, content);
+      await assertRejects(
+        () => ensurePulledProjectBootstrap({ ...options, plan }),
+        Deno.errors.AlreadyExists,
+      );
+      assertEquals(await Deno.readTextFile(`${projectDir}/${file}`), content);
+      assertEquals((await Array.fromAsync(Deno.readDir(projectDir))).map((entry) => entry.name), [
+        file,
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+}

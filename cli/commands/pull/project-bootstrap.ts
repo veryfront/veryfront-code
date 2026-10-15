@@ -11,7 +11,7 @@ import {
 } from "../../shared/project-link.ts";
 import { normalizeControlPlane, type ProjectTarget } from "../../shared/deployment-provenance.ts";
 import { generateGitignoreContent } from "../../utils/env-prompt.ts";
-import { createPackageJson, createTypeScriptConfig } from "../init/config-generator.ts";
+import { buildPackageJson, buildTypeScriptConfig } from "../init/config-generator.ts";
 
 const PACKAGE_JSON_PATH = "package.json";
 const TSCONFIG_PATH = "tsconfig.json";
@@ -230,12 +230,16 @@ export async function ensurePulledProjectBootstrap(
       if (plan.sharedAssociationAction === "create") createdFiles.push(sharedPath);
     }
     if (plan.createPackageJson) {
-      createdFiles.push(join(options.projectDir, PACKAGE_JSON_PATH));
-      await createPackageJson(options.projectDir, options.project.slug);
+      const packagePath = join(options.projectDir, PACKAGE_JSON_PATH);
+      await Deno.writeTextFile(packagePath, buildPackageJson(options.project.slug), {
+        createNew: true,
+      });
+      createdFiles.push(packagePath);
     }
     if (plan.createTsconfig) {
-      createdFiles.push(join(options.projectDir, TSCONFIG_PATH));
-      await createTypeScriptConfig(options.projectDir);
+      const tsconfigPath = join(options.projectDir, TSCONFIG_PATH);
+      await Deno.writeTextFile(tsconfigPath, buildTypeScriptConfig(), { createNew: true });
+      createdFiles.push(tsconfigPath);
     }
     if (plan.createGitignore) {
       const gitignorePath = join(options.projectDir, GITIGNORE_PATH);
