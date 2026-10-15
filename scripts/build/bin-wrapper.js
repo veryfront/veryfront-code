@@ -340,8 +340,10 @@ if (launch.pnpStartup) {
     ...process.execArgv,
     "--require",
     pnpStartup,
-    "--experimental-loader",
-    loader,
+    "--import",
+    "data:text/javascript," + encodeURIComponent(
+      `import { register } from "node:module"; register(${JSON.stringify(pathToFileURL(loader).href)});`,
+    ),
     fileURLToPath(import.meta.url),
     ...process.argv.slice(2),
   ], { stdio: "inherit" });

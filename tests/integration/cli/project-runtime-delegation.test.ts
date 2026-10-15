@@ -185,11 +185,31 @@ describe("project runtime delegation", () => {
         stderr: "piped",
       }).output();
       assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+      assertEquals(
+        new TextDecoder().decode(result.stderr),
+        "",
+        "PnP startup must not warn or expose loader paths",
+      );
       assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
         react: "19.2.5",
         origin: "project",
         args: ["dev"],
       });
+      for (const flag of ["--json", "--ndjson"]) {
+        const structured = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), "deploy", flag],
+          cwd: f.project,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(structured.code, 0);
+        assertEquals(
+          new TextDecoder().decode(structured.stderr),
+          "",
+          `${flag} startup is warning-free`,
+        );
+        assertEquals(JSON.parse(new TextDecoder().decode(structured.stdout)).origin, "project");
+      }
       const outside = await new Deno.Command("node", {
         args: [
           join(f.global, "bin", "veryfront.js"),

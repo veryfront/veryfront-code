@@ -208,6 +208,7 @@ export class PageRenderer {
             () =>
               handleScriptPage(pageInfo, slug, {
                 mode: this.mode,
+                reactPeers: options?.reactPeers,
                 config: this.config,
                 projectDir: this.projectDir,
                 adapter: this.adapter,

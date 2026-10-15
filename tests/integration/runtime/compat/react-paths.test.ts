@@ -50,6 +50,174 @@ function overrideInstalledVersion(
 }
 
 describe("react-paths", () => {
+  it("keeps script module imports and wrapped/full browser maps on captured peers", async () => {
+    if (!isNode && !isBun) return;
+    const { handleScriptPage } = await import("#veryfront/rendering/script-page-handling.ts");
+    const { nodeAdapter } = await import("#veryfront/platform/adapters/node.ts");
+    const directory = mkdtempSync(join(tmpdir(), "vf-script-peers-"));
+    const oldReact = join(directory, "old-react.cjs");
+    fs.writeFileSync(
+      oldReact,
+      'exports.version = "19.2.4"; exports.peerMarker = "captured-old";',
+    );
+    const captured = captureLocalReactPeers();
+    const peers = {
+      ...captured,
+      paths: { ...captured.paths, react: new URL(`file://${oldReact}`).href },
+    };
+    fs.mkdirSync(join(directory, "node_modules", "react"), { recursive: true });
+    fs.writeFileSync(
+      join(directory, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.5", type: "module", exports: "./index.js" }),
+    );
+    fs.writeFileSync(
+      join(directory, "node_modules", "react", "index.js"),
+      'export const version = "19.2.5";',
+    );
+    fs.mkdirSync(join(directory, "node_modules", "zod"));
+    fs.writeFileSync(
+      join(directory, "node_modules", "zod", "package.json"),
+      JSON.stringify({
+        name: "zod",
+        type: "module",
+        exports: { import: "./import.js", require: "./require.cjs", default: "./fallback.js" },
+      }),
+    );
+    fs.writeFileSync(
+      join(directory, "node_modules", "zod", "import.js"),
+      'export const issuer = "project-import";',
+    );
+    fs.writeFileSync(
+      join(directory, "node_modules", "zod", "require.cjs"),
+      'exports.issuer = "wrong-require";',
+    );
+    fs.writeFileSync(
+      join(directory, "node_modules", "zod", "fallback.js"),
+      'export const issuer = "wrong-default";',
+    );
+    fs.writeFileSync(join(directory, "entry.txt"), "entry-asset");
+    fs.mkdirSync(join(directory, "lib"));
+    fs.writeFileSync(join(directory, "lib", "helper.txt"), "child-asset");
+    fs.writeFileSync(
+      join(directory, "lib", "helper.js"),
+      'import { readFileSync } from "fs"; export const childAsset = readFileSync(new URL("./helper.txt", import.meta.url), "utf8");',
+    );
+    fs.mkdirSync(join(directory, "node_modules", "cjs-lib"));
+    fs.writeFileSync(
+      join(directory, "node_modules", "cjs-lib", "package.json"),
+      JSON.stringify({ name: "cjs-lib", main: "index.cjs" }),
+    );
+    fs.writeFileSync(
+      join(directory, "node_modules", "cjs-lib", "index.cjs"),
+      'module.exports = require("node:fs").readFileSync && __filename.endsWith("index.cjs") && __dirname.endsWith("cjs-lib") ? "native-require-" + require("react").peerMarker : "missing";',
+    );
+    fs.writeFileSync(join(directory, "lib", "value.json"), '{"value":"dependency-issuer"}');
+    fs.writeFileSync(
+      join(directory, "lib", "dynamic.cjs"),
+      'const asset = "./value.json"; const peer = "react"; function local(require) { return require(asset); } module.exports = require(asset).value + "-" + require(peer).peerMarker + "-" + local(() => "shadowed");',
+    );
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      for (const full of [false, true]) {
+        const path = join(directory, full ? "full.js" : "wrapped.js");
+        fs.writeFileSync(
+          path,
+          `let count = 0; import dynamicValue from "./lib/dynamic.cjs"; import legacy from "cjs-lib"; import { readFileSync } from "fs"; import { childAsset } from "./lib/helper.js"; import { issuer } from "zod"; import * as React from "react"; const entryAsset = readFileSync(new URL("./entry.txt", import.meta.url), "utf8"); const identity = React.peerMarker ?? React.version; export function render() { count++; return ${
+            full
+              ? "`<!DOCTYPE html><html><head></head><body><p>${identity}</p><i>${count}</i><aside>${issuer}</aside><section>${entryAsset}-${childAsset}-${legacy}-${dynamicValue}</section></body></html>`"
+              : "`<p>${identity}</p><i>${count}</i><aside>${issuer}</aside><section>${entryAsset}-${childAsset}-${legacy}-${dynamicValue}</section>`"
+          }; }`,
+        );
+        const result = await handleScriptPage(
+          { entity: { path, frontmatter: {} } } as never,
+          "/script",
+          {
+            mode: "production",
+            config: {},
+            projectDir: directory,
+            adapter: nodeAdapter,
+            reactPeers: peers,
+          },
+        );
+        const repeated = await handleScriptPage(
+          { entity: { path, frontmatter: {} } } as never,
+          "/script",
+          {
+            mode: "production",
+            config: {},
+            projectDir: directory,
+            adapter: nodeAdapter,
+            reactPeers: peers,
+          },
+        );
+        assertEquals(
+          repeated.html.includes("<i>2</i>"),
+          true,
+          "unchanged production modules reuse one instance",
+        );
+        assertEquals(
+          result.html.includes("<p>captured-old</p>"),
+          true,
+          "script imports use the captured physical React path",
+        );
+        assertEquals(
+          result.html.includes("<aside>project-import</aside>"),
+          true,
+          "externals retain project issuer and ESM import conditions",
+        );
+        assertEquals(
+          result.html.includes(
+            "<section>entry-asset-child-asset-native-require-captured-old-dependency-issuer-captured-old-shadowed</section>",
+          ),
+          true,
+          "entry and bundled child retain their source-relative assets",
+        );
+        assertEquals(
+          result.html.includes("react@19.2.4"),
+          true,
+          "browser map uses the captured React version",
+        );
+        assertEquals(
+          result.html.includes("react@19.2.5"),
+          false,
+          "replacement version never enters the cached document",
+        );
+        const changedSource = fs.readFileSync(path, "utf8").replace(
+          "<p>${identity}</p>",
+          "<p>${identity}</p><u>changed</u>",
+        );
+        fs.writeFileSync(path, changedSource);
+        const changed = await handleScriptPage(
+          { entity: { path, frontmatter: {} } } as never,
+          "/script",
+          {
+            mode: "production",
+            config: {},
+            projectDir: directory,
+            adapter: nodeAdapter,
+            reactPeers: peers,
+          },
+        );
+        assertEquals(
+          changed.html.includes("<u>changed</u>"),
+          true,
+          "source changes select a new executable",
+        );
+        assertEquals(
+          changed.html.includes("<i>1</i>"),
+          true,
+          "source changes do not reuse old module state",
+        );
+      }
+    } finally {
+      restoreDom();
+      restoreReact();
+      clearReactPathsCache();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   for (const transport of ["single", "batch"] as const) {
     it(`keeps ${transport} module SSR on captured peers after dependency replacement`, async () => {
       if (!isNode) return;

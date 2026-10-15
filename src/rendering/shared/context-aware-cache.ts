@@ -48,13 +48,16 @@ export class ContextAwareCacheCoordinator {
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   private readonly maxTrackedVariants: number;
   // Exact keys are needed when a store cannot enumerate runtime/pinning variants.
-  // Bound bookkeeping; at capacity caching is skipped until an entry expires or is cleared.
+  // Bound bookkeeping with the same least-recently-used order as cache reads.
   private readonly variants = new Map<string, {
     slugKey: string;
     expiresAt?: number;
     settled: boolean;
     write: Promise<void>;
   }>();
+
+  private readonly pendingWrites = new Set<Promise<void>>();
+  private readonly keyWrites = new Map<string, Promise<void>>();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
@@ -82,6 +85,11 @@ export class ContextAwareCacheCoordinator {
       async () => {
         const lookupStart = performance.now();
         const cached = (await this.store.get(cacheKey)) as CachePayload | undefined;
+        const tracked = this.variants.get(cacheKey);
+        if (tracked?.settled) {
+          this.variants.delete(cacheKey);
+          if (cached) this.variants.set(cacheKey, tracked);
+        }
 
         if (!cached) {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -218,14 +226,33 @@ export class ContextAwareCacheCoordinator {
     const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
     cachedResult.html = sealedHtml.html;
     for (const [key, variant] of this.variants) {
-      if (variant.settled && variant.expiresAt !== undefined && variant.expiresAt <= now) {
+      if (variant.settled && variant.expiresAt !== undefined && variant.expiresAt < now) {
         this.variants.delete(key);
       }
     }
-    if (!this.variants.has(cacheKey) && this.variants.size >= this.maxTrackedVariants) return;
     const previous = this.variants.get(cacheKey);
+    const previousWrite = this.keyWrites.get(cacheKey);
+    let evicted: [string, typeof previous] | undefined;
+    if (!previous && this.variants.size >= this.maxTrackedVariants) {
+      const oldest = this.variants.entries().next().value;
+      if (oldest) {
+        evicted = oldest;
+        this.variants.delete(oldest[0]);
+      }
+    }
+    let eviction: Promise<void> | undefined;
+    if (evicted) {
+      const [key, variant] = evicted;
+      const preceding = this.keyWrites.get(key) ?? variant?.write;
+      eviction = Promise.resolve().then(async () => {
+        if (preceding) await Promise.allSettled([preceding]);
+        await this.store.delete(key);
+      });
+      this.trackKeyWrite(key, eviction);
+    }
     const write = Promise.resolve().then(async () => {
-      await previous?.write;
+      if (previousWrite) await Promise.allSettled([previousWrite]);
+      if (eviction) await eviction;
       await this.store.set(cacheKey, {
         result: cachedResult,
         ...(sealedHtml.placeholder === undefined
@@ -241,11 +268,16 @@ export class ContextAwareCacheCoordinator {
     });
     const variant = {
       slugKey: createCacheKey(ctx, `page:${slug}`),
-      expiresAt: this.ttlMs ? now + this.ttlMs + this.staleMs : undefined,
+      expiresAt: this.ttlMs
+        ? now + this.ttlMs + (this.shouldServeStale(ctx) ? this.staleMs : 0)
+        : undefined,
       settled: false,
       write,
     };
+    this.variants.delete(cacheKey);
     this.variants.set(cacheKey, variant);
+    this.pendingWrites.add(write);
+    this.trackKeyWrite(cacheKey, write);
     try {
       await write;
       variant.settled = true;
@@ -255,6 +287,8 @@ export class ContextAwareCacheCoordinator {
         else this.variants.delete(cacheKey);
       }
       throw error;
+    } finally {
+      this.pendingWrites.delete(write);
     }
 
     logger.debug("Cached result", {
@@ -342,12 +376,22 @@ export class ContextAwareCacheCoordinator {
     });
   }
 
+  private trackKeyWrite(key: string, write: Promise<void>): void {
+    this.keyWrites.set(key, write);
+    const retire = () => {
+      if (this.keyWrites.get(key) === write) this.keyWrites.delete(key);
+    };
+    // Callers retain each operation's rejection; this continuation only retires ordering state.
+    void write.then(retire, retire);
+  }
+
   private async clearTrackedVariants(
     matches: (key: string, slugKey: string) => boolean,
   ): Promise<void> {
+    await Promise.allSettled([...this.pendingWrites]);
     const variants = [...this.variants].filter(([key, variant]) => matches(key, variant.slugKey));
-    // Wait for writes admitted before invalidation so they cannot repopulate cleared entries.
-    await Promise.all(variants.map(([, variant]) => variant.write));
+    // Each caller owns its write failure; settlement here only orders invalidation.
+    await Promise.allSettled(variants.map(([, variant]) => variant.write));
     for (const [key, variant] of variants) {
       await this.store.delete(key);
       if (this.variants.get(key) === variant) this.variants.delete(key);
@@ -355,12 +399,14 @@ export class ContextAwareCacheCoordinator {
   }
 
   async clearAll(): Promise<void> {
+    await Promise.allSettled([...this.pendingWrites]);
     await this.store.clear();
     this.variants.clear();
     logger.debug("Cleared all cached data");
   }
 
   async destroy(): Promise<void> {
+    await Promise.allSettled([...this.pendingWrites]);
     await this.store.destroy();
     this.variants.clear();
   }

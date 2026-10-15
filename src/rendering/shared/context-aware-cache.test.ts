@@ -647,6 +647,130 @@ describe("rendering/shared/context-aware-cache", () => {
       await cache.destroy();
     });
 
+    for (const secondSlug of ["first", "independent"]) {
+      it(`keeps a failed predecessor from aborting write and clear for ${secondSlug}`, async () => {
+        const store = createInMemoryStore();
+        let rejectFirst!: (error: Error) => void;
+        let admit!: () => void;
+        const admitted = new Promise<void>((resolve) => {
+          admit = resolve;
+        });
+        let writes = 0;
+        const set = store.set;
+        store.set = async (key, payload) => {
+          if (++writes === 1) {
+            admit();
+            await new Promise<void>((_resolve, reject) => {
+              rejectFirst = reject;
+            });
+          }
+          await set(key, payload);
+        };
+        const cache = new ContextAwareCacheCoordinator({ store, memory: { maxEntries: 1 } });
+        const ctx = makeMockCtx();
+        const result = { html: "recovered", frontmatter: {}, stream: null };
+        const first = cache.persistResult(result, "first", ctx);
+        const second = cache.persistResult(result, secondSlug, ctx);
+        const settled = Promise.allSettled([first, second]);
+        await admitted;
+        const cleared = Promise.allSettled([cache.clearForContext(ctx)]);
+        rejectFirst(new Error("transient write failure"));
+        const outcomes = await settled;
+        assertEquals(
+          outcomes.map((outcome) => outcome.status),
+          ["rejected", "fulfilled"],
+          "each write owns its failure",
+        );
+        assertEquals(
+          (await cleared)[0].status,
+          "fulfilled",
+          "clear owns only its own store errors",
+        );
+        assertEquals(writes, 2, "later operation reaches the recovered store");
+        assertEquals(store.data.size, 0, "failed predecessor must not prevent invalidation");
+        await cache.destroy();
+      });
+    }
+
+    it("orders a reused key behind its pending eviction", async () => {
+      const store = createInMemoryStore();
+      let release!: () => void;
+      let admit!: () => void;
+      const admitted = new Promise<void>((resolve) => {
+        admit = resolve;
+      });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const set = store.set;
+      store.set = async (key, payload) => {
+        if (payload.result.html === "old-a") {
+          admit();
+          await blocked;
+        }
+        await set(key, payload);
+      };
+      const cache = new ContextAwareCacheCoordinator({ store, memory: { maxEntries: 2 } });
+      const ctx = makeMockCtx();
+      const result = (html: string) => ({ html, frontmatter: {}, stream: null });
+      const first = cache.persistResult(result("old-a"), "a", ctx);
+      await admitted;
+      await cache.persistResult(result("c"), "c", ctx);
+      const evict = cache.persistResult(result("b"), "b", ctx);
+      const replace = cache.persistResult(result("new-a"), "a", ctx);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      release();
+      await Promise.all([first, evict, replace]);
+      assertEquals(
+        (await cache.checkCache("a", ctx)).cachedResult?.html,
+        "new-a",
+        "eviction cannot delete the later successful write",
+      );
+      await cache.destroy();
+    });
+
+    it("continues caching new routes when the backing LRU is full", async () => {
+      const cache = new ContextAwareCacheCoordinator({ memory: { maxEntries: 2 } });
+      const ctx = makeMockCtx();
+      const result = { html: "cached", frontmatter: {}, stream: null };
+      await cache.persistResult(result, "one", ctx);
+      await cache.persistResult(result, "two", ctx);
+      await cache.checkCache("one", ctx);
+      await cache.persistResult(result, "three", ctx);
+      assertEquals(
+        (await cache.checkCache("three", ctx)).hit,
+        true,
+        "new routes must remain cacheable at capacity",
+      );
+      assertEquals(
+        (await cache.checkCache("one", ctx)).hit,
+        true,
+        "recently read route remains cached",
+      );
+      assertEquals(
+        (await cache.checkCache("two", ctx)).hit,
+        false,
+        "least recently used route is evicted",
+      );
+      await cache.destroy();
+    });
+
+    for (const operation of ["clearAll", "destroy"] as const) {
+      it(`drains admitted writes before ${operation}`, async () => {
+        const store = createInMemoryStore();
+        const cache = new ContextAwareCacheCoordinator({ store });
+        const ctx = makeMockCtx();
+        const write = cache.persistResult(
+          { html: "old", frontmatter: {}, stream: null },
+          "pending",
+          ctx,
+        );
+        await cache[operation]();
+        await write;
+        assertEquals(store.data.size, 0, "pre-clear write cannot repopulate the store");
+      });
+    }
+
     it("releases variant capacity after context invalidation", async () => {
       const cache = new ContextAwareCacheCoordinator({ memory: { maxEntries: 2 } });
       const ctx = makeMockCtx();
