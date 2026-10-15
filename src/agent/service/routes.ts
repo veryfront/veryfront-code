@@ -72,6 +72,17 @@ const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype
 const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
 const HeadersDelete = NativeHeaders.prototype.delete;
+const HeadersForEach = NativeHeaders.prototype.forEach;
+const HeadersAppend = NativeHeaders.prototype.append;
+const HeadersSet = NativeHeaders.prototype.set;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")?.get;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")
+  ?.get;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")?.get;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)?.get;
 const ObjectCreate = Object.create;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
@@ -89,7 +100,7 @@ function createVersionResponse(deploymentArtifact: string | null): Response {
   );
 }
 
-function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
+function readRequestValue<T>(request: Request | Response, getter: (() => T) | undefined): T {
   if (!getter) throw new TypeError("Request accessor is unavailable");
   return IntrinsicReflectApply(getter, request, []) as T;
 }
@@ -342,6 +353,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
   const runtimeIdentity = getServiceRuntimeIdentity();
+  const runtimeNameHeader = encodeURIComponent(runtimeIdentity.name);
   const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
@@ -484,25 +496,41 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
   /** Names the service process that accepted work, even without a direct owner URL. */
   async function withRuntimeOwner(response: Response, request: Request): Promise<Response> {
-    if (response.status !== 202) {
+    const status = readRequestValue<number>(response, ResponseStatusGet);
+    if (status !== 202) {
       return response;
     }
-    const headers = new NativeHeaders(response.headers);
-    headers.set(RUNTIME_ID_HEADER, runtimeIdentity.id);
-    headers.set(RUNTIME_NAME_HEADER, encodeURIComponent(runtimeIdentity.name));
-    headers.set(RUNTIME_MODE_HEADER, runtimeIdentity.mode);
+    // Construct with an empty header dictionary. Passing Headers to the constructor
+    // would call a project-replaced iterator after work has already been accepted.
+    const init = buildResponseInit(
+      NativeObjectPrototype,
+      status,
+      readRequestValue<string>(response, ResponseStatusTextGet),
+    );
+    const result = new NativeResponse(
+      readRequestValue<ReadableStream<Uint8Array> | null>(response, ResponseBodyGet),
+      init,
+    );
+    const headers = readRequestValue<Headers>(result, ResponseHeadersGet);
+    IntrinsicReflectApply(HeadersForEach, readRequestValue<Headers>(response, ResponseHeadersGet), [
+      (value: string, name: string) => IntrinsicReflectApply(HeadersAppend, headers, [name, value]),
+    ]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_ID_HEADER, runtimeIdentity.id]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_NAME_HEADER, runtimeNameHeader]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_MODE_HEADER, runtimeIdentity.mode]);
     const resolve = options.resolveRuntimeOwnerInvokeUrl ?? resolveDefaultRuntimeOwnerInvokeUrl;
     try {
       const ownerInvokeUrl = await resolve(request);
       if (ownerInvokeUrl) {
-        headers.set(RUNTIME_OWNER_INVOKE_URL_HEADER, ownerInvokeUrl);
+        IntrinsicReflectApply(HeadersSet, headers, [
+          RUNTIME_OWNER_INVOKE_URL_HEADER,
+          ownerInvokeUrl,
+        ]);
       }
     } catch {
       // Direct run control remains optional; the accepting process is still known.
     }
-    const init = buildResponseInit(NativeObjectPrototype, response.status, response.statusText);
-    init.headers = headers;
-    return new NativeResponse(response.body, init);
+    return result;
   }
 
   async function handleRuntimeAgentRunInvocationExecuteRequest(input: {

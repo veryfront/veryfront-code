@@ -1,3 +1,4 @@
+import { getServiceRuntimeIdentity } from "./runtime-identity.ts";
 import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
@@ -824,6 +825,93 @@ it("accepted service invocations report one process identity across both launch 
   assertEquals(legacy.headers.get("x-veryfront-runtime-mode"), "service");
   assertEquals(native.headers.get("x-veryfront-runtime-mode"), "service");
 });
+
+for (const surface of ["legacy", "native"] as const) {
+  for (const replacement of ["iterator", "set", "response"] as const) {
+    it(`accepted ${surface} service identity survives project-mutated ${replacement}`, async () => {
+      const iterator = Object.getOwnPropertyDescriptor(Headers.prototype, Symbol.iterator)!;
+      const set = Object.getOwnPropertyDescriptor(Headers.prototype, "set")!;
+      const responseFields = ["status", "statusText", "headers", "body"] as const;
+      const responseDescriptors = responseFields.map((field) =>
+        [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
+      );
+      let poisonedCalls = 0;
+      let starts = 0;
+      const poison = () => {
+        poisonedCalls++;
+        throw new Error("project response intrinsic invoked");
+      };
+      const { routeSet } = createRouteSet({
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        prepareExecution: async () => {
+          if (replacement === "set") {
+            Object.defineProperty(Headers.prototype, "set", {
+              ...set,
+              value: function (this: Headers, name: string, value: string) {
+                if (name.startsWith("x-veryfront-runtime-")) return poison();
+                return Reflect.apply(set.value, this, [name, value]);
+              },
+            });
+          }
+          return { executionId: "exec-1" };
+        },
+        startDetachedExecution: async () => {
+          starts++;
+          if (replacement === "iterator") {
+            Object.defineProperty(Headers.prototype, Symbol.iterator, {
+              ...iterator,
+              value: poison,
+            });
+          }
+        },
+        resolveRuntimeOwnerInvokeUrl: async () => {
+          if (replacement === "response") {
+            for (const [field, descriptor] of responseDescriptors) {
+              Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+            }
+          }
+          return "http://10.0.0.7:3001/channels/invoke";
+        },
+      });
+      let response: Response | undefined;
+      try {
+        response = surface === "legacy"
+          ? await routeSet.handleDurableChatRunExecuteRequest({
+            request: createDefaultChatStartRequest(),
+          })
+          : await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+            request: createAuthenticatedRequest(
+              "/api/control-plane/runs/run-1/stream",
+              createRuntimeAgentInvocationBody(),
+              "POST",
+              { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
+            ),
+            runId: "run-1",
+          });
+      } finally {
+        Object.defineProperty(Headers.prototype, Symbol.iterator, iterator);
+        Object.defineProperty(Headers.prototype, "set", set);
+        for (const [field, descriptor] of responseDescriptors) {
+          Object.defineProperty(Response.prototype, field, descriptor);
+        }
+      }
+      assertEquals(response?.status, 202);
+      assertEquals(poisonedCalls, 0);
+      assertEquals(starts, 1);
+      assertEquals(response?.headers.get("x-veryfront-runtime-mode"), "service");
+      assertEquals(
+        response?.headers.get("x-veryfront-runtime-owner-invoke-url"),
+        "http://10.0.0.7:3001/channels/invoke",
+      );
+      assertEquals(response?.headers.get("x-veryfront-runtime-id"), getServiceRuntimeIdentity().id);
+      assertEquals(
+        response?.headers.get("x-veryfront-runtime-name"),
+        encodeURIComponent(getServiceRuntimeIdentity().name),
+      );
+      assertEquals(await response?.json(), { accepted: true, duplicate: false });
+    });
+  }
+}
 
 it("native invocations rejected by authentication do not report runtime identity", async () => {
   const { routeSet } = createRouteSet({

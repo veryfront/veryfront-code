@@ -16,10 +16,12 @@ it("service display names use an explicit override or the machine hostname", () 
 });
 
 it("service display names reject values that cannot be safely reported", () => {
-  assertThrows(() => resolveServiceRuntimeName("x".repeat(129)), Error, "128 characters");
+  assertThrows(() => resolveServiceRuntimeName("x".repeat(129)), Error, "128 UTF-16 code units");
   assertThrows(() => resolveServiceRuntimeName("name\nforged"), Error, "control characters");
   assertThrows(() => resolveServiceRuntimeName("bad\ud800"), Error, "valid Unicode");
   assertEquals(resolveServiceRuntimeName("服务 🚀"), "服务 🚀");
+  assertEquals(resolveServiceRuntimeName("🚀".repeat(64)), "🚀".repeat(64));
+  assertThrows(() => resolveServiceRuntimeName("🚀".repeat(65)), Error, "128 UTF-16 code units");
 });
 
 it("the service process identity is immutable and stable", () => {

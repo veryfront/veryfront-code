@@ -53,7 +53,7 @@ when several replicas share one service URL.
 
 Set `VERYFRONT_RUNTIME_NAME` in the trusted service environment to override the
 hostname used as the display name. The trimmed name must contain at most 128
-characters, valid Unicode, and no control characters. The name header uses
+UTF-16 code units, valid Unicode, and no control characters. The name header uses
 `encodeURIComponent` encoding. These headers identify the accepting process;
 they do not grant access. Existing runtime-owner URL headers remain unchanged.
 

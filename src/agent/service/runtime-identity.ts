@@ -22,7 +22,7 @@ export function resolveServiceRuntimeName(
   if (explicit) {
     if (explicit.length > 128 || /\p{Cc}/u.test(explicit)) {
       throw new Error(
-        "VERYFRONT_RUNTIME_NAME must contain at most 128 characters without control characters.",
+        "VERYFRONT_RUNTIME_NAME must contain at most 128 UTF-16 code units without control characters.",
       );
     }
     try {
