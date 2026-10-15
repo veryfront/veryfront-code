@@ -522,7 +522,7 @@ describe("inherited execution input and receipt authority", () => {
     );
     assertEquals(hostedInheritedTaskInput(plain, "project-1"), undefined);
     for (
-      const proof of [undefined, { ...verification, verified: false }, {
+      const proof of [false, { ...verification, verified: false }, {
         ...verification,
         taskInputRootRunId: "foreign-root",
       }, { ...verification, taskInputSha256: "wrong" }]
@@ -573,7 +573,10 @@ describe("inherited execution input and receipt authority", () => {
       );
     }
     for (
-      const headers of [{ "Cache-Control": "public" }, { [RUN_TERMINAL_TOKEN_HEADER]: "malformed" }]
+      const headers of [
+        { "Cache-Control": "public" } as Record<string, string>,
+        { [RUN_TERMINAL_TOKEN_HEADER]: "malformed" },
+      ]
     ) {
       await assertRejects(
         () =>
