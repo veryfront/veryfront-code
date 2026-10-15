@@ -1185,6 +1185,84 @@ describe("chat-stream-handler", () => {
       assertEquals(semanticIdleState.finishReason, "stop");
     });
 
+    for (const phase of ["input", "commit"] as const) {
+      it(`keeps the legacy local-tool ${phase} deadline across metadata`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        let now = 0;
+        let metadataRead = 0;
+        await processStream(
+          {
+            fullStream: {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+                if (phase === "commit") yield { type: "tool-input-end", id: "local" };
+                for (let i = 0; i < 3; i++) {
+                  now += 6;
+                  metadataRead++;
+                  yield { type: "data-heartbeat", data: i };
+                }
+                yield { type: "finish", finishReason: "stop", totalUsage: null };
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          {
+            streamLifecycleMode: "legacy",
+            localToolInputIdleTimeoutMs: 10,
+            localToolCommitGraceMs: 10,
+            streamLifecyclePolicy: {
+              clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+            },
+          },
+        );
+        assertEquals(metadataRead, 2, "metadata must not renew the local-tool deadline");
+        assertEquals(state.finishReason, "tool-calls");
+        assertEquals(state.toolCalls.get("local")?.inputAvailable, phase === "commit");
+      });
+    }
+
+    it("renews the legacy local-tool input deadline for changed arguments", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let now = 0;
+      await processStream(
+        {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "tool-input-start", id: "local", toolName: "lookup" };
+              now = 6;
+              yield { type: "tool-input-delta", id: "local", delta: '{"query":"ok"}' };
+              now = 12;
+              yield { type: "data-heartbeat", data: 1 };
+              yield { type: "tool-input-end", id: "local" };
+              yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        state,
+        controller,
+        encoder,
+        "t",
+        {
+          streamLifecycleMode: "legacy",
+          localToolInputIdleTimeoutMs: 10,
+          localToolCommitGraceMs: 10,
+          streamLifecyclePolicy: {
+            clock: { nowMs: () => now, waitUntil: () => Promise.resolve("deadline") },
+          },
+        },
+      );
+      assertEquals(state.toolCalls.get("local")?.inputAvailable, true);
+      assertEquals(state.toolCalls.get("local")?.arguments, '{"query":"ok"}');
+      assertEquals(state.finishReason, "tool-calls");
+    });
+
     it("applies the semantic-idle budget after reasoning-only progress", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
