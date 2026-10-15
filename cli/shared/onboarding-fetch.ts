@@ -17,7 +17,7 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectCreate = Object.create;
 
 function bindOnboardingResponse(response: Response): Response {
-  const bind = (target: object, name: string, value: unknown) => {
+  const bind = (target: Response | Headers | ReadableStream<Uint8Array>, name: string, value: unknown) => {
     const descriptor = ObjectCreate(null);
     descriptor.value = value;
     ObjectDefineProperty(target, name, descriptor);
@@ -52,7 +52,7 @@ export function withOnboardingDeadline(
       ), timeoutMs);
     const signals = [deadline.signal];
     if (input instanceof Request) signals.push(input.signal);
-    if (init?.signal) signals.push(init.signal);
+    if (init && "signal" in init && init.signal) signals.push(init.signal);
     const signal = AbortSignal.any(signals);
     let rejectAborted!: (reason: unknown) => void;
     const aborted = new Promise<never>((_resolve, reject) => {
