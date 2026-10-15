@@ -21,6 +21,15 @@ identifies the project that owns conversations, runs, tools, and billing, while
 The signed request audience remains the source runtime's project. Registration
 alone does not authorize another project or relax the runtime's signature checks.
 
+Source selection is independent of execution placement. Invocation project context
+retains `sourceTargetEnvironmentId` and `sourceTargetBranchId` separately from
+`runtimeTarget*` execution selectors. Signed environment and preview sources use
+their own persisted source IDs; release sources retain the immutable release ID
+for every execution target. Explicit null source branch identity selects the root
+branch. Legacy invocations without source IDs retain their matching environment
+or preview selector behavior. Deploy a framework accepting these independent
+selectors before enabling the API producer.
+
 Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
 project's environment variables and runtime token are not passed to the connected
 execution. Platform tool calls and inference use the consuming run's credentials.

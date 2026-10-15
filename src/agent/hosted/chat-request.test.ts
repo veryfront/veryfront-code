@@ -1648,6 +1648,47 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
+  for (const endpoint of ["stream", "execute"]) {
+    it(`accepts independent source selection through the hosted ${endpoint} parser`, async () => {
+      for (
+        const [project, source] of [
+          [
+            { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: environmentId },
+            environmentRuntimeSource,
+          ],
+          [{ runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId }, runtimeSource],
+        ] as const
+      ) {
+        const invocation = createRuntimeInvocation();
+        const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+          new Request(`https://agent.example.com/api/control-plane/runs/run_root_1/${endpoint}`, {
+            method: "POST",
+            headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+            body: JSON.stringify({
+              ...invocation,
+              run: {
+                ...invocation.run,
+                project: { projectId, projectSlug: "demo-project", ...project },
+              },
+              agentSource: source,
+            }),
+          }),
+          {
+            authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+            verifyProjectAccess: () => Promise.resolve({ success: true }),
+            verifyRunEventAppendToken: () => Promise.resolve(true),
+            runtimeSource: source,
+          },
+        );
+        if (parsed instanceof Response) {
+          throw new Error(`Unexpected response ${parsed.status}: ${await parsed.text()}`);
+        }
+        assertEquals(parsed.serverEnvelopeVerified, true);
+        assertEquals(parsed.validatedContext.runtimeTargetKind, project.runtimeTargetKind);
+      }
+    });
+  }
+
   it("preserves explicit delegation denial from runtime invocations", () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),

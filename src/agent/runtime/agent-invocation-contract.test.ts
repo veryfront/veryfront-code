@@ -416,54 +416,59 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
-  it("rejects agent sources that do not match the selected runtime target", () => {
-    assertThrows(
-      () =>
-        RuntimeAgentRunInvocationSchema.parse(createInvocation({
-          run: {
-            ...createInvocation().run,
-            project: {
-              projectId,
-              projectSlug: "demo-project",
-              runtimeTargetKind: "environment",
-              runtimeTargetEnvironmentId: environmentId,
-            },
-          },
-          agentSource: { type: "branch", branch: "main" },
-        })),
-      Error,
-      "environment runtime target requires an environment agent source",
-    );
+  it("keeps source selection independent of the execution target", () => {
+    for (
+      const project of [
+        { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: environmentId },
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
+          sourceTargetEnvironmentId: environmentId,
+        },
+      ]
+    ) {
+      const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        run: {
+          ...createInvocation().run,
+          project: { projectId, projectSlug: "demo-project", ...project },
+        },
+        agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
+      }));
+      assertEquals(parsed.run.project.sourceTargetEnvironmentId, environmentId);
+      assertEquals(
+        buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed).sourceTargetEnvironmentId,
+        environmentId,
+      );
+    }
+    for (
+      const project of [
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId },
+        { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId },
+      ]
+    ) {
+      const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        run: {
+          ...createInvocation().run,
+          project: { projectId, projectSlug: "demo-project", ...project },
+        },
+        agentSource: { type: "release", releaseId: "release-1" },
+      }));
+      assertEquals(parsed.agentSource, { type: "release", releaseId: "release-1" });
+    }
   });
 
-  it("rejects a release agent source outside a main-branch runtime target", () => {
-    assertThrows(
-      () =>
-        RuntimeAgentRunInvocationSchema.parse(createInvocation({
-          agentSource: { type: "release", releaseId: "release-1" },
-        })),
-      Error,
-      "release agent source requires a main-branch runtime target",
-      "a release source must not bind to a preview branch target",
-    );
-
+  it("rejects an environment source without its own or legacy environment ID", () => {
     assertThrows(
       () =>
         RuntimeAgentRunInvocationSchema.parse(createInvocation({
           run: {
             ...createInvocation().run,
-            project: {
-              projectId,
-              projectSlug: "demo-project",
-              runtimeTargetKind: "environment",
-              runtimeTargetEnvironmentId: environmentId,
-            },
+            project: { projectId, projectSlug: "demo-project", runtimeTargetKind: "main_branch" },
           },
-          agentSource: { type: "release", releaseId: "release-1" },
+          agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
         })),
       Error,
-      "release agent source requires a main-branch runtime target",
-      "a release source must not bind to an environment target",
+      "environment source requires its source environment identifier",
     );
   });
 

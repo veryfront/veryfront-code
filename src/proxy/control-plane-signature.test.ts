@@ -200,6 +200,41 @@ describe("proxy/control-plane-signature", () => {
     });
   }
 
+  it("binds signed source selection independently from the execution target", async () => {
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "main_branch", sourceTargetBranchId: "selected-branch" },
+        { type: "branch", branch: "feature/source" },
+      )),
+      { branchId: "selected-branch", branchName: "feature/source" },
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: "selected-environment" },
+        { type: "environment", environmentName: "staging", releaseId: "selected-release" },
+      )),
+      {},
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: "execution-branch" },
+        { type: "release", releaseId: "selected-release" },
+      )),
+      {},
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "execution-branch",
+          sourceTargetBranchId: null,
+        },
+        { type: "branch", branch: "trunk" },
+      )),
+      { defaultBranchName: "trunk" },
+    );
+  });
+
   it("rejects malformed or mismatched signed source projects", async () => {
     for (
       const sourceProject of [
@@ -241,13 +276,6 @@ describe("proxy/control-plane-signature", () => {
       createNestedTargetBody(
         { runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000006" },
         { type: "branch", branch: "trunk" },
-      ),
-      createNestedTargetBody(
-        {
-          runtimeTargetKind: "preview_branch",
-          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
-        },
-        { type: "release", releaseId: "release-1" },
       ),
     ];
 

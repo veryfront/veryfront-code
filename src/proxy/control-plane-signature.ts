@@ -186,49 +186,46 @@ function parseVerifiedBranchBinding(
   }
   const sourceRecord = source as Record<string, unknown>;
 
-  switch (target.runtimeTargetKind ?? "main_branch") {
-    case "preview_branch": {
-      if (
-        sourceRecord.type !== "branch" ||
-        !isCanonicalOpaqueProjectIdentifier(target.runtimeTargetBranchId) ||
-        target.runtimeTargetEnvironmentId !== null &&
-          target.runtimeTargetEnvironmentId !== undefined
-      ) {
-        throw new ControlPlaneBranchBindingError(400, "Invalid control-plane preview target");
-      }
-      return Object.freeze({
-        branchId: target.runtimeTargetBranchId,
-        branchName: requireBranchName(sourceRecord.branch),
-      });
-    }
-    case "main_branch":
-      if (
-        target.runtimeTargetBranchId !== null && target.runtimeTargetBranchId !== undefined ||
-        target.runtimeTargetEnvironmentId !== null &&
-          target.runtimeTargetEnvironmentId !== undefined
-      ) {
-        throw new ControlPlaneBranchBindingError(
-          400,
-          "Invalid control-plane default branch target",
-        );
-      }
-      if (sourceRecord.type === "branch") {
-        return Object.freeze({ defaultBranchName: requireBranchName(sourceRecord.branch) });
-      }
-      if (sourceRecord.type === "release") return Object.freeze({});
-      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane default branch source");
-    case "environment":
-      if (
-        sourceRecord.type !== "environment" ||
-        !isCanonicalOpaqueProjectIdentifier(target.runtimeTargetEnvironmentId) ||
-        target.runtimeTargetBranchId !== null && target.runtimeTargetBranchId !== undefined
-      ) {
-        throw new ControlPlaneBranchBindingError(400, "Invalid control-plane environment source");
-      }
-      return Object.freeze({});
-    default:
-      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
+  // Execution selectors remain validated, but do not choose the source snapshot.
+  const kind = target.runtimeTargetKind ?? "main_branch";
+  const hasEnvironment = target.runtimeTargetEnvironmentId != null;
+  const hasBranch = target.runtimeTargetBranchId != null;
+  if (
+    (kind === "main_branch" && (hasEnvironment || hasBranch)) ||
+    (kind === "environment" &&
+      (!isCanonicalOpaqueProjectIdentifier(target.runtimeTargetEnvironmentId) || hasBranch)) ||
+    (kind === "preview_branch" &&
+      (!isCanonicalOpaqueProjectIdentifier(target.runtimeTargetBranchId) || hasEnvironment)) ||
+    !["main_branch", "environment", "preview_branch"].includes(String(kind))
+  ) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
   }
+  if (sourceRecord.type === "release") return Object.freeze({});
+  if (sourceRecord.type === "environment") {
+    const environmentId = target.sourceTargetEnvironmentId === undefined && kind === "environment"
+      ? target.runtimeTargetEnvironmentId
+      : target.sourceTargetEnvironmentId;
+    if (!isCanonicalOpaqueProjectIdentifier(environmentId)) {
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane environment source");
+    }
+    return Object.freeze({});
+  }
+  if (sourceRecord.type !== "branch") {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source target");
+  }
+  // Legacy signed requests used the preview execution ID as their source ID.
+  // Explicit null selects root source even when execution uses a preview process.
+  const branchId = target.sourceTargetBranchId === undefined && kind === "preview_branch"
+    ? target.runtimeTargetBranchId
+    : target.sourceTargetBranchId;
+  const branchName = requireBranchName(sourceRecord.branch);
+  if (branchId != null) {
+    if (!isCanonicalOpaqueProjectIdentifier(branchId)) {
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane preview source");
+    }
+    return Object.freeze({ branchId, branchName });
+  }
+  return Object.freeze({ defaultBranchName: branchName });
 }
 
 /**
