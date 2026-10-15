@@ -1,3 +1,12 @@
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { ConversationRunProjection } from "../conversation/durable.ts";
+import type { HostedInferenceAuthorityOwner } from "./inference-credential.ts";
+
+export type HostedPlatformDependencyOwner =
+  | ParsedHostedChatRequest
+  | Pick<ConversationRunProjection, "runId">
+  | { readonly childRunId: string };
+
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -19,7 +28,7 @@ type Verifier = (
 type SourceFactory = (
   scope: Scope,
   authToken: string,
-  owner: object,
+  owner: HostedPlatformDependencyOwner,
 ) => Promise<RemoteToolSource | undefined>;
 type Runner = ReturnType<typeof createVerifiedPlatformToolDependencyRunner>;
 type Authority = {
@@ -41,7 +50,7 @@ const Freeze = Object.freeze;
 
 /** Retain ingress proof at its original private request identity, never in request JSON. */
 export function registerHostedPlatformDependencyRequest(
-  owner: object,
+  owner: HostedPlatformDependencyOwner,
   verification: HostedServiceRunEventAppendTokenResult,
   scope: Scope,
   verify: Verifier,
@@ -63,7 +72,7 @@ export function registerHostedPlatformDependencyRequest(
 
 /** Configure transport only through the original host-owned parsed request. */
 export async function configureHostedPlatformDependencySource(
-  owner: object,
+  owner: HostedPlatformDependencyOwner,
   factory: SourceFactory,
 ): Promise<void> {
   const authority = owners.get(owner);
@@ -77,8 +86,8 @@ export async function configureHostedPlatformDependencySource(
 
 /** Verify the authenticated admission's exact child JWT; parent grants never become child grants. */
 export async function registerHostedChildPlatformDependencies(
-  parent: object,
-  child: object,
+  parent: HostedPlatformDependencyOwner,
+  child: HostedPlatformDependencyOwner,
   scope: Scope,
   eventToken: string,
   authToken: string,
@@ -108,7 +117,10 @@ export async function registerHostedChildPlatformDependencies(
 }
 
 /** Transfer only the private admission descriptor association. */
-export function transferHostedPlatformDependencies(source: object, target: object): void {
+export function transferHostedPlatformDependencies(
+  source: HostedPlatformDependencyOwner,
+  target: HostedPlatformDependencyOwner,
+): void {
   const authority = owners.get(source);
   if (authority) owners.set(target, authority);
 }
@@ -129,7 +141,7 @@ function runAuthority<T>(
 
 /** Enter preparation or actual execution using an original request/admission descriptor. */
 export function runWithHostedPlatformDependencies<T>(
-  owner: object,
+  owner: HostedPlatformDependencyOwner,
   operation: () => Promise<T>,
 ): Promise<T> {
   return runAuthority(owners.get(owner), operation);
@@ -149,26 +161,32 @@ function revokeAuthority(authority: Authority): void {
   }
 }
 
-export function revokeHostedPlatformDependencies(owner: object): void {
+export function revokeHostedPlatformDependencies(owner: HostedPlatformDependencyOwner): void {
   const authority = owners.get(owner);
   if (authority) revokeAuthority(authority);
 }
 
 /** Bind runtime identity only from a genuine admitted child descriptor. */
-export function bindHostedPlatformDependencyRuntime(target: object, descriptor: object): void {
+export function bindHostedPlatformDependencyRuntime(
+  target: HostedInferenceAuthorityOwner,
+  descriptor: HostedPlatformDependencyOwner,
+): void {
   const authority = owners.get(descriptor);
   if (authority?.active && authority.runner) runtimeOwners.set(target, authority);
 }
 
 /** Preserve the private association across host-created fork runtime inputs. */
-export function inheritHostedPlatformDependencyRuntime(target: object, source: object): void {
+export function inheritHostedPlatformDependencyRuntime(
+  target: HostedInferenceAuthorityOwner,
+  source: HostedInferenceAuthorityOwner,
+): void {
   const authority = runtimeOwners.get(source);
   if (authority) runtimeOwners.set(target, authority);
 }
 
 /** Runtime identity is data; the original runner remains the authority. */
 export function hostedPlatformDependencyRuntimeContext(
-  input: object,
+  input: HostedInferenceAuthorityOwner,
   projectId: string | null,
 ): Scope | undefined {
   const authority = runtimeOwners.get(input);

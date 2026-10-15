@@ -48,6 +48,7 @@ import { parseRuntimeAgentRunInvocationHostedChatRequestFromRequest } from "#ver
 import {
   captureHostedPlatformDependencyExecution,
   configureHostedPlatformDependencySource,
+  type HostedPlatformDependencyOwner,
   registerHostedChildPlatformDependencies,
   registerHostedPlatformDependencyRequest,
   revokeHostedPlatformDependencies,
@@ -224,7 +225,8 @@ function pinHostedWriterFixture(fixture: JwtFixture): void {
 }
 
 async function createHostedDependencyHarness(
-  options: { parentHasNoDependencies?: boolean; childProjectId?: string } = {},
+  options: { parentHasNoDependencies?: boolean; childProjectId?: string; deferSource?: boolean } =
+    {},
 ) {
   const scope = {
     projectId: "11111111-1111-4111-8111-111111111111",
@@ -322,64 +324,68 @@ async function createHostedDependencyHarness(
     eventToken: string;
     deniedOperations: string[];
     failSource: boolean;
-    failedOwner?: object;
+    failedOwner?: HostedPlatformDependencyOwner;
     discoveryWait?: Promise<void>;
     onDiscovery?: () => void;
   } = { eventToken: childFixture.token, deniedOperations: [], failSource: false };
   const effects: string[] = [];
   const persisted = new Map<string, unknown>();
-  await configureHostedPlatformDependencySource(parsed, async (sourceScope, authToken, owner) => {
-    if (controls.failSource && sourceScope.runId === childScope.runId) {
-      controls.failedOwner = owner;
-      throw new Error("Fixture source configuration failed");
-    }
-    return createHostedProjectRemoteToolSources({
-      mcpServers: [{ kind: "veryfront-api", toolPolicy: { deny: controls.deniedOperations } }],
-      authToken,
-      apiMcpUrl: "https://api.example.test/mcp",
-      getProjectId: () => sourceScope.projectId,
-      defaultProjectId: sourceScope.projectId,
-      createRemoteToolSource: hostedTerminalToolSourceFactory(
-        owner,
-        "https://api.example.test/mcp",
-        (config) => ({
-          id: "fixture-api",
-          listTools: async () => {
-            controls.onDiscovery?.();
-            await controls.discoveryWait;
-            return ["create_file", "outlook__upload_attachment", "get_file_version"].map((
-              name,
-            ) => ({
-              name,
-              description: name,
-              parameters: { type: "object", properties: {} },
-            }));
-          },
-          executeTool: async (name, input, context) => {
-            const headers = new Headers(
-              typeof config.headers === "function" ? await config.headers(context) : config.headers,
-            );
-            if (name === "create_file") {
-              assertEquals(headers.get("X-Veryfront-Run-Event-Token"), childFixture.token);
-              persisted.set("fixture-record", input);
-            }
-            if (name !== "get_tool_access_profile") effects.push(name);
-            if (name === "create_file") {
-              return {
-                version_id: "10000000-1000-4000-8000-100000000020",
-                path: "fixture-record",
-              };
-            }
-            if (name === "get_file_version") {
-              assertEquals(input.version_id, "10000000-1000-4000-8000-100000000020");
-              return { path: "fixture-record", historical: persisted.get("fixture-record") };
-            }
-            return { persisted: persisted.has("fixture-record"), operation: name };
-          },
-        }),
-      ),
-    })[0];
-  });
+  if (!options.deferSource) {
+    await configureHostedPlatformDependencySource(parsed, async (sourceScope, authToken, owner) => {
+      if (controls.failSource && sourceScope.runId === childScope.runId) {
+        controls.failedOwner = owner;
+        throw new Error("Fixture source configuration failed");
+      }
+      return createHostedProjectRemoteToolSources({
+        mcpServers: [{ kind: "veryfront-api", toolPolicy: { deny: controls.deniedOperations } }],
+        authToken,
+        apiMcpUrl: "https://api.example.test/mcp",
+        getProjectId: () => sourceScope.projectId,
+        defaultProjectId: sourceScope.projectId,
+        createRemoteToolSource: hostedTerminalToolSourceFactory(
+          owner,
+          "https://api.example.test/mcp",
+          (config) => ({
+            id: "fixture-api",
+            listTools: async () => {
+              controls.onDiscovery?.();
+              await controls.discoveryWait;
+              return ["create_file", "outlook__upload_attachment", "get_file_version"].map((
+                name,
+              ) => ({
+                name,
+                description: name,
+                parameters: { type: "object", properties: {} },
+              }));
+            },
+            executeTool: async (name, input, context) => {
+              const headers = new Headers(
+                typeof config.headers === "function"
+                  ? await config.headers(context)
+                  : config.headers,
+              );
+              if (name === "create_file") {
+                assertEquals(headers.get("X-Veryfront-Run-Event-Token"), childFixture.token);
+                persisted.set("fixture-record", input);
+              }
+              if (name !== "get_tool_access_profile") effects.push(name);
+              if (name === "create_file") {
+                return {
+                  version_id: "10000000-1000-4000-8000-100000000020",
+                  path: "fixture-record",
+                };
+              }
+              if (name === "get_file_version") {
+                assertEquals(input.version_id, "10000000-1000-4000-8000-100000000020");
+                return { path: "fixture-record", historical: persisted.get("fixture-record") };
+              }
+              return { persisted: persisted.has("fixture-record"), operation: name };
+            },
+          }),
+        ),
+      })[0];
+    });
+  }
   const send: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     assertEquals(request.url, "https://api.example.test/runs");
@@ -915,76 +921,6 @@ describe("agent/agent-service-auth", () => {
     });
   });
 
-  it("uses the exact root source snapshot for hidden dependency transport", async () => {
-    using _catalog = useServedCatalogForTests();
-    const harness = await createHostedDependencyHarness();
-    const createdSources: string[] = [];
-    const context = {
-      options: {
-        mcpServers: [{ kind: "veryfront-api" }],
-        createRemoteToolSource: () => {
-          createdSources.push("api");
-          return { id: "fixture-api", listTools: async () => [], executeTool: async () => ({}) };
-        },
-      },
-      infrastructure: {
-        getConfig: () => ({
-          VERYFRONT_API_URL: "https://93.184.216.34",
-          VERYFRONT_MCP_URL: "https://93.184.216.34/mcp",
-          VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
-        }),
-        logger: { debug() {}, info() {}, warn() {}, error() {} },
-        tracer: {
-          trace: (_name: string, operation: () => unknown) => operation(),
-          scope: () => ({ active: () => undefined }),
-        },
-        setActiveSpanAttributes() {},
-      },
-      discoveryResult: {
-        agents: new Map(),
-        tools: new Map(),
-        sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
-      },
-      defaultAgentId: harness.scope.agentId,
-      agentConfigs: new Map([[harness.scope.agentId, {
-        id: harness.scope.agentId,
-        mcpServers: [{ kind: "veryfront-api" }],
-      }]]),
-      projectSteeringByAgentId: new Map(),
-      trace: (_name: string, operation: () => unknown) => operation(),
-    } as never;
-    const runtime = await createAgentRuntime(
-      context,
-      {
-        projectId: harness.scope.projectId,
-        branchId: null,
-        authToken: "fixture-session",
-        instructions: "Use selected tools",
-        agentId: harness.scope.agentId,
-        model: "anthropic/claude-sonnet-4-5",
-        allowedTools: [],
-        allowDelegation: false,
-        liveProjectSteering: {
-          agent: {
-            id: harness.scope.agentId,
-            name: "Root",
-            instructions: "Use selected tools",
-            tools: [],
-            mcpServers: [],
-          },
-          environmentContext: "",
-        },
-      } as never,
-      undefined,
-      harness.parsed,
-    );
-    try {
-      assertEquals(createdSources, []);
-    } finally {
-      await runtime.cleanup?.();
-    }
-  });
-
   it("revokes captured preparation authority after route failure or detached settlement", async () => {
     for (const failPreparation of [true, false]) {
       const harness = await createHostedDependencyHarness();
@@ -1344,8 +1280,8 @@ describe("agent/agent-service-auth", () => {
     );
     assertEquals(getVerifiedPlatformToolDependencies({ ...verification }, scope), undefined);
     for (const forged of [{ ...verification }, { verified: true }]) {
-      const parent = {};
-      const child = {};
+      const parent = { runId: scope.runId };
+      const child = { runId: scope.runId };
       registerHostedPlatformDependencyRequest(
         parent,
         forged,
@@ -2175,5 +2111,122 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(result.error.statusCode, 503);
     assertEquals(result.error.errorCode, "SERVER_ERROR");
+  });
+});
+
+describe("hosted platform dependency source policy", () => {
+  it("keeps hosted hidden grants separate from model allow lists while preserving source denial", async () => {
+    for (const mode of ["disabled", "allowed", "denied", "service-denied"] as const) {
+      using _catalog = useServedCatalogForTests();
+      const harness = await createHostedDependencyHarness({ deferSource: true });
+      const createdSources: string[] = [];
+      const context = {
+        options: {
+          mcpServers: [{
+            kind: "veryfront-api",
+            ...(mode === "service-denied" ? { toolPolicy: { allow: ["get_file"] } } : {}),
+          }],
+          createRemoteToolSource: () => {
+            createdSources.push("api");
+            return {
+              id: "fixture-api",
+              listTools: async () => [{
+                name: "create_file",
+                description: "Create",
+                parameters: { type: "object", properties: {} },
+              }],
+              executeTool: async () => ({ persisted: true }),
+            };
+          },
+        },
+        infrastructure: {
+          getConfig: () => ({
+            VERYFRONT_API_URL: "https://93.184.216.34",
+            VERYFRONT_MCP_URL: "https://93.184.216.34/mcp",
+            VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
+          }),
+          logger: { debug() {}, info() {}, warn() {}, error() {} },
+          tracer: {
+            trace: (_name: string, operation: () => unknown) => operation(),
+            scope: () => ({ active: () => undefined }),
+          },
+          setActiveSpanAttributes() {},
+        },
+        discoveryResult: {
+          agents: new Map(),
+          tools: new Map(),
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+        },
+        defaultAgentId: harness.scope.agentId,
+        agentConfigs: new Map([[harness.scope.agentId, {
+          id: harness.scope.agentId,
+          mcpServers: [{ kind: "veryfront-api" }],
+        }]]),
+        projectSteeringByAgentId: new Map(),
+        trace: (_name: string, operation: () => unknown) => operation(),
+      } as never;
+      const runtime = await createAgentRuntime(
+        context,
+        {
+          projectId: harness.scope.projectId,
+          branchId: null,
+          authToken: "fixture-session",
+          instructions: "Use selected tools",
+          agentId: harness.scope.agentId,
+          model: "anthropic/claude-sonnet-4-5",
+          allowedTools: [],
+          allowDelegation: false,
+          liveProjectSteering: {
+            agent: {
+              id: harness.scope.agentId,
+              name: "Root",
+              instructions: "Use selected tools",
+              tools: [],
+              mcpServers: mode === "disabled" ? [] : [{
+                kind: "veryfront-api",
+                toolPolicy: {
+                  allow: ["get_file"],
+                  ...(mode === "denied" ? { deny: ["create_file"] } : {}),
+                },
+              }],
+            },
+            environmentContext: "",
+          },
+        } as never,
+        undefined,
+        harness.parsed,
+      );
+      try {
+        assertEquals(createdSources.length > 0, mode !== "disabled");
+        const tools = createToolsFromHostDefinitions({
+          intake: dynamicTool({
+            id: "intake",
+            description: "Persist",
+            inputSchema: {},
+            inputSchemaJson: { type: "object", properties: {} },
+            delegatedPlatformTools: ["veryfront__create_file"],
+            execute: async (_input: unknown, context?: ToolExecutionContext) =>
+              await context?.executePlatformTool?.("veryfront__create_file", { path: "fixture" }),
+          }),
+        });
+        const execute = () =>
+          runWithHostedPlatformDependencies(
+            harness.parsed,
+            () =>
+              executeConfiguredTool(
+                "intake",
+                {},
+                tools,
+                { ...harness.scope, toolCallId: "root-call" },
+                [],
+                [],
+              ),
+          );
+        if (mode === "allowed") assertEquals(await execute(), { persisted: true });
+        else await assertRejects(execute);
+      } finally {
+        await runtime.cleanup?.();
+      }
+    }
   });
 });

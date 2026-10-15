@@ -233,8 +233,19 @@ export async function createAgentRuntime(
           ? options.liveProjectSteering?.agent
           : await resolveAgentConfig(context, scope.agentId);
         if (!agentConfig) return undefined;
+        // The private runner enforces the signed wrapper grant. Model inventory
+        // allow lists do not restrict it; service ceilings and explicit denials do.
         const mcpServers = resolveMcpServers(context.options, agentConfig)
-          .filter((server) => server.kind === "veryfront-api");
+          .filter((server) => server.kind === "veryfront-api")
+          .map((server) => ({
+            ...server,
+            toolPolicy: {
+              ...server.toolPolicy,
+              allow: context.options.mcpServers?.find((host) =>
+                host.kind === server.kind && host.id === server.id
+              )?.toolPolicy?.allow,
+            },
+          }));
         return createHostedProjectRemoteToolSources({
           authToken,
           apiMcpUrl: config.VERYFRONT_MCP_URL,

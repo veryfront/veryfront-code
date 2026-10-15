@@ -1,4 +1,5 @@
 import {
+  type HostedPlatformDependencyOwner,
   registerHostedChildPlatformDependencies,
   transferHostedPlatformDependencies,
 } from "./platform-dependency-credential.ts";
@@ -145,7 +146,7 @@ export function hostedTerminalRunFinalizer(
 
 /** The credential only reaches the bound platform endpoint through the trusted deployment transport. */
 export function hostedTerminalToolSourceFactory(
-  request: object | undefined,
+  request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
   fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
@@ -403,7 +404,7 @@ export async function acceptInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
-  dependencyParent?: object,
+  dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection> {
   response = await normalizeInheritedExecutionResponse(response, binding);
   if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
