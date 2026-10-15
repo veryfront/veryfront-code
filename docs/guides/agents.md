@@ -420,7 +420,8 @@ oversized root fails the run instead of being truncated. Keep the root focused o
 navigation and process, and put detailed guidance in references. The run fails
 before any model call when the agent has no authorized framework skill loader or
 the skill is not authorized. Omit `bootstrapSkill` to start without a preloaded
-skill. Hosted children load only the target agent's own configured startup skill.
+skill. Use an exact skill ID or the agent's own short name, not a selector pattern.
+Hosted children load only the target agent's own configured startup skill.
 The parent's startup skill is not inherited. Loading runs once before the child's
 first model call; its instructions remain in history across tool steps and
 continuations. In Markdown agent definitions, use `bootstrap-skill`.

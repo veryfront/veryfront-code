@@ -48,16 +48,18 @@ const parent = {
 };
 
 Deno.test("hosted child startup selects only the target's configured canonical authorized skill", async () => {
-  const config = await resolveHostedChildAgentExecutionConfig(
-    childContext("ingest-message"),
-    parent,
-    "ingestion-agent",
-    "test-project",
-  );
-  assertEquals(
-    config && "bootstrapSkill" in config ? config.bootstrapSkill : undefined,
-    "ingestion-agent--ingest-message",
-  );
+  for (const bootstrapSkill of ["ingest-message", "ingestion-agent--ingest-message"]) {
+    const config = await resolveHostedChildAgentExecutionConfig(
+      childContext(bootstrapSkill),
+      parent,
+      "ingestion-agent",
+      "test-project",
+    );
+    assertEquals(
+      config && "bootstrapSkill" in config ? config.bootstrapSkill : undefined,
+      "ingestion-agent--ingest-message",
+    );
+  }
 });
 
 Deno.test("a child without authored startup never inherits the parent's bootstrap skill", async () => {
@@ -79,6 +81,19 @@ Deno.test("child startup cannot select a sibling skill or expand an empty author
   ) {
     await assertRejects(() =>
       resolveHostedChildAgentExecutionConfig(context, parent, "ingestion-agent", "test-project")
+    );
+  }
+});
+
+Deno.test("child startup requires one exact skill rather than a selector pattern", async () => {
+  for (const bootstrapSkill of ["ingest-*", "ingest-?essage", "*"]) {
+    await assertRejects(() =>
+      resolveHostedChildAgentExecutionConfig(
+        childContext(bootstrapSkill),
+        parent,
+        "ingestion-agent",
+        "test-project",
+      )
     );
   }
 });

@@ -336,7 +336,8 @@ export interface AgentConfig<TOutput = any> {
   skills?: SkillSelector;
   /**
    * Load one authorized skill root through the framework skill loader before
-   * the first model call. Skill references remain deferred. Hosted children
+   * the first model call. Use an exact skill ID or the agent's own short name.
+   * Skill references remain deferred. Hosted children
    * load only their own configured skill, never the parent's startup skill.
    * Omit to start without a preloaded skill.
    */
