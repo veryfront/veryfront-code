@@ -1,5 +1,6 @@
 import { cwd as getCwd, env as getProcessEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { load as loadDotenv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { markEnvFileValue } from "#veryfront/platform/compat/process/env.ts";
 
 const DEFAULT_AGENT_SERVICE_ENV_FILES = [".env", ".env.local"] as const;
 
@@ -55,6 +56,7 @@ export async function loadAgentServiceEnvFiles(
       }
 
       setEnv(key, value);
+      markEnvFileValue(key);
       loadedVariables++;
     }
   }
