@@ -129,7 +129,7 @@ it("accepted service attribution preserves response body and multi-value headers
     Response.json = nativeJson;
   }
   assertEquals(response.status, 202);
-  assertEquals(response.headers.get("content-type"), "application/json");
+  assertEquals(response.headers.get("content-type")?.split(";")[0], "application/json");
   assertEquals(response.headers.get("x-service-extra"), "first, second");
   assertEquals(response.headers.getSetCookie(), ["first=1; Path=/", "second=2; Path=/"]);
   assertEquals(await response.json(), { accepted: true, duplicate: false });
@@ -176,7 +176,12 @@ for (const surface of ["legacy", "native"] as const) {
         resolveRuntimeOwnerInvokeUrl: async () => {
           if (replacement === "response") {
             for (const [field, descriptor] of responseDescriptors) {
-              Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+              // Bun's native getters are non-configurable; attempted replacement must
+              // fail without preventing the resolver from returning its owner URL.
+              assertEquals(
+                Reflect.defineProperty(Response.prototype, field, { ...descriptor, get: poison }),
+                descriptor.configurable === true,
+              );
             }
           }
           return "http://10.0.0.7:3001/channels/invoke";
