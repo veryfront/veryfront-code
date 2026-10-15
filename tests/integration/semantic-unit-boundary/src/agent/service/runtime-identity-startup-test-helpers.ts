@@ -7,17 +7,26 @@ import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-iden
 import { createNodeVeryfrontCloudAgentServiceRuntime } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
 import {
   deleteEnv,
+  getHostEnv,
   getHostEnvExcludingEnvFile,
   setEnv,
 } from "#veryfront/platform/compat/process.ts";
+import {
+  clearEnvFileValueSource,
+  hasEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 export async function verifyRuntimeIdentityStartup(source: "env" | "processTarget") {
   const encode = globalThis.encodeURIComponent;
-  const previousName = getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME");
+  const previousName = getHostEnv("VERYFRONT_RUNTIME_NAME");
+  const previousEnvFileSource = hasEnvFileValueSource("VERYFRONT_RUNTIME_NAME");
   const rootDir = await mkdtemp(join(tmpdir(), "service-identity-"));
-  setEnv("VERYFRONT_RUNTIME_NAME", "Operator runtime");
+  setEnv("VERYFRONT_RUNTIME_NAME", "project env-file identity");
+  markEnvFileValue("VERYFRONT_RUNTIME_NAME");
   try {
+    assertEquals(getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME"), undefined);
     await mkdir(join(rootDir, "agents"));
     await writeFile(
       join(rootDir, "agents", "support.ts"),
@@ -58,7 +67,8 @@ export async function verifyRuntimeIdentityStartup(source: "env" | "processTarge
         Error,
         "VERYFRONT_RUNTIME_NAME",
       );
-      assertEquals(getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME"), "Operator runtime");
+      assertEquals(getHostEnv("VERYFRONT_RUNTIME_NAME"), "project env-file identity");
+      assertEquals(hasEnvFileValueSource("VERYFRONT_RUNTIME_NAME"), true);
     }
     await createNodeVeryfrontCloudAgentServiceRuntime({
       serviceName: "identity-startup-test",
@@ -70,12 +80,14 @@ export async function verifyRuntimeIdentityStartup(source: "env" | "processTarge
       signals: [],
       ...serviceEnvironment(environment),
     });
-    assertEquals(getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME"), "project-forged-runtime");
+    assertEquals(getHostEnv("VERYFRONT_RUNTIME_NAME"), "project-forged-runtime");
     assertEquals(getServiceRuntimeIdentity().name, "Resolved operator runtime");
   } finally {
     globalThis.encodeURIComponent = encode;
     if (previousName === undefined) deleteEnv("VERYFRONT_RUNTIME_NAME");
     else setEnv("VERYFRONT_RUNTIME_NAME", previousName);
+    if (previousEnvFileSource) markEnvFileValue("VERYFRONT_RUNTIME_NAME");
+    else clearEnvFileValueSource("VERYFRONT_RUNTIME_NAME");
     await stopEsbuild();
     await rm(rootDir, { recursive: true, force: true });
   }
