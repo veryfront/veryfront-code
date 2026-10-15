@@ -13,7 +13,7 @@ import {
   __resetOperatorVeryfrontApiOriginsForTests,
   __runWithOutboundFetchTransportForTests,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import { createCloudOnboardingTransport } from "../../../../../../cli/shared/cloud-onboarding-transport.ts";
+import { createConnectedDevSyncTransport } from "../../../../../../cli/commands/dev/command.ts";
 import { trustOperatorConfiguredVeryfrontApiOrigins } from "#veryfront/security/http/outbound-fetch.ts";
 import { pullCommand } from "../../../../../../cli/commands/pull/command.ts";
 import { pushCommand } from "../../../../../../cli/commands/push/command.ts";
@@ -111,7 +111,7 @@ for (const command of [pullCommand, pushCommand]) {
                   quiet: true,
                   dryRun: !newProject,
                   ...(embedded
-                    ? { transport: createCloudOnboardingTransport("https://api.staging.example") }
+                    ? { transport: createConnectedDevSyncTransport("https://api.staging.example") }
                     : {}),
                 });
               } catch (error) {
@@ -152,3 +152,42 @@ for (const command of [pullCommand, pushCommand]) {
     }
   }
 }
+
+it("dev sync returns response headers while the source body remains pending", async () => {
+  const controller = new AbortController();
+  const response = new Response(new ReadableStream({ cancel() {} }));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let requestSignal: AbortSignal | null | undefined;
+  await withMockFetch((_input, init) => {
+    requestSignal = init?.signal;
+    return Promise.resolve(response);
+  }, async () => {
+    const transport = createConnectedDevSyncTransport("https://api.veryfront.com");
+    const request = transport("https://api.veryfront.com/projects/demo/files", {
+      signal: controller.signal,
+    });
+    try {
+      const result = await Promise.race([
+        request,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 50);
+        }),
+      ]);
+      assertEquals(
+        result !== null,
+        true,
+        "source sync must not wait for the response body to finish",
+      );
+      assertEquals(
+        requestSignal,
+        controller.signal,
+        "source sync must preserve the caller signal without an onboarding deadline",
+      );
+      if (result) await result.body?.cancel("test finished");
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      controller.abort();
+      await request.catch(() => undefined);
+    }
+  });
+});

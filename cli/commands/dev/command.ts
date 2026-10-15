@@ -56,7 +56,10 @@ import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
 } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
-import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -116,6 +119,11 @@ export function createConnectedDevAuthenticationOptions(apiBaseUrl: string, time
     transport: createCloudOnboardingTransport(apiBaseUrl, timeoutMs),
     timeoutMs,
   };
+}
+
+/** Host transport for source sync; responses remain streaming for large files. */
+export function createConnectedDevSyncTransport(apiBaseUrl: string): typeof fetch {
+  return createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl);
 }
 
 export async function preloadDevAuth(
@@ -660,7 +668,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
                   projectDir,
                   force: true,
                   quiet: true,
-                  transport: createCloudOnboardingTransport(
+                  transport: createConnectedDevSyncTransport(
                     connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
                   ),
                 }),
@@ -680,7 +688,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               () =>
                 pushCommand({
                   ...pushOptions,
-                  transport: createCloudOnboardingTransport(
+                  transport: createConnectedDevSyncTransport(
                     connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
                   ),
                 }),
