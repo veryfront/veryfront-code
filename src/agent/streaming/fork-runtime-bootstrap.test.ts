@@ -122,15 +122,18 @@ Deno.test("a hosted child loads its configured canonical skill before the first 
     }
   });
   await t.step("a resolver throw fails before inference", async () => {
+    let resolverCalls = 0;
     const blockedModel = scriptedModel([{ text: "Must not infer" }], { only: "stream" });
     const blocked = startAgentRuntimeForkWithHostTools({
       ...input,
+      buildInstructions: () => "Provisional instructions. ".repeat(50_000),
       createModelRuntimeResolver: () => () => blockedModel,
       prepareStep: (step) =>
         prepareHostedChildForkRuntimeStepMessages({
           ...step,
           bootstrapSkill: skillId,
           resolveSystem: () => {
+            resolverCalls++;
             throw new Error("Resolver failure");
           },
         }),
@@ -145,6 +148,7 @@ Deno.test("a hosted child loads its configured canonical skill before the first 
     }
     assertEquals(failure instanceof Error, true);
     assertEquals(blockedModel.callCount, 0);
+    assertEquals(resolverCalls, 1);
     assertEquals(loads, 1);
   });
   await t.step("the compatibility wrapper applies startup or fails before inference", async () => {
