@@ -108,6 +108,8 @@ export default tool({
 Veryfront resolves declarations from selected project tool source and seals the
 map for the admitted run. Explicit platform denials still apply. Each wrapper
 can call only its own declared operations while that invocation remains active.
+Tool identity and platform dependency declarations are immutable after construction
+or registration. Create a new tool definition to change them.
 A copied callback, another run, or a settled invocation cannot reuse authority.
 The API still verifies project access, integration bindings and operation policy.
 This contract applies to API-dispatched project agent runs and their

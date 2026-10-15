@@ -1,4 +1,5 @@
 import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
+import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
 import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
 import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
@@ -549,7 +550,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
     (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return inheritRuntimeProviderSchemaHiddenTool(
+      const scopedTool = inheritRuntimeProviderSchemaHiddenTool(
         tool,
         inheritTrustedHostToolProvenance(
           tool,
@@ -568,6 +569,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
           }),
         ),
       );
+      return sealToolPlatformDependencies(scopedTool);
     },
   );
 }
@@ -581,8 +583,8 @@ export function scopeHostedRuntimeTools(input: {
   const scopedTools = scopeHostedRuntimeToolResults(input.tools);
   return mapOwnRecord(
     scopedTools,
-    (_toolName, tool) =>
-      inheritRuntimeProviderSchemaHiddenTool(
+    (_toolName, tool) => {
+      const scopedTool = inheritRuntimeProviderSchemaHiddenTool(
         tool,
         inheritTrustedHostToolProvenance(
           tool,
@@ -596,7 +598,9 @@ export function scopeHostedRuntimeTools(input: {
               }),
           }),
         ),
-      ),
+      );
+      return sealToolPlatformDependencies(scopedTool);
+    },
   );
 }
 

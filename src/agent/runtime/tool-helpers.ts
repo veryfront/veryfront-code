@@ -55,6 +55,7 @@ const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const DeleteProperty = Reflect.deleteProperty;
 
 async function executeLocalWrapper(
+  toolName: string,
   localTool: Tool,
   input: Record<string, unknown>,
   context: ToolExecutionContext | undefined,
@@ -68,7 +69,7 @@ async function executeLocalWrapper(
   // Do not consult tenant-mutable Array prototypes when selecting authority.
   for (let index = 0; mapping && index < mapping.length; index++) {
     const entry = mapping[index]!;
-    if (entry.toolId !== localTool.id) continue;
+    if (localTool.id !== toolName || entry.toolId !== toolName) continue;
     for (let nameIndex = 0; nameIndex < entry.platformTools.length; nameIndex++) {
       const name = entry.platformTools[nameIndex]!;
       if (declared.has(name)) allowed.add(name);
@@ -561,6 +562,7 @@ export async function executeConfiguredTool(
   });
   if (configuredTool) {
     return await executeLocalWrapper(
+      toolName,
       configuredTool,
       input,
       context,
@@ -579,6 +581,7 @@ export async function executeConfiguredTool(
   const registryTool = toolRegistry.get(toolName);
   if (registryTool && isToolVisibleTo(registryTool, context)) {
     return await executeLocalWrapper(
+      toolName,
       registryTool,
       input,
       context,

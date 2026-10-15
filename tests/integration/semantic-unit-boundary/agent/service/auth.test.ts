@@ -45,6 +45,7 @@ import {
 import {
   createToolsFromHostDefinitions,
   dynamicTool,
+  tool,
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
@@ -70,6 +71,8 @@ import {
   transferHostedTerminalAuthority,
 } from "#veryfront/agent/hosted/terminal-credential.ts";
 import { createHostedProjectRemoteToolSources } from "#veryfront/agent/hosted/project-remote-tool-source.ts";
+import { scopeHostedRuntimeToolResults } from "#veryfront/agent/hosted/default-chat-runtime.ts";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 
 type JwtFixture = {
   token: string;
@@ -1544,6 +1547,116 @@ describe("agent/agent-service-auth", () => {
         await pending?.catch(() => {});
         revokePlatformDependencyOwner(owner);
       }
+    }
+  });
+
+  it("keeps signed wrapper grants bound after public tool metadata is mutated", async () => {
+    const scope = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      agentId: "ingestion-agent",
+    };
+    const ownOperation = "outlook__list_messages";
+    const siblingOperation = "outlook__upload_attachment";
+    const undeclaredOperation = "outlook__get_attachment";
+    const fixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      agentId: scope.agentId,
+      platformToolDependencies: [
+        { toolId: "alpha", platformTools: [ownOperation, undeclaredOperation] },
+        { toolId: "beta", platformTools: [siblingOperation] },
+      ],
+    });
+    pinHostedWriterFixture(fixture);
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        VERYFRONT_API_URL: "https://api.example.test",
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+      }),
+    });
+    const verification = await auth.verifyRunEventAppendToken({ token: fixture.token, ...scope });
+    assert(verification.verified);
+    for (const variant of ["tool", "dynamic", "host", "scoped", "registered"] as const) {
+      const effects: string[] = [];
+      const source = markTrustedPlatformSource({
+        id: "wrapper-mutation-source",
+        listTools: async () =>
+          [ownOperation, siblingOperation, undeclaredOperation].map((name) => ({
+            name,
+            description: name,
+            parameters: { type: "object" as const, properties: {} },
+          })),
+        executeTool: async (name: string) => {
+          effects.push(name);
+          return name;
+        },
+      });
+      let requestedOperation = ownOperation;
+      const create = variant === "tool" ? tool : dynamicTool;
+      let tools = {
+        alpha: create({
+          id: "alpha",
+          description: "First wrapper",
+          inputSchema: { type: "object", properties: {} },
+          delegatedPlatformTools: [ownOperation],
+          execute: async (_, context) =>
+            await context!.executePlatformTool!(requestedOperation, {}),
+        }),
+        beta: create({
+          id: "beta",
+          description: "Second wrapper",
+          inputSchema: { type: "object", properties: {} },
+          delegatedPlatformTools: [siblingOperation, ownOperation],
+          execute: async (_, context) =>
+            await context!.executePlatformTool!(requestedOperation, {}),
+        }),
+      };
+      if (variant === "host" || variant === "scoped") {
+        tools = createToolsFromHostDefinitions(tools) as typeof tools;
+      }
+      if (variant === "scoped") tools = scopeHostedRuntimeToolResults(tools) as typeof tools;
+      if (variant === "registered") {
+        tools = { alpha: { ...tools.alpha }, beta: { ...tools.beta } };
+        toolRegistryInternal.register("alpha", tools.alpha);
+        toolRegistryInternal.register("beta", tools.beta);
+      }
+      await runWithVerifiedPlatformToolDependencies(verification, scope, async () => {
+        const invoke = (name: string, configured = tools) =>
+          executeConfiguredTool(
+            name,
+            {},
+            configured,
+            { ...scope, toolCallId: "mutation-fixture" },
+            [],
+            [source],
+          );
+        assertEquals(await invoke("alpha"), ownOperation);
+        Reflect.set(tools.alpha, "id", "beta");
+        Reflect.set(tools.alpha, "delegatedPlatformTools", [siblingOperation]);
+        try {
+          (tools.alpha.delegatedPlatformTools as string[]).push(siblingOperation);
+        } catch { /* Immutable snapshot rejects mutation. */ }
+        requestedOperation = siblingOperation;
+        await assertRejects(() => invoke("alpha"), undefined, undefined, variant);
+        requestedOperation = ownOperation;
+        await assertRejects(() => invoke("alpha", { ...tools, alpha: tools.beta }));
+        Reflect.set(tools.alpha, "id", "alpha");
+        Reflect.set(tools.alpha, "delegatedPlatformTools", [undeclaredOperation]);
+        requestedOperation = undeclaredOperation;
+        await assertRejects(() => invoke("alpha"));
+        assertEquals(effects, [ownOperation]);
+        requestedOperation = siblingOperation;
+        assertEquals(await invoke("beta"), siblingOperation);
+        assertEquals(effects, [ownOperation, siblingOperation]);
+      }).finally(() => {
+        if (variant === "registered") {
+          toolRegistryInternal.delete("alpha");
+          toolRegistryInternal.delete("beta");
+        }
+      });
     }
   });
 
