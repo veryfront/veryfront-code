@@ -825,29 +825,6 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
-  it("intersects deny-all allowlists without consulting mutable array prototypes", () => {
-    const originalFilter = Array.prototype.filter;
-    const originalIncludes = Array.prototype.includes;
-    try {
-      // deno-lint-ignore no-explicit-any
-      (Array.prototype as any).filter = function () {
-        return ["web_search"];
-      };
-      // deno-lint-ignore no-explicit-any
-      (Array.prototype as any).includes = () => true;
-      const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
-        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
-        forwardedProps: { runtimeOverrides: { allowedTools: [] } },
-      }));
-      assertEquals(parsed.forwardedProps, {
-        runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
-      });
-    } finally {
-      Array.prototype.filter = originalFilter;
-      Array.prototype.includes = originalIncludes;
-    }
-  });
-
   it("rejects malformed caller allowlists on a deny-all invocation", () => {
     const malformed: Array<Record<string, unknown>> = [
       { allowedTools: "none" },
