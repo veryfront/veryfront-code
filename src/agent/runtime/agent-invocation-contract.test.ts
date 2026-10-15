@@ -851,6 +851,77 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("removes caller-injected tools from a deny-all invocation", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+      tools: [
+        { name: "web_search", description: "Injected caller tool", parameters: {} },
+        { name: "studio_focus_component", description: "Injected UI tool", parameters: {} },
+      ],
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.tools, []);
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
+  });
+
+  it("rejects malformed caller-injected tools on a deny-all invocation instead of clearing them", () => {
+    for (const tools of ["web_search", [{ description: "missing name" }]]) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        tools,
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(tools)}`);
+    }
+  });
+
+  it("validates deny-all agent config fields before discarding them", () => {
+    const invalidFields: Array<Record<string, unknown>> = [
+      { bootstrapTools: Array.from({ length: 17 }, (_, index) => `tool_${index}`) },
+      { bootstrapSkill: "s".repeat(257) },
+      { bootstrapSkill: "" },
+      { skills: 5 },
+      { skills: [""] },
+      { skills: Array.from({ length: 70 }, () => "s".repeat(1_024)) },
+    ];
+    for (const fields of invalidFields) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"], ...fields }),
+        forwardedProps: undefined,
+      }));
+      assertEquals(parsed.success, false, `accepted ${Object.keys(fields).join(",")}`);
+    }
+  });
+
+  it("validates the caller allowlist against the override contract before intersecting it", () => {
+    const invalidOverrides: Array<Record<string, unknown>> = [
+      { allowedTools: Array.from({ length: 101 }, () => "web_search") },
+      { allowedTools: [""] },
+      { allowedTools: ["web_search", ""] },
+    ];
+    for (const runtimeOverrides of invalidOverrides) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("intersects large disjoint deny-all allowlists to an empty allowlist", () => {
+    const providerTools = Array.from({ length: 3_000 }, (_, index) => `p${index}`);
+    const toolAllowlist = Array.from({ length: 5_000 }, (_, index) => `caller_${index}`);
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: { runtimeOverrides: { toolAllowlist } },
+    }));
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
+    });
+  });
+
   it("leaves non-deny agent tool selections unchanged", () => {
     const selections: Array<true | string[]> = [[], ["get_file"], true];
     for (const tools of selections) {
