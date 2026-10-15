@@ -6,8 +6,8 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorker,
   readExternalAgentWorkerRunAuthority,
-} from "./external-worker-client.ts";
-import type { AgentWorkerRuntimeOwnershipProbe } from "./agent-worker-runtime-ownership-probe.ts";
+} from "#veryfront/agent/service/external-worker-client.ts";
+import type { AgentWorkerRuntimeOwnershipProbe } from "#veryfront/agent/service/agent-worker-runtime-ownership-probe.ts";
 
 const API_URL = "https://api.example.com";
 const API_TOKEN = "api-token";

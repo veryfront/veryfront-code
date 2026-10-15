@@ -11,7 +11,7 @@ it("connected runtime never dispatches credentials to a project-steered API orig
   }, async () => {
     // Import after installing the host stub so even the previous raw-fetch implementation stays offline.
     const { installConnectedLocalRuntime, getConnectedLocalRuntime } = await import(
-      "./connected-local-runtime.ts"
+      "#veryfront/agent/ag-ui/connected-local-runtime.ts"
     );
     const originalReplace = String.prototype.replace;
     let uninstall: (() => Promise<void>) | undefined;

@@ -7,7 +7,7 @@ import {
   connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
-} from "./connected-dev.ts";
+} from "../../../../../../cli/commands/dev/connected-dev.ts";
 
 describe("connected local development", () => {
   it("leaves unlinked projects standalone without authentication", async () => {
@@ -77,7 +77,7 @@ it("excludes proxy projects from local Cloud admission", async () => {
 });
 
 it("stops MCP and dev servers even when connected runtime disposal rejects", async () => {
-  const { stopDevServices } = await import("./connected-dev.ts");
+  const { stopDevServices } = await import("../../../../../../cli/commands/dev/connected-dev.ts");
   const stopped: string[] = [];
   const failure = new Error("runtime disposal rejected");
   let caught: unknown;
