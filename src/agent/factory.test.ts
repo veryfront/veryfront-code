@@ -34,9 +34,6 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const EXPECTED_SKILL_TOOL_NAMES = [
-  "execute_skill_script",
-  "load_skill",
-  "load_skill_reference",
   "veryfront__execute_skill_script",
   "veryfront__load_skill",
   "veryfront__load_skill_reference",
@@ -72,7 +69,10 @@ function expectAgentToolMap(
   return tools;
 }
 
-function createLoadSkillModel(skillId: string): ModelRuntime {
+function createLoadSkillModel(
+  skillId: string,
+  toolName = "veryfront__load_skill",
+): ModelRuntime {
   let callCount = 0;
   return {
     provider: "hosted",
@@ -84,7 +84,7 @@ function createLoadSkillModel(skillId: string): ModelRuntime {
           content: [{
             type: "tool-call",
             toolCallId: `load-${skillId}`,
-            toolName: "load_skill",
+            toolName,
             input: JSON.stringify({ skillId }),
           }],
           finishReason: "tool-calls",
@@ -157,7 +157,7 @@ describe("agent factory", () => {
     assertEquals(assistant.id, "knowledge-owner");
   });
 
-  it("rejects visible registered veryfront__search_knowledge tools for tools true knowledge agents", () => {
+  it("keeps visible bare search_knowledge tools beside scoped framework knowledge", async () => {
     for (
       const [registeredOwner, expectedAgentId] of [
         [undefined, "global-collision-agent"],
@@ -175,17 +175,30 @@ describe("agent factory", () => {
         ...(registeredOwner === undefined ? {} : { ownerAgentId: registeredOwner }),
       });
 
-      assertThrows(
-        () =>
-          agent({
-            id: expectedAgentId,
-            system: "Use scoped knowledge.",
-            tools: true,
-            knowledge: true,
-            skills: [],
-          }),
-        Error,
-        "registered veryfront__search_knowledge tool conflicts with the agent knowledge scope",
+      const model = scriptedModel([{ text: "done" }], {
+        modelId: `hosted/${expectedAgentId}`,
+        only: "generate",
+      });
+      const assistant = agent({
+        id: expectedAgentId,
+        model: `hosted/${expectedAgentId}`,
+        system: "Use scoped knowledge.",
+        tools: true,
+        toolLoading: "eager",
+        knowledge: true,
+        skills: [],
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      await assistant.generate({ input: "List the available knowledge tools" });
+
+      assertEquals(
+        model.toolNames(0).filter((name) => name === "search_knowledge").length,
+        1,
+      );
+      assertEquals(
+        model.toolNames(0).filter((name) => name === "veryfront__search_knowledge").length,
+        1,
       );
     }
   });
@@ -625,7 +638,7 @@ describe("agent factory", () => {
     });
     assertEquals(
       withSkills.filter((t) => isSkillInfrastructureToolId(t.name)).map((t) => t.name).sort(),
-      ["execute_skill_script", "load_skill", "load_skill_reference"],
+      EXPECTED_SKILL_TOOL_NAMES,
     );
   });
 
@@ -656,7 +669,8 @@ describe("agent factory", () => {
     });
 
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
-    assertEquals(toolRegistry.has("load_skill"), true);
+    assertEquals(toolRegistry.has("load_skill"), false);
+    assertEquals(toolRegistry.has("veryfront__load_skill"), true);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
     const prompt = await resolveSystemText(effectiveSystem);
     assertStringIncludes(
@@ -743,7 +757,8 @@ describe("agent factory", () => {
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {
       throw new Error("Expected a concrete skill tool map");
     }
-    assertEquals(typeof allowlisted.config.tools.load_skill, "object");
+    assertEquals(allowlisted.config.tools.load_skill, undefined);
+    assertEquals(typeof allowlisted.config.tools.veryfront__load_skill, "object");
     assertThrows(
       () =>
         agent({
@@ -816,6 +831,42 @@ description: Excluded skill
     assertEquals(excludedReads, 0);
   });
 
+  it("rejects the legacy loader spelling at the provider dispatch boundary", async () => {
+    let selectedReads = 0;
+    const adapter = createSkillTestAdapter({
+      "/test/skills/selected/SKILL.md": `---
+name: selected
+description: Selected skill
+---
+# Selected`,
+    });
+    registerSkill("selected", {
+      ...createSkill("selected", "Selected skill"),
+      fsAdapter: {
+        ...adapter,
+        async readFileBytesWithinLimit(path, byteLimit) {
+          selectedReads++;
+          return await adapter.readFileBytesWithinLimit!(path, byteLimit);
+        },
+      },
+    });
+    const assistant = agent({
+      id: "legacy-loader-dispatch",
+      model: "hosted/legacy-load-skill",
+      system: "Load a skill.",
+      skills: ["selected"],
+      resolveModelTransport: async () => ({
+        model: createLoadSkillModel("selected", "load_skill"),
+      }),
+    });
+
+    const response = await assistant.generate({ input: "Load selected" });
+
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertStringIncludes(response.toolCalls[0]?.error ?? "", "not available");
+    assertEquals(selectedReads, 0);
+  });
+
   it("does not let runtime state spoof tools true skill authorization", async () => {
     let excludedReads = 0;
     const selectedAdapter = createSkillTestAdapter({
@@ -876,7 +927,8 @@ description: Excluded skill
     });
 
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
-    assertEquals(toolRegistry.has("load_skill"), true);
+    assertEquals(toolRegistry.has("load_skill"), false);
+    assertEquals(toolRegistry.has("veryfront__load_skill"), true);
     assertEquals(toolRegistry.has("load-skill"), false);
   });
 
@@ -896,8 +948,10 @@ description: Excluded skill
 
     const tools = expectAgentToolMap(assistant.config.tools);
     assertStrictEquals(tools.load_skill, runtimeLoadSkill);
-    assertEquals(typeof tools.load_skill_reference, "object");
-    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.load_skill_reference, undefined);
+    assertEquals(tools.execute_skill_script, undefined);
+    assertEquals(typeof tools.veryfront__load_skill_reference, "object");
+    assertEquals(typeof tools.veryfront__execute_skill_script, "object");
     assertEquals(
       typeof tools.veryfront__load_skill === "object" &&
         tools.veryfront__load_skill.id,
@@ -926,8 +980,9 @@ description: Excluded skill
 
     const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
 
-    assertStringIncludes(prompt, "Call veryfront__load_skill({ inventory:");
-    assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(prompt, "available through the skill inventory");
+    assertEquals(prompt.includes("Call veryfront__load_skill("), false);
+    assertEquals(prompt.includes("Call load_skill("), false);
   });
 
   it("advertises only platform-owned loader bindings when canonical project tools collide", async () => {
@@ -965,7 +1020,10 @@ description: Excluded skill
         );
       }
       if (mode === "unrestricted trusted") {
-        assertEquals(hasTrustedHostToolProvenance(toolRegistry.get("load_skill")), true);
+        assertEquals(
+          hasTrustedHostToolProvenance(toolRegistry.get("veryfront__load_skill")),
+          true,
+        );
       }
       const assistant = agent({
         id: `canonical-owner-${mode}`,
@@ -976,14 +1034,28 @@ description: Excluded skill
         },
       });
       const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+      if (mode.startsWith("unrestricted")) {
+        assertEquals(toolRegistry.has("load_skill"), mode === "unrestricted project");
+        assertEquals(
+          hasTrustedHostToolProvenance(toolRegistry.get("veryfront__load_skill")),
+          true,
+        );
+      } else {
+        const configuredTools = expectAgentToolMap(assistant.config.tools);
+        assertEquals(configuredTools.load_skill, mode === "legacy fallback" ? undefined : false);
+        assertEquals(
+          configuredTools.veryfront__load_skill === undefined
+            ? undefined
+            : hasTrustedHostToolProvenance(configuredTools.veryfront__load_skill),
+          mode === "legacy denied" ? undefined : true,
+        );
+      }
       assertEquals(
-        prompt.includes("Call veryfront__load_skill({ inventory:"),
-        mode === "trusted canonical",
+        prompt.includes("available through the skill inventory"),
+        mode !== "legacy denied",
       );
-      assertEquals(
-        prompt.includes("Call load_skill({ inventory:"),
-        mode === "legacy fallback" || mode === "unrestricted trusted",
-      );
+      assertEquals(prompt.includes("Call veryfront__load_skill("), false);
+      assertEquals(prompt.includes("Call load_skill("), false);
       if (mode === "unrestricted project") toolRegistry.delete("load_skill");
     }
   });
@@ -1049,10 +1121,11 @@ description: Excluded skill
       retainSkillLoaderTools: false,
     });
 
-    assertStringIncludes(observedPrompts[0] ?? "", "Call veryfront__load_skill({ inventory:");
+    assertStringIncludes(
+      observedPrompts[0] ?? "",
+      "available through the skill inventory",
+    );
     assertEquals(observedToolNames[0], [
-      "load_skill",
-      "load_skill_reference",
       "lookup",
       "veryfront__load_skill",
       "veryfront__load_skill_reference",
@@ -1099,9 +1172,9 @@ description: Excluded skill
     });
 
     const tools = expectAgentToolMap(assistant.config.tools);
-    assertEquals(typeof tools.load_skill, "object");
-    assertEquals(typeof tools.load_skill_reference, "object");
-    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.load_skill, undefined);
+    assertEquals(tools.load_skill_reference, undefined);
+    assertEquals(tools.execute_skill_script, undefined);
     assertEquals(tools.veryfront__load_skill, false);
     assertEquals(tools.veryfront__load_skill_reference, false);
     assertEquals(tools.veryfront__execute_skill_script, false);

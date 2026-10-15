@@ -216,7 +216,11 @@ it("fixed hosted delegates cannot override an empty fail-closed tool ceiling", (
 it("fixed hosted delegates prune unavailable optional Studio tool requests", () => {
   const requestedTools = defaultHostedInvokeAgentToolInternals
     .withoutUnavailableOptionalStudioRequestedTools({
-      requestedTools: ["studio_todo_write", "create_file"],
+      requestedTools: [
+        "studio_todo_write",
+        "veryfront__studio_todo_write",
+        "create_file",
+      ],
       config: {
         apiUrl: "https://api.example.com",
         apiMcpUrl: "https://api.example.com/mcp",
@@ -226,6 +230,30 @@ it("fixed hosted delegates prune unavailable optional Studio tool requests", () 
           required: false,
           toolPolicy: { allow: ["studio_todo_write"] },
         }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {
+          create_file: { description: "Create file", execute: () => ({ ok: true }) },
+        },
+      },
+      provider: "anthropic",
+      forkModel: "sonnet",
+    });
+
+  assertEquals(requestedTools, ["create_file"]);
+});
+
+it("fixed hosted delegates prune canonical Studio tools without an allow policy", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["veryfront__studio_todo_write", "create_file"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
       },
       clientProfile: null,
       toolSources: {
@@ -513,7 +541,7 @@ it("default hosted invoke prunes unavailable optional Studio child tools before 
         resolveChildAgentExecutionConfig: () =>
           Promise.resolve({
             system: "Use Studio when it is available.",
-            toolNames: ["studio_todo_write"],
+            toolNames: ["veryfront__studio_todo_write"],
             mcpServers: [{
               kind: "veryfront-studio",
               required: false,

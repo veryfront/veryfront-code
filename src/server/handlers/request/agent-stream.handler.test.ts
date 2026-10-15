@@ -2980,7 +2980,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () =>
             createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 required: false,
@@ -3034,9 +3034,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 200, await result.response.clone().text());
         assertEquals(remoteSources, 0);
-        assertEquals(unavailableNames, ["studio_todo_write"]);
-        assertEquals(unavailablePrefixes, ["studio_"]);
-        assertEquals(availableToolNames?.includes("studio_todo_write"), false);
+        assertEquals(unavailableNames, ["studio_todo_write", "veryfront__studio_todo_write"]);
+        assertEquals(unavailablePrefixes, ["studio_", "veryfront__studio_"]);
+        assertEquals(availableToolNames?.includes("veryfront__studio_todo_write"), false);
       }
     } finally {
       if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");

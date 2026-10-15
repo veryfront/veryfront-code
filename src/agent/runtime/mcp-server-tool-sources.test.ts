@@ -20,6 +20,7 @@ import {
   constrainRuntimeRemoteToolSources,
   getRequestedUnresolvedBooleanToolNames,
   getRuntimeRemoteToolSources,
+  getRuntimeUnavailableOptionalRemoteTools,
   markBootstrapIdentityRemoteToolSource,
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
@@ -1099,6 +1100,35 @@ it("getRuntimeRemoteToolSources omits unavailable optional Studio while retainin
   );
 });
 
+it("optional Studio unavailability covers canonical selectors with legacy or absent allowlists", () => {
+  assertEquals(
+    getRuntimeUnavailableOptionalRemoteTools({
+      system: "Use Studio when available.",
+      tools: { veryfront__studio_todo_write: true },
+      mcpServers: [{
+        kind: "veryfront-studio",
+        required: false,
+        toolPolicy: { allow: ["studio_todo_write"] },
+      }],
+    }, []),
+    {
+      names: ["studio_todo_write", "veryfront__studio_todo_write"],
+      prefixes: ["studio_", "veryfront__studio_"],
+    },
+  );
+  assertEquals(
+    getRuntimeUnavailableOptionalRemoteTools({
+      system: "Use Studio when available.",
+      tools: { veryfront__studio_todo_write: true },
+      mcpServers: [{ kind: "veryfront-studio", required: false }],
+    }, []),
+    {
+      names: [],
+      prefixes: ["studio_", "veryfront__studio_"],
+    },
+  );
+});
+
 Deno.test("getRuntimeRemoteToolSources requires injected control-plane source for explicit Studio MCP", () => {
   const error = assertThrows(
     () =>
@@ -1205,7 +1235,7 @@ Deno.test("getRuntimeRemoteToolSources canonicalizes a trusted injected Studio s
   await assertRejects(
     () => sources![0]!.executeTool("veryfront__studio_delete_project", {}),
     Error,
-    'Tool "veryfront__studio_delete_project" is not allowed for MCP server "studio-mcp"',
+    'Tool "veryfront__studio_delete_project" is not in the platform catalog',
   );
   assertEquals(executeCalls, ["studio_open_project"]);
 });

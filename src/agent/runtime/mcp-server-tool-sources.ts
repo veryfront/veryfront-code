@@ -2,6 +2,7 @@ import { bindTerminalRunCredentialOwner } from "./terminal-run-control.ts";
 import {
   createLivePlatformMcpSource,
   withPlatformMcpPolicyAliases,
+  withPlatformMcpToolNameAliases,
 } from "../platform-mcp-tool-source.ts";
 import {
   hasTrustedPlatformSource,
@@ -66,6 +67,8 @@ export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 /** Naming prefix for Studio MCP tools. */
 export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
+/** Canonical naming prefix for Studio MCP tools. */
+export const VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX = "veryfront__studio_";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
@@ -110,8 +113,9 @@ export function getRuntimeUnavailableOptionalRemoteTools(
     if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
     if (remoteSourceIds.has(getFirstPartyMcpSourceId(server))) continue;
     appendUnique(prefixes, VERYFRONT_STUDIO_TOOL_PREFIX);
+    appendUnique(prefixes, VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX);
     forEachPrivateArray(
-      server.toolPolicy?.allow ?? [],
+      withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? []),
       (toolName) => appendUnique(names, toolName),
     );
   }

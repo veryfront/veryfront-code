@@ -488,8 +488,6 @@ const logger = serverLogger.component("agent");
 const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
 
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
-  "load_skill",
-  "load_skill_reference",
   "veryfront__load_skill",
   "veryfront__load_skill_reference",
 ] as const;

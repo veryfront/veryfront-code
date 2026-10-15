@@ -55,26 +55,27 @@ export function withPlatformMcpPolicyAliases(
   policy: AgentMcpToolPolicy | undefined,
 ): AgentMcpToolPolicy | undefined {
   if (!policy) return policy;
-  const expand = (names: readonly string[]): string[] => {
-    const expanded = createPrivateSet(names);
-    for (const name of names) {
-      const legacyName = platformMcpLegacyName(name);
-      if (!legacyName || legacyName.includes("__")) continue;
-      const canonicalName = `veryfront__${legacyName}`;
-      expanded.add(legacyName);
-      expanded.add(canonicalName);
-    }
-    return [...expanded];
-  };
   return {
     ...policy,
     get allow() {
-      return policy.allow === undefined ? undefined : expand(policy.allow);
+      return policy.allow === undefined ? undefined : withPlatformMcpToolNameAliases(policy.allow);
     },
     get deny() {
-      return policy.deny === undefined ? undefined : expand(policy.deny);
+      return policy.deny === undefined ? undefined : withPlatformMcpToolNameAliases(policy.deny);
     },
   };
+}
+
+/** Expand platform tool selectors to their accepted bare and canonical spellings. */
+export function withPlatformMcpToolNameAliases(names: readonly string[]): string[] {
+  const expanded = createPrivateSet(names);
+  for (const name of names) {
+    const legacyName = platformMcpLegacyName(name);
+    if (!legacyName || legacyName.includes("__")) continue;
+    expanded.add(legacyName);
+    expanded.add(`veryfront__${legacyName}`);
+  }
+  return [...expanded];
 }
 
 /** Translate a platform selector at the authenticated API boundary. */

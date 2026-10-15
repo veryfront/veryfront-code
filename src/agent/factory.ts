@@ -26,8 +26,10 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
-import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
   resolveSkillToolDisposition,
@@ -361,10 +363,14 @@ function resolveToolsConfiguration(input: {
   ensureBuiltinSchemaValidator();
   for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
     const registration = SKILL_TOOL_REGISTRATIONS[index]!;
-    if (!toolRegistry.has(registration.id)) {
-      toolRegistryInternal.registerShared(
-        registration.id,
-        markTrustedHostToolProvenance(registration.create()),
+    const canonicalId = `veryfront__${registration.id}` as const;
+    if (!toolRegistry.has(canonicalId)) {
+      toolRegistryInternal.registerPlatformShared(
+        canonicalId,
+        markRuntimeLocalTool(markTrustedHostToolProvenance({
+          ...registration.create(),
+          id: canonicalId,
+        })),
       );
     }
   }
@@ -378,7 +384,7 @@ function resolveToolsConfiguration(input: {
     }
     for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
       const registration = SKILL_TOOL_REGISTRATIONS[index]!;
-      const canonicalId = `veryfront__${registration.id}`;
+      const canonicalId = `veryfront__${registration.id}` as const;
       if (skillTools === "disable" || skillTools === "omit") {
         if (configuredTools[registration.id] !== false) {
           delete configuredTools[registration.id];
@@ -391,26 +397,27 @@ function resolveToolsConfiguration(input: {
 
       const configuredTool = configuredTools[registration.id];
       const configuredCanonicalTool = configuredTools[canonicalId];
-      if (configuredTool === false && configuredCanonicalTool !== true) {
+      const hasTrustedCanonicalTool = hasTrustedHostToolProvenance(configuredCanonicalTool);
+      if (
+        configuredTool === false && configuredCanonicalTool !== true &&
+        !hasTrustedCanonicalTool
+      ) {
+        if (configuredCanonicalTool !== false) delete configuredTools[canonicalId];
         continue;
       }
 
-      const platformTool = markTrustedHostToolProvenance(registration.create({
-        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+      if (configuredTool === true) delete configuredTools[registration.id];
+      const platformTool = markRuntimeLocalTool(markTrustedHostToolProvenance({
+        ...registration.create({
+          resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+        }),
+        id: canonicalId,
       }));
       if (
-        configuredTool !== false && (typeof configuredTool !== "object" || configuredTool === null)
-      ) {
-        configuredTools[registration.id] = platformTool;
-      }
-      if (
         configuredCanonicalTool !== false &&
-        (typeof configuredCanonicalTool !== "object" || configuredCanonicalTool === null)
+        !hasTrustedCanonicalTool
       ) {
-        configuredTools[canonicalId] = markRuntimeLocalTool(markTrustedHostToolProvenance({
-          ...platformTool,
-          id: canonicalId,
-        }));
+        configuredTools[canonicalId] = platformTool;
       }
     }
     const hasConfiguredTools = IntrinsicObjectKeys(configuredTools).length > 0;
@@ -622,17 +629,6 @@ function createAgent<TOutput = never>(
     }
   }
   const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
-  const registeredKnowledgeTool = toolRegistry.get("search_knowledge");
-  if (
-    knowledgeTool && mergedToolsConfig === true && registeredKnowledgeTool &&
-    isToolVisibleTo(registeredKnowledgeTool, { agentId: id })
-  ) {
-    throw INVALID_ARGUMENT.create({
-      detail:
-        "A registered veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
-        "Use an explicit tool selection or rename the custom tool.",
-    });
-  }
   if (knowledgeTool && mergedToolsConfig !== true) {
     const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (

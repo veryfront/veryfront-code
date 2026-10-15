@@ -4,7 +4,10 @@ import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
-import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
+import {
+  platformMcpLegacyName,
+  withPlatformMcpToolNameAliases,
+} from "../platform-mcp-tool-source.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import type {
   AgentServiceSandboxToolsOptions,
@@ -415,7 +418,10 @@ function getUnavailableOptionalStudioToolNames(
   for (const server of config.mcpServers ?? []) {
     if (server.kind !== "veryfront-studio" || server.required !== false) continue;
     unavailableNames.add("studio_*");
-    for (const toolName of server.toolPolicy?.allow ?? []) unavailableNames.add(toolName);
+    unavailableNames.add("veryfront__studio_*");
+    for (const toolName of withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? [])) {
+      unavailableNames.add(toolName);
+    }
   }
 
   return unavailableNames.size === 0 ? undefined : unavailableNames;
@@ -426,7 +432,9 @@ function isUnavailableOptionalStudioTool(
   unavailableNames: ReadonlySet<string> | undefined,
 ): boolean {
   return unavailableNames?.has(toolName) === true ||
-    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_"));
+    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_")) ||
+    (unavailableNames?.has("veryfront__studio_*") === true &&
+      toolName.startsWith("veryfront__studio_"));
 }
 
 function withoutUnavailableOptionalStudioRequestedTools(input: {

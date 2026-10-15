@@ -494,9 +494,9 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.skills, true);
     assertEquals(restricted.tools, {
       load_skill: true,
+      veryfront__load_skill: true,
       load_skill_reference: false,
       execute_skill_script: false,
-      veryfront__load_skill: false,
       veryfront__load_skill_reference: false,
       veryfront__execute_skill_script: false,
     });
@@ -516,16 +516,15 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
     assertEquals(Object.keys(tools).sort(), [
       "execute_skill_script",
-      "load_skill",
       "load_skill_reference",
       "veryfront__execute_skill_script",
       "veryfront__load_skill",
       "veryfront__load_skill_reference",
     ]);
-    assertEquals(typeof tools.load_skill, "object");
+    assertEquals(tools.load_skill, undefined);
     assertEquals(tools.load_skill_reference, false);
     assertEquals(tools.execute_skill_script, false);
-    assertEquals(tools.veryfront__load_skill, false);
+    assertEquals(typeof tools.veryfront__load_skill, "object");
     assertEquals(tools.veryfront__load_skill_reference, false);
     assertEquals(tools.veryfront__execute_skill_script, false);
   });
@@ -541,8 +540,8 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       load_skill: true,
       load_skill_reference: true,
       veryfront__execute_skill_script: false,
-      veryfront__load_skill: false,
-      veryfront__load_skill_reference: false,
+      veryfront__load_skill: true,
+      veryfront__load_skill_reference: true,
     });
   });
 
@@ -555,7 +554,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
 
     const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
     assertEquals(restrictedAgent.config.skills, true);
-    assertEquals(tools.load_skill, false);
+    assertEquals(tools.load_skill, undefined);
     assertEquals(tools.load_skill_reference, false);
     assertEquals(tools.execute_skill_script, false);
     assertEquals(typeof tools.veryfront__load_skill, "object");
