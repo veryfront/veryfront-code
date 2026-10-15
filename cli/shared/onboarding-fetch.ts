@@ -17,7 +17,11 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectCreate = Object.create;
 
 function bindOnboardingResponse(response: Response): Response {
-  const bind = (target: Response | Headers | ReadableStream<Uint8Array>, name: string, value: unknown) => {
+  const bind = (
+    target: Response | Headers | ReadableStream<Uint8Array>,
+    name: string,
+    value: unknown,
+  ) => {
     const descriptor = ObjectCreate(null);
     descriptor.value = value;
     ObjectDefineProperty(target, name, descriptor);
