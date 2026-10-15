@@ -41,6 +41,7 @@ import { captureLocalWorkerName } from "./worker-name.ts";
 import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
 import {
   connectedDevApiBaseUrl,
+  connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
   stopDevServices,
@@ -51,7 +52,6 @@ import {
 } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
 import { isInteractive } from "../../shared/interactive.ts";
-import { getCloudDomain } from "#cli/shared/constants";
 import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
@@ -354,6 +354,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         },
         isProxyMode,
       );
+      const studioBase = connectedTarget
+        ? connectedDevStudioBaseUrl(
+          connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+          displayOptions.studioUrl,
+        )
+        : "";
       const disposeConnectedRuntime =
         connectedTarget && runtimeAuth.apiToken && runtimeAuth.apiBaseUrl
           ? installConnectedLocalRuntime({
@@ -361,8 +367,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             workerDisplayName,
             apiToken: runtimeAuth.apiToken,
             apiBaseUrl: runtimeAuth.apiBaseUrl,
-            studioUrl: displayOptions.studioUrl ??
-              `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`,
+            studioUrl: studioBase,
           })
           : undefined;
       const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken, projectDir).catch(() => ({
@@ -502,8 +507,6 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const serverUrl = `http://localhost:${boundPort}`;
-      const studioBase = displayOptions.studioUrl ??
-        `https://${getCloudDomain(runtimeAuth.apiBaseUrl)}`;
       console.log();
       for (
         const line of devReadinessLines({

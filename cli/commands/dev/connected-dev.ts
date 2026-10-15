@@ -53,3 +53,17 @@ export function createConnectedDevControlPlane(config: ResolvedConfig) {
     createApiClient(config, createVeryfrontApiOriginBoundOutboundFetch(config.apiUrl)),
   );
 }
+
+/** Keep the local runtime and readiness link on the connected API's Studio. */
+export function connectedDevStudioBaseUrl(apiBaseUrl: string, studioUrl?: string): string {
+  if (studioUrl) return studioUrl;
+  const hostname = new URL(apiBaseUrl).hostname;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(hostname)) {
+    return "http://localhost:3000";
+  }
+  if (hostname === "api.veryfront.com") return "https://veryfront.com";
+  if (hostname === "api.veryfront.org") return "https://veryfront.org";
+  throw new Error(
+    `Cannot determine Studio for connected API "${apiBaseUrl}". Set STUDIO_URL to your Studio origin and run npm run dev again.`,
+  );
+}

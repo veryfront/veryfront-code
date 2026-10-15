@@ -1,9 +1,10 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stub } from "#std/testing/mock";
 import {
   connectedDevApiBaseUrl,
+  connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
 } from "./connected-dev.ts";
@@ -123,4 +124,31 @@ it("connected preflight ignores a project-replaced global fetch", async () => {
       poisoned.restore();
     }
   });
+});
+
+it("resolves the Studio origin for the connected API without an override", () => {
+  assertEquals(connectedDevStudioBaseUrl("http://localhost:4400"), "http://localhost:3000");
+  assertEquals(connectedDevStudioBaseUrl("http://127.0.0.1:4000"), "http://localhost:3000");
+  assertEquals(connectedDevStudioBaseUrl("http://[::1]:4000"), "http://localhost:3000");
+  assertEquals(connectedDevStudioBaseUrl("https://api.veryfront.com"), "https://veryfront.com");
+  assertEquals(connectedDevStudioBaseUrl("https://api.veryfront.org/api"), "https://veryfront.org");
+});
+
+it("keeps an explicit Studio override for any connected API", () => {
+  assertEquals(
+    connectedDevStudioBaseUrl("https://api.example.com", "http://localhost:3440"),
+    "http://localhost:3440",
+  );
+  assertEquals(
+    connectedDevStudioBaseUrl("http://localhost:4400", "http://localhost:3440"),
+    "http://localhost:3440",
+  );
+});
+
+it("requires a Studio override for an unsupported connected API", () => {
+  assertThrows(
+    () => connectedDevStudioBaseUrl("https://api.example.com"),
+    Error,
+    "Set STUDIO_URL",
+  );
 });
