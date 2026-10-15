@@ -236,9 +236,11 @@ describe("project runtime delegation", () => {
       const store = join(f.project, "node_modules", "veryfront");
       await Deno.writeTextFile(
         join(f.project, ".pnp.cjs"),
-        `if (process.argv[1]?.endsWith("veryfront.js") && process.execArgv.includes("--import")) throw new Error(__filename + " private preload failure"); exports.setup = () => {}; exports.resolveToUnqualified = () => ${
-          JSON.stringify(store)
-        };`,
+        'if (process.argv[1]?.endsWith("veryfront.js") && process.execArgv.includes("--import")) throw new Error(__filename + " private preload failure"); exports.setup = () => {}; exports.resolveToUnqualified = () => JSON.parse(require("node:fs").readFileSync(require("node:path").join(__dirname, "pnp-fixture.json"), "utf8")).root;',
+      );
+      await Deno.writeTextFile(
+        join(f.project, "pnp-fixture.json"),
+        JSON.stringify({ root: store }),
       );
       await Deno.writeTextFile(
         join(f.project, ".pnp.loader.mjs"),
