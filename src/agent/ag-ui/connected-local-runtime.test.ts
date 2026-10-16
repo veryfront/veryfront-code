@@ -23,6 +23,7 @@ function fixture(
   options: {
     trustedClaim?: boolean;
     childAdmission?: () => Promise<Response>;
+    childRequest?: (path: string, body: Record<string, unknown>) => Response;
     lostResponseOnce?: string;
     abortOnPath?: string;
     controller?: AbortController;
@@ -175,6 +176,9 @@ function fixture(
       requests.push({ path, body, headers: new Headers(init?.headers) });
       if (path === "/runs" && body.parent_run_id && options.childAdmission) {
         return options.childAdmission();
+      }
+      if (path.startsWith("/runs/") && options.childRequest) {
+        return Promise.resolve(options.childRequest(path, body));
       }
       if (path === options.apiFailure?.path) {
         return Promise.resolve(
@@ -348,6 +352,118 @@ describe("connected local execution", () => {
     } finally {
       await run.finish("completed");
     }
+  });
+
+  it("executes an admitted child once with its own event and terminal credentials", async () => {
+    const childId = "22222222-2222-4222-8222-222222222222";
+    const childToken = `test.${
+      btoa(JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId: "run_child",
+        canonicalRunId: childId,
+        dispatchNonce: "child-generation",
+        projectId: "11111111-1111-4111-8111-111111111111",
+      }))
+    }.signature`;
+    let cursor = 0;
+    const f = fixture({
+      trustedClaim: true,
+      childAdmission: () =>
+        Promise.resolve(Response.json({
+          id: childId,
+          status: "running",
+          project_id: "11111111-1111-4111-8111-111111111111",
+          parent_run_id: "run-1",
+          target: { type: "agent", id: "child" },
+          conversation_id: "33333333-3333-4333-8333-333333333333",
+          output_message_id: "44444444-4444-4444-8444-444444444444",
+        }, {
+          status: 202,
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Veryfront-Run-Terminal-Token": childToken,
+            "X-Veryfront-Run-Invocation-Token": "child-invocation",
+            "X-Veryfront-Run-Event-Token": "child-event",
+            "X-Veryfront-Run-Renewal-Token": "child-renewal",
+            "X-Veryfront-Inference-Token": "child-inference",
+            "X-Veryfront-Run-Event-Sequence": "0",
+            "X-Veryfront-Run-External-Event-Sequence": "0",
+            "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
+          },
+        })),
+      childRequest: (path, body) => {
+        if (path.endsWith("/events")) {
+          assert(Array.isArray(body.events));
+          cursor += body.events.length;
+          return Response.json({
+            run_id: childId,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: body.events.length,
+          });
+        }
+        assertEquals(path, `/runs/${childId}/finalize`);
+        return Response.json({ id: childId, status: "completed" });
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const output = { text: "child output", toolCalls: 0, status: "completed" };
+    let executions = 0;
+    try {
+      await run.execute(async () => {
+        await observeAdmittedAgentToolCalls({
+          id: "message",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "child-call",
+            toolName: "invoke_agent",
+            args: { agent_id: "child" },
+          }],
+        });
+        const invoke = () =>
+          executeLocalChild({
+            agentId: "child",
+            input: "task",
+            toolName: "invoke_agent",
+            toolInput: { agent_id: "child" },
+            context: { toolCallId: "child-call" },
+            execute: async ({ signal, runId, onEvent } = {}) => {
+              executions++;
+              assertEquals(runId, "run_child");
+              assertEquals(signal?.aborted, false);
+              assert(onEvent);
+              await onEvent({ type: "text-delta", id: "child-text", delta: output.text });
+              return output;
+            },
+          });
+        assertEquals(await invoke(), output);
+        assertEquals(await invoke(), output);
+      });
+      assertEquals(executions, 1);
+      const admitted = f.requests.filter((r) => r.body.parent_run_id === "run-1");
+      assertEquals(admitted.length, 1);
+      assertEquals(admitted[0]!.headers.get("Authorization"), "Bearer claim-invocation");
+      const events = f.requests.filter((r) => r.path === `/runs/${childId}/events`);
+      assert(events.length > 0);
+      assert(events.every((r) => r.headers.get("Authorization") === "Bearer child-event"));
+      assert(events.some((r) => JSON.stringify(r.body).includes(output.text)));
+      const finalized = f.requests.filter((r) => r.path === `/runs/${childId}/finalize`);
+      assertEquals(finalized.length, 1);
+      assertEquals(finalized[0]!.headers.get("Authorization"), "Bearer child-invocation");
+      assertEquals(finalized[0]!.headers.get("X-Veryfront-Run-Terminal-Token"), childToken);
+      assertEquals(finalized[0]!.body, { status: "completed", output });
+      assertEquals(f.completed, []);
+    } finally {
+      await run.finish("completed");
+    }
+    assertEquals(f.completed, ["completed"]);
   });
 
   it("registers the configured worker name without changing its implementation or unique key", async () => {
