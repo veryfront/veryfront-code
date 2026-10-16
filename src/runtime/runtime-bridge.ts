@@ -499,6 +499,14 @@ function sanitizePersistedProviderOptions(
   return retained ? sanitized : undefined;
 }
 
+function snapshotAssistantProviderMetadata(value: unknown): Record<string, unknown> {
+  const snapshot = snapshotProviderJsonValue(value);
+  if (snapshot === null || typeof snapshot !== "object" || ArrayIsArray(snapshot)) {
+    throw new TypeError("Assistant provider metadata must be a JSON object");
+  }
+  return cloneStructured(snapshot) as Record<string, unknown>;
+}
+
 function sanitizeModelCallContextMessages(
   messages: readonly DirectModelMessage[],
   captureProviderMetadata = false,
@@ -510,9 +518,7 @@ function sanitizeModelCallContextMessages(
         content: message.content,
         ...(captureProviderMetadata && message.providerMetadata !== undefined
           ? {
-            providerMetadata: cloneStructured(
-              snapshotProviderJsonValue(message.providerMetadata),
-            ) as Record<string, unknown>,
+            providerMetadata: snapshotAssistantProviderMetadata(message.providerMetadata),
           }
           : {}),
       };

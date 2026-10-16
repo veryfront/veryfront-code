@@ -1678,9 +1678,17 @@ describe("runtime-bridge", () => {
       }),
     );
     for (
-      const providerMetadata of [{ anthropic: { value: NaN } }, {
-        anthropic: { value: () => "unsafe" },
-      }, { anthropic: { value: 1n } }]
+      const providerMetadata of [
+        { anthropic: { value: NaN } },
+        {
+          anthropic: { value: () => "unsafe" },
+        },
+        { anthropic: { value: 1n } },
+        null,
+        [],
+        "invalid",
+        0,
+      ]
     ) {
       await assertRejects(
         async () =>
@@ -1688,7 +1696,11 @@ describe("runtime-bridge", () => {
             generateText({
               model,
               messages: [
-                { role: "assistant", content: [{ type: "text", text: "Prior" }], providerMetadata },
+                {
+                  role: "assistant",
+                  content: [{ type: "text", text: "Prior" }],
+                  providerMetadata: providerMetadata as unknown as Record<string, unknown>,
+                },
                 { role: "user", content: "Continue" },
               ],
             })),
