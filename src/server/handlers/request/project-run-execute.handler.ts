@@ -4,6 +4,7 @@ import {
   RUNTIME_MODE_HEADER,
   RUNTIME_NAME_HEADER,
 } from "#veryfront/agent/service/runtime-identity.ts";
+import { copyNativeResponse, readResponseValue, ResponseHeadersGet } from "./native-response.ts";
 import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.ts";
 import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
 import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
@@ -2411,6 +2412,7 @@ const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url
 const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
 const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
 const HeadersAppend = Headers.prototype.append;
+const HeadersSet = Headers.prototype.set;
 const HeadersEntries = Headers.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new Headers().entries()).next as (
   this: IterableIterator<[string, string]>,
@@ -5761,11 +5763,16 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         const releaseStop = () => settledStop("abandoned");
 
         const runtimeIdentity = getServiceRuntimeIdentity();
-        builder.withHeaders({
-          [RUNTIME_ID_HEADER]: runtimeIdentity.id,
-          [RUNTIME_MODE_HEADER]: runtimeIdentity.mode,
-          [RUNTIME_NAME_HEADER]: RuntimeEncodeURIComponent(runtimeIdentity.name),
-        });
+        const runtimeNameHeader = RuntimeEncodeURIComponent(runtimeIdentity.name);
+        const withRuntimeIdentity = (response: Response, executionOwned: boolean): Response => {
+          if (!executionOwned) return response;
+          const result = copyNativeResponse(response);
+          const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+          IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_ID_HEADER, runtimeIdentity.id]);
+          IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_MODE_HEADER, runtimeIdentity.mode]);
+          IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_NAME_HEADER, runtimeNameHeader]);
+          return result;
+        };
 
         return await withSpan(
           "project_run.execute",
@@ -5820,15 +5827,21 @@ export class ProjectRunExecuteHandler extends BaseHandler {
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
               else if (completed && !executionSignal.aborted) markSpanCompleted(span);
               return this.respond(
-                builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+                withRuntimeIdentity(
+                  builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+                  executionOwned,
+                ),
               );
             } catch (error) {
               if (!executionOwned) releaseStop();
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
-                builder.json(
-                  createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
-                  200,
+                withRuntimeIdentity(
+                  builder.json(
+                    createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
+                    200,
+                  ),
+                  executionOwned,
                 ),
               );
             }

@@ -1382,6 +1382,73 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  for (const kind of ["task", "workflow"] as const) {
+    it(`protects accepted ${kind} attribution from a replaced header setter`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process_patched/execute",
+        {
+          runId: "run_process_patched",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+      );
+      const originalSet = Headers.prototype.set;
+      try {
+        Headers.prototype.set = function (name: string, value: string) {
+          return originalSet.call(
+            this,
+            name,
+            name.startsWith("x-veryfront-runtime-") ? "forged" : value,
+          );
+        };
+        const result = await handler.handle(request, createCtx(publicKeyPem));
+        assertExists(result.response);
+        const identity = getServiceRuntimeIdentity();
+        assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+        assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), identity.mode);
+        assertEquals(
+          result.response.headers.get("x-veryfront-runtime-name"),
+          encodeURIComponent(identity.name),
+        );
+      } finally {
+        Headers.prototype.set = originalSet;
+      }
+    });
+
+    it(`omits ${kind} attribution when observation admission rejects`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          started = true;
+          throw new Error("must not execute");
+        },
+        findWorkflowById: async () => {
+          started = true;
+          throw new Error("must not execute");
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process_refused/execute",
+        {
+          runId: "run_process_refused",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+        { "X-Veryfront-Inference-Token": "process-attribution-admission-canary" },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, false);
+      assertEquals(started, false);
+      for (const name of ["id", "mode", "name"]) {
+        assertEquals(result.response.headers.get(`x-veryfront-runtime-${name}`), null);
+      }
+    });
+  }
+
   afterAll(async () => {
     await stopEsbuild();
   });

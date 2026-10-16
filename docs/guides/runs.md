@@ -555,4 +555,4 @@ for the 0.8.9 contract. These tests do not prove deployed parity.
 
 ### Process attribution
 
-Accepted hosted task and workflow executions report the same process identity as agent executions. The control plane stores this snapshot for the exact execution attempt and exposes it as `execution.runtime_instance`; `execution.id` identifies the attempt. A load-balanced URL is not a process identity. Older runtimes without identity headers continue to execute and omit the snapshot. Deploy the framework consumer before enabling API persistence.
+Accepted hosted task and workflow executions report the same process identity as agent executions. The control-plane response includes the process ID, display name, and service mode in the `x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and `x-veryfront-runtime-mode` headers. Persisting and projecting this snapshot requires the corresponding API producer rollout. A load-balanced URL is not a process identity. Older runtimes without identity headers continue to execute and omit the snapshot. Deploy the framework consumer before enabling API persistence.
