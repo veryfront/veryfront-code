@@ -21,8 +21,9 @@ describe("request-utils", () => {
       assertEquals(HTTP_GATEWAY_TIMEOUT, 504);
     });
 
-    it("TIMEOUT_SENTINEL is a unique symbol", () => {
-      assertEquals(typeof TIMEOUT_SENTINEL, "symbol");
+    it("TIMEOUT_SENTINEL is an Error distinguished by identity", () => {
+      assertEquals(TIMEOUT_SENTINEL instanceof Error, true);
+      assertEquals(Object.is(TIMEOUT_SENTINEL, new Error(TIMEOUT_SENTINEL.message)), false);
     });
 
     it("MONITORING_PATHS includes health endpoints", () => {

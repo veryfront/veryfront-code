@@ -303,6 +303,20 @@ describe("build/renderer/utils/import-utils", () => {
       }
     });
 
+    it("ignores class words inside extends strings, comments and regexes", () => {
+      for (
+        const expression of [
+          'registry["class"]',
+          'registry[/* class */ "Base"]',
+          "/class/.constructor",
+        ]
+      ) {
+        const source =
+          `export class Foo extends ${expression} {} /"/.test("x"); const child = import("./child.mdx");`;
+        assertEquals(extractImports(source), ["./child.mdx"]);
+      }
+    });
+
     it("recognizes regex literals after class extends", () => {
       for (
         const code of [

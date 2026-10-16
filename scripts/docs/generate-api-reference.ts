@@ -45,7 +45,7 @@ const OUTPUT_DIR = CHECK_MODE
   ? await Deno.makeTempDir({ prefix: "veryfront-api-reference-check-" })
   : COMMITTED_DIR;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
-const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
+const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/(?<!\/)\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Types

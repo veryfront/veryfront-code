@@ -95,7 +95,7 @@ function validateBaseUrl(value: string): ValidatedBaseUrl {
 
   const origin = readUrl(url, "origin");
   const pathname = IntrinsicReflectApply(StringPrototypeReplace, readUrl(url, "pathname"), [
-    /\/+$/,
+    /(?<!\/)\/+$/,
     "",
   ]) as string;
   return {

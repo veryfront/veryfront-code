@@ -132,7 +132,7 @@ export interface RouterDirectories {
 
 function extractPathBelowRoot(pageEntityId: string, root: string): string | null {
   const normalizedPath = `/${pageEntityId.replaceAll("\\", "/").replace(/^\/+/, "")}`;
-  const normalizedRoot = root.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/^\/+|(?<!\/)\/+$/g, "");
   if (!normalizedRoot) return null;
 
   const marker = `/${normalizedRoot}/`;

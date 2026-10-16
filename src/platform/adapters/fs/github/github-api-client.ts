@@ -343,10 +343,10 @@ export class GitHubApiClient {
     if (!limit || !remaining || !reset) return;
 
     this.rateLimitInfo = {
-      limit: parseInt(limit, 10),
-      remaining: parseInt(remaining, 10),
-      reset: new Date(parseInt(reset, 10) * 1000),
-      used: used ? parseInt(used, 10) : 0,
+      limit: Number.parseInt(limit, 10),
+      remaining: Number.parseInt(remaining, 10),
+      reset: new Date(Number.parseInt(reset, 10) * 1000),
+      used: used ? Number.parseInt(used, 10) : 0,
     };
 
     if (this.rateLimitInfo.remaining < RATE_LIMIT_WARNING_THRESHOLD) {

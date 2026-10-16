@@ -721,10 +721,26 @@ interface OpenedEnvelope {
 
 class EnvelopeCipher {
   /** The first entry is the current key; every entry may decrypt. */
-  readonly #keys: Promise<EnvelopeKey[]>;
+  #keys?: Promise<EnvelopeKey[]>;
+  #keyRing: Uint8Array<ArrayBuffer>[];
 
   constructor(keyRing: readonly Uint8Array<ArrayBuffer>[]) {
-    this.#keys = Promise.all(keyRing.map(importEnvelopeKey));
+    this.#keyRing = keyRing.map((key) => new Uint8Array(key));
+  }
+
+  #getKeys(): Promise<EnvelopeKey[]> {
+    if (!this.#keys) {
+      const keyRing = this.#keyRing;
+      this.#keyRing = [];
+      this.#keys = Promise.all(keyRing.map(async (key) => {
+        try {
+          return await importEnvelopeKey(key);
+        } finally {
+          key.fill(0);
+        }
+      }));
+    }
+    return this.#keys;
   }
 
   async seal(storageKey: string, value: unknown): Promise<string> {
@@ -732,7 +748,7 @@ class EnvelopeCipher {
     if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
       throw new RangeError(`Stored OAuth value exceeds ${MAX_PLAINTEXT_BYTES} bytes`);
     }
-    const [current] = await this.#keys;
+    const [current] = await this.#getKeys();
     if (!current) {
       throw new Error("Encrypted token store has no encryption key configured");
     }
@@ -754,7 +770,7 @@ class EnvelopeCipher {
     if (typeof stored !== "string" || stored.length > MAX_ENCODED_LENGTH) {
       throw new TypeError("Stored OAuth value must be a bounded string");
     }
-    const keys = await this.#keys;
+    const keys = await this.#getKeys();
     if (stored.startsWith(ENVELOPE_PREFIX)) {
       const body = stored.slice(ENVELOPE_PREFIX.length);
       const keyId = body.slice(0, KEY_ID_HEX_LENGTH);

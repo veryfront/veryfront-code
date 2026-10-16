@@ -161,7 +161,7 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
     const encodedPath = match[1] as string;
     const cleanPath = decodeFileUrlPath(encodedPath);
     if (!cleanPath) {
-      missing.push(encodedPath.replace(/[?#].*$/, ""));
+      missing.push(encodedPath.replace(/[?#].*$/s, ""));
       continue;
     }
     try {
@@ -678,8 +678,8 @@ function getMdxEsmCacheDirFromPathSegments(cachedPath: string): string | null {
 }
 
 function isSameOrDescendantPath(path: string, parentPath: string): boolean {
-  const normalizedParent = parentPath.replace(/\/+$/, "");
-  const normalizedPath = path.replace(/\/+$/, "");
+  const normalizedParent = parentPath.replace(/(?<!\/)\/+$/, "");
+  const normalizedPath = path.replace(/(?<!\/)\/+$/, "");
   return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
 }
 

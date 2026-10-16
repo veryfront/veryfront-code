@@ -235,13 +235,13 @@ function getConfiguredHeapLimit(): number | undefined {
   const args = getArgs().join(" ");
 
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
-  if (v8FlagsMatch?.[1]) return parseInt(v8FlagsMatch[1], 10);
+  if (v8FlagsMatch?.[1]) return Number.parseInt(v8FlagsMatch[1], 10);
 
   const denoV8Flags = getEnv("DENO_V8_FLAGS");
   const denoV8Match = denoV8Flags?.match(/--max-old-space-size=(\d+)/);
-  if (denoV8Match?.[1]) return parseInt(denoV8Match[1], 10);
+  if (denoV8Match?.[1]) return Number.parseInt(denoV8Match[1], 10);
 
-  const v8MaxOldSpaceSize = parseInt(getEnv("V8_MAX_OLD_SPACE_SIZE") ?? "", 10);
+  const v8MaxOldSpaceSize = Number.parseInt(getEnv("V8_MAX_OLD_SPACE_SIZE") ?? "", 10);
   if (!Number.isNaN(v8MaxOldSpaceSize) && v8MaxOldSpaceSize > 0) return v8MaxOldSpaceSize;
 
   return undefined;
@@ -315,7 +315,7 @@ export function getMemoryMonitoringLogContext(
 export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
   const enabled = env.get("ENABLE_MEMORY_MONITORING") === "true";
   const rawInterval = env.get("MEMORY_MONITORING_INTERVAL_MS");
-  const parsedInterval = parseInt(
+  const parsedInterval = Number.parseInt(
     rawInterval ?? String(DEFAULT_MEMORY_MONITORING_INTERVAL_MS),
     10,
   );
@@ -581,7 +581,7 @@ function getMemoryThreshold(envVar: string, fallback: number): number {
     const value = getEnv(envVar);
     if (!value) return fallback;
 
-    const parsed = parseInt(value, 10);
+    const parsed = Number.parseInt(value, 10);
     if (Number.isNaN(parsed)) return fallback;
 
     return parsed;

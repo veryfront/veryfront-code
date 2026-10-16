@@ -296,7 +296,7 @@ function getServerPort(moduleServerUrl?: string): number | undefined {
 
   try {
     const url = new URL(moduleServerUrl);
-    return url.port ? parseInt(url.port, 10) : undefined;
+    return url.port ? Number.parseInt(url.port, 10) : undefined;
   } catch (_) {
     /* expected: invalid URL string */
     return undefined;

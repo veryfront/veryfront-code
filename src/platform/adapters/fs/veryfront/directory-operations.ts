@@ -136,7 +136,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         tree.set("", { files: new Map(), dirs: new Set() });
 
         for (const file of allFiles) {
-          let normalizedPath = file.path.replace(/^\/+/, "").replace(/\/+$/, "");
+          let normalizedPath = file.path.replace(/^\/+/, "").replace(/(?<!\/)\/+$/, "");
 
           // Handle paths that end with "/" (like "pages/") - treat as index file
           // The API sometimes returns "pages/" for the root page instead of "pages/index.mdx"

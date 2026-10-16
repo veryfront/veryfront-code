@@ -11,7 +11,7 @@ function splitAllowedOrigins(value: string): string[] {
 }
 
 function buildVeryfrontMcpUrl(apiUrl: string): string {
-  return `${apiUrl.replace(/\/+$/, "")}/mcp`;
+  return `${apiUrl.replace(/(?<!\/)\/+$/, "")}/mcp`;
 }
 
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";

@@ -21,7 +21,7 @@ export function extractNamedImports(
   return importMatch[1]
     .replace(/[{}]/g, "")
     .split(",")
-    .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
+    .map((n) => n.trim().split(/(?<!\s)\s+as\s+/)[0]?.trim())
     .filter((n): n is string => !!n);
 }
 

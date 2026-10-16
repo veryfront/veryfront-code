@@ -1,3 +1,4 @@
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../loader-shared/import-syntax.mjs";
 import type { ImportMapConfig, TransformOptions } from "./types.ts";
 import { resolveImport } from "./resolver.ts";
 
@@ -25,7 +26,11 @@ export function transformImportsWithMap(
   let transformedCode = code;
 
   transformedCode = transformedCode.replace(
-    /((?:import|export)\s+(?:[\w,{}\s*]+\s+from\s+)?|export\s+(?:\*|\{[^}]+\})\s+from\s+)["']([^"']+)["']/g,
+    new RegExp(
+      String
+        .raw`(\b(?:import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?)["']([^"']+)["']`,
+      "gu",
+    ),
     (_match, prefix, specifier) => {
       if (!shouldResolve(specifier, options)) return `${prefix}"${specifier}"`;
       return `${prefix}"${resolve(specifier)}"`;

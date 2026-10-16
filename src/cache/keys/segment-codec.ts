@@ -198,7 +198,7 @@ export function encodeCacheKeySegment(value: string): string {
   return btoa(chunks.join(""))
     .replaceAll("+", "-")
     .replaceAll("/", "_")
-    .replace(/=+$/, "");
+    .replace(/(?<!=)=+$/, "");
 }
 
 /** Decode a segment emitted by {@link encodeCacheKeySegment}. */

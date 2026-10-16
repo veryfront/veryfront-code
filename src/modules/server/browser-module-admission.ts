@@ -153,7 +153,7 @@ export function classifyBrowserModuleSourcePath(
   logicalPath: string,
   options: BrowserModuleSourcePolicyOptions = {},
 ): BrowserModuleSourcePolicy {
-  const path = normalizeRelativePath(logicalPath.replace(/[?#].*$/, ""), true);
+  const path = normalizeRelativePath(logicalPath.replace(/[?#].*$/s, ""), true);
   if (path === null || path === "") {
     return {
       canonicalPath: path,

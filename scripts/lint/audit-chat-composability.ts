@@ -66,7 +66,7 @@ export function collectCompoundParts(
 ): Map<string, Set<string>> {
   const compounds = new Map<string, Set<string>>();
   const declRe =
-    /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*Object\.assign\(/g;
+    /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^\s=\n][^=\n]*)?\s*=\s*Object\.assign\(/g;
 
   for (const f of files) {
     let m: RegExpExecArray | null;
@@ -118,7 +118,7 @@ export function findCompositionLies(
   compounds: Map<string, Set<string>>,
 ): CompositionLie[] {
   const lies: CompositionLie[] = [];
-  const treeRe = /compositionTree\s*=\s*(?:\n\s*)?`([\s\S]*?)`/g;
+  const treeRe = /compositionTree\s*=\s*`([\s\S]*?)`/g;
   const tokenRe = /\b([A-Z][A-Za-z0-9]*)\.([A-Z][A-Za-z0-9]*)\b/g;
 
   for (const f of storyFiles) {

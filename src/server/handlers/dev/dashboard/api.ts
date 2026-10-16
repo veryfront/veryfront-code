@@ -121,7 +121,7 @@ function isSensitiveDashboardPath(
   kind: "file" | "directory",
 ): boolean {
   const segments = path.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) =>
-    segment.toLowerCase().replace(/[ .]+$/g, "")
+    segment.toLowerCase().replace(/(?<![ .])[ .]+$/g, "")
   );
   // A colon addresses an alternate data stream on NTFS. Treat stream paths as
   // unavailable so a sensitive file cannot be reached through an alias such as
@@ -575,7 +575,7 @@ function handleGetMemory(): Response {
 
 function handleGetBuild(): Response {
   const transformStages = Object.entries(TransformStage)
-    .filter(([key]) => isNaN(Number(key)))
+    .filter(([key]) => Number.isNaN(Number(key)))
     .map(([name, value]) => ({
       stage: value as number,
       name,
@@ -692,8 +692,8 @@ function handleLiveLogs(req: Request): Response {
     level: level as import("#veryfront/observability").LogLevel | undefined,
     source,
     pattern,
-    limit: limit ? parseInt(limit, 10) : undefined,
-    since: since ? parseInt(since, 10) : undefined,
+    limit: limit ? Number.parseInt(limit, 10) : undefined,
+    since: since ? Number.parseInt(since, 10) : undefined,
   });
 
   return jsonResponse({

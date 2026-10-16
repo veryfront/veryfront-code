@@ -48,7 +48,7 @@ export function createGlobalErrorLogContext(
 }
 
 function getProjectSlug(path: string): string {
-  return path.replace(/\/+$/, "").split("/").pop() ?? "";
+  return path.replace(/(?<!\/)\/+$/, "").split("/").pop() ?? "";
 }
 
 export function shouldSkipProjectDirectory(name: string): boolean {

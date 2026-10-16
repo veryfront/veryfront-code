@@ -229,7 +229,7 @@ function encodeEmail(options: SendEmailOptions): string {
   if (options.replyTo) headers.push(`Reply-To: ${options.replyTo}`);
 
   const email = `${headers.join("\r\n")}\r\n\r\n${options.body}`;
-  return btoa(email).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(email).replace(/\+/g, "-").replace(/\//g, "_").replace(/(?<!=)=+$/, "");
 }
 
 function addListParams(params: URLSearchParams, options: ListMessagesOptions = {}): void {

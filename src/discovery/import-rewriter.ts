@@ -53,7 +53,7 @@ function escapeRegExp(value: string): string {
 function toDestructuredBindings(imports: string): string {
   return imports
     .split(",")
-    .map((part) => part.trim().replace(/\s+as\s+/g, ": "))
+    .map((part) => part.trim().replace(/(?<!\s)\s+as\s+/g, ": "))
     .filter(Boolean)
     .join(", ");
 }
@@ -155,7 +155,7 @@ function rewriteBareNpmImportsForDeno(code: string): string {
     })
     // Side-effect-only imports: `import "reflect-metadata";`, `import "dotenv/config";`.
     .replace(
-      /(^|[\n;{}])(\s*)import\s+["']([^"']+)["'](\s*;?)/g,
+      /(^|[\n;{}])([^\S\n]*)import\s+["']([^"']+)["'](\s*;?)/g,
       (match, lead: string, indent: string, specifier: string, tail: string) => {
         return isUnprefixedNpmSpecifier(specifier)
           ? `${lead}${indent}import "npm:${specifier}"${tail}`
@@ -366,7 +366,7 @@ export async function rewriteDiscoveryImports(
       // Side-effect imports: `import "reflect-metadata";`, `import "dotenv/config";`.
       for (
         const match of input.matchAll(
-          /(?:^|[\n;{}])\s*import\s+["']([^"']+)["']\s*;?/g,
+          /(?:^|[\n;{}])[^\S\n]*import\s+["']([^"']+)["']\s*;?/g,
         )
       ) {
         const s = match[1];

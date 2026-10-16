@@ -63,7 +63,7 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
 
   if (windows) {
     const unc = matches(
-      /^\/\/([^/]+)\/+([^/]+)(\/+(.*))?$/,
+      /^\/\/([^/]+)\/+([^/]+)(\/+([^/].*|))?$/,
       portable,
     );
     if (unc?.[1] && unc[2]) {
@@ -76,7 +76,7 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
       };
     }
 
-    const drive = matches(/^([A-Za-z]:)(\/+)?(.*)$/, portable);
+    const drive = matches(/^([A-Za-z]:)(\/+)?([^/].*|)$/, portable);
     if (drive?.[1] !== undefined) {
       const absolute = drive[2] !== undefined;
       return {

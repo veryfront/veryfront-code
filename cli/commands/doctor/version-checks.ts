@@ -26,7 +26,7 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
 
     if (runtimeVersion.startsWith("Node.js")) {
       const versionNum = runtimeVersion.replace("Node.js v", "");
-      const major = parseInt(versionNum.split(".")[0] ?? "0", 10);
+      const major = Number.parseInt(versionNum.split(".")[0] ?? "0", 10);
       const isSupported = major >= 18;
       const message = isSupported
         ? runtimeVersion

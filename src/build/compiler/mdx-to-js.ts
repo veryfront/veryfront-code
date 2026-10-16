@@ -1,3 +1,4 @@
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../modules/loader-shared/import-syntax.mjs";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import * as esbuild from "veryfront/extensions/bundler";
 import { extract } from "#std/front-matter/yaml.ts";
@@ -82,7 +83,14 @@ export async function compileMDXToJS(
     if (name && path) imports.push({ name, path });
   }
 
-  const contentWithoutImports = content.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, "");
+  const contentWithoutImports = content.replace(
+    new RegExp(
+      String
+        .raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"][^'"\r\n]+['"];?\s*`,
+      "gu",
+    ),
+    "",
+  );
 
   const processor = resolveContract<ContentProcessor>("ContentProcessor");
   const compiled = await processor.compileMdx({

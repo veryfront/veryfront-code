@@ -86,7 +86,7 @@ async function tryCreateProject(
   transport: typeof fetch = fetch,
 ): Promise<CreateProjectResult> {
   try {
-    const response = await transport(`${apiUrl.replace(/\/+$/, "")}/projects`, {
+    const response = await transport(`${apiUrl.replace(/(?<!\/)\/+$/, "")}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

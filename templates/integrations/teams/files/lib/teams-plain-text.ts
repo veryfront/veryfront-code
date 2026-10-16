@@ -1,17 +1,20 @@
 export function htmlToPlainText(html: string): string {
-  // Strip tags to a fixed point so overlapping fragments cannot survive a
-  // single pass. Decode &amp; last so nested entities unescape exactly once.
-  let text = html;
-  let previous: string;
-  do {
-    previous = text;
-    text = text
-      .replace(
-        /<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi,
-        " ",
-      )
-      .replace(/<[^>]*>/g, "");
-  } while (text !== previous);
+  let text = "";
+  let cursor = 0;
+  while (cursor < html.length) {
+    const open = html.indexOf("<", cursor);
+    const close = open === -1 ? -1 : html.indexOf(">", open + 1);
+    if (close === -1) {
+      text += html.slice(cursor);
+      break;
+    }
+    text += html.slice(cursor, open);
+    const tag = html.slice(open, close + 1);
+    if (/^<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b/i.test(tag)) {
+      text += " ";
+    }
+    cursor = close + 1;
+  }
 
   return text
     .replace(/&nbsp;/g, " ")

@@ -176,12 +176,10 @@ function javascriptBlockContext(
   const previousIndex = previousJavaScriptTokenIndex(line, openIndex);
   const previous = line[previousIndex];
   const word = previousIndex < 0 ? "" : precedingWord(line, previousIndex);
-  const classBody = /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test( // NOSONAR: bounded parser heuristic.
-    line.slice(0, openIndex),
-  ) || (previousIndex < 0 && lineStartFollowsClassExpression);
+  const classHead = trailingClassHead(line, openIndex - 1);
+  const classBody = classHead !== null || (previousIndex < 0 && lineStartFollowsClassExpression);
   const classExpressionBody = classBody &&
-    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/ // NOSONAR: bounded parser heuristic.
-      .test(line.slice(0, openIndex));
+    (classHead === null || !classHeadIsStatement(classHead.prefix));
   const statementLabelBlock = /(?:^|[;{}])\s*[A-Za-z_$][\w$]*\s*:\s*$/.test( // NOSONAR: bounded parser heuristic.
     line.slice(0, openIndex),
   );
@@ -290,11 +288,85 @@ function endsWithArrow(line: ArrayLike<string>, endIndex: number): boolean {
   return line[endIndex] === ">" && line[endIndex - 1] === "=";
 }
 
+function trailingClassHead(line: string, endIndex: number): { prefix: string } | null {
+  const prefix = line.slice(0, endIndex + 1).trimEnd();
+  let classStart = -1;
+  let quote: string | undefined;
+  const templateDepths: number[] = [];
+  const expressionContext: RegexLineContext = {
+    controlFlowCloses: new Set(),
+    statementBlockCloses: new Set(),
+    canStartAtLineStart: true,
+  };
+  for (let index = 0; index < prefix.length; index++) {
+    const current = prefix[index]!;
+    const next = prefix[index + 1];
+    if (quote) {
+      if (current === "\\") index++;
+      else if (current === quote) quote = undefined;
+      else if (quote === "`" && current === "$" && next === "{") {
+        templateDepths.push(1);
+        quote = undefined;
+        index++;
+      }
+      continue;
+    }
+    if (current === "'" || current === '"' || current === "`") {
+      quote = current;
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      const close = prefix.indexOf("*/", index + 2);
+      if (close === -1) break;
+      index = close + 1;
+      continue;
+    }
+    if (current === "/" && next === "/") {
+      const newline = prefix.indexOf("\n", index + 2);
+      if (newline === -1) break;
+      index = newline;
+      continue;
+    }
+    if (current === "/") {
+      const close = findRegexLiteralEnd(prefix, index, expressionContext);
+      if (close !== -1) {
+        index = close;
+        continue;
+      }
+    }
+    if (templateDepths.length > 0) {
+      const depth = templateDepths.length - 1;
+      if (current === "{") templateDepths[depth]!++;
+      if (current === "}" && --templateDepths[depth]! === 0) {
+        templateDepths.pop();
+        quote = "`";
+      }
+    }
+    if (
+      current === "c" && prefix.startsWith("class", index) &&
+      !/[\w$]/.test(prefix[index - 1] ?? "") &&
+      !/[\w$]/.test(prefix[index + 5] ?? "")
+    ) {
+      const previous = previousJavaScriptTokenIndex(prefix, index);
+      if (previous < 0 || prefix[previous] !== ".") classStart = index;
+      index += 4;
+    }
+  }
+  if (classStart < 0) return null;
+  const head = prefix.slice(classStart);
+  if (!/^class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^\s{}][^{}]*)?$/.test(head)) {
+    return null;
+  }
+  return { prefix: prefix.slice(0, classStart) };
+}
+
+function classHeadIsStatement(prefix: string): boolean {
+  return /(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?$/.test(prefix);
+}
+
 function endsWithClassExpression(line: string, endIndex: number): boolean {
-  const prefix = line.slice(0, endIndex + 1);
-  return /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test(prefix) &&
-    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/
-      .test(prefix);
+  const head = trailingClassHead(line, endIndex);
+  return head !== null && !classHeadIsStatement(head.prefix);
 }
 
 function precedingWord(line: string, endIndex: number): string {

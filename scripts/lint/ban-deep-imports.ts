@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 /**
  * Deep Import Linter
  *
@@ -91,7 +92,7 @@ function extractImports(text: string): string[] {
   const imports: string[] = [];
 
   // Static imports: import ... from "..."
-  const staticImportRegex = /import\s+(?:(?:\{[^}]*\})|(?:\*\s+as\s+\w+)|(?:\w+))?\s*(?:,\s*\{[^}]*\})?\s*from\s+['"]([^'"]+)['"]/g;
+  const staticImportRegex = new RegExp(String.raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"]([^'"]+)['"]`, "gu");
   let match;
   while ((match = staticImportRegex.exec(text)) !== null) {
     if (match[1]) imports.push(match[1]);
@@ -104,7 +105,7 @@ function extractImports(text: string): string[] {
   }
 
   // Export re-exports: export ... from "..."
-  const exportRegex = /export\s+(?:(?:\{[^}]*\})|(?:\*))?\s*(?:as\s+\w+)?\s*from\s+['"]([^'"]+)['"]/g;
+  const exportRegex = new RegExp(String.raw`\bexport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"]([^'"]+)['"]`, "gu");
   while ((match = exportRegex.exec(text)) !== null) {
     if (match[1]) imports.push(match[1]);
   }

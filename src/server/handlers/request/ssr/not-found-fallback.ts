@@ -173,9 +173,9 @@ async function extractNotFoundText(
         if (!st.isFile) continue;
 
         const src = await ctx.adapter.fs.readFile(file);
-        const match = src.match(/>\s*([^<]+?)\s*</);
+        const match = src.match(/>\s*([^\s<][^<]*)</);
 
-        if (match?.[1]) return `<p>${match[1]}</p>`;
+        if (match?.[1]) return `<p>${match[1].trimEnd()}</p>`;
       } catch (_) {
         /* expected: not-found file may not exist, try next */
       }

@@ -55,7 +55,7 @@ export function extractExports(
   content: string,
 ): { frontmatter: MDXFrontmatter; content: string } {
   const frontmatter: MDXFrontmatter = {};
-  const exportRegex = /^export\s+const\s+(\w+)\s*=\s*(.+)$/gm;
+  const exportRegex = /^export\s+const\s+(\w+)\s*=\s*(\S.*)$/gm;
 
   let match: RegExpExecArray | null;
   while ((match = exportRegex.exec(content)) !== null) {
@@ -77,7 +77,7 @@ function parseExportValue(value: string): unknown {
       trimmed === "true" ||
       trimmed === "false" ||
       trimmed === "null" ||
-      !isNaN(Number(trimmed))
+      !Number.isNaN(Number(trimmed))
     ) {
       return JSON.parse(trimmed);
     }

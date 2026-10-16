@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 /**
  * Cross-Boundary Relative Import Linter
  *
@@ -62,7 +63,7 @@ function extractImportPaths(text: string): Array<{ path: string; line: number }>
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     // Match: import ... from "..." / export ... from "..."
-    const matches = line.matchAll(/(?:import|export)\s+.*?from\s+['"]([^'"]+)['"]/g);
+    const matches = line.matchAll(new RegExp(String.raw`\b(?:import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"]([^'"]+)['"]`, "gu"));
     for (const m of matches) {
       if (m[1]) results.push({ path: m[1], line: i + 1 });
     }

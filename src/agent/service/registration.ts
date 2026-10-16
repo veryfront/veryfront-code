@@ -210,7 +210,7 @@ export type CreateAgentServiceRegistrationLifecycleOptions =
 
 function normalizeBaseUrl(value: string): string {
   const url = new URL(value);
-  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");

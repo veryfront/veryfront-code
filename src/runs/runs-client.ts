@@ -301,7 +301,7 @@ export class VeryfrontRunsClient {
 
   private sdk(): RunsSdk {
     const { apiUrl, authToken } = this.#resolveConnection();
-    const baseUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+    const baseUrl = applyIntrinsic(stringReplace, apiUrl, [/(?<!\/)\/+$/, ""]) as string;
     const origin = readUrlOrigin(new NativeURL(baseUrl));
     return createRunsSdk({
       transport: {
@@ -606,7 +606,7 @@ export class VeryfrontRunsClient {
     } = {},
   ): Promise<T> {
     const { apiUrl, authToken } = this.#resolveConnection();
-    const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+    const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/(?<!\/)\/+$/, ""]) as string;
     const apiOrigin = readUrlOrigin(new NativeURL(normalizedApiUrl));
     const raw = await requestWithRetry(
       `${normalizedApiUrl}${path}`,

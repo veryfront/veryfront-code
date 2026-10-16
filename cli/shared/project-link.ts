@@ -74,7 +74,7 @@ function normalizeControlPlane(controlPlane: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new TypeError("Veryfront control-plane URLs must use HTTP or HTTPS.");
   }
-  const pathname = url.pathname.replace(/\/+$/, "");
+  const pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   return `${url.origin}${pathname}`;
 }
 

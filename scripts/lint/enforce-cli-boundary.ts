@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 
 /**
  * CLI Boundary Lint
@@ -34,8 +35,8 @@ function shouldSkip(path: string): boolean {
 }
 
 function* findSpecifiers(source: string): Generator<{ specifier: string; index: number }> {
-  const staticRegex = /^\s*(import|export)\s+(?:[\s\S]*?)from\s+["']([^"']+)["']/gm;
-  const bareImportRegex = /^\s*import\s+["']([^"']+)["']/gm;
+  const staticRegex = new RegExp(String.raw`^[^\S\n]*(import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}["']([^"']+)["']`, "gmu");
+  const bareImportRegex = /^[^\S\n]*import\s+["']([^"']+)["']/gm;
   const dynamicRegex = /(?<![\w$"'`])import\s*\(\s*["']([^"']+)["']\s*\)/g;
 
   for (const match of source.matchAll(staticRegex)) {

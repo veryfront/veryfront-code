@@ -5,22 +5,20 @@ const hasNodeApis = !!globalProcess?.versions?.node || "Bun" in globalThis;
 
 export const isDeno = typeof Deno !== "undefined";
 
-let nodePath: NodePathModule | null = null;
-
-if (hasNodeApis) {
+function loadNodePath(): NodePathModule | null {
+  if (!hasNodeApis) return null;
   try {
     const nodeRequire = (globalThis as {
       require?: (specifier: string) => unknown;
     }).require;
-    if (nodeRequire) {
-      nodePath = nodeRequire("node:path") as NodePathModule;
-    }
-  } catch (_) {
-    /* expected: node:path require may fail in non-Node runtimes */
+    return nodeRequire ? nodeRequire("node:path") as NodePathModule : null;
+  } catch {
+    // node:path require may fail in non-Node runtimes.
+    return null;
   }
 }
 
-export { nodePath };
+export const nodePath = loadNodePath();
 
 export const sep = nodePath?.sep ?? "/";
 export const delimiter = nodePath?.delimiter ?? ":";

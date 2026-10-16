@@ -43,7 +43,7 @@ function normalizePathSegments(value: string, label: string): string {
     throw new TypeError(`GitHub ${label} must use forward slashes`);
   }
 
-  const collapsed = value.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+  const collapsed = value.replace(/^\/+|(?<!\/)\/+$/g, "").replace(/\/+/g, "/");
   const segments: string[] = [];
   for (const segment of collapsed.split("/")) {
     // "." segments are legitimate no-ops (a projectDir of "." conventionally
