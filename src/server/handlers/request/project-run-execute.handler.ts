@@ -560,6 +560,7 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    onExecutionOwned?: () => void;
     eventToken?: string;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
@@ -567,18 +568,21 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    onExecutionOwned?: () => void;
   }): Promise<ProjectRunExecuteResponse>;
   executeDependencyArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    onExecutionOwned?: () => void;
   }): Promise<ProjectRunExecuteResponse>;
   executeStyleArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    onExecutionOwned?: () => void;
   }): Promise<ProjectRunExecuteResponse>;
   workflowResumeTimeoutMs?: number;
   /** Overall pause decision deadline; defaults to 60 seconds. */
@@ -1207,6 +1211,7 @@ async function executeDiscoveredTaskRun(
   control?: TaskDeadlineControl,
   runChild?: ReturnType<typeof createTaskChildRunner>,
   onCompleted?: () => void,
+  onExecutionOwned?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1230,6 +1235,7 @@ async function executeDiscoveredTaskRun(
   control?.throwIfExpired();
   const result = await deps.runTask({
     task,
+    onExecutionStarted: onExecutionOwned,
     ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
@@ -1922,6 +1928,7 @@ async function executeWorkflowRun(
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
   onCompleted?: () => void,
+  onExecutionOwned?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1967,6 +1974,7 @@ async function executeWorkflowRun(
         releaseStop,
         runAgentNode,
         onCompleted,
+        onExecutionOwned,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -2000,6 +2008,7 @@ async function runDiscoveredWorkflow(
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
   onCompleted?: () => void,
+  onExecutionOwned?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -2023,6 +2032,7 @@ async function runDiscoveredWorkflow(
         debug: ctx.debug,
         executor: {
           retainExecutionStopEvidence: true,
+          onStart: onExecutionOwned,
           stepExecutor: { runAgentNode },
           ...(acknowledgePause ? { shouldPause } : {}),
         },
@@ -4225,6 +4235,7 @@ async function executeKnowledgeIngestRun(input: {
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  onExecutionOwned?: () => void;
   eventToken?: string;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
@@ -4327,8 +4338,9 @@ async function executeKnowledgeIngestRun(input: {
       ) {
         throw new Error("File read does not match the admitted canonical version.");
       }
-      input.signal.throwIfAborted();
       const localPath = `${outputDir}/canonical.md`;
+      input.signal.throwIfAborted();
+      input.onExecutionOwned?.();
       await Deno.writeTextFile(localPath, content);
       input.signal.throwIfAborted();
       const receipt = await indexCanonical({
@@ -4420,6 +4432,8 @@ async function executeKnowledgeIngestRun(input: {
       throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
     }
 
+    input.signal.throwIfAborted();
+    input.onExecutionOwned?.();
     const progressBridge = createKnowledgeRuntimeProgressBridge();
     const results = await (async () => {
       try {
@@ -4642,6 +4656,7 @@ async function executeEvalRun(
     summaryOnly?: boolean;
     progressLogs?: string[];
     eventToken?: string;
+    onExecutionOwned?: () => void;
   } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -4690,7 +4705,8 @@ async function executeEvalRun(
   }
 
   const config = request.config ?? {};
-  const report = await deps.runEval(withEvalRunConfig(evalItem.definition, config), {
+  const definition = withEvalRunConfig(evalItem.definition, config);
+  const runOptions: RunEvalOptions = {
     adapters: evalItem.definition.targetKind === "agent"
       ? {
         agent: deps.createEvalAgentAdapter(
@@ -4713,7 +4729,10 @@ async function executeEvalRun(
         },
       }
       : {}),
-  });
+  };
+  options.signal?.throwIfAborted();
+  options.onExecutionOwned?.();
+  const report = await deps.runEval(definition, runOptions);
   options.signal?.throwIfAborted();
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
@@ -4772,6 +4791,7 @@ async function executeEvalTaskRun(
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
   retainedEventToken?: string,
+  onExecutionOwned?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
   if (!evalId) {
@@ -4799,6 +4819,7 @@ async function executeEvalTaskRun(
             summaryOnly: true,
             progressLogs,
             eventToken: retainedEventToken,
+            onExecutionOwned,
           }),
       },
     },
@@ -4831,6 +4852,7 @@ async function executeReleaseAssetBuildRun(input: {
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  onExecutionOwned?: () => void;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -4882,6 +4904,8 @@ async function executeReleaseAssetBuildRun(input: {
       projectScope: projectReference,
     });
 
+    input.signal.throwIfAborted();
+    input.onExecutionOwned?.();
     const result = await runReleaseAssetBuild({
       projectReference,
       projectId: input.ctx.projectId ?? input.request.projectId,
@@ -4991,6 +5015,7 @@ async function executeDependencyArtifactBuildRun(input: {
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  onExecutionOwned?: () => void;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   try {
@@ -5014,6 +5039,8 @@ async function executeDependencyArtifactBuildRun(input: {
       projectSlug: input.ctx.projectSlug,
       projectId: input.ctx.projectId,
     });
+    input.signal.throwIfAborted();
+    input.onExecutionOwned?.();
     const result = await runDependencyArtifactBuild(taskInput, {
       writeAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
         runWhileActive(input.signal, () =>
@@ -5207,6 +5234,7 @@ async function executeStyleArtifactBuildRun(input: {
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  onExecutionOwned?: () => void;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -5321,6 +5349,7 @@ async function executeStyleArtifactBuildRun(input: {
         ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
         : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
     input.signal.throwIfAborted();
+    input.onExecutionOwned?.();
     const result = await buildPreparedCSSArtifactFromFiles({
       projectSlug: projectReference,
       projectVersion: resolveStyleContentVersion(contentContext, {
@@ -5426,6 +5455,7 @@ async function executeProjectRun(
     signal: AbortSignal,
   ) => Promise<ProjectRunExecuteResponse>,
   onCompleted?: () => void,
+  onExecutionOwned?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(
@@ -5446,6 +5476,7 @@ async function executeProjectRun(
                   deps,
                   control,
                   retainedEventToken,
+                  onExecutionOwned,
                 );
               case "task:knowledge-ingest":
                 return await deps.executeKnowledgeIngest({
@@ -5454,13 +5485,32 @@ async function executeProjectRun(
                   req,
                   signal,
                   eventToken: retainedEventToken,
+                  onExecutionOwned,
                 });
               case "task:release-asset-build":
-                return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
+                return await deps.executeReleaseAssetBuild({
+                  request,
+                  ctx,
+                  req,
+                  signal,
+                  onExecutionOwned,
+                });
               case "task:dependency-artifact-build":
-                return await deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
+                return await deps.executeDependencyArtifactBuild({
+                  request,
+                  ctx,
+                  req,
+                  signal,
+                  onExecutionOwned,
+                });
               case "task:style-artifact-build":
-                return await deps.executeStyleArtifactBuild({ request, ctx, req, signal });
+                return await deps.executeStyleArtifactBuild({
+                  request,
+                  ctx,
+                  req,
+                  signal,
+                  onExecutionOwned,
+                });
               default:
                 return await executeDiscoveredTaskRun(
                   request,
@@ -5482,6 +5532,7 @@ async function executeProjectRun(
                     })(child);
                   },
                   onCompleted,
+                  onExecutionOwned,
                 );
             }
           };
@@ -5524,6 +5575,7 @@ async function executeProjectRun(
         return await runAgentNode(invocation);
       },
       onCompleted,
+      onExecutionOwned,
     );
   };
   try {
@@ -5788,7 +5840,6 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                 if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
                   requireProjectRunObservationParent(request, eventToken);
                 }
-                executionOwned = true;
                 return executeProjectRun(
                   request,
                   ctx,
@@ -5813,6 +5864,9 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     }
                     : undefined,
                   onCompleted,
+                  () => {
+                    executionOwned = true;
+                  },
                 );
               };
               const limited = enforceRunOutputLimit(

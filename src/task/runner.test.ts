@@ -16,6 +16,35 @@ function makeTask(definition: TaskDefinition, id = "test-task"): RunnableTask {
 
 describe("src/task/runner", () => {
   describe("runTask", () => {
+    it("reports execution entry only after admission and before task code", async () => {
+      for (const mode of ["valid", "invalid", "aborted", "throws"] as const) {
+        const order: string[] = [];
+        const controller = new AbortController();
+        if (mode === "aborted") controller.abort();
+        const result = await runTask({
+          task: makeTask({
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "string" } },
+              required: ["value"],
+            },
+            run: () => {
+              order.push("run");
+              if (mode === "throws") throw new Error("task failed after entry");
+              return null;
+            },
+          }),
+          input: { value: mode === "invalid" ? 1 : "ok" },
+          signal: controller.signal,
+          onExecutionStarted: () => {
+            order.push("entered");
+          },
+        }, createInMemoryHostRuntime());
+        assertEquals(order, mode === "invalid" || mode === "aborted" ? [] : ["entered", "run"]);
+        assertEquals(result.success, mode === "valid");
+      }
+    });
+
     it("should return success with the task result", async () => {
       const task = makeTask({
         name: "simple",
