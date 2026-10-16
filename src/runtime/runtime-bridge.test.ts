@@ -1,3 +1,4 @@
+import { normalizeConversationRunEvent } from "../agent/conversation/run-event-normalization.ts";
 import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -1583,6 +1584,8 @@ describe("runtime-bridge", () => {
     const order: string[] = [];
     const sink: AgentRunEventSink = (event) => {
       assertModelCallContextEvent(event);
+      const normalized = normalizeConversationRunEvent(event);
+      assertEquals(normalized, [event]);
       contexts.push(event);
       order.push("persist");
       return { eventId: "1", projectId, runId: canonicalRunId, modelCallId: event.modelCallId! };

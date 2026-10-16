@@ -1,3 +1,4 @@
+import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, VeryfrontError } from "../../errors/index.ts";
 import { everyPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
@@ -136,6 +137,20 @@ function isRequest(value: unknown): boolean {
       typeof ownDataValue(responseFormat, "strict") === "boolean");
 }
 
+function isAssistantProviderMetadata(message: Record<string, unknown>): boolean {
+  const descriptor = ownPropertyDescriptor(message, "providerMetadata");
+  if (descriptor === undefined) return true;
+  if (!("value" in descriptor) || descriptor.enumerable !== true || !isRecord(descriptor.value)) {
+    return false;
+  }
+  try {
+    snapshotProviderJsonValue(descriptor.value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isMessage(value: unknown): boolean {
   if (!isRecord(value) || typeof ownDataValue(value, "role") !== "string") return false;
   const role = ownDataValue(value, "role");
@@ -145,7 +160,13 @@ function isMessage(value: unknown): boolean {
       hasOnlyKeys(value, ["role", "content", "providerOptions"]) &&
       isPersistedProviderOptions(ownDataValue(value, "providerOptions"));
   }
-  if (!ArrayIsArray(content) || !hasOnlyKeys(value, ["role", "content"])) return false;
+  if (!ArrayIsArray(content)) return false;
+  if (role === "assistant") {
+    if (
+      !hasOnlyKeys(value, ["role", "content", "providerMetadata"]) ||
+      !isAssistantProviderMetadata(value)
+    ) return false;
+  } else if (!hasOnlyKeys(value, ["role", "content"])) return false;
   return everyPrivateArray(content, (part) => {
     if (!isRecord(part)) return false;
     if (role === "user") {
