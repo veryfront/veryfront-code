@@ -47,7 +47,10 @@ import {
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
-import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import {
+  getProviderToolProfile,
+  selectProviderCompatibleToolNames,
+} from "./provider-tool-compat.ts";
 import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
@@ -306,6 +309,10 @@ export async function prepareAgentRuntimeStep(
   const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
     input.config.bootstrapTools,
   );
+  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.config.optionalBootstrapTools,
+    "optionalBootstrapTools",
+  );
   const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools ||
       configuredBootstrapNames.length > 0
     ? await input.getAvailableTools(input.config.tools, {
@@ -440,6 +447,29 @@ export async function prepareAgentRuntimeStep(
     input.reservedToolSlots,
   );
   const toolLoadingMode = resolveRuntimeToolLoading(input.config).mode;
+  if (optionalBootstrapNames.length > 0) {
+    const candidates = [...bootstrapToolNames];
+    for (let index = 0; index < optionalBootstrapNames.length; index++) {
+      const name = optionalBootstrapNames[index]!;
+      if (
+        setHas(existingToolNames, name) &&
+        somePrivateArray(
+          tools,
+          (tool) => tool.name === name && !isRuntimeProviderSchemaHiddenTool(tool),
+        ) &&
+        !setHas(bootstrapToolNames, name)
+      ) candidates[candidates.length] = name;
+    }
+    const selected = selectProviderCompatibleToolNames(candidates, {
+      model: input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
+      wireSurface: input.wireSurface,
+      requiredToolNames: [...bootstrapToolNames],
+      reservedToolSlots: (input.reservedToolSlots ?? 0) + (toolLoadingMode === "deferred" ? 2 : 0),
+    });
+    for (const name of selected) {
+      IntrinsicReflectApply(IntrinsicSetAdd, bootstrapToolNames, [name]);
+    }
+  }
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
     mode: toolLoadingMode,
