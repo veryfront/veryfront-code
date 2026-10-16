@@ -26,6 +26,8 @@ Cloud transport removes caller correlation headers and sends `x-veryfront-model-
 
 A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input can leave a truncated legacy audit record, but it has no usable complete-input receipt and sends no provider request. Legacy records and acknowledgements remain readable; they cannot supply missing capture evidence.
 
+Google structured-output capture supports `generationConfig.responseJsonSchema` and the neutral `responseFormat: json_schema` override. Native `generationConfig.responseSchema` uses Google's schema dialect and is unsupported by this capture profile. When capture is required, that setting refuses dispatch. Supporting the native dialect requires a separate schema contract and qualification.
+
 Activation requires matching API support; merging this SDK change does not activate it or establish that the API is deployed. Remove the migration gate only after the API supports receipts, the SDK is released and consumers are pinned, and integrated acceptance tests pass. Projectless canonical runs retain legacy dispatch without new project correlation; target projectless provenance remains unsupported. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
 ## Hosted tool-start admission
@@ -102,3 +104,9 @@ deno task generate
 deno run -A src/events/generate-payload-types.mjs
 git diff --exit-code -- src/events/payload-types.generated.ts
 ```
+
+## Descendant history continuation
+
+Canonical single-run pages retain the immutable decimal cursor contract. Reads with `include_descendants: true` explicitly select `cursor_profile=run-events-descendants-v1` and require that additive page profile and preserve the opaque `vfd1.` continuation token exactly. Equal physical event IDs from different producing runs remain distinct history entries. The SDK validates the bounded canonical token encoding, page discriminator, continuation identity, nonregressing physical IDs, and duplicate producing-run/event-ID pairs. It cannot infer physical storage from a member. The API owns total tuple ordering and authorizes the cursor's root, filters, order, store, and view before querying history; client token validation grants no access.
+
+Canonical payload decoding also enforces the selected source schema’s UTF-16 string limits, trimmed parse output, and JSON context-item UTF-8 byte limit. These supplementary checks reject invalid history without changing its values or the frozen schema resources. They follow declared schema fields and applicable union branches; arbitrary JSON inside context data, tool schemas, or forwarded properties stays opaque. Physical-store source segments must retain their canonical encoded spelling.

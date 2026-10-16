@@ -1100,7 +1100,12 @@ describe("module-fetcher", () => {
     });
 
     it("counts shared modules toward each joined render's graph limit", async () => {
-      const project = createProjectAdapter("graph-limit");
+      const entryRead = Promise.withResolvers<void>();
+      const project = createProjectAdapter("graph-limit", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts") entryRead.resolve();
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-limit-cache-"),
         projectDir: await tempDir("vf-shared-limit-proj-"),
@@ -1112,8 +1117,13 @@ describe("module-fetcher", () => {
         follower.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
       }
 
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      // Shared-key preparation is asynchronous, so invocation order alone does
+      // not establish leadership. Join only once the unrestricted render owns
+      // the entry resolution; otherwise it may retry a constrained leader.
+      await entryRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 

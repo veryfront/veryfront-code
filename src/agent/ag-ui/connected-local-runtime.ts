@@ -28,6 +28,7 @@ import {
 } from "../runtime/model-transport.ts";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
 import type { Agent } from "../types.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
@@ -653,6 +654,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 ...getAgentExecutionConfig(agent.config),
                 id: agent.id,
                 tools: agent.config.tools === true ? true : buildExplicitAgUiSourceTools(agent),
+                toolLoading: resolveRuntimeToolLoading(agent.config).mode,
                 ...(agent.config.tools === true ? {} : { delegates: undefined }),
               }, {
                 resolveModelRuntime: resolver,

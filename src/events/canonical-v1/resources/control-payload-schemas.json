@@ -1,0 +1,4396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:control-payloads",
+  "title": "Canonical control payload schemas with explicit target extensions",
+  "description": "Planning artifact. Validates CloudEvents data, not its envelope. Full producer/private schemas and viewer profiles are separate. Preserve source fields with canonical data.type substitution; ToolCallRefused explicitly adds required exact toolCallId and reason to the target contract. Structural validation does not replace annotated runtime refinements or admission/authority checks.",
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?(Z|([+-]\\d{2}:?\\d{2}))$",
+      "x-source-format": "Zod datetime({ offset: true }); source regex admits optional seconds and compact offsets. Do not replace with stricter RFC3339 date-time assertion."
+    },
+    "DateTimeUtc": {
+      "type": "string",
+      "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?(Z)$",
+      "x-source-format": "Zod datetime(); UTC Z only, source regex admits optional seconds."
+    },
+    "RunId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "ToolCallId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "RuntimeToolCallId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "ClientToolName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9._:-]*$"
+    },
+    "AgentServiceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "AgentTaskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "MoneyAmountOutput": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$"
+    },
+    "TriggerPrincipal": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "system",
+            "user",
+            "api_key",
+            "service_account"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "PersistedTraceContext": {
+      "type": "object",
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "spanId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "traceFlags": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "traceId",
+        "spanId",
+        "traceFlags"
+      ],
+      "additionalProperties": false
+    },
+    "OriginatingCredentialPrincipal": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "user",
+            "token",
+            "service_account"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "OriginatingCredentialGrant": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "relation": {
+          "anyOf": [
+            {
+              "enum": [
+                "viewer",
+                "editor",
+                "admin",
+                "owner"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "enum": [
+            "apiKey",
+            "accountKey",
+            "serviceAccount",
+            "serviceToken"
+          ]
+        },
+        "issuedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "relation",
+        "scopes",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "OriginatingCredential": {
+      "type": "object",
+      "properties": {
+        "credentialType": {
+          "enum": [
+            "jwt",
+            "api_key",
+            "internal"
+          ]
+        },
+        "principal": {
+          "$ref": "#/$defs/OriginatingCredentialPrincipal"
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OriginatingCredentialGrant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "credentialType",
+        "principal",
+        "grant"
+      ],
+      "additionalProperties": false
+    },
+    "RunAuthorizationActor": {
+      "type": "object",
+      "properties": {
+        "requestedByUserId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceAccountId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agentAccessGrantId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requesterServiceAccountId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "requestedByUserId",
+        "serviceAccountId",
+        "agentAccessGrantId"
+      ],
+      "additionalProperties": true
+    },
+    "RunAuthorizationOrigin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "interactive",
+            "automation"
+          ]
+        },
+        "agentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "enum": [
+            "api",
+            "schedule",
+            "schedule_retry",
+            "webhook",
+            "agent"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "agentId"
+      ],
+      "additionalProperties": true
+    },
+    "RunToolAuthority": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "all-tools",
+            "explicit"
+          ]
+        },
+        "platformTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "integrationTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "projectTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "firstPartyRuntimeTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mutatingIntegrationTools": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mode",
+        "platformTools",
+        "integrationTools",
+        "projectTools"
+      ],
+      "additionalProperties": true
+    },
+    "RunAuthorizationRecord": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "sealedAt": {
+          "$ref": "#/$defs/DateTimeUtc"
+        },
+        "actor": {
+          "$ref": "#/$defs/RunAuthorizationActor"
+        },
+        "origin": {
+          "$ref": "#/$defs/RunAuthorizationOrigin"
+        },
+        "toolAuthority": {
+          "$ref": "#/$defs/RunToolAuthority"
+        },
+        "originatingCredential": {
+          "$ref": "#/$defs/OriginatingCredential"
+        }
+      },
+      "required": [
+        "version",
+        "sealedAt",
+        "actor",
+        "origin",
+        "toolAuthority"
+      ],
+      "additionalProperties": true,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/run-authorization-record.ts",
+          "line": 29,
+          "endLine": 99
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/originating-credential.types.ts",
+          "line": 3,
+          "endLine": 33
+        }
+      ]
+    },
+    "RequestMessagePart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true
+    },
+    "RequestMessage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessagePart"
+          },
+          "default": []
+        },
+        "metadata": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "parts"
+      ],
+      "additionalProperties": false
+    },
+    "AgentStreamTool": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ClientToolName"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "parameters": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "x-runtime-constraints": [
+        "Each parameters/inputSchema/outputSchema value must fit 16384 bytes under Buffer.byteLength(JSON.stringify(value), utf8)."
+      ]
+    },
+    "RuntimeAgentThinkingConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "budgetTokens": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "budgetTokens"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "RuntimeAgentDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024,
+          "default": ""
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64000
+        },
+        "thinking": {
+          "$ref": "#/$defs/RuntimeAgentThinkingConfig"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "providerTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 500
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "const": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 500
+            }
+          ]
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "const": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 500
+            }
+          ]
+        },
+        "deniedTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "x-source-transform": "trim"
+          },
+          "maxItems": 500
+        },
+        "delegates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "instructions"
+      ],
+      "additionalProperties": false
+    },
+    "AgentStreamContextItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "json"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "data": {
+              "$ref": "#/$defs/JsonObject"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "additionalProperties": false,
+          "x-runtime-constraints": [
+            "JSON.stringify(data) UTF-8 bytes <= 16384."
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "resource"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "uri": {
+              "type": "string",
+              "maxLength": 2048
+            },
+            "mimeType": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "type",
+            "uri"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeAgentSourceContext": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "branch"
+            },
+            "branch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "type",
+            "branch"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "environment"
+            },
+            "environmentName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "releaseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "type",
+            "environmentName",
+            "releaseId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "release"
+            },
+            "releaseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "type",
+            "releaseId"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeAgentProjectContext": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "projectSlug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "runtimeTargetKind": {
+          "anyOf": [
+            {
+              "enum": [
+                "main_branch",
+                "environment",
+                "preview_branch"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtimeTargetEnvironmentId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtimeTargetEnvironmentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "x-source-transform": "trim"
+        },
+        "runtimeTargetBranchName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "x-source-transform": "trim"
+        },
+        "executionEnvironmentId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "runtimeTargetBranchId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "projectId",
+        "projectSlug"
+      ],
+      "additionalProperties": false,
+      "x-runtime-constraints": [
+        "Absent/null/main_branch runtimeTargetKind permits no non-null environment or branch ID; environment requires environment ID and no branch ID; preview_branch requires branch ID and no environment ID."
+      ]
+    },
+    "ManagedRuntimeSourceBinding": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "environmentId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "releaseId": {
+          "$ref": "#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "projectId",
+        "environmentId",
+        "releaseId"
+      ],
+      "additionalProperties": false
+    },
+    "ManagedRuntimeSourceSnapshot": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "sourceBinding": {
+          "$ref": "#/$defs/ManagedRuntimeSourceBinding"
+        },
+        "sourceProject": {
+          "$ref": "#/$defs/RuntimeAgentProjectContext"
+        },
+        "agentSource": {
+          "$ref": "#/$defs/RuntimeAgentSourceContext"
+        }
+      },
+      "required": [
+        "serviceId",
+        "sourceBinding",
+        "sourceProject",
+        "agentSource"
+      ],
+      "additionalProperties": false,
+      "x-runtime-constraints": [
+        "sourceProject.projectId equals sourceBinding.projectId; sourceProject.runtimeTargetKind is environment; runtimeTargetEnvironmentId and optional executionEnvironmentId equal sourceBinding.environmentId; agentSource.type is environment and releaseId equals sourceBinding.releaseId."
+      ]
+    },
+    "OAuthIntegrationConnectionBinding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "integration": {
+              "type": "string",
+              "minLength": 1,
+              "x-source-transform": "trim"
+            },
+            "kind": {
+              "const": "oauth"
+            },
+            "source": {
+              "enum": [
+                "project_policy",
+                "user_config"
+              ]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "connectionGenerationId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "policyGenerationId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ownerId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "scope": {
+              "const": "user"
+            },
+            "ownerKind": {
+              "const": "user"
+            }
+          },
+          "required": [
+            "integration",
+            "connectionId",
+            "connectionGenerationId",
+            "ownerId",
+            "scope",
+            "ownerKind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "integration": {
+              "type": "string",
+              "minLength": 1,
+              "x-source-transform": "trim"
+            },
+            "kind": {
+              "const": "oauth"
+            },
+            "source": {
+              "enum": [
+                "project_policy",
+                "user_config"
+              ]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "connectionGenerationId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "policyGenerationId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ownerId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "scope": {
+              "const": "project"
+            },
+            "ownerKind": {
+              "const": "project"
+            }
+          },
+          "required": [
+            "integration",
+            "connectionId",
+            "connectionGenerationId",
+            "ownerId",
+            "scope",
+            "ownerKind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ServiceIdentityAuthorizationBinding": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "service_identity"
+        },
+        "integration": {
+          "enum": [
+            "github",
+            "jira",
+            "salesforce"
+          ]
+        },
+        "ownerKind": {
+          "const": "project"
+        },
+        "ownerId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "targetEnvironmentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "x-source-transform": "trim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policyGenerationId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "integration",
+        "ownerKind",
+        "ownerId",
+        "targetEnvironmentId"
+      ],
+      "additionalProperties": false
+    },
+    "IntegrationAuthorizationBindings": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/OAuthIntegrationConnectionBinding"
+          },
+          {
+            "$ref": "#/$defs/ServiceIdentityAuthorizationBinding"
+          }
+        ]
+      },
+      "maxItems": 128,
+      "x-runtime-constraints": [
+        "integration values must be unique across bindings."
+      ]
+    },
+    "AgentRunRequestSnapshotOutput": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "taskId": {
+          "$ref": "#/$defs/AgentTaskId"
+        },
+        "agentServiceId": {
+          "$ref": "#/$defs/AgentServiceId"
+        },
+        "agentSource": {
+          "$ref": "#/$defs/RuntimeAgentSourceContext"
+        },
+        "managedRuntimeSource": {
+          "$ref": "#/$defs/ManagedRuntimeSourceSnapshot"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "default": []
+        },
+        "context": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamContextItem"
+          },
+          "default": []
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "agentConfig": {
+          "$ref": "#/$defs/RuntimeAgentDefinition"
+        },
+        "forwardedProps": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "integrationConnectionBindings": {
+          "$ref": "#/$defs/IntegrationAuthorizationBindings",
+          "default": []
+        },
+        "traceContext": {
+          "$ref": "#/$defs/PersistedTraceContext"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        },
+        "authorization": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "messages",
+        "agentSource",
+        "tools",
+        "context",
+        "integrationConnectionBindings"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 15,
+          "endLine": 127
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-stream.types.ts",
+          "line": 77,
+          "endLine": 206
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runtime-targets/managed-runtime-source.schema.ts",
+          "line": 4,
+          "endLine": 38
+        }
+      ],
+      "x-output-profile": "Zod parse output; defaults are materialized. authorization remains an opaque record, not a forced RunAuthorizationRecord v1 parse."
+    },
+    "DefaultChatRuntimeOverrides": {
+      "type": "object",
+      "properties": {
+        "allowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 100
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "DefaultChatRequestContext": {
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "branchId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environmentContext": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId",
+        "branchId"
+      ],
+      "additionalProperties": false
+    },
+    "DefaultChatRequestSnapshotOutput": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "maxItems": 50
+        },
+        "context": {
+          "$ref": "#/$defs/DefaultChatRequestContext"
+        },
+        "model": {
+          "type": "string"
+        },
+        "activeChatId": {
+          "type": "string"
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "forwardedProps": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "runtimeOverrides": {
+          "$ref": "#/$defs/DefaultChatRuntimeOverrides"
+        },
+        "serverResolvedIntegrationTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "serverResolvedPlatformTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "authorization": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        }
+      },
+      "required": [
+        "messages",
+        "context"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/request-schemas/default-chat.ts",
+          "line": 7,
+          "endLine": 39
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/external-default-chat-run-support.ts",
+          "line": 238,
+          "endLine": 275
+        }
+      ],
+      "x-output-profile": "Hosted default-chat start producer reparses DefaultChatRequestSnapshotSchema. Persisted reader subtype permits optional context.projectReference; stored producer output does not."
+    },
+    "RunFinishedMetadataOutput": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "inputTokens": {
+          "type": "number"
+        },
+        "outputTokens": {
+          "type": "number"
+        },
+        "finishReason": {
+          "type": "string"
+        },
+        "totalTokens": {
+          "type": "number"
+        },
+        "cachedInputTokens": {
+          "type": "number"
+        },
+        "cacheCreationInputTokens": {
+          "type": "number"
+        },
+        "cacheCreation1hInputTokens": {
+          "type": "number"
+        },
+        "cacheReadInputTokens": {
+          "type": "number"
+        },
+        "reasoningTokens": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latencyMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeToFirstTokenMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billableInputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billableOutputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "costUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "providerInputCostUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "providerOutputCostUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "providerCostUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "veryfrontInputChargeUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "veryfrontOutputChargeUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "veryfrontChargeUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "veryfrontBilledUsd": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "costCredits": {
+          "$ref": "#/$defs/MoneyAmountOutput"
+        },
+        "billingMode": {
+          "enum": [
+            "direct",
+            "deferred"
+          ]
+        },
+        "usageCaptureStatus": {
+          "enum": [
+            "complete",
+            "partial",
+            "missing"
+          ]
+        },
+        "providerRequestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "inputTokens",
+        "outputTokens",
+        "finishReason"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/ag-ui.types.ts",
+          "line": 56,
+          "endLine": 91
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/money.types.ts",
+          "line": 63,
+          "endLine": 70
+        }
+      ],
+      "x-output-profile": "RunFinishedMetadataSchema parse output, strips unknown keys and transforms valid string/number money inputs to plain decimal strings. Counts inputTokens/outputTokens and siblings are number, not integer/nonnegative constraints."
+    },
+    "ModelCallProviderOptions": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cacheControl": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "ephemeral"
+              },
+              "ttl": {
+                "enum": [
+                  "5m",
+                  "1h"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "cacheControl"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "ModelCallToolCall": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "tool-call"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "providerExecuted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolName",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "ModelCallMessage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "const": "system"
+            },
+            "content": {
+              "type": "string"
+            },
+            "providerOptions": {
+              "$ref": "#/$defs/ModelCallProviderOptions"
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "const": "user"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "text"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "image",
+                          "file"
+                        ]
+                      },
+                      "mediaType": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      },
+                      "filename": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "mediaType",
+                      "url"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "const": "assistant"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "text"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "$ref": "#/$defs/ModelCallToolCall"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "const": "tool"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "tool-result"
+                  },
+                  "toolCallId": {
+                    "type": "string"
+                  },
+                  "toolName": {
+                    "type": "string"
+                  },
+                  "output": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "json"
+                      },
+                      "value": {
+                        "$ref": "#/$defs/JsonValue"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "toolCallId",
+                  "toolName",
+                  "output"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ModelCallTool": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "function"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "inputSchema"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "provider"
+            },
+            "name": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "\\."
+            },
+            "args": {
+              "$ref": "#/$defs/JsonObject"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "id",
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ModelCallRequest": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number"
+        },
+        "topP": {
+          "type": "number"
+        },
+        "topK": {
+          "type": "number"
+        },
+        "seed": {
+          "type": "number"
+        },
+        "presencePenalty": {
+          "type": "number"
+        },
+        "frequencyPenalty": {
+          "type": "number"
+        },
+        "maxOutputTokens": {
+          "type": "number",
+          "minimum": 0
+        },
+        "stopSequences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reasoning": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "effort": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ]
+            },
+            "budgetTokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunAuthorizationSealed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.authorization.sealed"
+        },
+        "authorization": {
+          "$ref": "#/$defs/RunAuthorizationRecord"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        }
+      },
+      "required": [
+        "type",
+        "authorization"
+      ],
+      "additionalProperties": true,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/create-external-agent-run.ts",
+          "line": 852,
+          "endLine": 884
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunAuthorizationSealedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.authorization.sealed"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunRequested": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.requested"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "taskId": {
+          "$ref": "#/$defs/AgentTaskId"
+        },
+        "agentServiceId": {
+          "$ref": "#/$defs/AgentServiceId"
+        },
+        "agentSource": {
+          "$ref": "#/$defs/RuntimeAgentSourceContext"
+        },
+        "managedRuntimeSource": {
+          "$ref": "#/$defs/ManagedRuntimeSourceSnapshot"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "default": []
+        },
+        "context": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamContextItem"
+          },
+          "default": []
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "agentConfig": {
+          "$ref": "#/$defs/RuntimeAgentDefinition"
+        },
+        "forwardedProps": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "integrationConnectionBindings": {
+          "$ref": "#/$defs/IntegrationAuthorizationBindings",
+          "default": []
+        },
+        "traceContext": {
+          "$ref": "#/$defs/PersistedTraceContext"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        },
+        "authorization": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "type",
+        "messages",
+        "agentSource",
+        "tools",
+        "context",
+        "integrationConnectionBindings"
+      ],
+      "additionalProperties": false,
+      "x-output-profile": "Project/runtime request snapshot parse output. This target is not the default-chat start snapshot.",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 104,
+          "endLine": 127
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 2097152,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunEnqueued": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.enqueued"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "maxItems": 50
+        },
+        "context": {
+          "$ref": "#/$defs/DefaultChatRequestContext"
+        },
+        "model": {
+          "type": "string"
+        },
+        "activeChatId": {
+          "type": "string"
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "forwardedProps": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "runtimeOverrides": {
+          "$ref": "#/$defs/DefaultChatRuntimeOverrides"
+        },
+        "serverResolvedIntegrationTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "serverResolvedPlatformTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "authorization": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        }
+      },
+      "required": [
+        "type",
+        "messages",
+        "context"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/request-schemas/default-chat.ts",
+          "line": 24,
+          "endLine": 39
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/external-default-chat-run-support.ts",
+          "line": 238,
+          "endLine": 275
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 2097152,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "ToolCallResultSubmitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.result.submitted"
+        },
+        "toolCallId": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "publicToolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "receiverGeneration": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "result": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "isError": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "isError"
+      ],
+      "additionalProperties": false,
+      "x-output-profile": "ToolResultSubmissionSchema parse output. z.unknown() accepts an absent result property; isError defaults to false. Do not invent a source required result or change null/primitive/array results to objects.",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 129,
+          "endLine": 137
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "ToolCallResultDeliveryFailed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.result.delivery.failed"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "childRunId": {
+          "type": "string"
+        },
+        "childStatus": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "childRunId",
+        "childStatus",
+        "error"
+      ],
+      "additionalProperties": true,
+      "x-output-profile": "Server-created literal persisted through the general record write boundary; no owning closed payload validator. childStatus is the source run row string, not a newly strengthened terminal-only enum.",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-child-runs.ts",
+          "line": 399,
+          "endLine": 416
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunRuntimeOwnerChanged": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.runtime.owner.changed"
+        },
+        "invokeUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "boundAt": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "type",
+        "boundAt"
+      ],
+      "additionalProperties": true,
+      "x-output-profile": "Wire payload preserved; owning replay reader strips extra keys. invokeUrl absent records clearing; it is not nullable.",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runtime-targets/runtime-owner-binding.ts",
+          "line": 10,
+          "endLine": 13
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runtime-targets/runtime-owner-binding.ts",
+          "line": 65,
+          "endLine": 104
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunRuntimeRetryRecorded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.runtime.retry.recorded"
+        },
+        "kind": {
+          "enum": [
+            "pre_stream",
+            "replay_conflict",
+            "server_restart",
+            "transport_recovery"
+          ]
+        },
+        "attempt": {
+          "type": "number"
+        },
+        "at": {
+          "$ref": "#/$defs/DateTimeUtc"
+        }
+      },
+      "required": [
+        "type",
+        "kind",
+        "at"
+      ],
+      "additionalProperties": true,
+      "x-runtime-constraints": [
+        "Fresh server_restart records omit attempt; other current producer paths provide their source attempt number. No source payload Zod schema strengthens attempt to positive integer. Legacy absent kind is interpreted as pre_stream by the existing reader and is a separate legacy profile."
+      ],
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 63,
+          "endLine": 76
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 111,
+          "endLine": 134
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunContextCompacted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.context.compacted"
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": true
+        },
+        "firstKeptEntryId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tokensBefore": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokensAfter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenBudget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reserveTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "enum": [
+            "context_window",
+            "transport_body"
+          ]
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "summary",
+        "firstKeptEntryId",
+        "tokensBefore",
+        "tokensAfter",
+        "tokenBudget",
+        "reserveTokens",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 487,
+          "endLine": 526
+        }
+      ],
+      "x-runtime-constraints": [
+        "reserveTokens < tokenBudget.",
+        "tokensAfter <= tokenBudget - reserveTokens.",
+        "tokensAfter <= tokensBefore."
+      ],
+      "x-source-profile": "api-preserved-append-wire-contract",
+      "x-access": "private",
+      "x-output-profile": "The append usecase validates summary with a stripping object parser but retains the original event. Preserve additive summary keys; Code factory parse output is a separate profile.",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunContextCompactedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.context.compacted"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunToolExposureCheckpointed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.tool.exposure.checkpointed"
+        },
+        "version": {
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "authorizedCatalogFingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "loadedToolNames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientToolName"
+          },
+          "uniqueItems": true
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "loadedToolNames"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 610,
+          "endLine": 647
+        }
+      ],
+      "x-runtime-constraints": [
+        "For version 1, loadedToolNames must be sorted by JavaScript code-unit order. Version 2 preserves oldest-to-newest recency and must not be sorted."
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunToolExposureCheckpointedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.tool.exposure.checkpointed"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderReplayBlock": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "provider-block"
+        },
+        "provider": {
+          "enum": [
+            "anthropic",
+            "openai-responses"
+          ]
+        },
+        "block": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "type",
+        "provider",
+        "block"
+      ],
+      "additionalProperties": false
+    },
+    "RunProviderReplayCheckpointed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.checkpointed"
+        },
+        "version": {
+          "const": 1
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "provider": {
+          "enum": [
+            "anthropic",
+            "openai-responses"
+          ]
+        },
+        "providerBlocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderReplayBlock"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "providerBlockPositions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "providerMessageBlockCounts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "totalPartCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "messageId",
+        "provider",
+        "providerBlocks",
+        "providerBlockPositions",
+        "totalPartCount"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 651,
+          "endLine": 726
+        }
+      ],
+      "x-runtime-constraints": [
+        "providerBlockPositions.length equals providerBlocks.length.",
+        "If present, sum(providerMessageBlockCounts) equals providerBlocks.length.",
+        "totalPartCount >= providerBlocks.length.",
+        "providerBlockPositions are strictly increasing and every value is < totalPartCount."
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "anthropic"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerBlocks": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "anthropic"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "openai-responses"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerBlocks": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "openai-responses"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunProviderReplayCheckpointedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.checkpointed"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunProviderReplayBoundaryRequired": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.boundary.required"
+        },
+        "messageId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": true,
+      "x-runtime-constraints": [
+        "Fresh producer supplies the owning run assistant message identity; equality with run.messageId or the deterministic fallback is an executor requirement, not a generic schema property."
+      ],
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-run-lifecycle.ts",
+          "line": 345,
+          "endLine": 365
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunProviderReplayBoundaryRequiredPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.boundary.required"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "InvokeAgentToolCall": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "toolName": {
+          "enum": [
+            "invoke_agent",
+            "veryfront__invoke_agent"
+          ]
+        },
+        "toolArgsJson": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "toolCallId",
+        "toolName",
+        "toolArgsJson"
+      ],
+      "additionalProperties": false
+    },
+    "RunProviderReplayBoundaryRecorded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.boundary.recorded"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "invokeAgentToolCalls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InvokeAgentToolCall"
+          },
+          "maxItems": 100
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/ag-ui-sse.ts",
+          "line": 199,
+          "endLine": 218
+        }
+      ],
+      "x-runtime-constraints": [
+        "invokeAgentToolCalls must have unique toolCallId values.",
+        "UTF-8 JSON serialized boundary payload <= 2097152 bytes.",
+        "messageId must equal run.messageId or its deterministic fallback. Boundary must belong to an active negotiated provider turn. Delegation batches require negotiated replay protocol."
+      ],
+      "x-source-profile": "api-runtime-frame-parse-output",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 2097152,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunProviderReplayBoundaryRecordedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.boundary.recorded"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ModelInputCaptured": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.model-call.input.captured"
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelProvider": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "request": {
+          "$ref": "#/$defs/ModelCallRequest"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelCallMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelCallTool"
+          }
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 741,
+          "endLine": 913
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/model-call-context.ts",
+          "line": 1,
+          "endLine": 86
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/runtime-bridge.ts",
+          "line": 377,
+          "endLine": 454
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 10485760,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "ModelInputCapturedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.model-call.input.captured"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunDispatchRequestedV2": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.dispatch.requested"
+        },
+        "requestHash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "version": {
+          "const": 2
+        },
+        "state": {
+          "const": "intent_recorded"
+        },
+        "runId": {
+          "$ref": "#/$defs/RunId"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "leaseOwner": {
+          "type": "string",
+          "pattern": "^agent-run-detached:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "dispatchAttemptId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "transportRecoveryAttempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resumesDispatchAttemptId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "leaseExpiresAt": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "state",
+        "runId",
+        "projectId",
+        "leaseOwner",
+        "dispatchAttemptId",
+        "transportRecoveryAttempt",
+        "requestHash",
+        "leaseExpiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "RunDispatchRequested": {
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 530,
+          "endLine": 558
+        }
+      ],
+      "x-runtime-constraints": [
+        "Canonical server request uses strict V2 only. Conversion requires exact-event committed server intent and historical run/project/generation evidence before redaction. V1 requestHash receipts remain legacy; no dispatch, delivery or runtime acceptance is inferred."
+      ],
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes.",
+      "$ref": "#/$defs/RunDispatchRequestedV2"
+    },
+    "RunDispatchRequestedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.dispatch.requested"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunBillingModeRetained": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.billing.mode.retained"
+        },
+        "toolCallId": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "billingMode": {
+          "enum": [
+            "direct",
+            "deferred"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "billingMode"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 570,
+          "endLine": 577
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunBillingModeRetainedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.billing.mode.retained"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunBillingUsageRetained": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.billing.usage.retained"
+        },
+        "toolCallId": {
+          "$ref": "#/$defs/RuntimeToolCallId"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunFinishedMetadataOutput"
+          },
+          "minItems": 1,
+          "maxItems": 16
+        },
+        "throughEventId": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "segments"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 582,
+          "endLine": 589
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-run-lifecycle.ts",
+          "line": 817,
+          "endLine": 825
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunBillingUsageRetainedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.billing.usage.retained"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "RunDispatchAccepted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.dispatch.accepted"
+        },
+        "leaseOwner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dispatchAttemptId": {
+          "$ref": "#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "type",
+        "leaseOwner",
+        "dispatchAttemptId"
+      ],
+      "additionalProperties": true,
+      "x-runtime-constraints": [
+        "Fresh producer validates the detached owner format and accepts only the current receipt/active lease for this run/project. Preserved read contract deliberately requires only nonempty leaseOwner, not a newly narrowed prefix."
+      ],
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 194,
+          "endLine": 197
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/infrastructure/persistence/conversations/agent-run.repository.ts",
+          "line": 2343,
+          "endLine": 2396
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 86,
+          "endLine": 97
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunDispatchAcceptedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.dispatch.accepted"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ToolCallRefused": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.refused"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact identity of the specific tool call refused by its owning executor; supplied by that producer or trusted event-linked context."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing_integration_connection"
+          ],
+          "description": "The classified reason the owning executor refused this specific call."
+        },
+        "integration": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "reason",
+        "integration",
+        "toolName",
+        "message"
+      ],
+      "additionalProperties": true,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/integration-connection-refusal.ts",
+          "line": 24,
+          "endLine": 31
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 101,
+          "endLine": 108
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "full-authorized-producer-data",
+      "x-source-payload-max-bytes": 262144,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes.",
+      "x-target-call-identity": "Required toolCallId and reason are an explicit target extension. Pinned legacy refusal payloads declare neither field. Historical records need trusted context tied to the exact stored event and tool call; do not manufacture identity from toolName, integration, adjacent events or run ID.",
+      "x-target-lifecycle": "Records the owning executor refusing one specific call. It does not establish run failure, generic tool-call completion, or a later execution/result outcome."
+    },
+    "RunInputUploadsSealed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.input.uploads.sealed"
+        },
+        "uploadIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "type",
+        "uploadIds"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 601,
+          "endLine": 606
+        }
+      ],
+      "x-source-profile": "api-owning-producer",
+      "x-access": "private",
+      "x-source-payload-max-bytes": 2097152,
+      "x-source-size-validation": "Source JSON serialization UTF-8 budget before canonical discriminator substitution; model input checks the full CreateAgentRunEventInput record <= 10485759 bytes. JSON Schema cannot enforce encoded bytes."
+    },
+    "RunInputUploadsSealedPublicTypeOnly": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.input.uploads.sealed"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "CodeRunContextCompactedOutput": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.context.compacted"
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "firstKeptEntryId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tokensBefore": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokensAfter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenBudget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reserveTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "enum": [
+            "context_window",
+            "transport_body"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "summary",
+        "firstKeptEntryId",
+        "tokensBefore",
+        "tokensAfter",
+        "tokenBudget",
+        "reserveTokens",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/hosted/context-budget-manager.ts",
+          "line": 18,
+          "endLine": 55
+        }
+      ],
+      "x-runtime-constraints": [
+        "reserveTokens < tokenBudget.",
+        "tokensAfter <= tokenBudget - reserveTokens.",
+        "tokensAfter <= tokensBefore."
+      ],
+      "x-source-profile": "code-factory-output-before-common-timing-stamp",
+      "x-access": "private",
+      "x-output-profile": "The append usecase validates summary with a stripping object parser but retains the original event. Preserve additive summary keys; Code factory parse output is a separate profile."
+    },
+    "CodeRunToolExposureCheckpointedOutput": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.tool.exposure.checkpointed"
+        },
+        "version": {
+          "const": 2
+        },
+        "loadedToolNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "loadedToolNames"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/runtime/tool-exposure.ts",
+          "line": 95,
+          "endLine": 109
+        }
+      ],
+      "x-runtime-constraints": [
+        "createToolExposureCheckpoint filters names against the current authorized catalog and preserves recency; later common persistence timing may add elapsedMs/emittedAt. API normalizer may attach authorizedCatalogFingerprint.",
+        "The Code factory type carries string names; Code restore checks nonempty strings only. The API separately enforces ClientToolName syntax and length. Do not infer the API grammar from Code catalog membership alone."
+      ],
+      "x-source-profile": "code-factory-output-before-common-timing-stamp",
+      "x-access": "private"
+    },
+    "CodeRunProviderReplayBoundaryRecorded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.boundary.recorded"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "invokeAgentToolCalls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InvokeAgentToolCall"
+          },
+          "maxItems": 100,
+          "minItems": 2
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/internal-agents/run-stream.ts",
+          "line": 1120,
+          "endLine": 1134
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/runtime/runtime-tool-config.ts",
+          "line": 66,
+          "endLine": 79
+        }
+      ],
+      "x-runtime-constraints": [
+        "invokeAgentToolCalls must have unique toolCallId values.",
+        "UTF-8 JSON serialized boundary payload <= 2097152 bytes.",
+        "messageId must equal run.messageId or its deterministic fallback. Boundary must belong to an active negotiated provider turn. Delegation batches require negotiated replay protocol."
+      ],
+      "x-source-profile": "code-boundary-producer-output",
+      "x-access": "private"
+    },
+    "CodeModelCallRequest": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number"
+        },
+        "topP": {
+          "type": "number"
+        },
+        "topK": {
+          "type": "number"
+        },
+        "seed": {
+          "type": "number"
+        },
+        "presencePenalty": {
+          "type": "number"
+        },
+        "frequencyPenalty": {
+          "type": "number"
+        },
+        "maxOutputTokens": {
+          "type": "number"
+        },
+        "stopSequences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reasoning": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "effort": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ]
+            },
+            "budgetTokens": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "x-source-profile": "code-direct-capture-request-projection",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/model-call-context-request.ts",
+          "line": 252,
+          "endLine": 278
+        }
+      ]
+    },
+    "CodeModelInputCaptured": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.model-call.input.captured"
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelProvider": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "request": {
+          "$ref": "#/$defs/CodeModelCallRequest"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelCallMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelCallTool"
+          }
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/runtime-bridge.ts",
+          "line": 758,
+          "endLine": 784
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/model-call-context-request.ts",
+          "line": 252,
+          "endLine": 278
+        }
+      ],
+      "x-source-profile": "code-direct-observer-capture",
+      "x-access": "private",
+      "x-runtime-constraints": [
+        "Code projects supplied numeric controls; its type alone does not enforce the API nonnegative maxOutputTokens or integer/nonnegative reasoning budget. Hosted durable append must still pass the strict API ModelInputCaptured profile. JSON capture excludes nonfinite numeric values."
+      ]
+    },
+    "CodeRunProviderReplayCheckpointed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.provider.replay.checkpointed"
+        },
+        "version": {
+          "const": 1
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "provider": {
+          "enum": [
+            "anthropic",
+            "openai-responses"
+          ]
+        },
+        "providerBlocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderReplayBlock"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "providerBlockPositions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "providerMessageBlockCounts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "totalPartCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "emittedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "messageId",
+        "provider",
+        "providerBlocks",
+        "providerBlockPositions",
+        "totalPartCount"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/runtime/provider-replay.ts",
+          "line": 1568,
+          "endLine": 1755
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/runtime/provider-replay-limits.ts",
+          "line": 1,
+          "endLine": 3
+        }
+      ],
+      "x-runtime-constraints": [
+        "providerBlockPositions.length equals providerBlocks.length; optional providerMessageBlockCounts sum equals that length; totalPartCount is no smaller than block count.",
+        "Positions are strictly increasing and every position is below totalPartCount.",
+        "For Anthropic, invoke the pinned Code replay-block validator: only recognized text/thinking/redacted_thinking/tool-use/provider-tool-result kinds with source-specific fields/content are replayable. API opaque JsonObject acceptance is not Code replay validity.",
+        "Anthropic opaque material must pass snapshotProviderJsonValue with maxDepth 64, maxNodes 65536 and maxBytes 8388608 per block and grouped assistant metadata.",
+        "Code emission additionally enforces event UTF-8 serialized bytes <= 245760 with conservative timing stamps."
+      ],
+      "x-source-profile": "code-provider-state-parser-output",
+      "x-access": "private",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "anthropic"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerBlocks": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "anthropic"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "openai-responses"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerBlocks": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "openai-responses"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LegacyRunRuntimeRetryRecordedRead": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.runtime.retry.recorded"
+        },
+        "kind": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "attempt": {
+          "type": "number"
+        },
+        "at": {
+          "$ref": "#/$defs/DateTimeUtc"
+        }
+      },
+      "required": [
+        "type",
+        "at"
+      ],
+      "additionalProperties": true,
+      "x-runtime-constraints": [
+        "Only select for reviewed legacy records. Missing/unrecognized kind is interpreted as pre_stream by the existing source reader; canonical projection preserves the raw field."
+      ],
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 63,
+          "endLine": 76
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 111,
+          "endLine": 134
+        }
+      ],
+      "x-source-profile": "legacy-retry-read",
+      "x-access": "full-authorized-producer-data"
+    },
+    "ToolCallResultSubmittedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.result.submitted"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "isError": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "x-source-profile": "viewer-sanitized-read",
+      "x-output-profile": "Primitive allowlist tolerates damaged historical records by omitting invalid fields; full producer requiredness is not imposed on this public profile."
+    },
+    "ToolCallResultDeliveryFailedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.result.delivery.failed"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "childRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "x-source-profile": "viewer-sanitized-read",
+      "x-output-profile": "Primitive allowlist tolerates damaged historical records by omitting invalid fields; full producer requiredness is not imposed on this public profile."
+    },
+    "RunRuntimeOwnerChangedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.runtime.owner.changed"
+        },
+        "boundAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "x-source-profile": "viewer-sanitized-read",
+      "x-output-profile": "Primitive allowlist tolerates damaged historical records by omitting invalid fields; full producer requiredness is not imposed on this public profile."
+    },
+    "ToolCallRefusedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.tool-call.refused"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact identity of the specific tool call refused by its owning executor; supplied by that producer or trusted event-linked context."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing_integration_connection"
+          ],
+          "description": "The classified reason the owning executor refused this specific call."
+        },
+        "integration": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "x-source-profile": "viewer-sanitized-read",
+      "x-output-profile": "Required exact toolCallId and classified reason are exposed by the canonical public target. The existing primitive allowlist keeps integration, toolName and message optional strings and omits invalid descriptor fields; this does not weaken identity/provenance admission.",
+      "x-target-call-identity": "Required toolCallId and reason are an explicit target extension. Pinned legacy refusal payloads declare neither field. Historical records need trusted context tied to the exact stored event and tool call; do not manufacture identity from toolName, integration, adjacent events or run ID.",
+      "x-target-lifecycle": "Records the owning executor refusing one specific call. It does not establish run failure, generic tool-call completion, or a later execution/result outcome."
+    },
+    "RunRequestedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.requested"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "taskId": {
+          "$ref": "#/$defs/AgentTaskId"
+        },
+        "agentServiceId": {
+          "$ref": "#/$defs/AgentServiceId"
+        },
+        "agentSource": {
+          "$ref": "#/$defs/RuntimeAgentSourceContext"
+        },
+        "managedRuntimeSource": {
+          "$ref": "#/$defs/ManagedRuntimeSourceSnapshot"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "default": []
+        },
+        "context": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamContextItem"
+          },
+          "default": []
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "traceContext": {
+          "$ref": "#/$defs/PersistedTraceContext"
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        },
+        "agentConfig": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "id"
+              ]
+            },
+            {
+              "required": [
+                "name"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "messages",
+        "agentSource",
+        "tools",
+        "context"
+      ],
+      "additionalProperties": false,
+      "x-output-profile": "Project/runtime request snapshot parse output. This target is not the default-chat start snapshot.",
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 104,
+          "endLine": 127
+        }
+      ],
+      "x-source-profile": "viewer-sanitized-current-producer-data",
+      "x-access": "full-authorized-producer-data",
+      "x-runtime-constraints": [
+        "Use the existing source sanitizer: research-purpose context items are withheld; no source payload type-only openness grants write authority."
+      ]
+    },
+    "RunEnqueuedPublicData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "com.veryfront.run.enqueued"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStreamTool"
+          },
+          "maxItems": 50
+        },
+        "context": {
+          "$ref": "#/$defs/DefaultChatRequestContext"
+        },
+        "model": {
+          "type": "string"
+        },
+        "activeChatId": {
+          "type": "string"
+        },
+        "allowDelegation": {
+          "type": "boolean"
+        },
+        "runtimeOverrides": {
+          "$ref": "#/$defs/DefaultChatRuntimeOverrides"
+        },
+        "serverResolvedIntegrationTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "serverResolvedPlatformTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "triggerPrincipal": {
+          "$ref": "#/$defs/TriggerPrincipal"
+        }
+      },
+      "required": [
+        "type",
+        "messages",
+        "context"
+      ],
+      "additionalProperties": false,
+      "x-source-refs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/request-schemas/default-chat.ts",
+          "line": 24,
+          "endLine": 39
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/external-default-chat-run-support.ts",
+          "line": 238,
+          "endLine": 275
+        }
+      ],
+      "x-source-profile": "viewer-sanitized-current-producer-data",
+      "x-access": "full-authorized-producer-data",
+      "x-runtime-constraints": [
+        "Use the existing source sanitizer: research-purpose context items are withheld; no source payload type-only openness grants write authority."
+      ]
+    },
+    "LegacyRunDispatchReceiptV1": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED"
+        },
+        "requestHash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
+      },
+      "required": [
+        "type",
+        "requestHash"
+      ],
+      "additionalProperties": false,
+      "x-access": "legacy-source-adapter-only"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RunAuthorizationSealed"
+    },
+    {
+      "$ref": "#/$defs/RunRequested"
+    },
+    {
+      "$ref": "#/$defs/RunEnqueued"
+    },
+    {
+      "$ref": "#/$defs/ToolCallResultSubmitted"
+    },
+    {
+      "$ref": "#/$defs/ToolCallResultDeliveryFailed"
+    },
+    {
+      "$ref": "#/$defs/RunRuntimeOwnerChanged"
+    },
+    {
+      "$ref": "#/$defs/RunRuntimeRetryRecorded"
+    },
+    {
+      "$ref": "#/$defs/RunContextCompacted"
+    },
+    {
+      "$ref": "#/$defs/RunToolExposureCheckpointed"
+    },
+    {
+      "$ref": "#/$defs/RunProviderReplayCheckpointed"
+    },
+    {
+      "$ref": "#/$defs/RunProviderReplayBoundaryRequired"
+    },
+    {
+      "$ref": "#/$defs/RunProviderReplayBoundaryRecorded"
+    },
+    {
+      "$ref": "#/$defs/ModelInputCaptured"
+    },
+    {
+      "$ref": "#/$defs/RunDispatchRequested"
+    },
+    {
+      "$ref": "#/$defs/RunBillingModeRetained"
+    },
+    {
+      "$ref": "#/$defs/RunBillingUsageRetained"
+    },
+    {
+      "$ref": "#/$defs/RunDispatchAccepted"
+    },
+    {
+      "$ref": "#/$defs/ToolCallRefused"
+    },
+    {
+      "$ref": "#/$defs/RunInputUploadsSealed"
+    }
+  ],
+  "x-targets": {
+    "com.veryfront.run.authorization.sealed": {
+      "$ref": "#/$defs/RunAuthorizationSealed",
+      "legacyOrigin": "AGENT_RUN_AUTHORIZATION_SEALED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent runs; server-built authorization snapshot.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/create-external-agent-run.ts",
+          "line": 852,
+          "endLine": 884
+        }
+      ],
+      "publicDataRef": "#/$defs/RunAuthorizationSealedPublicTypeOnly"
+    },
+    "com.veryfront.run.requested": {
+      "$ref": "#/$defs/RunRequested",
+      "legacyOrigin": "AGENT_RUN_REQUEST_ENQUEUED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "sanitized",
+      "applicability": "Agent-run request snapshots, including queued project agents and already-running runtime agents.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 104,
+          "endLine": 127
+        }
+      ],
+      "publicDataRef": "#/$defs/RunRequestedPublicData"
+    },
+    "com.veryfront.run.enqueued": {
+      "$ref": "#/$defs/RunEnqueued",
+      "legacyOrigin": "AGENT_RUN_DEFAULT_CHAT_START_ENQUEUED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "sanitized",
+      "applicability": "Agent runs on the hosted default-chat start path only.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/request-schemas/default-chat.ts",
+          "line": 24,
+          "endLine": 39
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/external-default-chat-run-support.ts",
+          "line": 238,
+          "endLine": 275
+        }
+      ],
+      "publicDataRef": "#/$defs/RunEnqueuedPublicData"
+    },
+    "com.veryfront.tool-call.result.submitted": {
+      "$ref": "#/$defs/ToolCallResultSubmitted",
+      "legacyOrigin": "AGENT_RUN_TOOL_RESULT_SUBMITTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "sanitized",
+      "applicability": "Tool-result control-plane receipts for agent runs.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/request-payload.ts",
+          "line": 129,
+          "endLine": 137
+        }
+      ],
+      "publicDataRef": "#/$defs/ToolCallResultSubmittedPublicData"
+    },
+    "com.veryfront.tool-call.result.delivery.failed": {
+      "$ref": "#/$defs/ToolCallResultDeliveryFailed",
+      "legacyOrigin": "AGENT_RUN_TOOL_RESULT_DELIVERY_FAILED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "sanitized",
+      "applicability": "Agent child-result delivery diagnostics on the parent run.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-child-runs.ts",
+          "line": 399,
+          "endLine": 416
+        }
+      ],
+      "publicDataRef": "#/$defs/ToolCallResultDeliveryFailedPublicData"
+    },
+    "com.veryfront.run.runtime.owner.changed": {
+      "$ref": "#/$defs/RunRuntimeOwnerChanged",
+      "legacyOrigin": "AGENT_RUN_RUNTIME_OWNER_BOUND",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "sanitized",
+      "applicability": "Agent-run runtime-owner invocation bindings.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runtime-targets/runtime-owner-binding.ts",
+          "line": 10,
+          "endLine": 13
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runtime-targets/runtime-owner-binding.ts",
+          "line": 65,
+          "endLine": 104
+        }
+      ],
+      "publicDataRef": "#/$defs/RunRuntimeOwnerChangedPublicData"
+    },
+    "com.veryfront.run.runtime.retry.recorded": {
+      "$ref": "#/$defs/RunRuntimeRetryRecorded",
+      "legacyOrigin": "AGENT_RUN_RUNTIME_INVOKE_RETRIED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "public",
+      "applicability": "Agent executor runtime invocation retry/recovery accounting.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 63,
+          "endLine": 76
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-state-transitions.ts",
+          "line": 111,
+          "endLine": 134
+        }
+      ],
+      "sourceProfiles": {
+        "freshProducer": "#/$defs/RunRuntimeRetryRecorded",
+        "legacyRead": "#/$defs/LegacyRunRuntimeRetryRecordedRead"
+      }
+    },
+    "com.veryfront.run.context.compacted": {
+      "$ref": "#/$defs/RunContextCompacted",
+      "legacyOrigin": "AGENT_RUN_CONTEXT_COMPACTED",
+      "sourceProfile": "api-preserved-append-wire-contract",
+      "visibility": "type_only",
+      "applicability": "Agent model context compaction, including existing projectless compatibility.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 487,
+          "endLine": 526
+        }
+      ],
+      "publicDataRef": "#/$defs/RunContextCompactedPublicTypeOnly",
+      "sourceProfiles": {
+        "api": "#/$defs/RunContextCompacted",
+        "codeFactoryOutput": "#/$defs/CodeRunContextCompactedOutput"
+      }
+    },
+    "com.veryfront.run.tool.exposure.checkpointed": {
+      "$ref": "#/$defs/RunToolExposureCheckpointed",
+      "legacyOrigin": "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent-run private loaded-tool exposure state.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 610,
+          "endLine": 647
+        }
+      ],
+      "publicDataRef": "#/$defs/RunToolExposureCheckpointedPublicTypeOnly",
+      "sourceProfiles": {
+        "api": "#/$defs/RunToolExposureCheckpointed",
+        "codeFactoryOutput": "#/$defs/CodeRunToolExposureCheckpointedOutput"
+      }
+    },
+    "com.veryfront.run.provider.replay.checkpointed": {
+      "$ref": "#/$defs/RunProviderReplayCheckpointed",
+      "legacyOrigin": "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent-run negotiated provider-native replay checkpoints.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 651,
+          "endLine": 726
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/agent/runtime/provider-replay.ts",
+          "line": 1613,
+          "endLine": 1755
+        }
+      ],
+      "publicDataRef": "#/$defs/RunProviderReplayCheckpointedPublicTypeOnly",
+      "sourceProfiles": {
+        "apiDurable": "#/$defs/RunProviderReplayCheckpointed",
+        "codeStateParser": "#/$defs/CodeRunProviderReplayCheckpointed"
+      }
+    },
+    "com.veryfront.run.provider.replay.boundary.required": {
+      "$ref": "#/$defs/RunProviderReplayBoundaryRequired",
+      "legacyOrigin": "AGENT_RUN_PROVIDER_REPLAY_TURN_STARTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent-run negotiated provider replay protocol.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-run-lifecycle.ts",
+          "line": 345,
+          "endLine": 365
+        }
+      ],
+      "publicDataRef": "#/$defs/RunProviderReplayBoundaryRequiredPublicTypeOnly"
+    },
+    "com.veryfront.run.provider.replay.boundary.recorded": {
+      "$ref": "#/$defs/RunProviderReplayBoundaryRecorded",
+      "legacyOrigin": "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED",
+      "sourceProfile": "api-runtime-frame-parse-output",
+      "visibility": "type_only",
+      "applicability": "Agent-run negotiated provider replay protocol.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/ag-ui-sse.ts",
+          "line": 199,
+          "endLine": 218
+        }
+      ],
+      "publicDataRef": "#/$defs/RunProviderReplayBoundaryRecordedPublicTypeOnly",
+      "sourceProfiles": {
+        "api": "#/$defs/RunProviderReplayBoundaryRecorded",
+        "codeProducer": "#/$defs/CodeRunProviderReplayBoundaryRecorded"
+      }
+    },
+    "com.veryfront.model-call.input.captured": {
+      "$ref": "#/$defs/ModelInputCaptured",
+      "legacyOrigin": "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Prepared model input through active run sinks; current durable writes remain agent-run trusted runtime writes.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 741,
+          "endLine": 913
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/model-call-context.ts",
+          "line": 1,
+          "endLine": 86
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/runtime/runtime-bridge.ts",
+          "line": 377,
+          "endLine": 454
+        }
+      ],
+      "publicDataRef": "#/$defs/ModelInputCapturedPublicTypeOnly",
+      "sourceProfiles": {
+        "apiDurable": "#/$defs/ModelInputCaptured",
+        "codeDirectObserver": "#/$defs/CodeModelInputCaptured"
+      }
+    },
+    "com.veryfront.run.dispatch.requested": {
+      "$ref": "#/$defs/RunDispatchRequested",
+      "legacyOrigin": "AGENT_RUN_CONTROL_PLANE_DISPATCH_ACCEPTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Server-owned committed detached dispatch request for one agent-run generation.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 530,
+          "endLine": 558
+        }
+      ],
+      "publicDataRef": "#/$defs/RunDispatchRequestedPublicTypeOnly",
+      "variants": {
+        "v2": "#/$defs/RunDispatchRequestedV2"
+      },
+      "legacyAdapterRefs": [
+        "#/$defs/LegacyRunDispatchReceiptV1"
+      ],
+      "conversion": "conditional-server-dispatch-request"
+    },
+    "com.veryfront.run.billing.mode.retained": {
+      "$ref": "#/$defs/RunBillingModeRetained",
+      "legacyOrigin": "AGENT_RUN_INVOKE_AGENT_BILLING_MODE_RETAINED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent parent-run billing mode captured for an invoke_agent delegation tool call.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 570,
+          "endLine": 577
+        }
+      ],
+      "publicDataRef": "#/$defs/RunBillingModeRetainedPublicTypeOnly"
+    },
+    "com.veryfront.run.billing.usage.retained": {
+      "$ref": "#/$defs/RunBillingUsageRetained",
+      "legacyOrigin": "AGENT_RUN_BILLING_USAGE_RETAINED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent-run accumulated usage retained across tool/authentication suspension.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 582,
+          "endLine": 589
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-execution/executor-run-lifecycle.ts",
+          "line": 817,
+          "endLine": 825
+        }
+      ],
+      "publicDataRef": "#/$defs/RunBillingUsageRetainedPublicTypeOnly"
+    },
+    "com.veryfront.run.dispatch.accepted": {
+      "$ref": "#/$defs/RunDispatchAccepted",
+      "legacyOrigin": "AGENT_RUN_DETACHED_ACCEPTED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Current detached agent-run execution generation acceptance.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 194,
+          "endLine": 197
+        },
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/infrastructure/persistence/conversations/agent-run.repository.ts",
+          "line": 2343,
+          "endLine": 2396
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 86,
+          "endLine": 97
+        }
+      ],
+      "publicDataRef": "#/$defs/RunDispatchAcceptedPublicTypeOnly"
+    },
+    "com.veryfront.tool-call.refused": {
+      "$ref": "#/$defs/ToolCallRefused",
+      "legacyOrigin": "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "public",
+      "applicability": "An owning executor refused a specific tool call because its integration connection was missing; exact toolCallId and classified reason are required target fields.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/integration-connection-refusal.ts",
+          "line": 24,
+          "endLine": 31
+        },
+        {
+          "repo": "veryfront-code",
+          "revision": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 101,
+          "endLine": 108
+        }
+      ],
+      "publicDataRef": "#/$defs/ToolCallRefusedPublicData",
+      "sourceCompatibility": "The pinned legacy source has integration, toolName and message, but no declared toolCallId or reason. Canonical projection requires trusted exact call context and missing-integration classification; otherwise preserve an explicit legacy member."
+    },
+    "com.veryfront.run.input.uploads.sealed": {
+      "$ref": "#/$defs/RunInputUploadsSealed",
+      "legacyOrigin": "AGENT_RUN_REPLAYED_UPLOADS_SEALED",
+      "sourceProfile": "api-owning-producer",
+      "visibility": "type_only",
+      "applicability": "Agent-run user-attachment allowance sealed immediately before dispatch.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "revision": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/agent-run.types.ts",
+          "line": 601,
+          "endLine": 606
+        }
+      ],
+      "publicDataRef": "#/$defs/RunInputUploadsSealedPublicTypeOnly"
+    }
+  },
+  "x-source-snapshots": {
+    "veryfront-api": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+    "veryfront-code": "03903775fbf92852f23cccc1ba6243192042ff64"
+  },
+  "x-validation-profile": {
+    "scope": "Current owning API producer parse outputs or explicitly preserved server wire contracts, plus the explicit ToolCallRefused call-identity/reason target extension.",
+    "formats": "Assert uri and uuid formats when using these profiles. Payload datetime fields use exact pinned Zod regex; do not apply stricter RFC3339 date-time assertion to source payloads. Envelope time is a separate contract.",
+    "unknownValues": "JsonValue is arbitrary JSON including null, scalars, arrays and objects; JavaScript undefined/functions/symbols/nonfinite numbers are not JSON.",
+    "requiredness": "Defaulted fields are required only in source parse-output profiles. Unknown-valued requiredness follows source behavior, including optional ToolResultSubmission.result.",
+    "sourceStringSemantics": "Zod string lengths count JavaScript UTF-16 code units while standard JSON Schema minLength/maxLength count Unicode code points. For non-BMP content, retain source UTF-16 length checks as supplementary validation. Source trim transforms are parse behavior and do not authorize canonical projection to trim existing data.",
+    "semanticCompleteness": "x-runtime-constraints are mandatory supplementary validators. Standard Draft 2020-12 cannot generally compare sibling numeric values, sort arrays, compare selected object properties across arrays, sum lengths or enforce serialized UTF-8 bytes.",
+    "privacy": "A private $defs member is not a public schema endpoint or permission grant. Viewer projections use publicDataRef.",
+    "preservation": "On projection retain every source payload field apart from canonical type substitution. ToolCallRefused additionally requires trusted event-linked toolCallId and classified reason; without that evidence retain legacy representation. If the selected structural profile fails, do not coerce/drop fields to make it pass. Choose an explicitly reviewed source profile or retain legacy representation."
+  }
+}

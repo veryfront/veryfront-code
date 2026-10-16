@@ -5,6 +5,7 @@ import {
 } from "./connected-local-runtime.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import {
@@ -757,6 +758,7 @@ async function createAgUiInjectedToolsStreamResponse(
     const runtimeConfig = {
       ...restrictedConfig,
       tools: buildMergedAgUiTools(agent, effectiveRunId, request.tools, sessionManager),
+      toolLoading: resolveRuntimeToolLoading(restrictedConfig).mode,
     };
     const inferenceAgent = privateRuntime
       ? await privateRuntime.prepareAgent(() => {

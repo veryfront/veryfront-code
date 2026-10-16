@@ -19,6 +19,8 @@ import {
   createApplicationRequestHeaders,
 } from "#veryfront/security/http/application-request.ts";
 
+import { runWithoutRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
+
 const CHUNK_BYTES = 16 * 1024;
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_HEADER_BYTES = 32 * 1024;
@@ -365,7 +367,11 @@ export function createExecutorHttpOperation(
       const run = <T>(operation: () => T): T => {
         const scoped = () =>
           traceIdentity ? runWithExecutorHttpTraceScope(traceIdentity, operation) : operation();
-        return recorder ? recorder.run(scoped) : runWithProjectTraceProvider(undefined, scoped);
+        // A warm generation can outlive the task that installed its channel.
+        // That task's run writer is never authority for a new HTTP request.
+        return runWithoutRunEventSinks(() =>
+          recorder ? recorder.run(scoped) : runWithProjectTraceProvider(undefined, scoped)
+        );
       };
       try {
         const init: RequestInit & { duplex?: "half" } = {
