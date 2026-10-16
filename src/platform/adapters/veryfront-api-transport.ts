@@ -458,7 +458,11 @@ export async function readVeryfrontApiResponse(
   }
 }
 
-function requireSuccessResponseByteLimit(value: number | undefined): number {
+/**
+ * Resolve a success-body byte limit, defaulting when absent and throwing a `RangeError` for
+ * anything other than a positive safe integer within the transport ceiling.
+ */
+export function requireSuccessResponseByteLimit(value: number | undefined): number {
   const limit = value ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   if (
     !Number.isSafeInteger(limit) ||
@@ -505,7 +509,11 @@ function snapshotBoundedJsonFieldOptions(
   return Object.freeze({ fieldName, maximumBytes });
 }
 
-function successfulResponseProtocolError(
+/**
+ * A 502 error for a successful response whose body breaks the protocol (for example over
+ * its byte limit). The transport never retries it: a retry would download the same body.
+ */
+export function successfulResponseProtocolError(
   detail: string,
   url: string,
   cause?: unknown,
