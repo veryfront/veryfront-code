@@ -472,6 +472,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("rejects an environment execution with an omitted branch source selector before discovery", async () => {
     let discoveryCalls = 0;
     const handler = createTestAgentStreamHandler({
+      sessionManager: new AgentRunSessionManager(),
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
         return createEmptyDiscoveryResult();
