@@ -552,3 +552,7 @@ and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
 for the 0.8.9 contract. These tests do not prove deployed parity.
+
+### Process attribution
+
+Accepted hosted task and workflow executions report the same process identity as agent executions. The control-plane response includes the process ID, display name, and service mode in the `x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and `x-veryfront-runtime-mode` headers. Persisting and projecting this snapshot requires the corresponding API producer rollout. A load-balanced URL is not a process identity. Older runtimes without identity headers continue to execute and omit the snapshot. Deploy the framework consumer before enabling API persistence.
