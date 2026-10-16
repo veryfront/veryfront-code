@@ -43,6 +43,9 @@ describe("canonical shared-host project tool preview scope", () => {
         skills: false,
         tools: { publish_email_ingestion: true },
         maxSteps: 1,
+        resolveRuntimeState: ({ context }) => ({
+          context: { ...context, branch: suppliedBranch },
+        }),
         resolveModelTransport: () => ({ model }),
       });
       const response = await createRuntimeAgentStreamResponse(
@@ -103,6 +106,9 @@ describe("canonical shared-host project tool preview scope", () => {
       skills: false,
       tools: { preview_read: true },
       maxSteps: 1,
+      resolveRuntimeState: ({ context }) => ({
+        context: { ...context, branch: suppliedBranch },
+      }),
       resolveModelTransport: () => ({ model }),
     });
     Object.defineProperty(agent.config, "__vfRemoteToolSources", {

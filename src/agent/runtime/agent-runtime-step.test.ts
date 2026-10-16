@@ -713,6 +713,33 @@ describe("agent/runtime-step", () => {
     assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
   });
 
+  for (const branch of ["verified-preview", null, undefined]) {
+    for (const mode of ["generate", "stream"] as const) {
+      it(`preserves trusted branch through runtime refresh (${mode}, ${branch})`, async () => {
+        const base = { branch };
+        const observed: Array<ToolExecutionContext | undefined> = [];
+        const prepared = await prepareAgentRuntimeStep(bootstrapStepInput([], {
+          mode,
+          toolContextBase: base,
+          runtimeContext: base,
+          resolveRuntimeState: async (_messages, context) => {
+            if (context) context.branch = "request-preview";
+            return { systemPrompt: "Base", context: { branch: "request-preview", keep: true } };
+          },
+          getAvailableTools: async (_tools, options) => {
+            observed.push(options?.remoteToolContext);
+            return [];
+          },
+        }));
+        assertEquals(base.branch, branch);
+        assertEquals(observed.length, 1);
+        assertEquals(observed[0]?.branch, branch);
+        assertEquals(prepared.toolContext.branch, branch);
+        assertEquals(prepared.runtimeContext, { branch, keep: true });
+      });
+    }
+  }
+
   it("does not let runtime context shadow trusted allowed skill ids", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
