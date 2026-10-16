@@ -1,3 +1,12 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  currentToolResultSequence,
+  runWithToolResultSequence,
+} from "#veryfront/runtime/tool-result-sequence.ts";
+import {
+  isPrimaryRuntimeStream,
+  withRuntimeStreamOwnership,
+} from "#veryfront/runtime/runtime-stream-ownership.ts";
 import { readProjectExecutionParent } from "#veryfront/server/handlers/request/project-run-parent.ts";
 import { createTimedAgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getPrivateRunEventAppendRequestByteLength } from "#veryfront/agent/conversation/run-event-limits.ts";
@@ -977,5 +986,29 @@ describe("runtime model-call private intrinsics", () => {
     assertEquals(openai?.seed, undefined);
     assertEquals(openai?.stopSequences, undefined);
     assertEquals(openai?.reasoning, { enabled: true, effort: "low" });
+  });
+});
+
+describe("hosted result ownership private contexts", () => {
+  it("retains producer and stream ownership after project code replaces async-context methods", () => {
+    const run = AsyncLocalStorage.prototype.run;
+    const getStore = AsyncLocalStorage.prototype.getStore;
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    try {
+      AsyncLocalStorage.prototype.getStore = () => undefined;
+      AsyncLocalStorage.prototype.run = () => {
+        throw new Error("project async-context replacement");
+      };
+      runWithToolResultSequence(sessionId, () =>
+        withRuntimeStreamOwnership(() => {
+          assertEquals(currentToolResultSequence(), { sessionId, ordinal: 0 });
+          assertEquals(isPrimaryRuntimeStream(), true);
+          withRuntimeStreamOwnership(() => assertEquals(isPrimaryRuntimeStream(), false));
+          assertEquals(isPrimaryRuntimeStream(), true);
+        }));
+    } finally {
+      AsyncLocalStorage.prototype.run = run;
+      AsyncLocalStorage.prototype.getStore = getStore;
+    }
   });
 });

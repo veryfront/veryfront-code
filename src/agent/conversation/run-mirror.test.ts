@@ -200,6 +200,221 @@ describe("agent/conversation-run-mirror", () => {
     assertEquals(mirror.getSnapshot().pendingEventCount, 0);
   });
 
+  it("waits through retry backoff when durable persistence requests a drain", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const controller = createMockQueueController({
+      pendingEvents: [{ type: "capture" }],
+      flushImpl: async () => {
+        attempts++;
+        return attempts === 1
+          ? {
+            outcome: "retry_scheduled",
+            latestEventId: 1,
+            latestExternalEventSequence: 0,
+            pendingEventCount: 1,
+            consecutiveFailures: 1,
+            disabled: false,
+            errorMessage: "temporary network failure",
+          }
+          : {
+            outcome: "flushed",
+            latestEventId: 2,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+          };
+      },
+    });
+    const mirror = createConversationRunMirror({
+      queueController: controller,
+      immediateFlushEventCount: 2,
+      getRetryDelayMs: () => 250,
+    });
+    const options = { abortSignal: new AbortController().signal, waitForRetries: true };
+    let settled = false;
+    const draining = mirror.flush(options).then((state) => {
+      settled = true;
+      return state;
+    });
+    try {
+      await time.tickAsync(0);
+      assertEquals(settled, false, "a scheduled retry is not a completed drain");
+      await time.tickAsync(249);
+      assertEquals(attempts, 1, "retain retry backoff");
+      await time.tickAsync(1);
+      assertEquals((await draining).pendingEventCount, 0);
+      assertEquals(attempts, 2);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("shares retry backoff across concurrent drains and immediate enqueues", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const mirror = createConversationRunMirror({
+      queueController: createMockQueueController({
+        pendingEvents: [{ type: "capture" }],
+        flushImpl: async () => {
+          attempts++;
+          return attempts === 1
+            ? {
+              outcome: "retry_scheduled",
+              latestEventId: 1,
+              latestExternalEventSequence: 0,
+              pendingEventCount: 1,
+              consecutiveFailures: 1,
+              disabled: false,
+              errorMessage: "temporary network failure",
+            }
+            : {
+              outcome: "flushed",
+              latestEventId: 2,
+              latestExternalEventSequence: 1,
+              pendingEventCount: 0,
+              consecutiveFailures: 0,
+              disabled: false,
+            };
+        },
+      }),
+      immediateFlushEventCount: 1,
+      getRetryDelayMs: () => 250,
+    });
+    const options = { abortSignal: new AbortController().signal, waitForRetries: true };
+    const first = mirror.flush(options);
+    const second = mirror.flush(options);
+    try {
+      await time.tickAsync(0);
+      await mirror.flush();
+      mirror.enqueue([{ type: "another capture" }]);
+      await time.tickAsync(249);
+      assertEquals(attempts, 1, "concurrent callers must retain the shared backoff");
+      await time.tickAsync(1);
+      assertEquals((await first).pendingEventCount, 0);
+      assertEquals((await second).pendingEventCount, 0);
+      assertEquals(attempts, 2);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("cancels a persistence drain during retry backoff without another append", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const controller = createMockQueueController({
+      pendingEvents: [{ type: "capture" }],
+      flushImpl: async () => {
+        attempts++;
+        return {
+          outcome: "retry_scheduled",
+          latestEventId: 1,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 1,
+          consecutiveFailures: attempts,
+          disabled: false,
+          errorMessage: "temporary network failure",
+        };
+      },
+    });
+    const mirror = createConversationRunMirror({
+      queueController: controller,
+      immediateFlushEventCount: 2,
+      getRetryDelayMs: () => 250,
+    });
+    const abort = new AbortController();
+    const options = { abortSignal: abort.signal, waitForRetries: true };
+    const rejected = assertRejects(() => mirror.flush(options), DOMException, "deadline");
+    try {
+      await time.tickAsync(0);
+      abort.abort(new DOMException("persistence deadline", "AbortError"));
+      await rejected;
+      mirror.dispose();
+      await time.tickAsync(1000);
+      assertEquals(attempts, 1);
+      assertEquals(mirror.getSnapshot().pendingEventCount, 1);
+      assertEquals(mirror.getSnapshot().hasRetryTimer, false);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("observes caller cancellation while a shared retry append is in flight", async () => {
+    using time = new FakeTime();
+    const secondAppend = Promise.withResolvers<void>();
+    let attempts = 0;
+    const mirror = createConversationRunMirror({
+      queueController: createMockQueueController({
+        pendingEvents: [{ type: "capture" }],
+        flushImpl: async () => {
+          attempts++;
+          if (attempts === 1) {
+            return {
+              outcome: "retry_scheduled",
+              latestEventId: 1,
+              latestExternalEventSequence: 0,
+              pendingEventCount: 1,
+              consecutiveFailures: 1,
+              disabled: false,
+              errorMessage: "temporary network failure",
+            };
+          }
+          await secondAppend.promise;
+          return {
+            outcome: "flushed",
+            latestEventId: 2,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+          };
+        },
+      }),
+      immediateFlushEventCount: 2,
+      getRetryDelayMs: () => 250,
+    });
+    const abort = new AbortController();
+    let status = "pending";
+    const draining = mirror.flush({ abortSignal: abort.signal, waitForRetries: true }).then(
+      () => {
+        status = "resolved";
+      },
+      (error) => {
+        assertEquals(error, abort.signal.reason);
+        status = "rejected";
+      },
+    );
+    try {
+      await time.tickAsync(250);
+      assertEquals(attempts, 2);
+      await time.tickAsync(0);
+      abort.abort(new DOMException("persistence deadline", "AbortError"));
+      await time.tickAsync(0);
+      assertEquals(status, "rejected", "cancellation must not wait for another caller's append");
+    } finally {
+      secondAppend.resolve();
+      await draining;
+      mirror.dispose();
+    }
+  });
+
+  it("requires an abort signal before waiting for persistence retries", async () => {
+    const mirror = createConversationRunMirror({
+      queueController: createMockQueueController(),
+      immediateFlushEventCount: 2,
+    });
+    try {
+      await assertRejects(
+        () => mirror.flush({ waitForRetries: true }),
+        TypeError,
+        "requires an abort signal",
+      );
+    } finally {
+      mirror.dispose();
+    }
+  });
+
   it("runs immediate, retry, and explicit queue flushes inside the owner hook", async () => {
     using time = new FakeTime();
     const calls: string[] = [];

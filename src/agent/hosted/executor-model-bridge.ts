@@ -1,6 +1,10 @@
 const hasOwn = Object.hasOwn;
 import { randomUUID } from "node:crypto";
 import {
+  currentToolResultSequence,
+  type ToolResultSequence,
+} from "#veryfront/runtime/tool-result-sequence.ts";
+import {
   readServedVeryfrontCloudCatalogModel,
   readVeryfrontCloudModelFacts,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -46,6 +50,7 @@ export interface ExecutorModelDispatch {
     readonly modelCallId: string;
   };
   readonly mode: "generate" | "stream";
+  readonly privateToolResultSequence?: ToolResultSequence;
   readonly model: ExecutorModelMetadata;
   readonly options: Omit<ModelRuntimeCallOptions, "headers" | "abortSignal">;
 }
@@ -105,6 +110,9 @@ export function createExecutorModelBroker(options: {
       modelId: call.modelId,
       model: getModel(call.modelId),
       options: call.options satisfies Omit<ModelRuntimeCallOptions, "headers" | "abortSignal">,
+      ...(call.privateToolResultSequence
+        ? { privateToolResultSequence: call.privateToolResultSequence }
+        : {}),
     };
   };
   const authorizeDispatch = async (
@@ -125,6 +133,9 @@ export function createExecutorModelBroker(options: {
       const snapshot = (): ExecutorModelDispatch => ({
         identity: { binding: { ...context.binding }, sequence: callSequence, modelCallId },
         mode,
+        ...(call.privateToolResultSequence
+          ? { privateToolResultSequence: call.privateToolResultSequence }
+          : {}),
         model: parseExecutorModelData(
           getExecutorModelMetadataSchema(),
           executorModelJson([metadata]),
@@ -496,7 +507,15 @@ function createExecutorModelRuntime(
     const { abortSignal, headers: _headers, ...neutral } = options;
     const data = executorModelJson(neutral);
     parseExecutorModelData(getExecutorModelOptionsSchema(), data);
-    return { input: { modelId: id, options: data }, signal: withAuthority(abortSignal) };
+    const sequence = currentToolResultSequence();
+    return {
+      input: {
+        modelId: id,
+        options: data,
+        ...(sequence ? { privateToolResultSequence: sequence } : {}),
+      },
+      signal: withAuthority(abortSignal),
+    };
   };
   return Object.freeze({
     ...metadata,
