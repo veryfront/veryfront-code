@@ -73,6 +73,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.bootstrapTools === undefined
       ? {}
       : { bootstrapTools: definition.bootstrapTools }),
+    ...(definition.optionalBootstrapTools === undefined
+      ? {}
+      : { optionalBootstrapTools: definition.optionalBootstrapTools }),
     ...(definition.bootstrapSkill === undefined
       ? {}
       : { bootstrapSkill: definition.bootstrapSkill }),

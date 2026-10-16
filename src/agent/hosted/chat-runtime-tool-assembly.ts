@@ -294,6 +294,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   toolLoading?: RuntimeToolLoadingMode;
   /** Exact authored startup schemas, constrained by the authorized catalog. */
   bootstrapTools?: AgentConfig["bootstrapTools"];
+  optionalBootstrapTools?: AgentConfig["optionalBootstrapTools"];
   /** Authored framework knowledge selector supplied by trusted agent config. */
   knowledge?: AgentConfig["knowledge"];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -1217,6 +1218,36 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
           detail: "bootstrapTools contains a tool outside the authorized executable catalog",
         });
       }
+      if (!includesValue(bootstrapToolNames, name)) {
+        bootstrapToolNames[bootstrapToolNames.length] = name;
+      }
+    }
+    sortValues(bootstrapToolNames, compareStrings);
+  }
+  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.optionalBootstrapTools,
+    "optionalBootstrapTools",
+  );
+  if (optionalBootstrapNames.length > 0) {
+    const candidates = [...bootstrapToolNames];
+    for (let index = 0; index < optionalBootstrapNames.length; index++) {
+      const name = optionalBootstrapNames[index]!;
+      const localTool = localRuntimeTools[name];
+      if (
+        includesValue(availableToolNames, name) &&
+        (localTool === undefined || !isRuntimeProviderSchemaHiddenTool(localTool)) &&
+        !includesValue(candidates, name)
+      ) candidates[candidates.length] = name;
+    }
+    const selected = selectProviderCompatibleToolNames(candidates, {
+      ...(input.toolSchemaTarget ?? { model: input.taskContext.model }),
+      requiredToolNames: bootstrapToolNames,
+      // Preserve slots for discovery and at least one discovered schema.
+      reservedToolSlots: (input.reservedToolSlots ?? 0) +
+        (toolLoadingMode === "deferred" && !toolSearchDenied ? 2 : 0),
+    });
+    for (let index = 0; index < selected.length; index++) {
+      const name = selected[index]!;
       if (!includesValue(bootstrapToolNames, name)) {
         bootstrapToolNames[bootstrapToolNames.length] = name;
       }

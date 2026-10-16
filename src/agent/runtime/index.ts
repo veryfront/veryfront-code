@@ -4483,6 +4483,7 @@ export class AgentRuntime {
           tools: runtimeToolsConfig,
           skills: undefined,
           bootstrapTools: undefined,
+          optionalBootstrapTools: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,

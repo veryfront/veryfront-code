@@ -453,3 +453,21 @@ it("authored bootstrap selection is bounded, copied, and excludes veryfront__too
     assertEquals((error as VeryfrontError).slug, "config-invalid");
   }
 });
+
+it("optional bootstrap hints retain the same bounded exact-name validation", () => {
+  assertEquals(snapshotConfiguredToolBootstrapNames(["create_file"], "optionalBootstrapTools"), [
+    "create_file",
+  ]);
+  for (
+    const invalid of [["veryfront__tool_search"], [""], Array(17).fill("create_file"), [
+      "create_file",
+      3,
+    ]]
+  ) {
+    assertThrows(
+      () => snapshotConfiguredToolBootstrapNames(invalid, "optionalBootstrapTools"),
+      VeryfrontError,
+      "optionalBootstrapTools",
+    );
+  }
+});

@@ -218,6 +218,28 @@ In Markdown agent definitions, use `bootstrap-tools` with the same list. In
 eager mode, all selected tools are already exposed; the startup selection does
 not make that mode deferred.
 
+### Expose optional startup schemas
+
+Use `optionalBootstrapTools` for capabilities that may be absent from a run's
+final authorized catalog. Unlike required `bootstrapTools`, missing or denied
+optional tools are skipped, so a read-only run can start without a write tool.
+Authorized optional schemas are exposed initially when the model's tool limit
+has room; required bootstrap schemas and discovery capacity take precedence.
+This setting never grants access. Per-step restrictions still apply.
+
+```ts
+export default agent({
+  system: "Use the available project tools.",
+  tools: true,
+  bootstrapTools: ["read_project"],
+  optionalBootstrapTools: ["create_file"],
+});
+```
+
+Each list accepts up to 16 exact executable names. In Markdown, use
+`optional-bootstrap-tools`. Both startup selections apply to root runs;
+hosted child runs do not inherit them.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -768,29 +790,30 @@ export default agent({
 
 ## Agent configuration
 
-| Property              | Type                                                                                                   | Description                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                                                                     |
-| `name`                | `string`                                                                                               | Human-readable display name for listings                                                                                     |
-| `description`         | `string`                                                                                               | Optional summary for listings                                                                                                |
-| `model`               | `string`                                                                                               | Optional provider/model override. Omit for the [inference-path default](./providers.md); use `"auto"` for runtime selection. |
-| `system`              | `AgentSystem \| () => AgentSystem \| Promise<AgentSystem>`                                             | Text or structured system instructions                                                                                       |
-| `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                                              |
-| `tools`               | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly                        |
-| `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                                         |
-| `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                                                 |
-| `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                                           |
-| `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                                               |
-| `bootstrapTools`      | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                    |
-| `bootstrapSkill`      | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                            |
-| `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                             |
-| `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                     |
-| `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                                         |
-| `parallelToolCalls`   | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                        |
-| `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                                                 |
-| `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                                           |
-| `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                                         |
-| `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                                           |
+| Property                 | Type                                                                                                   | Description                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                     | `string`                                                                                               | Unique identifier used with `getAgent()`                                                                                                    |
+| `name`                   | `string`                                                                                               | Human-readable display name for listings                                                                                                    |
+| `description`            | `string`                                                                                               | Optional summary for listings                                                                                                               |
+| `model`                  | `string`                                                                                               | Optional provider/model override. Omit for the [inference-path default](./providers.md); use `"auto"` for runtime selection.                |
+| `system`                 | `AgentSystem \| () => AgentSystem \| Promise<AgentSystem>`                                             | Text or structured system instructions                                                                                                      |
+| `resolveRuntimeState`    | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                                                             |
+| `tools`                  | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly                                       |
+| `delegates`              | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                                                        |
+| `providerTools`          | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                                                                |
+| `mcpServers`             | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                                                          |
+| `skills`                 | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                                                              |
+| `bootstrapTools`         | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                                   |
+| `optionalBootstrapTools` | `string[]`                                                                                             | Up to 16 exact tool names exposed initially only when already authorized and provider capacity permits; missing or denied tools are skipped |
+| `bootstrapSkill`         | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                                           |
+| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                                            |
+| `temperature`            | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                                    |
+| `maxSteps`               | `number`                                                                                               | Max tool-call iterations per request                                                                                                        |
+| `parallelToolCalls`      | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                                       |
+| `memory`                 | `MemoryConfig`                                                                                         | Conversation memory settings                                                                                                                |
+| `streaming`              | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                                                          |
+| `middleware`             | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                                                        |
+| `allowedModels`          | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                                                          |
 
 Each agent middleware invocation receives a single-use `next()` continuation.
 Its lifecycle is:

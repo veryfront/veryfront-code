@@ -3245,3 +3245,114 @@ it("hosted eager capping retains the selected authored remote startup tool", asy
   assertEquals(assembly.remoteToolNames.includes("remote_129"), true);
   assertEquals(assembly.modelVisibleToolNames?.length, 128);
 });
+
+it("hosted optional bootstrap exposes only authorized schemas without requiring absent write tools", async () => {
+  for (const denied of [false, true]) {
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: { authToken: "token", model: "mistral/mistral-small-2503" },
+      instructions: "Base",
+      localTools: {
+        read_project: localTool("Read project"),
+        other_tool: localTool("Deferred tool"),
+        form_input: localTool("Collect input"),
+        create_file: localTool("Write file"),
+      },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      mcpServers: [],
+      toolLoading: "deferred",
+      bootstrapTools: ["read_project"],
+      ...{ optionalBootstrapTools: ["form_input", "create_file", "missing_tool", "form_input"] },
+      ...(denied ? { deniedToolNames: ["create_file"] } : {}),
+      preloadLatestConversationUserText: false,
+    });
+    assertEquals(
+      assembly.modelVisibleToolNames,
+      denied
+        ? ["form_input", "read_project", "veryfront__tool_search"]
+        : ["create_file", "form_input", "read_project", "veryfront__tool_search"],
+    );
+    assertEquals(assembly.availableToolNames.includes("create_file"), !denied);
+    assertEquals("create_file" in assembly.runtimeTools, !denied);
+    assertEquals(assembly.availableToolNames.includes("missing_tool"), false);
+  }
+});
+
+it("optional canonical API bootstrap hints cannot widen a restricted read-only grant", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "mistral/mistral-small-2503",
+    },
+    instructions: "Read only",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    allowedToolNames: ["veryfront__get_file"],
+    deniedToolNames: ["veryfront__create_file"],
+    bootstrapTools: ["veryfront__get_file"],
+    optionalBootstrapTools: ["veryfront__create_file"],
+    createRemoteToolSource: () => ({
+      id: "api-mcp",
+      listTools:
+        async () => [remoteTool("get_file", "Read file"), remoteTool("create_file", "Write file")],
+      executeTool: async () => ({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, ["veryfront__get_file"]);
+  assertEquals(assembly.availableToolNames, ["veryfront__get_file"]);
+  assertEquals(assembly.compatibleRemoteToolNames, ["veryfront__get_file"]);
+  assertEquals("veryfront__create_file" in assembly.runtimeTools, false);
+  assertEquals(await assembly.remoteToolSources[0]!.executeTool("veryfront__get_file", {}), {
+    ok: true,
+  });
+});
+
+it("optional bootstrap schemas yield to mandatory tools and provider discovery capacity", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", model: "openai/gpt-4.1" },
+    instructions: "Base",
+    localTools: {
+      read: localTool("Read"),
+      write: localTool("Write"),
+      form: localTool("Form"),
+      other: localTool("Other"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [],
+    toolLoading: "deferred",
+    bootstrapTools: ["read"],
+    optionalBootstrapTools: ["form", "write"],
+    reservedToolSlots: 125,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames?.length, 2);
+  assertEquals(assembly.modelVisibleToolNames?.includes("read"), true);
+  assertEquals(assembly.modelVisibleToolNames?.includes("veryfront__tool_search"), true);
+  assertEquals(assembly.availableToolNames.includes("write"), true);
+});
+
+it("optional startup hints cannot recover tools removed by an empty execution grant", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", model: "mistral/mistral-small-2503" },
+    instructions: "Answer without tools",
+    localTools: { create_file: localTool("Write file") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [],
+    allowedToolNames: [],
+    optionalBootstrapTools: ["create_file"],
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, []);
+  assertEquals(assembly.availableToolNames, []);
+  assertEquals(Object.keys(assembly.runtimeTools), []);
+});
