@@ -817,7 +817,8 @@ describe("Runs target SDK", () => {
 
   it("rejects a run artifact chunk over the byte budget before copying it", async () => {
     // A resizable buffer cannot be copied, so reaching the copy would report a non-byte chunk.
-    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    const buffer: ArrayBuffer = Reflect.construct(ArrayBuffer, [8, { maxByteLength: 16 }]);
+    assert(buffer.resizable);
     const sdk = createRunsSdk({
       transport: {
         request: async (_path, init) =>
