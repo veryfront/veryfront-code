@@ -11,6 +11,9 @@ import {
 } from "./run-chunk-mirror.ts";
 import { createDurableRunEventSink } from "../hosted/durable-run-event-sink.ts";
 import { bindRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { sendSSE } from "../runtime/sse-utils.ts";
+import { waitForQueuedToolResults } from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 
 type ConversationRunEventQueueFlushResult = Awaited<
   ReturnType<ConversationRunEventQueueController["flush"]>
@@ -53,7 +56,218 @@ function createQueueController(): ConversationRunEventQueueController & {
   };
 }
 
+const terminalResults: ChatUiMessageChunk[] = [
+  { type: "tool-output-available", toolCallId: "local-result", output: { value: "observed" } },
+  { type: "tool-output-error", toolCallId: "local-result", errorText: "reader failed" },
+  { type: "tool-output-denied", toolCallId: "local-result" },
+  {
+    type: "tool-input-error",
+    toolCallId: "local-result",
+    toolName: "local_reader",
+    input: {},
+    errorText: "invalid input",
+  },
+];
+
+for (const chunk of terminalResults) {
+  Deno.test(`captures model input after its queued ${chunk.type} reaches the mirror`, async () => {
+    const prepared: string[] = [];
+    const mirror = createConversationRunChunkMirror({
+      queueController: createQueueController(),
+      runtimeObservations: true,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+      onChunkPrepared: ({ events }) => {
+        prepared.push(...events.map((event) => event.type));
+      },
+      onExternalEventsPrepared: ({ events }) => {
+        prepared.push(...events.map((event) => event.type));
+      },
+    });
+    const sink = createDurableRunEventSink({ mirror });
+    runWithMandatoryRunEventSink(sink, () => {
+      new ReadableStream({
+        start(controller) {
+          sendSSE(controller, new TextEncoder(), { type: "message-start", messageId: "root" });
+          sendSSE(controller, new TextEncoder(), { ...chunk });
+          controller.close();
+        },
+      });
+    });
+    let captureError: unknown;
+    const capture = Promise.resolve(sink({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      messages: [{
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "local-result",
+          toolName: "local_reader",
+          output: { type: "json", value: { value: "observed" } },
+        }],
+      }],
+    })).catch((error: unknown) => {
+      captureError = error;
+    });
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assertEquals(prepared, [], "context must wait for the queued public result");
+      await mirror.handleChunk(chunk);
+      await capture;
+      assertEquals(captureError, undefined);
+      assertEquals(
+        prepared.indexOf("TOOL_CALL_RESULT") <
+          prepared.indexOf("AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"),
+        true,
+      );
+    } finally {
+      mirror.dispose();
+      await capture;
+    }
+  });
+}
+
 const RETRY_LOG_MESSAGE = "Durable run mirror flush failed; queued for retry";
+
+describe("hosted result capture barrier", () => {
+  it("does not release a queued result when the run event queue rejects it", async () => {
+    const queueController = createQueueController();
+    queueController.enqueue = () => {
+      throw new Error("queue refused result");
+    };
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      runtimeObservations: true,
+    });
+    const sink = createDurableRunEventSink({ mirror });
+    const result = {
+      type: "tool-output-available" as const,
+      toolCallId: "rejected-result",
+      output: { value: "observed" },
+    };
+    runWithMandatoryRunEventSink(sink, () => {
+      new ReadableStream({
+        start(controller) {
+          sendSSE(controller, new TextEncoder(), { type: "message-start", messageId: "root" });
+          sendSSE(controller, new TextEncoder(), result);
+          controller.close();
+        },
+      });
+    });
+    const abort = new AbortController();
+    const wait = waitForQueuedToolResults(mirror, [{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: result.toolCallId,
+        toolName: "reader",
+        output: { type: "json", value: result.output },
+      }],
+    }], abort.signal);
+    let released = false;
+    void wait.then(() => {
+      released = true;
+    }, () => {});
+    try {
+      await assertRejects(() => mirror.handleChunk(result), Error, "queue refused result");
+      await Promise.resolve();
+      assertEquals(released, false);
+      const rejection = assertRejects(() => wait, Error, "capture cancelled");
+      abort.abort(new Error("capture cancelled"));
+      await rejection;
+      assertEquals(released, false);
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("does not wait for preliminary results or failed stream writes", async () => {
+    const mirror = createConversationRunChunkMirror({
+      queueController: createQueueController(),
+      runtimeObservations: true,
+    });
+    const sink = createDurableRunEventSink({ mirror, timeoutMs: 50 });
+    runWithMandatoryRunEventSink(sink, () => {
+      new ReadableStream({
+        start(controller) {
+          sendSSE(controller, new TextEncoder(), { type: "message-start", messageId: "root" });
+          sendSSE(controller, new TextEncoder(), {
+            type: "tool-output-available",
+            toolCallId: "preview",
+            preliminary: true,
+            output: {},
+          });
+          controller.close();
+          sendSSE(controller, new TextEncoder(), {
+            type: "tool-output-available",
+            toolCallId: "closed",
+            output: {},
+          });
+        },
+      });
+    });
+    try {
+      await sink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        messages: [{
+          role: "tool",
+          content: ["preview", "closed"].map((toolCallId) => ({
+            type: "tool-result",
+            toolCallId,
+            toolName: "reader",
+            output: { type: "json", value: {} },
+          })),
+        }],
+      });
+    } finally {
+      mirror.dispose();
+    }
+  });
+
+  it("times out without persisting context when its queued result cannot be mirrored", async () => {
+    const events: string[] = [];
+    const mirror = createConversationRunChunkMirror({
+      queueController: createQueueController(),
+      runtimeObservations: true,
+      onExternalEventsPrepared: ({ events: prepared }) => {
+        events.push(...prepared.map((event) => event.type));
+      },
+    });
+    const sink = createDurableRunEventSink({ mirror, timeoutMs: 10 });
+    runWithMandatoryRunEventSink(sink, () => {
+      new ReadableStream({
+        start(controller) {
+          sendSSE(controller, new TextEncoder(), { type: "message-start", messageId: "root" });
+          sendSSE(controller, new TextEncoder(), {
+            type: "tool-output-error",
+            toolCallId: "unconsumed",
+            errorText: "reader failed",
+          });
+          controller.close();
+        },
+      });
+    });
+    try {
+      await assertRejects(async () =>
+        await sink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          messages: [{
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "unconsumed",
+              toolName: "reader",
+              output: { type: "json", value: { error: "reader failed" } },
+            }],
+          }],
+        })
+      );
+      assertEquals(events, []);
+    } finally {
+      mirror.dispose();
+    }
+  });
+});
 
 describe("agent/conversation-run-chunk-mirror", () => {
   it("prepares UI chunks into durable events and enqueues them", async () => {
