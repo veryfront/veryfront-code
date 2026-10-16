@@ -11,6 +11,14 @@ const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype);
 const typedArrayBufferGetter = requireTypedArrayGetter("buffer");
 const typedArrayByteLengthGetter = requireTypedArrayGetter("byteLength");
 const typedArrayByteOffsetGetter = requireTypedArrayGetter("byteOffset");
+const typedArrayToStringTagGetterCandidate = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  Symbol.toStringTag,
+)?.get;
+if (typeof typedArrayToStringTagGetterCandidate !== "function") {
+  throw new TypeError("Required Uint8Array toStringTag intrinsic is unavailable");
+}
+const typedArrayToStringTagGetter = typedArrayToStringTagGetterCandidate;
 const Uint8ArrayPrototypeSet = NativeUint8Array.prototype.set;
 const TextDecoderPrototypeDecode = NativeTextDecoder.prototype.decode;
 const StringFromCharCode = String.fromCharCode;
@@ -81,6 +89,35 @@ function viewBytes(bytes: Uint8Array, start: number, length: number): Uint8Array
 
 function setBytes(target: Uint8Array, source: Uint8Array): void {
   ReflectApply(Uint8ArrayPrototypeSet, target, [source]);
+}
+
+/**
+ * Copy one response body chunk into a fresh, fixed-length native Uint8Array.
+ *
+ * Validates and counts the chunk through captured intrinsics, so a chunk whose
+ * `byteLength` (or its prototype's) was replaced cannot under-report its size,
+ * and the copy cannot grow after the caller counted it. A chunk longer than
+ * `maxBytes` returns `null` before anything is allocated.
+ */
+export function copyResponseBodyChunk(
+  chunk: unknown,
+  maxBytes: number,
+): { bytes: Uint8Array; byteLength: number } | null {
+  let tag: unknown;
+  try {
+    tag = ReflectApply(typedArrayToStringTagGetter, chunk, []);
+  } catch {
+    tag = undefined;
+  }
+  if (tag !== "Uint8Array") {
+    throw new InvalidResponseBodyChunkError("Response body chunks must be Uint8Array values");
+  }
+  const bytes = chunk as Uint8Array;
+  const byteLength = byteLengthOf(bytes);
+  if (byteLength > maxBytes) return null;
+  const copy = new NativeUint8Array(byteLength);
+  setBytes(copy, viewBytes(bytes, 0, byteLength));
+  return { bytes: copy, byteLength };
 }
 
 function decodeBytes(

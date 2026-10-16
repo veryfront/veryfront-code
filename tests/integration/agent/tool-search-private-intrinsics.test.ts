@@ -15,7 +15,13 @@ for (const probe of ["baseline", "strings", "arrays"]) {
       it(`loads and executes a matching tool in ${mode} while preserving structured cache metadata`, async () => {
         const marker = "synthetic private search";
         const model = scriptedModel([
-          { toolCalls: [{ id: "search", name: "tool_search", input: { query: ` ${marker} ` } }] },
+          {
+            toolCalls: [{
+              id: "search",
+              name: "veryfront__tool_search",
+              input: { query: ` ${marker} ` },
+            }],
+          },
           { toolCalls: [{ id: "lookup", name: "lookup_private", input: {} }] },
           { text: "Complete" },
         ], { only: mode });

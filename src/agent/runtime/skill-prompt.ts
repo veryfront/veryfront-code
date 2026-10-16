@@ -278,18 +278,14 @@ function appendBoundedEncodedRuntimeSkillId(
 
 function buildRuntimeSkillDiscoveryNote(
   hiddenSkillIdCount: number,
-  cursor: number,
-  skillLoaderToolName: RuntimeSkillLoaderToolName,
 ): string {
-  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call ${skillLoaderToolName}({ inventory: { cursor: ${cursor} } }), then follow each nextCursor value to discover them.)`;
+  return `\n\n(${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt and available through the skill inventory.)`;
 }
 
 function buildRuntimeAuthorizedSkillIdDiscoveryBlock(
   hiddenSkillIdCount: number,
-  cursor: number,
-  skillLoaderToolName: RuntimeSkillLoaderToolName,
 ): string {
-  return `<authorized_skill_id_discovery>\n${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt. Call ${skillLoaderToolName}({ inventory: { cursor: ${cursor} } }), then follow each nextCursor value to discover them.\n</authorized_skill_id_discovery>`;
+  return `<authorized_skill_id_discovery>\n${hiddenSkillIdCount} additional authorized skill IDs are omitted from this prompt and available through the skill inventory.\n</authorized_skill_id_discovery>`;
 }
 
 function requireRuntimeSkillModel(value: unknown): string {
@@ -436,18 +432,13 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
     encodedCharacters = nextEncodedCharacters;
   }
   const hiddenSkillIdCount = omittedSkillIds.length - encodedOmittedSkillIds.length;
-  const discoveryCursor = displaySkills.length + encodedOmittedSkillIds.length;
   const truncationNote = omittedSkillIds.length > 0
     ? `\n\n(${omittedSkillIds.length} more skill summaries omitted.)\nOmitted skill IDs: ${`[${
       joinStrings(encodedOmittedSkillIds, ",")
-    }]`}${
-      hiddenSkillIdCount > 0
-        ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount, discoveryCursor, skillLoaderToolName)
-        : ""
-    }`
+    }]`}${hiddenSkillIdCount > 0 ? buildRuntimeSkillDiscoveryNote(hiddenSkillIdCount) : ""}`
     : "";
-  // This block lists skills and, only when the ID inventory reaches its
-  // encoded-size limit, points to the tool's bounded discovery path.
+  // This block lists skills and reports when additional authorized IDs remain
+  // available through the tool's inventory without prescribing a call shape.
   // Delegation and output-style policy belong to the agent's instructions,
   // not to a catalogue.
   //
@@ -522,8 +513,6 @@ export function buildRuntimeAuthorizedSkillIdsPromptBlock(
     ? `${skillIdsBlock}\n\n${
       buildRuntimeAuthorizedSkillIdDiscoveryBlock(
         hiddenSkillIdCount,
-        encodedSkillIds.length,
-        skillLoaderToolName,
       )
     }`
     : skillIdsBlock;

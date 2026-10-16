@@ -43,7 +43,10 @@ import {
   type ProjectSteeringMutationResult,
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
-import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import {
+  filterVeryfrontApiToolDefinitionsWithAccessProfile,
+  resolveVeryfrontApiToolAccessProfileToolName,
+} from "./veryfront-api-tool-access.ts";
 import { serverLogger } from "#veryfront/utils";
 
 const objectSetPrototypeOf = Object.setPrototypeOf;
@@ -218,7 +221,11 @@ export function createHostedProjectRemoteToolSource(
   };
   objectSetPrototypeOf(catalogOptions, null);
   const toolCatalog = createProjectScopedRemoteToolCatalog(catalogOptions);
-  const retryToolName = input.retryToolName ?? "update_file";
+  const configuredRetryToolName = input.retryToolName ?? "update_file";
+  const retryToolName =
+    hasTrustedPlatformSource(input.source) && !configuredRetryToolName.includes("__")
+      ? `veryfront__${configuredRetryToolName}`
+      : configuredRetryToolName;
 
   function normalizeProjectToolInput(
     toolName: string,
@@ -422,8 +429,24 @@ function createHostedProjectRemoteToolSourceFromConfig(
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
   if (server.kind === "veryfront-api") markTrustedPlatformSource(source);
-  const isPlatform = server.kind === "veryfront-api";
-  const wireSource = isPlatform ? createLivePlatformMcpSource(source) : source;
+  const isPlatform = server.kind === "veryfront-api" || server.kind === "veryfront-studio";
+  let accessProfileToolName = "veryfront__get_tool_access_profile";
+  const discoverySource = server.kind === "veryfront-api"
+    ? inheritTrustedPlatformSource(source, {
+      id: source.id,
+      async listTools(context?: ToolExecutionContext) {
+        const definitions = await source.listTools(context);
+        accessProfileToolName = resolveVeryfrontApiToolAccessProfileToolName(definitions);
+        return definitions;
+      },
+      executeTool: (
+        name: string,
+        args: Record<string, unknown>,
+        context?: ToolExecutionContext,
+      ) => source.executeTool(name, args, context),
+    })
+    : source;
+  const wireSource = isPlatform ? createLivePlatformMcpSource(discoverySource) : source;
   const policySource = createHostedMcpToolPolicySource(
     wireSource,
     isPlatform ? withPlatformMcpPolicyAliases(server.toolPolicy) : server.toolPolicy,
@@ -448,12 +471,13 @@ function createHostedProjectRemoteToolSourceFromConfig(
       : {}),
     ...(server.kind === "veryfront-api"
       ? {
-        filterToolDefinitions: async ({ source, toolDefinitions, activeProjectId, context }) => {
+        filterToolDefinitions: async ({ toolDefinitions, activeProjectId, context }) => {
           const visible = await filterVeryfrontApiToolDefinitionsWithAccessProfile({
             source,
             toolDefinitions,
             projectId: activeProjectId,
             context,
+            profileToolName: accessProfileToolName,
           });
           return visible.filter(({ name }) =>
             !allowedNames || allowedNames.has(name) ||

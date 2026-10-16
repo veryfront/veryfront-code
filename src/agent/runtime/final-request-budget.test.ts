@@ -1106,14 +1106,14 @@ describe("final model request budget", () => {
       else await (await runtime.stream({ messages: history })).toDataStreamResponse().text();
       assertEquals(model.callCount, 1);
       assertEquals(model.toolNames(0).includes("large_tool"), false);
-      assertEquals(model.toolNames(0).includes("tool_search"), true);
+      assertEquals(model.toolNames(0).includes("veryfront__tool_search"), true);
       assert(checkpoints.some((entry) => JSON.stringify(entry).includes('"loadedToolNames":[]')));
 
       const resumedModel = servedModel(mode, 12_000, [
         {
           toolCalls: [{
             id: "reactivate",
-            name: "tool_search",
+            name: "veryfront__tool_search",
             input: { query: "large_tool" },
           }],
         },

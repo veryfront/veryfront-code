@@ -30,7 +30,9 @@ export interface LocalChildInvocation {
   context?: ToolExecutionContext;
   execute: (control?: {
     signal?: AbortSignal;
+    runId?: string;
     onEvent?: (event: AgUiRuntimeStreamEvent) => Promise<void>;
+    resolveModelRuntime?: import("../runtime/model-transport.ts").AgentModelRuntimeResolver;
   }) => Promise<LocalChildResult>;
 }
 
@@ -56,6 +58,7 @@ export async function withLocalChildExecution<T>(
   observe?: Scope["observe"],
   admitTool?: Scope["admitTool"],
   createObserver?: Scope["createObserver"],
+  lifetime?: AbortSignal,
 ): Promise<T> {
   const scope: Scope = {
     active: true,
@@ -65,10 +68,19 @@ export async function withLocalChildExecution<T>(
     createObserver,
     automaticStreamObservation: true,
   };
+  const close = () => {
+    scope.active = false;
+  };
+  if (lifetime?.aborted) close();
+  else lifetime?.addEventListener("abort", close, { once: true });
   try {
     return await (apply(run, scopes, [scope, operation]) as Promise<T>);
+  } catch (error) {
+    close();
+    lifetime?.removeEventListener("abort", close);
+    throw error;
   } finally {
-    scope.active = false;
+    if (!lifetime) close();
   }
 }
 
@@ -97,7 +109,9 @@ export function withLocalChildRuntime<T>(runtime: AgentRuntime, operation: () =>
 
 export function executeLocalChild(input: LocalChildInvocation): Promise<LocalChildResult> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
-  return scope?.active ? scope.execute(input) : input.execute();
+  if (!scope) return input.execute();
+  if (!scope.active) return Promise.reject(new Error("Local child execution authority has ended."));
+  return scope.execute(input);
 }
 
 export function withoutAutomaticRuntimeStreamObservation<T>(operation: () => T): T {

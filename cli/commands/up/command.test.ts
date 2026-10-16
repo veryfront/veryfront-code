@@ -733,7 +733,10 @@ describe("Up Command", () => {
             projectSlug: expectedSlug,
           },
         );
-        assertEquals(await exists(join(projectDir, "veryfront.json")), false);
+        assertEquals(JSON.parse(await Deno.readTextFile(join(projectDir, "veryfront.json"))), {
+          projectSlug: expectedSlug,
+          apiUrl: "https://api.from-env.test",
+        });
       } finally {
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
         restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);

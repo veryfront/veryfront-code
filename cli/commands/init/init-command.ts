@@ -1,3 +1,4 @@
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 /*******************************
  * Main init command implementation
  * @module
@@ -18,6 +19,9 @@ import {
 import { validateProjectName } from "../../shared/project-name.ts";
 import { promptForEnvVars } from "../../utils/env-prompt.ts";
 import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
+import { isTTY } from "#cli/utils";
+import { isInteractive } from "../../shared/interactive.ts";
+import { chooseCloudProject } from "../../shared/cloud-project.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -169,6 +173,7 @@ export async function initCommand(
   options: InitOptions,
   dependencies: InitCommandDependencies = {},
 ): Promise<InitCommandResult> {
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const { name, quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -258,6 +263,22 @@ export async function initCommand(
     },
     {
       observer: installObserver,
+      beforeGitInitialization: async (projectDir) => {
+        if (!quiet && !options.deploy && isTTY() && isInteractive()) {
+          try {
+            await chooseCloudProject(projectDir);
+          } catch (error) {
+            log(
+              `  Cloud setup could not finish: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`,
+            );
+            log(
+              "  Your local project is ready. Run veryfront push to create or link a Cloud project later.",
+            );
+          }
+        }
+      },
       resolveEnvironmentFiles: (variables, values) =>
         promptForEnvVars(variables, {
           skipPrompt: options.skipEnvPrompt,

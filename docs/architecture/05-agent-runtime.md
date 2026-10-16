@@ -135,10 +135,10 @@ flowchart TD
   validate --> registry[Register skill]
   registry --> manifest[Build skill manifest prompt]
   manifest --> agent[Agent runtime]
-  agent --> load[load_skill]
+  agent --> load[veryfront__load_skill]
   load --> active[Active skill context]
-  active --> reference[load_skill_reference]
-  active --> script[execute_skill_script]
+  active --> reference[veryfront__load_skill_reference]
+  active --> script[veryfront__execute_skill_script]
   active --> gate[Gate skill reference and script tools]
   reference --> safety[Path safety checks]
   script --> executor[Local or cloud script executor]
@@ -149,8 +149,8 @@ flowchart TD
 3. Prompt augmentation summarizes available skills for agent planning.
 4. Built-in skill tools load instructions, read reference files, and execute
    scripts.
-5. Skill tool availability gates `load_skill_reference` and
-   `execute_skill_script` on the files the active skill advertises.
+5. Skill tool availability gates `veryfront__load_skill_reference` and
+   `veryfront__execute_skill_script` on the files the active skill advertises.
 6. Path-safety helpers reject traversal and symlink escapes before reading
    skill files.
 7. Script execution selects local subprocess execution or cloud sandbox

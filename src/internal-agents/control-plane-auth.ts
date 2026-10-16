@@ -1,9 +1,16 @@
+import type { HostedServiceRunEventAppendTokenResult } from "#veryfront/agent/service/auth.ts";
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
   type ControlPlaneClaims,
   type ControlPlaneSurface,
   verifyControlPlaneJws,
 } from "#veryfront/channels/control-plane.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { getHostBootEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  readPlatformToolDependencies,
+  type VerifiedPlatformToolDependencies,
+} from "#veryfront/agent/service/platform-tool-dependency-claims.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
@@ -14,6 +21,34 @@ const CONTROL_PLANE_SIGNING_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const logger = serverLogger.component("internal-agents-auth");
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const DateNow = Date.now;
+const ObjectFreeze = Object.freeze;
+const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+const verifiedPlatformGrants = createPrivateWeakStore<
+  object,
+  Readonly<
+    {
+      projectId: string;
+      runId: string;
+      agentId: string;
+      expiresAt: number;
+      dependencies: VerifiedPlatformToolDependencies;
+    }
+  >
+>();
+
+/** Read a private exact-body operator grant. Compatibility adapter signatures cannot mint it. */
+export function getVerifiedControlPlanePlatformDependencies(
+  claims: VerifiedControlPlaneRequestClaims | HostedServiceRunEventAppendTokenResult,
+  scope: { projectId: string; runId: string; agentId: string },
+): VerifiedPlatformToolDependencies | undefined {
+  const grant = verifiedPlatformGrants.get(claims);
+  return grant && grant.expiresAt > DateNow() / 1000 && grant.projectId === scope.projectId &&
+      grant.runId === scope.runId && grant.agentId === scope.agentId
+    ? grant.dependencies
+    : undefined;
+}
 
 declare const verifiedControlPlaneRequestBrand: unique symbol;
 
@@ -137,6 +172,84 @@ export async function verifyControlPlaneRequest(
       verificationOptions,
     );
     const verifiedClaims = claims as VerifiedControlPlaneRequestClaims;
+    // This new authority uses the operator's value captured before tenant env
+    // loading. Legacy transport/cache compatibility deliberately stays separate.
+    const pinnedKey = getHostBootEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    let body: Record<string, unknown> | undefined;
+    try {
+      const parsed: unknown = IntrinsicReflectApply(JsonParse, JSON, [rawBody]);
+      if (parsed !== null && typeof parsed === "object" && !ArrayIsArray(parsed)) {
+        body = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // A valid signature can cover a plain cancel or malformed resume body.
+      // The handler owns payload validation; no dependency grant is minted.
+    }
+    if (body && ObjectHasOwn(body, "platformToolDependencies")) {
+      const dependencies = readPlatformToolDependencies(
+        readOwnDataProperty(body, "platformToolDependencies", "Platform dependencies"),
+      );
+      if (pinnedKey) {
+        let operatorVerified = pinnedKey === publicKeyPem;
+        if (!operatorVerified) {
+          try {
+            await verifyControlPlaneJws(controlPlaneJws, rawBody, {
+              ...verificationOptions,
+              publicKeyPem: pinnedKey,
+            });
+            operatorVerified = true;
+          } catch { /* Adapter compatibility never grants platform dependencies. */ }
+        }
+        if (operatorVerified) {
+          const run = readOwnDataProperty(body, "run", "Platform dependency scope");
+          const project = readOwnDataProperty(run, "project", "Platform dependency scope");
+          const runId = readOwnDataProperty(run, "runId", "Platform dependency scope");
+          const agentId = readOwnDataProperty(run, "agentId", "Platform dependency scope");
+          const projectId = readOwnDataProperty(project, "projectId", "Platform dependency scope");
+          let authenticatedProjectId = projectId;
+          if (ObjectHasOwn(body, "sourceProject") || ObjectHasOwn(body, "executionProject")) {
+            const sourceProject = readOwnDataProperty(
+              body,
+              "sourceProject",
+              "Platform dependency scope",
+            );
+            const executionProject = readOwnDataProperty(
+              body,
+              "executionProject",
+              "Platform dependency scope",
+            );
+            authenticatedProjectId = readOwnDataProperty(
+              sourceProject,
+              "projectId",
+              "Platform dependency scope",
+            );
+            const executionProjectId = readOwnDataProperty(
+              executionProject,
+              "projectId",
+              "Platform dependency scope",
+            );
+            if (executionProjectId !== projectId) {
+              throw new Error("Platform dependency scope is invalid");
+            }
+          }
+          if (
+            typeof runId !== "string" || runId !== claims.sub ||
+            typeof agentId !== "string" || typeof projectId !== "string" ||
+            authenticatedProjectId !== claims.project_id
+          ) throw new Error("Platform dependency scope is invalid");
+          verifiedPlatformGrants.set(
+            verifiedClaims,
+            ObjectFreeze({
+              projectId,
+              runId,
+              agentId,
+              expiresAt: claims.exp,
+              dependencies,
+            }),
+          );
+        }
+      }
+    }
     let hostVerified = hostPublicKeyPem === publicKeyPem && Boolean(hostPublicKeyPem);
     if (hostPublicKeyPem && !hostVerified) {
       try {

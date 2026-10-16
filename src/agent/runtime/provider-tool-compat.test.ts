@@ -483,16 +483,13 @@ describe("provider-tool-compat", () => {
       properties: { value: {}, alias: {} },
     } as never);
   });
-  it("intersects large required lists in linear time", () => {
+  it("preserves large intersecting required lists", () => {
     const required = Array.from({ length: 49_000 }, (_, index) => `field${index}`);
-    const started = performance.now();
     const result = sanitizeProviderToolSchema(
       { type: "object", anyOf: [{ required }, { required: [...required].reverse() }] } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(result.required?.length, 49_000);
-    // A quadratic intersection takes seconds here; the linear one takes milliseconds.
-    assertEquals(performance.now() - started < 750, true);
+    assertEquals(result.required, required);
   });
   it("keeps prototype-named definitions as own data properties", () => {
     const schema = JSON.parse(

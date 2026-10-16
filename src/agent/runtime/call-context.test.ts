@@ -923,12 +923,10 @@ describe("agent/runtime/call-context", () => {
         skills,
       });
       const content = dynamicMessage?.content ?? "";
-      const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(
-        content,
-      );
 
-      assertEquals(cursorMatch === null, false);
-      assertEquals(Number(cursorMatch?.[1]), content.match(/"skill-/g)?.length);
+      assertStringIncludes(content, "additional authorized skill IDs");
+      assertStringIncludes(content, "available through the skill inventory");
+      assertEquals(content.includes("Call load_skill("), false);
       assertEquals(content.length < 21_000, true);
     });
 

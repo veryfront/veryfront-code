@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { Agent } from "../types.ts";
+import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { RunResumeSessionManager } from "../runtime/index.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 
@@ -136,6 +137,20 @@ function makeRegistryTool(id: string, ownerAgentId?: string): Tool {
 }
 
 describe("buildMergedAgUiTools owner scope", () => {
+  it("preserves authored search_knowledge alongside canonical framework knowledge", () => {
+    clearMCPRegistry();
+    try {
+      registerTool("search_knowledge", makeRegistryTool("search_knowledge", "writer"));
+      const agent = { id: "writer", config: { tools: true, knowledge: true } } as unknown as Agent;
+      const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+      const tools = buildMergedAgUiTools(agent, "knowledge-run", [], sessionManager);
+      if (!tools || tools === true) throw new Error("Expected explicit tools");
+      assertEquals(tools.search_knowledge, true);
+      assertEquals(isAgentKnowledgeTool(tools.veryfront__search_knowledge), true);
+    } finally {
+      clearMCPRegistry();
+    }
+  });
   it("tools: true excludes other agents' owned tools and includes the owner's", () => {
     clearMCPRegistry();
     try {

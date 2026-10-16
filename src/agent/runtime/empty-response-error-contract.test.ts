@@ -20,7 +20,13 @@ it("does not classify forged or uninspectable errors as empty-response failures"
 
 it("generate classifies exhausted empty-response recovery with a stable registry slug", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "update_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "update_file" },
+      }],
+    },
     { content: [], finishReason: "stop" },
   ], { modelId: "hosted/empty-response-error-contract", only: "generate" });
   const assistant = agent(

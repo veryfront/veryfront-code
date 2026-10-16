@@ -10,6 +10,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { HostToolDefinition } from "#veryfront/tool";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
@@ -31,6 +32,7 @@ import {
   executeDefaultHostedInvokeAgentTool,
   getDefaultHostedInvokeAgentInputSchema,
 } from "./default-invoke-agent-tool.ts";
+import { resolveHostedChildToolNames } from "./cloud-agent-child-tools.ts";
 import { HostedChildAgentResolutionError } from "./project-agent-definition-resolver.ts";
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
@@ -257,7 +259,11 @@ it("fixed hosted delegates cannot override an empty fail-closed tool ceiling", (
 it("fixed hosted delegates prune unavailable optional Studio tool requests", () => {
   const requestedTools = defaultHostedInvokeAgentToolInternals
     .withoutUnavailableOptionalStudioRequestedTools({
-      requestedTools: ["studio_todo_write", "create_file"],
+      requestedTools: [
+        "studio_todo_write",
+        "veryfront__studio_todo_write",
+        "create_file",
+      ],
       config: {
         apiUrl: "https://api.example.com",
         apiMcpUrl: "https://api.example.com/mcp",
@@ -267,6 +273,30 @@ it("fixed hosted delegates prune unavailable optional Studio tool requests", () 
           required: false,
           toolPolicy: { allow: ["studio_todo_write"] },
         }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {
+          create_file: { description: "Create file", execute: () => ({ ok: true }) },
+        },
+      },
+      provider: "anthropic",
+      forkModel: "sonnet",
+    });
+
+  assertEquals(requestedTools, ["create_file"]);
+});
+
+it("fixed hosted delegates prune canonical Studio tools without an allow policy", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["veryfront__studio_todo_write", "create_file"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
       },
       clientProfile: null,
       toolSources: {
@@ -592,6 +622,162 @@ function startRuntimeReturning(
   };
 }
 
+for (
+  const scenario of [
+    { name: "saved bare selector", saved: "get_file", expected: ["veryfront__get_file"] },
+    {
+      name: "canonical parent narrowing",
+      saved: "get_file",
+      requested: "veryfront__get_file",
+      expected: ["veryfront__get_file"],
+    },
+    {
+      name: "bare parent narrowing",
+      saved: "veryfront__get_file",
+      requested: "get_file",
+      expected: ["veryfront__get_file"],
+    },
+    { name: "project bare collision", saved: "get_file", collision: true, expected: ["get_file"] },
+    {
+      name: "project allowance cannot grant platform sibling",
+      saved: "get_file",
+      requested: "veryfront__get_file",
+      collision: true,
+      expected: [],
+    },
+    {
+      name: "untrusted canonical sibling",
+      saved: "get_file",
+      untrusted: true,
+      unavailable: true,
+      expected: [],
+    },
+    {
+      name: "untrusted canonical cannot match saved bare ceiling",
+      saved: "get_file",
+      requested: "veryfront__get_file",
+      untrusted: true,
+      expected: [],
+    },
+    {
+      name: "integration namespace stays exact",
+      saved: "crm__get_file",
+      unavailable: true,
+      expected: [],
+    },
+  ]
+) {
+  it(`saved child selectors preserve authority: ${scenario.name}`, async () => {
+    const definition = (id: string): HostToolDefinition => ({
+      id,
+      description: id,
+      inputSchemaJson: { type: "object" },
+      execute: () => ({ ok: true }),
+    });
+    const platform = definition("veryfront__get_file");
+    if (!scenario.untrusted) markTrustedHostToolProvenance(platform);
+    const project = definition("get_file");
+    const captured: { started?: boolean; toolNames?: string[] } = {};
+    const result = await executeDefaultHostedInvokeAgentTool(
+      createTestOptions({
+        enableDurableInvokeAgent: false,
+        config: { mcpServers: [] },
+        options: {
+          resolveChildAgentExecutionConfig: () =>
+            Promise.resolve({
+              system: "Read the project.",
+              toolNames: resolveHostedChildToolNames({
+                id: "saved",
+                name: "Saved",
+                description: "Read",
+                instructions: "Read the project.",
+                tools: [scenario.saved],
+                skills: [],
+              }, { allowedSkillIds: [] }),
+              availableSkillIds: [],
+            }),
+          buildGlobalTools: () => ({
+            veryfront__get_file: platform,
+            ...(scenario.collision ? { get_file: project } : {}),
+          }),
+          createAgentServiceSandboxTools: () =>
+            Promise.resolve({
+              tools: {},
+              sandbox: {} as never,
+              closeSandbox: () => Promise.resolve(),
+            }),
+          startRuntime: (input) => {
+            if (scenario.expected.some((name) => name === "veryfront__get_file")) {
+              assertStrictEquals(input.forkTools?.veryfront__get_file, platform);
+            }
+            if (scenario.expected.some((name) => name === "get_file")) {
+              assertStrictEquals(input.forkTools?.get_file, project);
+            }
+            return startRuntimeReturning("Read complete.", captured)(input);
+          },
+        },
+      }),
+      {
+        description: "Read project",
+        prompt: "Read project metadata.",
+        agent_id: "saved",
+        ...(scenario.requested ? { tools: [scenario.requested] } : {}),
+      },
+      "saved",
+      { toolCallId: "saved-selector" },
+    );
+    if (scenario.unavailable) {
+      assertEquals(captured.started, undefined);
+      assertEquals("success" in result && result.success, false);
+    } else {
+      assertEquals(captured.started, true);
+      assertEquals(captured.toolNames, scenario.expected);
+    }
+  });
+}
+
+it("saved provider-native child selections do not grant a canonical host collision", async () => {
+  const captured: { started?: boolean; toolNames?: string[]; forkToolNames?: readonly string[] } =
+    {};
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: { mcpServers: [] },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "Search.",
+            toolNames: ["web_search"],
+            providerOnlyToolNames: ["web_search"],
+            availableSkillIds: [],
+          }),
+        buildGlobalTools: () => ({
+          veryfront__web_search: markTrustedHostToolProvenance({
+            id: "veryfront__web_search",
+            description: "Host search",
+            inputSchemaJson: {},
+            execute: () => ({ ok: true }),
+          }),
+        }),
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: startRuntimeReturning("Search complete.", captured),
+      },
+    }),
+    { description: "Search", prompt: "Search current information.", agent_id: "saved" },
+    "saved",
+    { toolCallId: "native-selector" },
+  );
+  assertEquals("success" in result && result.success, true);
+  assertEquals(captured.started, true);
+  assertEquals(captured.toolNames, []);
+  assertEquals(captured.forkToolNames, ["web_search"]);
+});
+
 function parentToolset() {
   const definition = (description: string) => ({
     description,
@@ -865,7 +1051,7 @@ it("default hosted invoke prunes unavailable optional Studio child tools before 
         resolveChildAgentExecutionConfig: () =>
           Promise.resolve({
             system: "Use Studio when it is available.",
-            toolNames: ["studio_todo_write"],
+            toolNames: ["veryfront__studio_todo_write"],
             mcpServers: [{
               kind: "veryfront-studio",
               required: false,
