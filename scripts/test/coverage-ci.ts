@@ -74,7 +74,9 @@ export function buildCoverageCommandArgs(
   profileDirs: string[],
   repositoryRoot = fromFileUrl(new URL("../../", import.meta.url)),
 ): string[] {
-  const sourceRoot = toFileUrl(repositoryRoot.replace(/(?<![\\/])[\\/]+$/, "") + "/").href
+  const sourceRoot = toFileUrl(
+    repositoryRoot.replace(/(?<![\\/])[\\/]+$/, "") + "/",
+  ).href
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [
     "coverage",
