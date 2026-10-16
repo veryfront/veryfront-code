@@ -944,7 +944,7 @@ describe("agent/ag-ui-handler", () => {
           conversationId: "conversation-connected",
           signal,
           prepareAgent: (agent) => Promise.resolve(agent),
-          execute: (operation) => operation(),
+          execute: (operation) => Promise.resolve(operation()),
           wrapStream: (body) => body,
           finish: () => Promise.resolve(),
         } satisfies ConnectedLocalRun,

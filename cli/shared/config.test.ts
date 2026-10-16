@@ -2059,7 +2059,7 @@ Deno.test("API management client keeps credentials on the supplied host transpor
   await withMockFetch(() => {
     throw new Error("project fetch must not receive credentials");
   }, async () => {
-    const transport = ((_input, init) => {
+    const transport = ((_input: unknown, init?: RequestInit) => {
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
       requests++;
       return Promise.resolve(Response.json({ data: [] }));

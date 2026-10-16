@@ -22,7 +22,7 @@ it("preserves caller cancellation during onboarding body reads", async () => {
     started = resolve;
   });
   let signal: AbortSignal | null | undefined;
-  const transport = withOnboardingDeadline((_input, init) => {
+  const transport = withOnboardingDeadline((_input: unknown, init?: RequestInit) => {
     signal = init?.signal;
     started();
     return Promise.resolve(new Response(new ReadableStream()));

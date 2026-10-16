@@ -3565,7 +3565,7 @@ Deno.test("authentication preflight does not use project-mutated fetch when give
       },
       undefined,
       {
-        transport: ((_input, init) => {
+        transport: ((_input: unknown, init?: RequestInit) => {
           assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer vf_private_test");
           return Promise.resolve(Response.json({ data: [], page_info: {} }));
         }) as typeof fetch,
@@ -3582,7 +3582,7 @@ Deno.test("authentication preflight does not use project-mutated fetch when give
       },
       undefined,
       {
-        transport: ((_input, init) => {
+        transport: ((_input: unknown, init?: RequestInit) => {
           assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer vf_private_test");
           return Promise.resolve(Response.json({ data: [], page_info: {} }));
         }) as typeof fetch,
