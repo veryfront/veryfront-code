@@ -145,6 +145,40 @@ describe("proxy/control-plane-signature", () => {
     else Deno.env.set(PUBLIC_KEY_ENV, previousKey);
   });
 
+  for (const mutation of ["includes", "String"] as const) {
+    it(`rejects a signed invalid runtime kind after global ${mutation} changes`, async () => {
+      const body = createNestedTargetBody({ runtimeTargetKind: "invalid_kind" }, {
+        type: "release",
+      });
+      const { jws, publicKeyPem } = await mintJws("control-plane", { body });
+      Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+      const { req, url } = requestWith(
+        { "x-token": "t", "x-veryfront-control-plane-jws": jws },
+        CONTROL_PLANE_PATH,
+        "POST",
+        body,
+      );
+      const originalIncludes = Array.prototype.includes;
+      const originalString = globalThis.String;
+      let failure: unknown;
+      try {
+        if (mutation === "includes") Array.prototype.includes = () => true;
+        else globalThis.String = (() => "main_branch") as StringConstructor;
+        await resolveVerifiedControlPlaneBranchBinding(req, url, {
+          audience: "protected",
+          expectedProjectId: "proj-1",
+        });
+      } catch (error) {
+        failure = error;
+      } finally {
+        Array.prototype.includes = originalIncludes;
+        globalThis.String = originalString;
+      }
+      assertEquals(failure instanceof ControlPlaneBranchBindingError, true);
+      assertEquals((failure as Error | undefined)?.message, "Invalid control-plane runtime target");
+    });
+  }
+
   it("defaults an omitted nested runtime target kind to the main branch", async () => {
     assertEquals(
       await resolveNestedTarget(

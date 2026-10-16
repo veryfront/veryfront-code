@@ -196,7 +196,7 @@ function parseVerifiedBranchBinding(
       (!isCanonicalOpaqueProjectIdentifier(target.runtimeTargetEnvironmentId) || hasBranch)) ||
     (kind === "preview_branch" &&
       (!isCanonicalOpaqueProjectIdentifier(target.runtimeTargetBranchId) || hasEnvironment)) ||
-    !["main_branch", "environment", "preview_branch"].includes(String(kind))
+    (kind !== "main_branch" && kind !== "environment" && kind !== "preview_branch")
   ) {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
   }
