@@ -1624,6 +1624,7 @@
       "jsr:@std/testing@1.0.17",
       "jsr:@std/yaml@1.1.0",
       "npm:@babel/parser@7.29.2",
+      "npm:@babel/types@7.29.8",
       "npm:@kreuzberg/node@4.4.2",
       "npm:@kreuzberg/wasm@4.5.2",
       "npm:@types/mdast@4.0.3",
