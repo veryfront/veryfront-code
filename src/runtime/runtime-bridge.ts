@@ -501,10 +501,21 @@ function sanitizePersistedProviderOptions(
 
 function sanitizeModelCallContextMessages(
   messages: readonly DirectModelMessage[],
+  captureProviderMetadata = false,
 ): ModelCallMessage[] {
   return mapPrivateArray(messages, (message) => {
     if (message.role === "assistant") {
-      return { role: "assistant", content: message.content };
+      return {
+        role: "assistant",
+        content: message.content,
+        ...(captureProviderMetadata && message.providerMetadata !== undefined
+          ? {
+            providerMetadata: cloneStructured(
+              snapshotProviderJsonValue(message.providerMetadata),
+            ) as Record<string, unknown>,
+          }
+          : {}),
+      };
     }
     if (message.role !== "system") {
       return message;
@@ -855,14 +866,6 @@ function hasUnsupportedExactCapturePromptProviderOptions(
   });
 }
 
-function hasUnsupportedExactCaptureAssistantProviderMetadata(
-  directOptions: DirectModelOptions,
-): boolean {
-  return somePrivateArray(directOptions.prompt, (message) => {
-    return message.role === "assistant" && message.providerMetadata !== undefined;
-  });
-}
-
 function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
@@ -880,9 +883,6 @@ function assertExactModelCallCaptureControlsSupported(
   );
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     pushPrivateArray(unsupportedControls, "system.providerOptions");
-  }
-  if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
-    pushPrivateArray(unsupportedControls, "assistant.providerMetadata");
   }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(
@@ -980,7 +980,7 @@ async function emitModelCallContextEvent(
       : {}),
     ...(request ? { request } : {}),
     messages: snapshotModelCallContextMessages(
-      sanitizeModelCallContextMessages(directOptions.prompt),
+      sanitizeModelCallContextMessages(directOptions.prompt, captureEnabled),
     ),
     ...(directOptions.tools ? { tools: snapshotModelCallContextTools(directOptions.tools) } : {}),
   };

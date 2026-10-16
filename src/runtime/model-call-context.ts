@@ -12,6 +12,8 @@ export type ModelCallMessage =
   }
   | {
     role: "assistant";
+    /** Exact-capture replay data, validated as semantic JSON before persistence. */
+    providerMetadata?: Record<string, unknown>;
     content: Array<
       | { type: "text"; text: string }
       | {
@@ -86,8 +88,8 @@ export interface ModelCallRequest {
 
 /**
  * Provider-agnostic input persisted before one model dispatch. System-message
- * provider options contain only validated prompt-cache metadata. Other
- * provider-specific values are excluded because run events are durable.
+ * provider options contain only validated prompt-cache metadata. Exact managed
+ * capture also retains assistant replay metadata; legacy observations omit it.
  */
 export type AgentRunModelCallContextEvent = {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
