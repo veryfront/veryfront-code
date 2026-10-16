@@ -190,6 +190,7 @@ async function writePreviewChatApp(
     `"use client";
 import type { ChatMessage } from "veryfront/agent/react";
 import { Chat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
 
 const initialMessages: ChatMessage[] = [
   {
@@ -210,7 +211,9 @@ const initialMessages: ChatMessage[] = [
 export default function Page() {
   return (
     <main id="preview-chat-page">
-      <Chat initialMessages={initialMessages} />
+      <MarkdownRendererProvider renderer={({ source }) => <p>{source}</p>}>
+        <Chat initialMessages={initialMessages} />
+      </MarkdownRendererProvider>
     </main>
   );
 }

@@ -164,6 +164,25 @@ function createMinimalAgent(id: string): Agent {
 }
 
 describe("agentAsTool", () => {
+  for (const selection of ["all tools", "delegates"] as const) {
+    it(`preserves connected child ${selection} when binding its model runtime`, async () => {
+      const child = createMinimalAgent(`connected-${selection.replaceAll(" ", "-")}`);
+      child.config.model = "veryfront-cloud/openai/gpt-test";
+      if (selection === "all tools") child.config.tools = true;
+      else child.config.delegates = [];
+      const model = scriptedModel([{ text: "connected child", finishReason: "stop" }], {
+        only: "stream",
+        provider: "custom",
+        modelId: "custom/connected-child",
+      });
+      const result = await withLocalChildExecution(
+        (invocation) => invocation.execute({ resolveModelRuntime: () => model }),
+        () => agentAsTool(child, "Connected child").execute({ input: "hello" }),
+      );
+      assertEquals(result.text, "connected child");
+      assertEquals(result.status, "completed");
+    });
+  }
   it("keeps local child streams independent of managed admission", async () => {
     const child = createMinimalAgent("local-child");
     child.config.model = "local/synthetic";

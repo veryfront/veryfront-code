@@ -4,6 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageRouteMatcher } from "./matchers/index.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 describe("PageRouteMatcher", () => {
   it("does not create a periodic cleanup timer", () => {
     // The test runner sets VF_DISABLE_LRU_INTERVAL=1, which short-circuits the
@@ -12,19 +18,19 @@ describe("PageRouteMatcher", () => {
     const globals = globalThis as Record<string, unknown>;
     const previousGlobalFlag = globals.__vfDisableLruInterval;
     const previousHostFlag = getHostEnv("VF_DISABLE_LRU_INTERVAL");
-    const originalSetInterval = globalThis.setInterval;
+    const originalSetInterval = webTimers.setInterval;
     let intervalCalls = 0;
     globals.__vfDisableLruInterval = false;
     deleteEnv("VF_DISABLE_LRU_INTERVAL");
-    globalThis.setInterval = (() => {
+    webTimers.setInterval = (() => {
       intervalCalls++;
-      return 0 as unknown as ReturnType<typeof setInterval>;
-    }) as typeof setInterval;
+      return 0 as unknown as ReturnType<Window["setInterval"]>;
+    }) as Window["setInterval"];
 
     try {
       new PageRouteMatcher();
     } finally {
-      globalThis.setInterval = originalSetInterval;
+      webTimers.setInterval = originalSetInterval;
       if (previousGlobalFlag === undefined) {
         delete globals.__vfDisableLruInterval;
       } else {

@@ -6,7 +6,6 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { Server as NativeHttpServer } from "node:http";
 import { NodeHttpServer } from "./node-server.ts";
 
@@ -28,7 +27,7 @@ function withTimeout<T>(
   milliseconds: number,
   detail: string,
 ): Promise<T> {
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
     new Promise<never>((_, reject) => {
@@ -400,10 +399,7 @@ describe("NodeHttpServer lifecycle", () => {
       });
 
       assertEquals(result.statusCode, 201);
-      assertEquals(
-        result.statusMessage,
-        isDeno ? "Created" : "Created Here",
-      );
+      assertEquals(result.statusMessage, "Created Here");
       assertEquals(result.cookies, [
         "first=1; Path=/",
         "second=2; Path=/",

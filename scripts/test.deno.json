@@ -3,6 +3,7 @@
   "minimumDependencyAge": "P2D",
   "imports": {
     "#babel/parser": "npm:@babel/parser@7.29.2",
+    "@babel/types": "npm:@babel/types@7.29.8",
     "#veryfront/": "../src/",
     "#dnt": "jsr:@deno/dnt@0.43.2",
     "#std/assert": "jsr:@std/assert@1.0.19",

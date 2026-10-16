@@ -118,10 +118,15 @@ function replacePropertyForTest(
 ): () => void {
   const original = TestObjectGetOwnPropertyDescriptor(target, key);
   if (!original) throw new Error(`Expected an own descriptor for ${String(key)}`);
-  TestObjectDefineProperty(target, key, {
-    ...original,
-    ...replacement,
-  });
+  const descriptor = { ...original, ...replacement };
+  if ("value" in replacement || "writable" in replacement) {
+    delete descriptor.get;
+    delete descriptor.set;
+  } else if ("get" in replacement || "set" in replacement) {
+    delete descriptor.value;
+    delete descriptor.writable;
+  }
+  TestObjectDefineProperty(target, key, descriptor);
   return () => {
     TestObjectDefineProperty(target, key, original);
   };

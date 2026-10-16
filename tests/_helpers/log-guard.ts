@@ -11,6 +11,10 @@ const original = {
 
 // Allowlist of substrings that are acceptable in warnings/errors during tests
 const allowedWarnings: string[] = [
+  // Deno 2.9 warns once about its retained legacy successful-response abort.
+  // Keep the runtime behavior while cancellation cleanup is exercised by the suite.
+  "Deno.serve: request.signal aborts on successful responses (legacy behavior).",
+
   // Renderer attempts to discover reserved files; NotFound is expected
   "[prod] test page existence failed",
   // Optional OTEL/metrics are best-effort

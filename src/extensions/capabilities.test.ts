@@ -459,7 +459,7 @@ describe("capabilities", () => {
         assertThrows(
           () => mapToDenoPermissions([{ type: "system:read", apis: [api] }]),
           TypeError,
-          "must be a supported read-only Deno 2.7.7 system API name",
+          "must be a read-only system API name in Veryfront's audited subset",
         );
       }
     });
@@ -472,7 +472,7 @@ describe("capabilities", () => {
             apis: ["setPriority"],
           }]),
         TypeError,
-        "must be a supported read-only Deno 2.7.7 system API name",
+        "must be a read-only system API name in Veryfront's audited subset",
       );
     });
 

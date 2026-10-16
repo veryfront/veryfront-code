@@ -1,4 +1,5 @@
 import { parse } from "#babel/parser";
+import type { Program } from "@babel/types";
 import { parseArgs } from "#std/flags";
 import { walk } from "#std/fs/walk";
 import {
@@ -320,7 +321,7 @@ export function parseMigrationBaselineSource(
   source: string,
   ref: string,
 ): TestLayoutMigrationBaseline {
-  let program;
+  let program: Program;
   try {
     program = parse(source, {
       sourceType: "module",

@@ -537,7 +537,7 @@ export async function startProxyRoutingInvalidationBus(
         if (recipients > 0 && acknowledgedReplicas.size >= recipients) resolveAcknowledged?.();
 
         if (recipients > 0) {
-          let timeout: number | undefined;
+          let timeout: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
             acknowledgementReceived,
             waitForClose(),

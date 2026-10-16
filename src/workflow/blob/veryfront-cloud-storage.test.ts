@@ -39,7 +39,7 @@ interface StoredUpload {
 }
 
 async function beforeDeadline<T>(operation: Promise<T>, timeoutMs = 250): Promise<T> {
-  let timeout: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timeout = setTimeout(
       () => reject(new Error("Operation exceeded the test deadline")),

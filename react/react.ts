@@ -1,3 +1,4 @@
+// @deno-types="./react-upstream-types.d.ts"
 import ReactUpstream from "@veryfront/react-upstream";
 
 export {

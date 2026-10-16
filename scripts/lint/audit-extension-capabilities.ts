@@ -534,7 +534,7 @@ function validateKnownCapabilitySchema(
         !isSupportedDenoSystemReadApi(api)
       ) {
         issues.push(
-          `${field}.apis[${index}] must be a supported read-only Deno 2.7.7 system API name`,
+          `${field}.apis[${index}] must be a read-only system API name in Veryfront's audited subset`,
         );
       }
     }

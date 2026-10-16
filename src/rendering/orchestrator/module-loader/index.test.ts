@@ -277,7 +277,7 @@ describe("module-loader/transformModuleWithDeps", () => {
         ].join("\n"),
       },
       async ({ projectDir, tmpDir, config }) => {
-        let timer = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const transformed = await Promise.race([
           transformModuleWithDeps(
             join(projectDir, "app/page.json"),
@@ -325,7 +325,7 @@ describe("module-loader/transformModuleWithDeps", () => {
         ].join("\n"),
       },
       async ({ projectDir, tmpDir, config }) => {
-        let timer = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const transformed = await Promise.race([
           transformModuleWithDeps(
             join(projectDir, "app/page.ts"),
@@ -1168,7 +1168,7 @@ describe("module-loader/transformModuleWithDeps", () => {
         "lib/c.ts": `export async function later() { return await import("./b.ts"); }`,
       },
       async ({ projectDir, tmpDir, config }) => {
-        let timer = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const rootPath = await Promise.race([
           transformModuleWithDeps(
             join(projectDir, "app/page.ts"),

@@ -38,7 +38,9 @@ describe("cached Veryfront ESM package scope intrinsics", () => {
           value: poisoned,
         });
         Object.defineProperty(globalThis, "TextDecoder", {
-          ...textDecoder,
+          configurable: textDecoder.configurable,
+          enumerable: textDecoder.enumerable,
+          writable: true,
           value: class {
             constructor() {
               throw new Error("ambient TextDecoder must not be used");

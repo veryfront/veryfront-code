@@ -55,7 +55,7 @@ and `app.greeting` span in your collector. Export is batched, so delivery is not
 synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
 disable trace export. Settings are read when the extension starts.
 
-The local integration fixture is tested on Deno 2.7.7. It verifies real OTLP/HTTP
+The local integration fixture runs on the repository's pinned Deno runtime. It verifies real OTLP/HTTP
 delivery, authentication headers, service identity, request/custom span correlation,
 disabled export, and unchanged app responses when the collector rejects exports.
 
@@ -125,7 +125,7 @@ Set `OTEL_TRACES_ENABLED=false` or disable the extension declaration to stop pro
 
 Export is best effort: requests arriving while an exporter starts or rotates run without project traces. Requests do not wait for exporter initialization or collector delivery, retries are bounded, and queue overflow or process termination can lose spans. At most 32 exporter generations are retained per process, with a 1 MiB queued serialized-span budget per generation. Collector requests must pass the runtime's existing outbound policy; redirects are rejected. Private collectors require explicit operator authorization.
 
-The hosted integration fixtures exercise the runtime HTTP handler, project authorization/settings fetch, and real collectors for shared and dedicated configurations on Deno 2.7.7. They are repository evidence, not proof that a particular managed deployment already runs this version. Verify your deployed runtime version before relying on this behavior.
+The hosted integration fixtures exercise the runtime HTTP handler, project authorization/settings fetch, and real collectors for shared and dedicated configurations on the repository's pinned Deno runtime. They are repository evidence, not proof that a particular managed deployment already runs this version. Verify your deployed runtime version before relying on this behavior.
 
 ## Factory configuration
 

@@ -121,6 +121,59 @@ describe("native brand checks", () => {
     }
   });
 
+  it("propagates a failing host resolver accessor without falling back", async () => {
+    const hostProcess = (globalThis as typeof globalThis & { process: object }).process;
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    const expected = new Error("synthetic host resolver failure");
+    let reads = 0;
+    let failure: unknown;
+    Object.defineProperty(hostProcess, "getBuiltinModule", {
+      configurable: true,
+      get() {
+        reads++;
+        throw expected;
+      },
+    });
+    try {
+      await import("./native-brand-checks.ts?throwing-host-resolver-accessor");
+    } catch (error) {
+      failure = error;
+    } finally {
+      if (previous) Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+      else Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+    }
+    assertEquals(failure, expected);
+    assertEquals(reads, 1);
+  });
+
+  it("rejects accessor predicates in an untrusted module without invoking them", async () => {
+    const hostProcess = (globalThis as typeof globalThis & { process: object }).process;
+    const previous = Object.getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+    const predicates = { ...await import("node:util/types") };
+    let reads = 0;
+    let failure: unknown;
+    Object.defineProperty(predicates, "isProxy", {
+      get() {
+        reads++;
+        throw new Error("untrusted predicate getter");
+      },
+    });
+    Object.defineProperty(hostProcess, "getBuiltinModule", {
+      configurable: true,
+      value: () => predicates,
+    });
+    try {
+      await import("./native-brand-checks.ts?untrusted-predicate-accessor");
+    } catch (error) {
+      failure = error;
+    } finally {
+      if (previous) Object.defineProperty(hostProcess, "getBuiltinModule", previous);
+      else Reflect.deleteProperty(hostProcess, "getBuiltinModule");
+    }
+    assertEquals(failure instanceof Error, true);
+    assertEquals(reads, 0);
+  });
+
   it("identifies native-slot objects without trusting their prototype", async () => {
     const isolated = await import("./native-brand-checks.ts?non-plain-builtins");
     const values: object[] = [

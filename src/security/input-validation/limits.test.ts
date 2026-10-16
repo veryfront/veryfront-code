@@ -385,7 +385,7 @@ describe("security/input-validation/limits", () => {
         }),
       );
 
-      let timeoutId: number | undefined;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const outcome = await Promise.race([
         readBodyBytesWithLimit(req, 4).then(
           () => "resolved",

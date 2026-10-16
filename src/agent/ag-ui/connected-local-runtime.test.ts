@@ -13,8 +13,8 @@ import {
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
 import { createEphemeralAgent } from "../factory.ts";
+import { getAvailableTools } from "../runtime/tool-helpers.ts";
 import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
-import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { tool } from "#veryfront/tool/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -692,14 +692,27 @@ describe("connected local execution", () => {
 
       const prepared = await run.prepareAgent(source);
       const preparedTools = prepared.config.tools;
-      if (!preparedTools || preparedTools === true) {
-        throw new Error("Expected an explicit connected tool catalog");
-      }
-      assertEquals(preparedTools[registered[0]!], true);
-      assertEquals(preparedTools[registered[1]!], true);
-      assertEquals(preparedTools[registered[2]!], undefined);
-      assertEquals(isAgentKnowledgeTool(preparedTools.veryfront__search_knowledge), true);
+      assertEquals(preparedTools, true);
       assertEquals(resolveRuntimeToolLoading(prepared.config).mode, "deferred");
+      const definitions = await getAvailableTools(preparedTools, {
+        callerAgentId: "coder",
+        includeIntegrationTools: false,
+        remoteToolSources: [{
+          id: "connected-remote",
+          listTools: () =>
+            Promise.resolve([{
+              name: "connected_remote_tool",
+              description: "Authorized connected remote tool",
+              parameters: { type: "object", properties: {} },
+            }]),
+          executeTool: () => Promise.resolve({ ok: true }),
+        }],
+      });
+      const names = definitions.map((definition) => definition.name);
+      assertEquals(names.includes(registered[0]!), true);
+      assertEquals(names.includes(registered[1]!), true);
+      assertEquals(names.includes(registered[2]!), false);
+      assertEquals(names.includes("connected_remote_tool"), true);
       assertEquals(prepared.config.delegates, undefined);
     } finally {
       await runtime.dispose().catch(() => {});

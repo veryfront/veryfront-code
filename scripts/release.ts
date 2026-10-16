@@ -8,6 +8,7 @@
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { rewriteWorkspacePackageVersion } from "./lib/workspace-package-version.ts";
 import {
   bumpDenoJsonVersion,
   bumpVersionAssignments,
@@ -176,7 +177,7 @@ async function updateTemplates(newVersion: string) {
 		const fullPath = getPath().resolve(filePath);
 		if (await fs.exists(fullPath)) {
 			try {
-				let content = await fs.readTextFile(fullPath);
+				const content = await fs.readTextFile(fullPath);
 				const regex1 = /veryfront:\s*"[\^~]?[\d\.]+",/g;
 				const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d\.]+"/g;
 				const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d\.]+\/"/g;
@@ -246,7 +247,18 @@ async function runRelease() {
 		// which buries the one meaningful line under unrelated churn that then
 		// has to be reverted by hand.
 		const source = await fs.readTextFile(denoJsonPath);
+		if (typeof denoJson.name !== "string" || !denoJson.name) {
+			throw new Error("deno.json must define a non-empty package name");
+		}
+		const lockPath = getPath().resolve("scripts/deno.lock");
+		const lockSource = await fs.readTextFile(lockPath);
+		const nextLockSource = rewriteWorkspacePackageVersion(
+			lockSource,
+			`jsr:${denoJson.name}@${currentVersion}`,
+			`jsr:${denoJson.name}@${newVersion}`,
+		);
 		await fs.writeTextFile(denoJsonPath, bumpDenoJsonVersion(source, newVersion));
+		if (nextLockSource !== lockSource) await fs.writeTextFile(lockPath, nextLockSource);
 		denoJson.version = newVersion;
 	}
 

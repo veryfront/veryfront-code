@@ -258,19 +258,24 @@ Deno.test("agent service version route ignores inherited header iterators", asyn
     assertEquals(vulnerableResponse.headers.get("Cache-Control"), "max-age=999");
     assertEquals(vulnerableResponse.headers.get("Content-Type"), "text/plain;charset=UTF-8");
 
-    const vulnerableHeaders = new Headers();
-    vulnerableHeaders.set("Cache-Control", "no-store");
-    vulnerableHeaders.set("Content-Type", "application/json");
-    const vulnerableHeadersResponse = new Response(
+    // The pinned host reads native Headers slots directly. Its plain-record
+    // constructor path above still demonstrates the inherited-iterator hazard.
+    iteratorCalls = 0;
+    const nativeHeaders = new Headers();
+    nativeHeaders.set("Cache-Control", "no-store");
+    nativeHeaders.set("Content-Type", "application/json");
+    const nativeHeadersResponse = new Response(
       JSON.stringify({ artifact }),
       {
         status: 200,
         statusText: "",
-        headers: vulnerableHeaders,
+        headers: nativeHeaders,
       },
     );
-    assertEquals(vulnerableHeadersResponse.headers.get("Cache-Control"), "max-age=999");
-    assertEquals(vulnerableHeadersResponse.headers.get("Content-Type"), "text/plain;charset=UTF-8");
+    assertEquals(nativeHeadersResponse.headers.get("Cache-Control"), "no-store");
+    assertEquals(nativeHeadersResponse.headers.get("Content-Type"), "application/json");
+
+    assertEquals(iteratorCalls, 0);
 
     iteratorCalls = 0;
     const routeSet = createHostedAgentServiceRouteSet<{ ok: true }>({

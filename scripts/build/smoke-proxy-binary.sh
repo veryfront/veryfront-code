@@ -5,7 +5,9 @@ binary="${1:?usage: smoke-proxy-binary.sh <binary> [base_port]}"
 base_port="${2:-18080}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX")"
 proxy_pid=""
-max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-188743680}"
+# Pinned Deno 2.9.7 produced a 191,203,872-byte Linux proxy in CI.
+# Keep a 192 MiB ceiling around that runtime upgrade (previously 180 MiB).
+max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-201326592}"
 
 cleanup() {
   if [ -n "$proxy_pid" ]; then

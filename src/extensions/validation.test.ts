@@ -244,7 +244,7 @@ describe("validateExtension", () => {
         [{ type: "system:read", api: ["cpus"] }, "unexpected field api"],
         [
           { type: "system:read", apis: ["cpus=all"] },
-          "supported read-only Deno 2.7.7 system API name",
+          "read-only system API name in Veryfront's audited subset",
         ],
       ] as const
     ) {

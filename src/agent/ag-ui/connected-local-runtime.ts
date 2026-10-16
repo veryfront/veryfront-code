@@ -653,10 +653,13 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               createEphemeralAgentWithRuntimeOptions({
                 ...getAgentExecutionConfig(agent.config),
                 id: agent.id,
-                tools: buildExplicitAgUiSourceTools(agent),
+                tools: agent.config.tools === true ? true : buildExplicitAgUiSourceTools(agent),
                 toolLoading: resolveRuntimeToolLoading(agent.config).mode,
-                delegates: undefined,
-              }, { resolveModelRuntime: resolver, preserveToolCatalog: true })
+                ...(agent.config.tools === true ? {} : { delegates: undefined }),
+              }, {
+                resolveModelRuntime: resolver,
+                preserveToolCatalog: agent.config.tools !== true,
+              })
             );
           },
           wrapStream(body) {

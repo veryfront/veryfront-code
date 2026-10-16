@@ -33,7 +33,7 @@ export interface TuiState {
 let state: TuiState;
 let config: TuiConfig;
 let spinnerFrame = 0;
-let spinnerInterval: number | null = null;
+let spinnerInterval: ReturnType<typeof setInterval> | null = null;
 let termH = DEFAULT_TERMINAL_HEIGHT;
 let termW = DEFAULT_TERMINAL_WIDTH;
 

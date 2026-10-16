@@ -192,7 +192,7 @@ describe("auditExtensionCapabilities", () => {
           issue.message.includes("must not contain commas") ||
           issue.message.includes('must not contain "="') ||
           issue.message.includes(
-            "must be a supported read-only Deno 2.7.7 system API name",
+            "must be a read-only system API name in Veryfront's audited subset",
           ) ||
           issue.message.includes("must be an ASCII") ||
           issue.message.includes('must use "*" only')) &&
@@ -285,8 +285,8 @@ describe("auditExtensionCapabilities", () => {
       ]);
 
       assertEquals(issues.map((issue) => issue.message), [
-        "extensions/ext-custom/deno.json veryfront.capabilities[0].apis[0] must be a supported read-only Deno 2.7.7 system API name",
-        "extensions/ext-custom/deno.json factory capabilities[0].apis[0] must be a supported read-only Deno 2.7.7 system API name",
+        "extensions/ext-custom/deno.json veryfront.capabilities[0].apis[0] must be a read-only system API name in Veryfront's audited subset",
+        "extensions/ext-custom/deno.json factory capabilities[0].apis[0] must be a read-only system API name in Veryfront's audited subset",
       ]);
     }
   });

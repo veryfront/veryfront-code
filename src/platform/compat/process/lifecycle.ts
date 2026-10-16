@@ -4,7 +4,7 @@ import {
   invokeGlobalErrorHandler,
   normalizeGlobalError,
 } from "./global-error.ts";
-import { runtimeProcess } from "./runtime-process.ts";
+import { getNodeCompatibilityProcess, runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
@@ -83,7 +83,7 @@ export function getV8HeapSizeLimit(): number | undefined {
   if (IS_BUN) return undefined;
 
   try {
-    const proc = runtimeProcess as
+    const proc = getNodeCompatibilityProcess() as
       | { getBuiltinModule?: (id: string) => unknown }
       | null;
     const v8 = proc?.getBuiltinModule?.("node:v8") as
@@ -311,7 +311,7 @@ export function onGlobalError(
 /**
  * Unreference a timer to prevent it from keeping the process alive
  */
-export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
+export function unrefTimer(timerId: number | ReturnType<typeof setInterval>): void {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno && typeof deno.unrefTimer === "function" && typeof timerId === "number") {
     deno.unrefTimer(timerId as number);
