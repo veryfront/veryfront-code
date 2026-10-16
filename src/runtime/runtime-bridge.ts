@@ -76,6 +76,7 @@ import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-recei
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallAssistantProviderMetadata,
   snapshotModelCallContextMessages,
   snapshotModelCallContextTools,
   snapshotModelCallProviderOptions,
@@ -499,14 +500,6 @@ function sanitizePersistedProviderOptions(
   return retained ? sanitized : undefined;
 }
 
-function snapshotAssistantProviderMetadata(value: unknown): Record<string, unknown> {
-  const snapshot = snapshotProviderJsonValue(value);
-  if (snapshot === null || typeof snapshot !== "object" || ArrayIsArray(snapshot)) {
-    throw new TypeError("Assistant provider metadata must be a JSON object");
-  }
-  return cloneStructured(snapshot) as Record<string, unknown>;
-}
-
 function sanitizeModelCallContextMessages(
   messages: readonly DirectModelMessage[],
   captureProviderMetadata = false,
@@ -518,7 +511,7 @@ function sanitizeModelCallContextMessages(
         content: message.content,
         ...(captureProviderMetadata && message.providerMetadata !== undefined
           ? {
-            providerMetadata: snapshotAssistantProviderMetadata(message.providerMetadata),
+            providerMetadata: snapshotModelCallAssistantProviderMetadata(message.providerMetadata),
           }
           : {}),
       };

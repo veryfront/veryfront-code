@@ -146,6 +146,129 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("preserves assistant replay metadata in exact hosted capture and omits it before activation", async () => {
+    const providerMetadata = {
+      anthropic: {
+        rawAssistantMessages: [[
+          {
+            type: "tool_use",
+            id: "child-call",
+            name: "invoke_agent",
+            input: { enabled: false, count: 0, value: null },
+          },
+        ]],
+      },
+    };
+    const continuation: ModelRuntimeCallOptions["prompt"] = [
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          input: { enabled: false, count: 0, value: null },
+        }],
+        providerMetadata,
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          output: { type: "json", value: { ok: true, enabled: false, count: 0, value: null } },
+        }],
+      },
+    ];
+    for (const exact of [true, false]) {
+      for (const mode of ["generate", "stream"] as const) {
+        let captured: AgentRunModelCallContextEvent | undefined;
+        let dispatched: ModelRuntimeCallOptions["prompt"] | undefined;
+        const order: string[] = [];
+        const channels = pair(createHostedBroker({
+          grant: grant(),
+          allowedModelIds,
+          scope: scope(),
+          projectId: "11111111-1111-4111-8111-111111111111",
+          ...(exact ? { modelCallCaptureReceipts: true as const } : {}),
+          resolveModelRuntime: () =>
+            model((options) => {
+              order.push("dispatch");
+              dispatched = options.prompt;
+            }),
+          runEventSink: (event) => {
+            assertModelCallContextEvent(event);
+            captured = event;
+            order.push("persist");
+            return exact ? receiptFor(event.modelCallId) : undefined;
+          },
+        }));
+        try {
+          const runtime = await proxy(channels);
+          if (mode === "generate") await runtime.doGenerate({ prompt: continuation });
+          else {
+            const reader = (await runtime.doStream({ prompt: continuation })).stream.getReader();
+            while (!(await reader.read()).done) { /* Drain bounded stream. */ }
+          }
+          assertEquals(order, ["persist", "dispatch"]);
+          assertModelCallContextEvent(captured);
+          assertEquals(dispatched, continuation);
+          assertEquals(captured.messages[0], {
+            role: "assistant",
+            content: continuation[0]!.content,
+            ...(exact ? { providerMetadata } : {}),
+          });
+          assertEquals(captured.messages[1], continuation[1]);
+          assertEquals(isPrivateConversationRunEvent(captured), true);
+        } finally {
+          await channels.close();
+        }
+      }
+    }
+  });
+
+  it("rejects invalid assistant metadata before hosted capture or dispatch", async () => {
+    for (
+      const metadata of [null, [], "invalid", 0, { value: NaN }, { value: 1n }, {
+        value: () => "unsafe",
+      }]
+    ) {
+      let captures = 0;
+      let dispatches = 0;
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () =>
+          model(() => {
+            dispatches += 1;
+          }),
+        runEventSink: () => {
+          captures += 1;
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () =>
+          await runtime.doGenerate({
+            prompt: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "Prior" }],
+                providerMetadata: metadata as unknown as Record<string, unknown>,
+              },
+              ...prompt,
+            ],
+          })
+        );
+        assertEquals(captures, 0);
+        assertEquals(dispatches, 0);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
   it("records each successfully dispatched prompt in the host skill observation", async () => {
     const observed: unknown[] = [];
     const channels = pair(createHostedExecutorModelBroker({
