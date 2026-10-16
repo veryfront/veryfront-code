@@ -1407,6 +1407,48 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("retains runtime process attribution when workflow dynamic steps fail after admission", async () => {
+    let entries = 0;
+    const definition = workflow({
+      id: "publish",
+      steps: () => {
+        entries++;
+        throw new Error("Workflow failed after actual entry");
+      },
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: (config) => createWorkflowClient(config),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_failed/execute",
+      {
+        runId: "run_workflow_failed",
+        projectId: "proj-1",
+        kind: "workflow",
+        target: "workflow:publish",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const body = await result.response.json();
+    assertEquals(entries, 1);
+    assertEquals(body.success, false);
+    assertStringIncludes(body.error, "Workflow failed after actual entry");
+    const identity = getServiceRuntimeIdentity();
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), identity.mode);
+    assertEquals(
+      result.response.headers.get("x-veryfront-runtime-name"),
+      encodeURIComponent(identity.name),
+    );
+  });
+
   for (const mode of ["invalid", "throws"] as const) {
     it(`reports actual task entry for ${mode} task input or execution`, async () => {
       let entered = 0;
