@@ -9072,6 +9072,14 @@ Deno.test("fresh run-bound lifecycle keys retain their epoch for review requests
 });
 
 describe("versioned envelope uniqueness", () => {
+  it("rejects summary proof with unresolved security findings", async () => {
+    const original = codexReviewSummary();
+    const state = { code_review: { commit_sha: HEAD, has_any_findings: false, has_unresolved_findings: false, status: "completed" }, security_review: { commit_sha: HEAD, has_any_findings: true, has_unresolved_findings: true, status: "completed" } };
+    const lines = original.body.split("\n");
+    lines.splice(1, 0, `<!-- codex-review-state:v1 ${JSON.stringify(state)} -->`);
+    assertEquals(await findAutomatedReview({ reviews: [], comments: [{ ...original, body: lines.join("\n") }], reactions: [codexCompletionReaction()] }, HEAD, () => Promise.resolve(HEAD)), undefined);
+  });
+
   it("rejects receipt markers after a clean verdict", async () => {
     const original = codexComment();
     const prefix = "<!-- codex-review-receipt:v1 -->\n\n";

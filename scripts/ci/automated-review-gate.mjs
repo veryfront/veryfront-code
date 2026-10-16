@@ -10,10 +10,13 @@ const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEW_RECEIPT_PREFIX = "<!-- codex-review-receipt:v1 -->\n\n";
 
 // Only one known receipt envelope may surround a clean connector verdict.
-function isCodexCleanVerdict(body) {
+function isCodexCleanVerdict(body, allowLegacyWhitespace = false) {
   const normalized = body.replaceAll("\r\n", "\n");
   const markers = normalized.match(/<!--\s*codex-review-receipt\b/g) ?? [];
-  if (markers.length === 0) return normalized.startsWith(CODEX_NO_FINDINGS);
+  if (markers.length === 0) {
+    const legacy = allowLegacyWhitespace ? normalized.trim() : normalized;
+    return legacy.startsWith(CODEX_NO_FINDINGS);
+  }
   if (
     markers.length !== 1 || !normalized.startsWith(CODEX_REVIEW_RECEIPT_PREFIX)
   ) {
@@ -324,6 +327,7 @@ function parseCompletedCodexStateMetadata(line) {
   if (
     typeof code.commit_sha !== "string" || code.status !== "completed" ||
     code.has_any_findings !== false || code.has_unresolved_findings !== false ||
+    security.has_unresolved_findings === true ||
     (security.commit_sha !== null &&
       security.commit_sha.toLowerCase() !== code.commit_sha.toLowerCase())
   ) return undefined;
