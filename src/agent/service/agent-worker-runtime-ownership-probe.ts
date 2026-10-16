@@ -61,6 +61,8 @@ const CANONICAL_KNOWLEDGE_MODEL = {
 
 export interface AgentWorkerRuntimeOwnershipProbeCredentials {
   authToken: string;
+  inferenceToken?: string;
+  assertInferenceCredentialActive?: () => void;
   runEventToken: string;
   runTerminalToken: string;
 }
@@ -770,13 +772,16 @@ function sourceContent(
 }
 
 function defaultCanonicalEmbedder(input: AgentWorkerRuntimeOwnershipProbeClaimInput): Embedding {
+  const inferenceToken = input.credentials.inferenceToken;
+  if (!inferenceToken) throw new Error("Dedicated worker inference authority is required");
   const modelId = `${CANONICAL_KNOWLEDGE_MODEL.provider}/${CANONICAL_KNOWLEDGE_MODEL.name}`;
   return createEmbeddingFacade(
     {},
     `veryfront-cloud/${modelId}`,
-    createVeryfrontCloudInferenceEmbeddingModel(modelId, input.credentials.authToken, {
+    createVeryfrontCloudInferenceEmbeddingModel(modelId, inferenceToken, {
       apiBaseUrl: input.apiUrl,
       assertInferenceCredentialActive: () => {
+        input.credentials.assertInferenceCredentialActive?.();
         if (pastProbeDeadline(input)) {
           throw new DOMException("Probe operation deadline exceeded", "TimeoutError");
         }

@@ -421,9 +421,18 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     return response.worker;
   }
 
-  #probeCredentials(credentials: RunCredentials): AgentWorkerRuntimeOwnershipProbeCredentials {
+  #probeCredentials(
+    runId: string,
+    credentials: RunCredentials,
+  ): AgentWorkerRuntimeOwnershipProbeCredentials {
     return {
       authToken: credentials.auth_token,
+      inferenceToken: credentials.inference_token,
+      assertInferenceCredentialActive: () => {
+        if (apply(mapGet, this.#runCredentials, [runId]) !== credentials) {
+          throw new Error("Current worker inference authority is required");
+        }
+      },
       runEventToken: credentials.run_event_token,
       runTerminalToken: credentials.run_terminal_token,
     };
@@ -553,7 +562,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
               fetch: this.#fetch,
               workerId: input.workerId,
               run: probeRun,
-              credentials: this.#probeCredentials(responseCredentials),
+              credentials: this.#probeCredentials(probeRun.runId, responseCredentials),
             }),
         );
       } catch (error) {
@@ -611,9 +620,9 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
               fetch: this.#fetch,
               workerId: input.workerId,
               run: probeRun,
-              credentials: this.#probeCredentials(responseCredentials),
+              credentials: this.#probeCredentials(probeRun.runId, responseCredentials),
               previousCredentials: previousCredentials
-                ? this.#probeCredentials(previousCredentials)
+                ? this.#probeCredentials(input.runId, previousCredentials)
                 : undefined,
             }),
         );
@@ -648,7 +657,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
             fetch: this.#fetch,
             workerId: previousClaim.workerId,
             run: this.#probeRun(previousClaim.run, previousCredentials),
-            credentials: this.#probeCredentials(previousCredentials),
+            credentials: this.#probeCredentials(input.runId, previousCredentials),
           })
         );
       }
@@ -725,7 +734,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
         fetch: this.#fetch,
         workerId: claim.workerId,
         run: this.#probeRun(claim.run, credentials),
-        credentials: this.#probeCredentials(credentials),
+        credentials: this.#probeCredentials(input.runId, credentials),
       };
       if (input.status === "cancelled") {
         await this.#observeOwnershipProbe(() => this.#ownershipProbe?.afterCancelled(probeInput));
