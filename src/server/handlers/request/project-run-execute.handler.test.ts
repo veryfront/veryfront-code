@@ -1,3 +1,4 @@
+import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import {
   createProjectRunRuntimeOwnershipProbe,
   type RuntimeOwnershipProbeReceipt,
@@ -1357,6 +1358,30 @@ describe("workflow capability transport boundary", () => {
 });
 
 describe("server/handlers/request/project-run-execute.handler", () => {
+  for (const kind of ["task", "workflow"] as const) {
+    it(`returns runtime process attribution for an accepted ${kind}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process/execute",
+        {
+          runId: "run_process",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const identity = getServiceRuntimeIdentity();
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
+      const body = await result.response.json();
+      assertEquals(body.success, true);
+      assertEquals(body.result, kind === "task" ? { synced: 12 } : { deployed: true });
+    });
+  }
+
   afterAll(async () => {
     await stopEsbuild();
   });
@@ -1384,6 +1409,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(result.response);
       assertEquals(result.response.status, 400);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
       assertEquals(await result.response.json(), { error: refusal.error });
     });
   }

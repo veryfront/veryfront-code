@@ -1,3 +1,9 @@
+import {
+  getServiceRuntimeIdentity,
+  RUNTIME_ID_HEADER,
+  RUNTIME_MODE_HEADER,
+  RUNTIME_NAME_HEADER,
+} from "#veryfront/agent/service/runtime-identity.ts";
 import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.ts";
 import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
 import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
@@ -192,6 +198,7 @@ import {
   type RuntimeOwnershipProbeAuthoritySurface,
 } from "./project-run-runtime-ownership-probe.ts";
 
+const RuntimeEncodeURIComponent = encodeURIComponent;
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
 const TaskError = Error;
@@ -5752,6 +5759,13 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           await callback?.();
         };
         const releaseStop = () => settledStop("abandoned");
+
+        const runtimeIdentity = getServiceRuntimeIdentity();
+        builder.withHeaders({
+          [RUNTIME_ID_HEADER]: runtimeIdentity.id,
+          [RUNTIME_MODE_HEADER]: runtimeIdentity.mode,
+          [RUNTIME_NAME_HEADER]: RuntimeEncodeURIComponent(runtimeIdentity.name),
+        });
 
         return await withSpan(
           "project_run.execute",
