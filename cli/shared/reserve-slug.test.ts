@@ -74,3 +74,22 @@ describe("reserveProjectSlug", () => {
     );
   });
 });
+
+Deno.test("project reservation keeps credentials on the supplied host transport", async () => {
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
+    const transport = ((_input: unknown, init?: RequestInit) => {
+      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
+      return Promise.resolve(Response.json({ id: "project-id" }));
+    }) as typeof fetch;
+    const result = await reserveProjectSlug(
+      "demo",
+      "private-token",
+      undefined,
+      "https://api.veryfront.com",
+      { transport },
+    );
+    assertEquals(result.projectId, "project-id");
+  });
+});

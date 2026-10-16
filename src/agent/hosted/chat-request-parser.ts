@@ -1,3 +1,4 @@
+import { registerHostedPlatformDependencyRequest } from "./platform-dependency-credential.ts";
 import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
@@ -208,6 +209,7 @@ export type ParseHostedChatRequestOptions = {
     token: string;
     projectId: string;
     runId: string;
+    agentId?: string;
   }) => Promise<RunEventAppendTokenVerification>;
 };
 
@@ -331,7 +333,12 @@ async function withVerifiedRunEventAppendToken(
   const runId = parsedRequest.durableRootRun?.runId;
   const verification = projectId && runId && verifyRunEventAppendToken
     ? toRunEventAppendTokenResult(
-      await verifyRunEventAppendToken({ token, projectId, runId }),
+      await verifyRunEventAppendToken({
+        token,
+        projectId,
+        runId,
+        ...(parsedRequest.agentId ? { agentId: parsedRequest.agentId } : {}),
+      }),
     )
     : { verified: false };
   if (!projectId || !runId || !verification.verified) {
@@ -441,6 +448,15 @@ async function withVerifiedRunEventAppendToken(
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
+  if (verifyRunEventAppendToken) {
+    registerHostedPlatformDependencyRequest(
+      verifiedRequest,
+      verification,
+      { projectId, runId, ...(parsedRequest.agentId ? { agentId: parsedRequest.agentId } : {}) },
+      verifyRunEventAppendToken,
+      parsedRequest.authToken,
+    );
+  }
   registerHostedRunEventWriterToken(
     verifiedRequest,
     {
@@ -453,6 +469,7 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+    token,
   );
   registerHostedAgentPauseCredential(
     verifiedRequest,

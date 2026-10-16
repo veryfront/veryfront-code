@@ -34,6 +34,27 @@ uses the same request path and response hook, then yields bounded frames rather
 than buffering the entire event stream. The host's transport owns tracing,
 metrics, retry decisions, redirect protection and outbound origin authorization.
 
+`sdk.readRunArtifact({ path: { run_id, artifact_id } })` downloads a file a run
+produced, using an `artifact_id` from `run.artifacts`, and resolves with a `Blob`. Its
+size is bounded by `maxResponseBytes` like a JSON body.
+
+List operations return `{ data, page_info }`. `page_info.next` is an opaque
+cursor: pass it back unchanged as `query.cursor`, with the same filters and
+ordering, and do not parse or build it. `sdk.paginate(operationId, input)`
+follows it for you.
+
+An error response rejects with a `VeryfrontError`; `runsProblemOf(error)` returns
+its Problem body. Each normalized `RUN_*` code maps to one shared error kind: `RUN_INVALID_INPUT` is `invalid_input`, `RUN_UNAUTHENTICATED` is
+`unauthenticated`, `RUN_FORBIDDEN` is `forbidden`, `RUN_NOT_FOUND` and `RUN_GONE`
+are `not_found`, `RUN_CONFLICT` is `conflict`, `RUN_SNAPSHOT_LIMIT_EXCEEDED` is
+`limit_exceeded`, `RUN_EVENT_IDENTITY_PENDING` is `not_ready`, and
+`RUN_INTERNAL_ERROR` and `RUN_ERROR` are `internal`. Other server codes in a valid
+Problem, such as `IDEMPOTENCY_KEY_REUSED`, pass through unchanged, so handle
+unknown codes by the Problem `status`. An error response without a
+Problem body (empty, HTML or malformed JSON) yields a Problem built from the HTTP
+status with the code `UNEXPECTED_RESPONSE`. The
+[Runs guide](../../../docs/guides/runs.md#error-codes) describes each code.
+
 The target routes remain gated by the consumer integration work in issue #2239;
 fixture replay does not establish deployed five-surface parity.
 

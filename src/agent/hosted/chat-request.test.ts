@@ -2377,6 +2377,7 @@ describe("agent/hosted-chat-request", () => {
       token: string;
       projectId: string;
       runId: string;
+      agentId?: string;
     }> = [];
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
@@ -2425,6 +2426,7 @@ describe("agent/hosted-chat-request", () => {
       token: "run-event-service-token",
       projectId,
       runId: "run_root_1",
+      agentId: "builder",
     }]);
   });
 

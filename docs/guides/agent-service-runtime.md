@@ -43,6 +43,20 @@ persisted source authorization and credential-renewal contract; ordinary same-pr
 workflows and explicit calls to the consuming project's existing APIs keep their
 existing behavior.
 
+## Runtime identity
+
+Accepted authenticated service invocations report the receiving process through
+`x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and
+`x-veryfront-runtime-mode: service` response headers. The ID remains the same for
+the process lifetime. Each replica and restarted process has a different ID, even
+when several replicas share one service URL.
+
+Set `VERYFRONT_RUNTIME_NAME` in the trusted service environment to override the
+hostname used as the display name. The trimmed name must contain at most 128
+UTF-16 code units, valid Unicode, and no control characters. The name header uses
+`encodeURIComponent` encoding. These headers identify the accepting process;
+they do not grant access. Existing runtime-owner URL headers remain unchanged.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

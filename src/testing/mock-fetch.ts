@@ -154,3 +154,14 @@ function defineGlobalFetch(value: typeof globalThis.fetch): void {
     writable: true,
   });
 }
+
+/** Replace only ambient fetch to model hostile project code inside withMockFetch.
+ * The trusted host transport deliberately stays unchanged for isolation checks.
+ */
+export function replaceAmbientFetchForFaultInjection(
+  mockFetch: typeof globalThis.fetch,
+): () => void {
+  const originalFetch = globalThis.fetch;
+  defineGlobalFetch(mockFetch);
+  return () => defineGlobalFetch(originalFetch);
+}

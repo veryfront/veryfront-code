@@ -19,6 +19,7 @@ const getDevArgsSchema = defineSchema((v) =>
   v.object({
     port: v.number().int().min(0).max(65535).default(DEFAULT_DEV_SERVER_PORT),
     project: v.string().optional(),
+    env: v.string().min(1).optional(),
     hmr: v.boolean().default(true),
     noHmr: v.boolean().default(false),
     open: v.boolean().default(false),
@@ -31,6 +32,7 @@ const DevArgsSchema = lazySchema(getDevArgsSchema);
 const parseDevArgsBase = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },
   project: { keys: ["project"], type: "string" },
+  env: { keys: ["env"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
   noHmr: { keys: ["no-hmr"], type: "boolean" },
   open: { keys: ["open"], type: "boolean" },
@@ -124,6 +126,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
     port: opts.port,
     portExplicit,
     projectDir,
+    environment: opts.env,
     hmr: opts.hmr && !opts.noHmr,
     open: opts.open,
     // Clear stale ESM caches to prevent module resolution issues from previous

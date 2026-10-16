@@ -141,13 +141,19 @@ describe("buildMergedAgUiTools owner scope", () => {
     try {
       registerTool("global-echo", makeRegistryTool("global-echo"));
       registerTool("load_skill", makeRegistryTool("load_skill"));
+      registerTool("search_knowledge", makeRegistryTool("search_knowledge"));
       registerTool("researcher--fetch", makeRegistryTool("researcher--fetch", "researcher"));
 
       const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
-      const writer = { id: "writer", config: { tools: true } } as unknown as Agent;
+      const writer = { id: "writer", config: { tools: true, knowledge: true } } as unknown as Agent;
       const writerTools = buildMergedAgUiTools(writer, "run_w", [], sessionManager);
       assertEquals(Object.keys(writerTools ?? {}).includes("global-echo"), true);
       assertEquals(Object.keys(writerTools ?? {}).includes("load_skill"), true);
+      assertEquals(
+        writerTools && writerTools !== true ? writerTools.search_knowledge : undefined,
+        true,
+      );
+      assertEquals(Object.keys(writerTools ?? {}).includes("veryfront__search_knowledge"), true);
       assertEquals(Object.keys(writerTools ?? {}).includes("researcher--fetch"), false);
 
       const researcher = { id: "researcher", config: { tools: true } } as unknown as Agent;

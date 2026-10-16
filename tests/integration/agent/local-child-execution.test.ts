@@ -1,6 +1,6 @@
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
   executeLocalChild,
   observeAdmittedAgentToolCalls,
@@ -309,7 +309,10 @@ it("persists consumed stream events while project array traversal hooks stay rep
   let delivered: Uint8Array | undefined;
   try {
     Array.prototype.flatMap = () => [];
-    Array.prototype[Symbol.iterator] = function* () {};
+    Array.prototype[Symbol.iterator] = function* () {
+      yield* new Set<never>();
+      return undefined;
+    };
     delivered = (await reader.read()).value;
     await reader.read();
   } finally {
@@ -327,7 +330,10 @@ it("retains generated tool admission and outcomes while the array iterator is re
   await withLocalChildExecution(async (input) => input.execute(), async () => {
     const iterator = Array.prototype[Symbol.iterator];
     try {
-      Array.prototype[Symbol.iterator] = function* () {};
+      Array.prototype[Symbol.iterator] = function* () {
+        yield* new Set<never>();
+        return undefined;
+      };
       await observeGeneratedAgentTurn("message", {
         text: "",
         toolCalls: [{ toolCallId: "generated", toolName: "lookup", input: {} }],
@@ -392,7 +398,7 @@ it("keeps host observation authority out of replaced async storage receiver meth
     };
     try {
       await withLocalChildRuntime(
-        new AgentRuntime("scope-proof", { model: "test/model" }),
+        new AgentRuntime("scope-proof", { model: "test/model", system: "Scope proof" }),
         async () => {},
       );
     } finally {
@@ -404,4 +410,72 @@ it("keeps host observation authority out of replaced async storage receiver meth
   });
   assertEquals(observed, []);
   assertEquals(forged, 0);
+});
+
+it("retains connected child ownership after stream setup until the host closes it", async () => {
+  const lifetime = new AbortController();
+  let resume!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let pending!: Promise<unknown>;
+  await withLocalChildExecution(
+    async () => ({ text: "durable child", status: "completed", toolCalls: 0 }),
+    async () => {
+      pending = gate.then(() =>
+        executeLocalChild({
+          agentId: "child",
+          input: "task",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async () => ({ text: "untracked child", status: "completed", toolCalls: 0 }),
+        })
+      );
+    },
+    undefined,
+    undefined,
+    undefined,
+    lifetime.signal,
+  );
+  try {
+    resume();
+    assertEquals(await pending, { text: "durable child", status: "completed", toolCalls: 0 });
+  } finally {
+    lifetime.abort();
+  }
+});
+
+it("rejects delayed delegation when a retained parent scope has closed", async () => {
+  const lifetime = new AbortController();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let pending!: Promise<unknown>;
+  let executed = false;
+  await withLocalChildExecution(
+    async (input) => await input.execute(),
+    async () => {
+      pending = gate.then(() =>
+        executeLocalChild({
+          agentId: "child",
+          input: "task",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async () => {
+            executed = true;
+            return { text: "untracked", toolCalls: 0, status: "completed" };
+          },
+        })
+      );
+    },
+    undefined,
+    undefined,
+    undefined,
+    lifetime.signal,
+  );
+  lifetime.abort();
+  release();
+  await assertRejects(() => pending, Error, "Local child execution authority has ended");
+  assertEquals(executed, false);
 });

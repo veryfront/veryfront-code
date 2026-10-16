@@ -67,16 +67,24 @@ export function parseDataStreamSseEvents(chunk: string): {
   return { events, remainder };
 }
 
-/** Stream data stream events helper. */
+/** Read runtime SSE events. An optional signal cancels pending upstream reads. */
 export async function* streamDataStreamEvents(
   stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
 ): AsyncGenerator<AgUiRuntimeStreamEvent> {
   const reader = getPrivateStreamReader(stream);
   const decoder = createPrivateTextDecoder();
   let remainder = "";
   let completed = false;
+  const abort = () => {
+    void reader.cancel(signal?.reason).catch((error) => {
+      logger.debug("Data stream reader cancellation failed during abort", { error });
+    });
+  };
+  signal?.addEventListener("abort", abort, { once: true });
 
   try {
+    if (signal?.aborted) abort();
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
@@ -99,6 +107,7 @@ export async function* streamDataStreamEvents(
       yield event;
     }
   } finally {
+    signal?.removeEventListener("abort", abort);
     if (!completed) {
       try {
         await reader.cancel();
