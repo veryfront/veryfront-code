@@ -1876,6 +1876,21 @@ async function runSmoke(workDir: string): Promise<void> {
       timeoutMs: 60_000,
     });
     await npmInstall(workDir, plan, plan.rootInstallSpecs);
+    if (plan.registryMode) {
+      // This consumer tests the exact first-party release just published.
+      // Retain Deno's default age guard for every other dependency.
+      await Deno.writeTextFile(
+        `${workDir}/deno.json`,
+        JSON.stringify({
+          minimumDependencyAge: {
+            age: "P1D",
+            exclude: plan.registryPackageNames?.filter((name) =>
+              name === "veryfront" || name.startsWith("@veryfront/")
+            ).map((name) => `npm:${name}`),
+          },
+        }),
+      );
+    }
 
     if (Deno.args.includes("--browser-only")) {
       await checkBrowserClientBuild(workDir);
