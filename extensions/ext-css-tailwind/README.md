@@ -100,3 +100,12 @@ The configuration merge also rejects `__proto__`, `constructor` and `prototype`
 keys before copying a value, and only enumerates own properties. This fixes the
 upstream merge helper's prototype-pollution behavior. Encountering one of those keys aborts the merge before components are produced. The guard is a recorded reversible source
 edit, and valid supported CSS output fixtures remain unchanged.
+
+## Animation stylesheet
+
+`@import "tw-animate-css";` uses the exact MIT-licensed stylesheet from
+`tw-animate-css@1.4.0`. The extension pins the dependency and embeds its original
+CSS as a static source module for Node, Deno, npm and compiled distributions.
+`vendor-sources.json` records the source digest and upstream pedigree. The CSS
+content digest and version participate in the processor cache identity. Unknown
+stylesheet imports and animation subpaths remain unsupported.
