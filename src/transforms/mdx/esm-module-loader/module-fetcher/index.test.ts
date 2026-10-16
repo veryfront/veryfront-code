@@ -1100,7 +1100,12 @@ describe("module-fetcher", () => {
     });
 
     it("counts shared modules toward each joined render's graph limit", async () => {
-      const project = createProjectAdapter("graph-limit");
+      const sourceRead = Promise.withResolvers<void>();
+      const project = createProjectAdapter("graph-limit", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts") sourceRead.resolve();
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-limit-cache-"),
         projectDir: await tempDir("vf-shared-limit-proj-"),
@@ -1112,8 +1117,12 @@ describe("module-fetcher", () => {
         follower.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
       }
 
+      // Wait for the intended owner to read its source: asynchronous identity
+      // preparation can otherwise let the graph-limited render lead the flight.
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
@@ -1126,7 +1135,12 @@ describe("module-fetcher", () => {
     });
 
     it("retries alone when the leading render has no room in its graph", async () => {
-      const project = createProjectAdapter("leader-full");
+      const sourceRead = Promise.withResolvers<void>();
+      const project = createProjectAdapter("leader-full", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts") sourceRead.resolve();
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-leaderfull-cache-"),
         projectDir: await tempDir("vf-shared-leaderfull-proj-"),
@@ -1137,8 +1151,10 @@ describe("module-fetcher", () => {
       }
       const follower = await newRender(project.adapter, "p-leader-full", dirs);
 
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
@@ -1146,6 +1162,8 @@ describe("module-fetcher", () => {
         leaderResult.status === "rejected" && leaderResult.reason instanceof ModuleGraphLimitError,
       );
       assertEquals(followerResult.status, "fulfilled");
+      assertEquals(project.reads.filter((path) => path === "/virtual/page.ts").length, 2);
+      assertEquals(project.reads.length, 5, "the healthy follower retries the failed entry");
     });
 
     it("admits modules a shared resolution could not resolve into joined graphs", async () => {
