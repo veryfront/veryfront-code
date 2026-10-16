@@ -944,7 +944,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         requestTimeoutMs: 10_000,
         allowInternalEgress: false,
       });
-      let timeout: number | undefined;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
 
       try {
         worker.start();

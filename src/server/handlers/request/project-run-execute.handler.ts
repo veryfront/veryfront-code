@@ -1147,7 +1147,7 @@ async function executeTaskRun(
     detail:
       "Task exceeded its execution deadline; non-cooperative task code may continue inside the runtime process",
   });
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<TaskDeadlineClock["setTimer"]> | undefined;
   // The abort reason and the thrown value are the same error: once the signal
   // is aborted, the catch below knows the deadline, not the task, failed.
   const expire = () => {

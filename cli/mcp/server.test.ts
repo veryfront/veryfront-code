@@ -11,7 +11,7 @@ import type { MCPServerConfig } from "./server.ts";
 const SERVER_READY_TIMEOUT_MS = 5_000;
 
 async function withTestWatchdog<T>(promise: Promise<T>): Promise<T> {
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(
       () => reject(new Error("MCP HTTP listener did not report readiness")),

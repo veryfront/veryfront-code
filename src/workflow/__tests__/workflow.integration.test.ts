@@ -366,7 +366,7 @@ describe("Workflow Integration", () => {
 
   describe("Timeout Enforcement", () => {
     it("should timeout long-running steps", async () => {
-      let timeoutId: number | undefined;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
       const slowTool = createMockTool("slow", async () => {
         try {

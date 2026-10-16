@@ -40,15 +40,18 @@ function createManualTimers(): {
   clearTimeoutFn: typeof clearTimeout;
 } {
   const callbacks: Array<() => void> = [];
-  const setTimeoutFn: typeof setTimeout = (callback, _delay, ...args) => {
-    callbacks.push(() => {
-      if (typeof callback !== "function") {
-        throw new TypeError("String timer handlers are unsupported in resume-session tests");
-      }
-      callback(...args);
-    });
-    return globalThis.setTimeout(() => {}, 60_000);
-  };
+  const setTimeoutFn = Object.assign(
+    (callback: TimerHandler, _delay?: number, ...args: unknown[]) => {
+      callbacks.push(() => {
+        if (typeof callback !== "function") {
+          throw new TypeError("String timer handlers are unsupported in resume-session tests");
+        }
+        callback(...args);
+      });
+      return globalThis.setTimeout(() => {}, 60_000);
+    },
+    globalThis.setTimeout,
+  );
   return {
     callbacks,
     setTimeoutFn,

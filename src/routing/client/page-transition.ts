@@ -14,7 +14,7 @@ import type { RouteData } from "./page-loader.ts";
 const logger = rendererLogger.component("veryfront");
 
 export class PageTransition {
-  private pendingTransitionTimeout?: number;
+  private pendingTransitionTimeout?: ReturnType<typeof setTimeout>;
   private pendingRoot?: HTMLElement;
 
   constructor(private setupViewportPrefetch: (root: Document | HTMLElement) => void) {}

@@ -176,8 +176,8 @@ systems. For `net:listen`, `host` is valid only together with a non-empty
 
 Veryfront rejects unknown fields on recognized capability types so a typo such
 as `path` instead of `paths` cannot silently broaden access.
-System API scopes must use a `Deno.SysPermissionDescriptor.kind` supported by
-the pinned Deno 2.7.7 runtime: `loadavg`, `hostname`, `systemMemoryInfo`,
+System API scopes must use a `Deno.SysPermissionDescriptor.kind` from
+Veryfront's audited read-only subset: `loadavg`, `hostname`, `systemMemoryInfo`,
 `networkInterfaces`, `osRelease`, `osUptime`, `uid`, `gid`, `username`, `cpus`,
 `homedir`, `statfs`, or `getPriority`. The `system:read` capability rejects
 `setPriority` because that API changes process scheduling state.

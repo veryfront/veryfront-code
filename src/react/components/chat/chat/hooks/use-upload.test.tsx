@@ -201,7 +201,8 @@ describe("useUpload", () => {
     );
     assertEquals(
       createUploadId({
-        getRandomValues(array) {
+        getRandomValues<T extends ArrayBufferView | null>(array: T): T {
+          if (!array) return array;
           new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(0);
           return array;
         },

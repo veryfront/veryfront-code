@@ -120,7 +120,7 @@ export async function runDenoCheck(
   }
 
   const outputPromise = child.output();
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const result = await Promise.race([
     outputPromise.then((output) => ({ kind: "output" as const, output })),
     new Promise<{ kind: "timeout" }>((resolve) => {

@@ -100,8 +100,15 @@ async function runAgentAsStreamingTool(
     try {
       const streamAgent = control?.resolveModelRuntime && createAdmittedAgent
         ? createAdmittedAgent(
-          { ...getAgentExecutionConfig(agent.config), id: agent.id },
-          { resolveModelRuntime: control.resolveModelRuntime, preserveToolCatalog: true },
+          {
+            ...getAgentExecutionConfig(agent.config),
+            id: agent.id,
+            ...(agent.config.tools === true ? {} : { delegates: undefined }),
+          },
+          {
+            resolveModelRuntime: control.resolveModelRuntime,
+            preserveToolCatalog: agent.config.tools !== true,
+          },
         )
         : privateRuntime && createAdmittedAgent
         ? await privateRuntime.prepareAgent(() => {

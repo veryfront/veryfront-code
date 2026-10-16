@@ -197,7 +197,7 @@ describe("OAuth Client", () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
       const { server, port } = createMockServer(
         () =>
-          new Response("x", {
+          new Response("x".repeat(128 * 1024 + 1), {
             headers: {
               "Content-Type": "application/json",
               "Content-Length": String(128 * 1024 + 1),

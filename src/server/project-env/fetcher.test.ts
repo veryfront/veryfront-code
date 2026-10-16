@@ -256,7 +256,7 @@ describe("project-env/fetcher", () => {
 
   it("does not wait for response cleanup before the privileged fetch", async () => {
     let fetchCount = 0;
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     await withMockFetch(
       (() => {
         fetchCount++;

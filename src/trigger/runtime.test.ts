@@ -629,7 +629,7 @@ describe("trigger runtime", () => {
       input: { channelName },
       signal: controller.signal,
     });
-    let startupWatchdog: number | undefined;
+    let startupWatchdog: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const startState = await Promise.race([

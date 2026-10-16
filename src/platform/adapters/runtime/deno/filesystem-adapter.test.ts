@@ -252,7 +252,7 @@ if (isDeno) {
         recursive: false,
       });
       const iterator = watcher[Symbol.asyncIterator]();
-      let timeoutId: number | undefined;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
       try {
         assertExists(watcher.ready);

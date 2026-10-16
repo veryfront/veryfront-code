@@ -143,7 +143,9 @@ describe("run-scoped model cancellation intrinsics", () => {
         }
       }
       Object.defineProperty(globalThis, "ReadableStream", {
-        ...streamDescriptor,
+        configurable: streamDescriptor.configurable,
+        enumerable: streamDescriptor.enumerable,
+        writable: true,
         value: RetainedReadableStream,
       });
       stream = await runtime.stream([{
@@ -323,7 +325,9 @@ describe("run-scoped model cancellation intrinsics", () => {
         override abort(): void {}
       }
       Object.defineProperty(globalThis, "AbortController", {
-        ...globalDescriptor,
+        configurable: globalDescriptor.configurable,
+        enumerable: globalDescriptor.enumerable,
+        writable: true,
         value: SuppressedAbortController,
       });
       scope = createModelRuntimeResolverAbortScope(resolver, upstreamController.signal);

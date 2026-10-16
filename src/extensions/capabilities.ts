@@ -714,7 +714,7 @@ function snapshotCapability(capability: Capability, index: number): CapabilitySn
     for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
       if (!isSupportedDenoSystemReadApi(scopes[scopeIndex]!)) {
         throw new TypeError(
-          `capabilities[${index}].apis[${scopeIndex}] must be a supported read-only Deno 2.7.7 system API name`,
+          `capabilities[${index}].apis[${scopeIndex}] must be a read-only system API name in Veryfront's audited subset`,
         );
       }
     }

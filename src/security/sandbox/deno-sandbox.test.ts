@@ -164,7 +164,7 @@ testSuite("deno-sandbox", () => {
     );
 
     const netError = await assertRejects(
-      () => runInWorker("return fetch('http://127.0.0.1:1/').then((r) => r.status);"),
+      () => runInWorker("return fetch('http://127.0.0.1:65534/').then((r) => r.status);"),
       VeryfrontError,
       undefined,
       "a worker denied every permission must not open outbound sockets",

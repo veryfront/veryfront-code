@@ -3889,7 +3889,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
   function createDelayedResult(
     steps: Array<{ chunk: Record<string, unknown>; delayMs?: number }>,
   ) {
-    const pendingTimers = new Set<number>();
+    const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
     const fullStream = {
       async *[Symbol.asyncIterator]() {
         for (const step of steps) {

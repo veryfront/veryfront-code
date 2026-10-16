@@ -10,10 +10,10 @@ order: 34
 import {
   createAgentServiceSandboxClient,
   createAgentServiceSandboxTools,
+  createHostedSandboxClient,
+  createHostedSandboxTools,
   createSandboxShellTools,
   normalizeBashToolSet,
-  renameSandboxFileTools,
-  resolveDefaultSandboxRuntimeEndpoint,
 } from "veryfront/sandbox";
 ```
 
@@ -224,6 +224,8 @@ Streaming event emitted during command execution.
 | -------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | `createAgentServiceSandboxClient`      | Create agent service sandbox client.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
 | `createAgentServiceSandboxTools`       | Create agent service sandbox tools.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
+| `createHostedSandboxClient`            | Create hosted sandbox client.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
+| `createHostedSandboxTools`             | Create hosted sandbox tools.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
 | `createSandboxShellTools`              | Create sandbox shell tools.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
 | `normalizeBashToolSet`                 | Normalizes bash tool set.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
 | `renameSandboxFileTools`               | Rename sandbox file tools.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
@@ -281,10 +283,3 @@ Streaming event emitted during command execution.
 | `SandboxShellToolSet`                        | Public API contract for sandbox shell tool set.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
 | `SandboxStatus`                              | Observed sandbox runtime state.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
 | `SandboxWorkspaceStorage`                    |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-
-### Constants
-
-| Name                        | Description                   | Source                                                                                             |
-| --------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `createHostedSandboxClient` | Create hosted sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
-| `createHostedSandboxTools`  | Create hosted sandbox tools.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |

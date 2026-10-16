@@ -32,7 +32,7 @@ export function buildExplicitAgUiSourceTools(
     if (isToolVisibleTo(registryTool, { agentId: agent.id })) tools[toolId] = true;
   }
   const knowledgeTool = createAgentKnowledgeTool(agent.config);
-  if (knowledgeTool) tools.search_knowledge = knowledgeTool;
+  if (knowledgeTool) tools[knowledgeTool.id] = knowledgeTool;
   return tools;
 }
 

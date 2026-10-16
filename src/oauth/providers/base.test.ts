@@ -2206,7 +2206,7 @@ it(
 
     await withTokenFetch(200, { access_token: "stale-refresh", expires_in: 3_600 }, async () => {
       const result = service.getAccessToken("alice");
-      let timeoutId: number | undefined;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           casEntered,

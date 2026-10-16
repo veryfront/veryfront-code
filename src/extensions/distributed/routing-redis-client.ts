@@ -43,7 +43,7 @@ export function createRoutingRedisClient(
   let epoch = 0;
   let generation = 1;
   let restoring = false;
-  let resetTimer: number | undefined;
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
   let draining: Promise<void> | undefined;
   let raw: RoutingRedisClient;
   let rawDisposed = false;
@@ -133,7 +133,7 @@ export function createRoutingRedisClient(
     }, 1_000);
   };
   const boundedRetirement = async (owner: number, operation: Promise<unknown>) => {
-    let timer: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let cancel: (() => void) | undefined;
     try {
       await Promise.race([

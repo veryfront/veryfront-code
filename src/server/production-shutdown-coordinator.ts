@@ -66,7 +66,7 @@ export async function awaitBeforeDeadline(
     return;
   }
 
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       result,

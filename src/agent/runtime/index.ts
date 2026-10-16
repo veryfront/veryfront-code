@@ -471,7 +471,6 @@ import {
 
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
-const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicStructuredClone = globalThis.structuredClone;
@@ -872,6 +871,11 @@ function providerTranscriptIsOrderedSubset(
     if (!matched) return false;
   }
   return true;
+}
+
+/** Clone inside an owned wrapper so host brand probes never inspect the candidate. */
+function cloneStructuredValue<T>(value: T): T {
+  return (IntrinsicReflectApply(IntrinsicStructuredClone, globalThis, [[value]]) as [T])[0];
 }
 
 function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {

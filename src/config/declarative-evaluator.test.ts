@@ -333,7 +333,7 @@ export default {
         deniedCapabilities: {
           env: await isDenied(() => Deno.env.get("SECRET")),
           read: await isDenied(() => Deno.readTextFile(${JSON.stringify(evaluatorUrl)})),
-          net: await isDenied(() => fetch("http://127.0.0.1:9/")),
+          net: await isDenied(() => fetch("http://127.0.0.1:65534/")),
         },
       });
     `);
