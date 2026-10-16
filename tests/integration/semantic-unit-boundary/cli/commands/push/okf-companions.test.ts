@@ -188,6 +188,68 @@ describe("native push OKF companions", () => {
     });
   });
 
+  for (
+    const reference of [
+      "../../outside.sql",
+      "./../../outside.sql",
+      "nested/../../../outside.sql",
+      "//cdn.example/data.csv",
+      "///cdn.example/data.csv",
+      "\\\\cdn.example\\data.csv",
+      "..\\..\\outside.sql",
+      "C:\\outside.sql",
+      "references\\query.sql",
+      "references/que\u0000ry.sql",
+      "references/que\nry.sql",
+      "https://cdn.example/data.csv",
+      "HTTPS://cdn.example/data.csv",
+      "file:///outside.sql",
+      "mailto:outside.sql",
+      "#outside.sql",
+    ]
+  ) {
+    it(`excludes nonlocal or traversing companion reference ${JSON.stringify(reference)}`, async () => {
+      const files = {
+        "acme/nested/doc.md": `---\ntype: Metric\ncomputation: ${JSON.stringify(reference)}\n---\n`,
+        "outside.sql": "outside",
+        "cdn.example/data.csv": "external-looking bytes",
+      };
+      await withFiles(files, async (directory) => {
+        const checker = await loadIgnoreChecker(directory);
+        const remoteFiles = Object.entries(files).map(([path, content]) => ({ path, content }));
+        assertEquals([...collectReferencedOkfCompanions(remoteFiles, checker)], []);
+        const scanned = await scanLocalFiles(directory, checker);
+        assertEquals(scanned.map((file) => file.path), ["acme/nested/doc.md"]);
+      });
+    });
+  }
+
+  it("keeps local reference syntax literal while removing query and fragment suffixes", async () => {
+    const files = {
+      "acme/index.md": "---\nokf_version: '0.1'\n---\n",
+      "acme/nested/doc.md":
+        "---\ntype: Metric\nsources: [/data.csv?download=1#rows, ./local.sql#query, /literal%2e%2e.sql, /%2e%2e/outside.sql]\n---\n",
+      "acme/data.csv": "a,b",
+      "acme/nested/local.sql": "select 1;",
+      "acme/literal%2e%2e.sql": "literal percent filename",
+      "acme/%2e%2e/outside.sql": "literal percent directory",
+      "outside.sql": "outside",
+    };
+    await withFiles(files, async (directory) => {
+      const checker = await loadIgnoreChecker(directory);
+      const remoteFiles = Object.entries(files).map(([path, content]) => ({ path, content }));
+      const expected = Object.keys(files).filter((path) =>
+        path.endsWith(".sql") && path !== "outside.sql"
+      ).concat("acme/data.csv").sort();
+      assertEquals([...collectReferencedOkfCompanions(remoteFiles, checker)].sort(), expected);
+      const scanned = await scanLocalFiles(directory, checker);
+      assertEquals(
+        scanned.map((file) => file.path).sort(),
+        Object.keys(files).filter((path) => path !== "outside.sql").sort(),
+      );
+    });
+  });
+
   it("keeps ignored, protected, unreferenced and escaped assets excluded", async () => {
     await withFiles({
       "acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",

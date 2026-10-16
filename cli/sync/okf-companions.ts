@@ -17,7 +17,7 @@ const OKF_COMPANION_REFERENCE_KEYS = new Set([
 const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
 
 function looksLikeExternalOkfReference(value: string): boolean {
-  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#");
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#") || value.startsWith("//");
 }
 
 function isMarkdownPath(path: string): boolean {
@@ -104,7 +104,12 @@ function resolveOkfCompanionCandidates(
   const [withoutHash] = trimmed.split("#", 1);
   const [withoutQuery] = (withoutHash ?? "").split("?", 1);
   const path = withoutQuery?.trim();
-  if (!path) return [];
+  // Local OKF paths use forward slashes. Reject ambiguous/traversing syntax
+  // before join/normalize can erase it or reinterpret it as a project path.
+  if (
+    !path || path.includes("\\") || path.split("/").includes("..") ||
+    [...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  ) return [];
 
   const referencePath = path.replace(/^\/+/, "");
   const rootFallbacks = bundleRoots.map((root) => ({
