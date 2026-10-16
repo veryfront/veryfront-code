@@ -457,6 +457,32 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }
   });
 
+  it("requires an explicit branch source selector on an environment execution", () => {
+    const invocation = createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: { type: "branch", branch: "feature/source" },
+    });
+    assertThrows(() => RuntimeAgentRunInvocationSchema.parse(invocation));
+    assertEquals(
+      RuntimeAgentRunInvocationSchema.parse({
+        ...invocation,
+        run: {
+          ...invocation.run,
+          project: { ...invocation.run.project, sourceTargetBranchId: null },
+        },
+      }).run.project.sourceTargetBranchId,
+      null,
+    );
+  });
+
   it("rejects an environment source without its own or legacy environment ID", () => {
     assertThrows(
       () =>

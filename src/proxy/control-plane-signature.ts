@@ -213,6 +213,9 @@ function parseVerifiedBranchBinding(
   if (sourceRecord.type !== "branch") {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source target");
   }
+  if (kind === "environment" && target.sourceTargetBranchId === undefined) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane branch source");
+  }
   // Legacy signed requests used the preview execution ID as their source ID.
   // Explicit null selects root source even when execution uses a preview process.
   const branchId = target.sourceTargetBranchId === undefined && kind === "preview_branch"

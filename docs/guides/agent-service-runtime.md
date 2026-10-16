@@ -26,7 +26,8 @@ retains `sourceTargetEnvironmentId` and `sourceTargetBranchId` separately from
 `runtimeTarget*` execution selectors. Signed environment and preview sources use
 their own persisted source IDs; release sources retain the immutable release ID
 for every execution target. Explicit null source branch identity selects the root
-branch. Legacy invocations without source IDs retain their matching environment
+branch. A branch source executing on an environment requires an explicit source
+branch ID or null; an omitted ID is rejected. Legacy invocations without source IDs retain their matching environment
 or preview selector behavior. Deploy a framework accepting these independent
 selectors before enabling the API producer.
 

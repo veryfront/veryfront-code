@@ -235,6 +235,25 @@ describe("proxy/control-plane-signature", () => {
     );
   });
 
+  it("requires an explicit branch source selector on an environment execution", async () => {
+    const target = {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "execution-environment",
+    };
+    const source = { type: "branch", branch: "feature/source" };
+    await assertRejects(
+      () => resolveNestedTarget(createNestedTargetBody(target, source)),
+      ControlPlaneBranchBindingError,
+      "Invalid control-plane branch source",
+    );
+    assertEquals(
+      await resolveNestedTarget(
+        createNestedTargetBody({ ...target, sourceTargetBranchId: null }, source),
+      ),
+      { defaultBranchName: "feature/source" },
+    );
+  });
+
   it("rejects malformed or mismatched signed source projects", async () => {
     for (
       const sourceProject of [

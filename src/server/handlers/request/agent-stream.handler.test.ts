@@ -469,7 +469,45 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
-  for (const selection of ["environment-on-main", "preview-on-main", "root-on-preview"] as const) {
+  it("rejects an environment execution with an omitted branch source selector before discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: { type: "branch", branch: "feature/source" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  for (
+    const selection of [
+      "environment-on-main",
+      "preview-on-main",
+      "root-on-preview",
+      "root-on-environment",
+    ] as const
+  ) {
     it(`executes independent signed source ${selection} through the handler`, async () => {
       const sourceEnvironmentId = "10000000-1000-4000-8000-100000000098";
       const sourceBranchId = "10000000-1000-4000-8000-100000000006";
@@ -523,6 +561,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ? {
           runtimeTargetKind: "preview_branch",
           runtimeTargetBranchId: sourceBranchId,
+          sourceTargetBranchId: null,
+        }
+        : selection === "root-on-environment"
+        ? {
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: sourceEnvironmentId,
           sourceTargetBranchId: null,
         }
         : selection === "preview-on-main"

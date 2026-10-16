@@ -246,6 +246,17 @@ export function validateRuntimeAgentSourceTargetBinding(
   input: RuntimeAgentTargetSelectionInput & { agentSource: RuntimeAgentSourceContext },
   ctx: RefinementCtx,
 ) {
+  if (
+    input.agentSource.type === "branch" && input.runtimeTargetKind === "environment" &&
+    input.sourceTargetBranchId === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "branch source requires an explicit source branch identifier on an environment target",
+      path: ["sourceTargetBranchId"],
+    });
+  }
   if (input.agentSource.type === "environment") {
     const environmentId =
       input.sourceTargetEnvironmentId === undefined && input.runtimeTargetKind === "environment"
