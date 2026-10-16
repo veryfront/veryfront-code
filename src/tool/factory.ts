@@ -5,6 +5,8 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { slicePrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   isContractSchema,
   isInferredJsonSchemaObject,
@@ -22,6 +24,29 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
 const structuredCloneValue = globalThis.structuredClone;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const sealedPlatformDependencies = createPrivateWeakStore<object, true>();
+
+/** @internal Retain immutable wrapper identity and dependency requests across host copies. */
+export function sealToolPlatformDependencies<T extends Tool>(createdTool: T): T {
+  if (sealedPlatformDependencies.get(createdTool)) return createdTool;
+  const dependencies = createdTool.delegatedPlatformTools;
+  objectDefineProperty(createdTool, "id", {
+    value: createdTool.id,
+    enumerable: true,
+    writable: false,
+    configurable: false,
+  });
+  objectDefineProperty(createdTool, "delegatedPlatformTools", {
+    value: dependencies === undefined ? undefined : objectFreeze(slicePrivateArray(dependencies)),
+    enumerable: dependencies !== undefined,
+    writable: false,
+    configurable: false,
+  });
+  sealedPlatformDependencies.set(createdTool, true);
+  return createdTool;
+}
 
 function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -220,6 +245,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
       config.allowUnknownSchema ?? false,
     )
     : undefined;
+  const delegatedPlatformTools = config.delegatedPlatformTools
+    ? [...config.delegatedPlatformTools]
+    : undefined;
   const delegatedIntegrationTools = config.delegatedIntegrationTools
     ? [...config.delegatedIntegrationTools]
     : undefined;
@@ -232,6 +260,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     description: config.description,
     ...(discovery ? { discovery } : {}),
     ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
+    ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
     outputSchema: outputSchema as Schema<TOutput> | undefined,
@@ -256,11 +285,13 @@ export function tool<TInput = unknown, TOutput = unknown>(
     mcp,
   };
 
-  return explicitId ? createdTool : markGeneratedToolId(createdTool);
+  return sealToolPlatformDependencies(explicitId ? createdTool : markGeneratedToolId(createdTool));
 }
 
 /** Configuration used by dynamic tool. */
 export interface DynamicToolConfig {
+  /** Platform dependency requests, never authorization by themselves. */
+  delegatedPlatformTools?: readonly string[];
   id?: string;
   description: string;
   /** Catalog navigation hints for `veryfront__tool_search`, without execution authority. */
@@ -296,9 +327,14 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   const mcp = snapshotMcpConfig(config.mcp, id);
   const discovery = readToolDiscoveryMetadata(config);
 
+  const delegatedPlatformTools = config.delegatedPlatformTools
+    ? [...config.delegatedPlatformTools]
+    : undefined;
+
   const createdTool: Tool<unknown, unknown> = {
     id,
     type: "dynamic" as const,
+    ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
     description: config.description,
     ...(discovery ? { discovery } : {}),
     inputSchema: inputSchema as Schema<unknown>,
@@ -317,5 +353,5 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     mcp,
   };
 
-  return explicitId ? createdTool : markGeneratedToolId(createdTool);
+  return sealToolPlatformDependencies(explicitId ? createdTool : markGeneratedToolId(createdTool));
 }

@@ -11,6 +11,11 @@ import {
 } from "./local-tool.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import {
+  getActivePlatformDependencySources,
+  getActivePlatformToolDependencies,
+} from "#veryfront/agent/service/auth.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
@@ -42,6 +47,91 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
+const platformWrapperInvocation = new AsyncLocalStorage<object>();
+const InvocationRun = AsyncLocalStorage.prototype.run;
+const InvocationGet = AsyncLocalStorage.prototype.getStore;
+const DefineProperty = Object.defineProperty;
+const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const DeleteProperty = Reflect.deleteProperty;
+
+async function executeLocalWrapper(
+  toolName: string,
+  localTool: Tool,
+  input: Record<string, unknown>,
+  context: ToolExecutionContext | undefined,
+  sources: RemoteToolSource[] | undefined,
+  sourcePolicy: SourceIntegrationPolicyManifest,
+): Promise<unknown> {
+  const mapping = context ? getActivePlatformToolDependencies(context) : undefined;
+  const abortSignal = context?.abortSignal;
+  const declared = createPrivateSet(localTool.delegatedPlatformTools ?? []);
+  const allowed = createPrivateSet<string>();
+  // Do not consult tenant-mutable Array prototypes when selecting authority.
+  for (let index = 0; mapping && index < mapping.length; index++) {
+    const entry = mapping[index]!;
+    if (localTool.id !== toolName || entry.toolId !== toolName) continue;
+    for (let nameIndex = 0; nameIndex < entry.platformTools.length; nameIndex++) {
+      const name = entry.platformTools[nameIndex]!;
+      if (declared.has(name)) allowed.add(name);
+    }
+  }
+  const invocation = {};
+  let active = true;
+  const executionContext = context ?? {};
+  const priorCallback = GetOwnPropertyDescriptor(executionContext, "executePlatformTool");
+  return await intrinsicReflectApply(InvocationRun, platformWrapperInvocation, [
+    invocation,
+    async () => {
+      const assertInvocationAuthority = (name: string) => {
+        if (
+          !active ||
+          !context || getActivePlatformToolDependencies(context) !== mapping ||
+          intrinsicReflectApply(InvocationGet, platformWrapperInvocation, []) !== invocation ||
+          !allowed.has(name)
+        ) {
+          throw PERMISSION_DENIED.create({
+            detail: `Platform operation "${name}" is not admitted for this wrapper invocation`,
+          });
+        }
+        abortSignal?.throwIfAborted();
+      };
+      const executePlatformTool = async (name: string, arguments_: Record<string, unknown>) => {
+        assertInvocationAuthority(name);
+        const trusted = [...(sources ?? []), ...getActivePlatformDependencySources(context ?? {})]
+          .filter(hasTrustedPlatformSource);
+        const result = await executeRemoteToolFromSources(
+          name,
+          arguments_,
+          context,
+          [...allowed],
+          trusted,
+          sourcePolicy,
+          { assertAuthority: () => assertInvocationAuthority(name) },
+        );
+        if (!result.handled) throw new Error(`Platform operation "${name}" is unavailable`);
+        return result.result;
+      };
+      try {
+        // Keep the original context identity: terminal and native-input authority
+        // are private host associations and must not be lost through object spread.
+        DefineProperty(executionContext, "executePlatformTool", {
+          value: executePlatformTool,
+          enumerable: false,
+          configurable: true,
+        });
+        return await dispatchWithTerminalRunControl(
+          context,
+          () => localTool.execute(input, executionContext),
+        );
+      } finally {
+        active = false;
+        if (priorCallback) {
+          DefineProperty(executionContext, "executePlatformTool", priorCallback);
+        } else DeleteProperty(executionContext, "executePlatformTool");
+      }
+    },
+  ]);
+}
 
 function isAllowedBySourcePolicy(
   name: string,
@@ -321,8 +411,9 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
-  selectedSource?: RemoteToolSource,
+  dispatch?: { selectedSource?: RemoteToolSource; assertAuthority?: () => void },
 ): Promise<{ handled: boolean; result?: unknown }> {
+  const selectedSource = dispatch?.selectedSource;
   const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
   const source = await findSequential(sources, async (candidate) => {
     if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(candidate)) return false;
@@ -340,13 +431,17 @@ async function executeRemoteToolFromSources(
     ) {
       throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
     }
+    const execute = () => {
+      // Discovery and terminal admission can both suspend. The owner may have
+      // settled during either await, so check at the actual effect boundary.
+      dispatch?.assertAuthority?.();
+      return source.executeTool(toolName, input, context);
+    };
     return {
       handled: true,
       result: await (hasTrustedPlatformSource(source)
-        ? executeTerminalRunTool(toolName, input, context, () =>
-          source.executeTool(toolName, input, context))
-        : dispatchWithTerminalRunControl(context, () =>
-          source.executeTool(toolName, input, context))),
+        ? executeTerminalRunTool(toolName, input, context, execute)
+        : dispatchWithTerminalRunControl(context, execute)),
     };
   }
 
@@ -455,7 +550,7 @@ export async function executeConfiguredTool(
       allowedRemoteToolNames,
       remoteToolSources,
       sourceIntegrationPolicy,
-      selectedSource,
+      { selectedSource },
     );
     if (remoteSourceResult.handled) {
       return remoteSourceResult.result;
@@ -466,9 +561,13 @@ export async function executeConfiguredTool(
     allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
   });
   if (configuredTool) {
-    return await dispatchWithTerminalRunControl(
+    return await executeLocalWrapper(
+      toolName,
+      configuredTool,
+      input,
       context,
-      () => configuredTool.execute(input, context),
+      remoteToolSources,
+      sourceIntegrationPolicy,
     );
   }
 
@@ -481,9 +580,13 @@ export async function executeConfiguredTool(
   // fall through and surface as "not found" via executeTool.
   const registryTool = toolRegistry.get(toolName);
   if (registryTool && isToolVisibleTo(registryTool, context)) {
-    return await dispatchWithTerminalRunControl(
+    return await executeLocalWrapper(
+      toolName,
+      registryTool,
+      input,
       context,
-      () => registryTool.execute(input, context),
+      remoteToolSources,
+      sourceIntegrationPolicy,
     );
   }
 
@@ -494,7 +597,7 @@ export async function executeConfiguredTool(
     allowedRemoteToolNames,
     remoteToolSources,
     sourceIntegrationPolicy,
-    selectedSource,
+    { selectedSource },
   );
   if (remoteSourceResult.handled) {
     return remoteSourceResult.result;

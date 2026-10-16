@@ -260,7 +260,7 @@ export type Run = InferSchema<ReturnType<typeof getRunSchema>>;
 /**
  * An accepted run with either a full Run or a compact receipt containing only run_id and status.
  * Use run_id and status in either variant. Narrow with `"output" in response.run` before
- * reading full-run fields, or read the resource with `runs.get(response.run.run_id)`.
+ * reading full-run fields, or read the grouped resource with `runs.getRun(response.run.run_id)`.
  */
 export type CreateRunResponse = InferSchema<ReturnType<typeof getCreateRunResponseSchema>>;
 /** Response returned when a schedule-triggered run is accepted. */

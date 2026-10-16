@@ -1,3 +1,10 @@
+import {
+  type HostedPlatformDependencyOwner,
+  registerHostedChildPlatformDependencies,
+  transferHostedPlatformDependencies,
+} from "./platform-dependency-credential.ts";
+import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
+import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
@@ -74,6 +81,7 @@ export function hostedInheritedTerminalReceipt(
 export function registerHostedTerminalCredential(
   request: ParsedHostedChatRequest,
   token: string | undefined,
+  eventToken?: string,
 ): void {
   if (!token || token.length > 16384 || !request.projectId || !request.durableRootRun?.runId) {
     return;
@@ -83,6 +91,7 @@ export function registerHostedTerminalCredential(
     projectId: request.projectId,
     runId: request.durableRootRun.runId,
     authToken: request.authToken,
+    ...(eventToken ? { eventToken } : {}),
   });
 }
 
@@ -110,6 +119,7 @@ export function bindHostedTerminalRun(
       apiUrl: transport.apiUrl,
       fetch: instrumentConversationRunFetch(transport.fetch ?? hostFetch),
     });
+    transferHostedPlatformDependencies(request, run);
   }
 }
 
@@ -136,7 +146,7 @@ export function hostedTerminalRunFinalizer(
 
 /** The credential only reaches the bound platform endpoint through the trusted deployment transport. */
 export function hostedTerminalToolSourceFactory(
-  request: ParsedHostedChatRequest | undefined,
+  request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
   fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
@@ -147,6 +157,22 @@ export function hostedTerminalToolSourceFactory(
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
     const ordinary = fallback(config);
+    const mutation = authority.eventToken
+      ? fallback({
+        ...config,
+        endpoint: expectedEndpoint,
+        headers: async (context) => {
+          const original = typeof config.headers === "function"
+            ? await config.headers(context)
+            : config.headers;
+          const headers = new NativeHeaders(original);
+          if (context?.projectId === authority.projectId && context.runId === authority.runId) {
+            apply(headersSet, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER, authority.eventToken!]);
+          }
+          return headers;
+        },
+      })
+      : ordinary;
     const terminal = fallback({
       ...config,
       endpoint: expectedEndpoint,
@@ -211,7 +237,9 @@ export function hostedTerminalToolSourceFactory(
             },
           }, context);
         }
-        return ordinary.executeTool(name, args, context);
+        return isCanonicalFileMutationTool(name)
+          ? mutation.executeTool(name, args, context)
+          : ordinary.executeTool(name, args, context);
       },
     };
   };
@@ -248,6 +276,7 @@ export function hostedInheritedRunAdmitter(
     if (input.parentRunId !== parent.runId) {
       throw new Error("Inherited child parent binding mismatch");
     }
+    const childProjectId = input.projectId ?? parent.projectId;
     const response = await send(`${transport.apiUrl}/runs`, {
       method: "POST",
       headers: {
@@ -259,7 +288,7 @@ export function hostedInheritedRunAdmitter(
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
       },
       body: JSON.stringify({
-        project_id: input.projectId ?? parent.projectId,
+        project_id: childProjectId,
         target: { type: "agent", id: input.agentId },
         parent_run_id: parentId,
         tool_call_id: toolCallId,
@@ -272,13 +301,13 @@ export function hostedInheritedRunAdmitter(
       ? acceptWorkflowInheritedRunAdmission
       : acceptInheritedRunAdmission;
     return decode(response, {
-      projectId: parent.projectId,
+      projectId: childProjectId,
       conversationId: input.conversationId,
       parentRunId: parentId,
       agentId: input.agentId,
       apiUrl: transport.apiUrl,
       fetch: send,
-    });
+    }, request);
   };
 }
 
@@ -349,11 +378,12 @@ export async function acceptWorkflowInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
+  dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection | InheritedRunResult> {
   response = await normalizeInheritedExecutionResponse(response, binding);
   const row = await response.clone().json();
   if (row?.status !== "completed" && row?.status !== "failed" && row?.status !== "cancelled") {
-    return await acceptInheritedRunAdmission(response, binding);
+    return await acceptInheritedRunAdmission(response, binding, dependencyParent);
   }
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (
@@ -387,6 +417,7 @@ export async function acceptInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
+  dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection> {
   response = await normalizeInheritedExecutionResponse(response, binding);
   if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
@@ -452,6 +483,15 @@ export async function acceptInheritedRunAdmission(
     apiUrl: binding.apiUrl,
     fetch: binding.fetch,
   });
+  if (dependencyParent && binding.agentId) {
+    await registerHostedChildPlatformDependencies(
+      dependencyParent,
+      run,
+      { projectId: binding.projectId, runId, agentId: binding.agentId },
+      eventToken,
+      authToken,
+    );
+  }
   return run;
 }
 
@@ -481,7 +521,10 @@ export function transferHostedTerminalAuthority(
   target: HostedTerminalDescriptor,
 ): void {
   const authority = credentials.get(source);
-  if (authority) credentials.set(target, authority);
+  if (authority) {
+    credentials.set(target, authority);
+    transferHostedPlatformDependencies(source, target);
+  }
   const receipt = terminalReceipts.get(source);
   if (receipt) terminalReceipts.set(target, receipt);
 }

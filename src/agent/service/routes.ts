@@ -1,3 +1,7 @@
+import {
+  revokeHostedPlatformDependencies,
+  runWithHostedPlatformDependencies,
+} from "../hosted/platform-dependency-credential.ts";
 import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
 import {
   resolveRuntimeOwnerInvokeUrl as resolveDefaultRuntimeOwnerInvokeUrl,
@@ -443,22 +447,49 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     requestOrCtx?: unknown;
   }): Promise<Response> {
     const requestOrCtx = input.requestOrCtx instanceof Request ? input.request : input.requestOrCtx;
-    return executeHostedDurableChatRun({
+    let prepared = false;
+    const response = await executeHostedDurableChatRun({
       req: input.req,
       rawRequest: input.request,
       requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: (request) =>
-        runWithHostedRequestPreparationSignal(
-          input.request.signal,
-          () =>
-            runWithVerifiedHostedRunEventWriterRequest(
-              input.req,
-              () => options.prepareExecution(request),
-            ),
-        ),
-      startDetachedExecution: options.startDetachedExecution,
-      cleanupExecution: options.cleanupExecution,
+      prepareExecution: async (request) => {
+        try {
+          const result = await runWithHostedRequestPreparationSignal(
+            input.request.signal,
+            () =>
+              runWithVerifiedHostedRunEventWriterRequest(
+                input.req,
+                () =>
+                  runWithHostedPlatformDependencies(input.req, () =>
+                    options.prepareExecution(request)),
+              ),
+          );
+          prepared = true;
+          return result;
+        } catch (error) {
+          revokeHostedPlatformDependencies(input.req);
+          throw error;
+        }
+      },
+      startDetachedExecution: async (executionInput) => {
+        const onAbort = () => revokeHostedPlatformDependencies(input.req);
+        executionInput.abortSignal.addEventListener("abort", onAbort, { once: true });
+        try {
+          executionInput.abortSignal.throwIfAborted();
+          await runWithHostedPlatformDependencies(
+            input.req,
+            () => options.startDetachedExecution(executionInput),
+          );
+        } finally {
+          revokeHostedPlatformDependencies(input.req);
+          executionInput.abortSignal.removeEventListener("abort", onAbort);
+        }
+      },
+      cleanupExecution: async (cleanupInput) => {
+        revokeHostedPlatformDependencies(input.req);
+        await options.cleanupExecution?.(cleanupInput);
+      },
       resolveAuthError: (error) =>
         error instanceof HostedServiceAuthError
           ? {
@@ -468,6 +499,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           : null,
       logger: options.logger,
     });
+    if (!prepared || response.status !== 202) revokeHostedPlatformDependencies(input.req);
+    return response;
   }
 
   async function handleDurableChatRunExecuteRequest(input: {
