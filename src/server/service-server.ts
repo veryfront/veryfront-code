@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { scopeRequestAsyncContext } from "#veryfront/platform/compat/http/request-async-scope.ts";
 import {
   createNodeServerWithStartupOwner,
   type NodeServer,
@@ -450,7 +451,7 @@ async function startDenoVeryfrontServer(
     hostname: bindAddress,
     signal: abortController.signal,
     onListen: () => undefined,
-  }, options.runtime.fetch);
+  }, scopeRequestAsyncContext(options.runtime.fetch));
   let shutdownStarted = false;
   let removeSignalHandlers: () => void = () => undefined;
 
