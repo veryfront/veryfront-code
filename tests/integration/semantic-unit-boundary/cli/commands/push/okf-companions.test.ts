@@ -3,7 +3,10 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
-import { annotateOkfBundleMembers } from "../../../../../../cli/sync/okf-companions.ts";
+import {
+  annotateOkfBundleMembers,
+  collectReferencedOkfCompanions,
+} from "../../../../../../cli/sync/okf-companions.ts";
 import { loadIgnoreChecker } from "../../../../../../cli/sync/ignore.ts";
 import { pushCommand, scanLocalFiles } from "../../../../../../cli/commands/push/command.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -117,6 +120,47 @@ describe("native push OKF companions", () => {
       }]);
     });
   });
+
+  for (const ignoreFile of [".vfignore", ".gitignore"]) {
+    for (const indexContent of ["---\nokf_version: '0.1'\n---\n", "# Plain index\n"]) {
+      it(`does not use a ${ignoreFile}-ignored ${indexContent.startsWith("---") ? "declared" : "plain"} index to admit opaque companions`, async () => {
+        await withFiles({
+          "knowledge/acme/index.md": indexContent,
+          "knowledge/acme/metrics/revenue.md": "---\ntype: Metric\ncomputation: /query.sql\n---\n",
+          "knowledge/acme/query.sql": "select 1;",
+          [ignoreFile]: "knowledge/acme/index.md\n",
+        }, async (directory) => {
+          if (ignoreFile === ".gitignore") {
+            const initialized = await new Deno.Command("git", {
+              args: ["init", "--quiet", directory],
+              stdout: "null",
+              stderr: "piped",
+            }).output();
+            assertEquals(initialized.success, true);
+          }
+          const checker = await loadIgnoreChecker(directory);
+          const remoteFiles = await Promise.all([
+            "knowledge/acme/index.md",
+            "knowledge/acme/metrics/revenue.md",
+            "knowledge/acme/query.sql",
+          ].map(async (path) => ({
+            path,
+            content: await Deno.readTextFile(join(directory, path)),
+          })));
+          await checker.resolveGitIgnoredCandidates(remoteFiles.map((file) => file.path));
+          const companions = collectReferencedOkfCompanions(remoteFiles, checker);
+          assertEquals(companions.has("knowledge/acme/query.sql"), false);
+          const scanned = await scanLocalFiles(directory, checker);
+          assertEquals(scanned.some((file) => file.path === "knowledge/acme/index.md"), false);
+          assertEquals(scanned.some((file) => file.path === "knowledge/acme/query.sql"), false);
+          assertEquals(
+            scanned.some((file) => file.path === "knowledge/acme/metrics/revenue.md"),
+            true,
+          );
+        });
+      });
+    }
+  }
 
   it("preserves a referenced text companion's BOM and Unicode bytes", async () => {
     const content = "\uFEFFselect 'å';\r\n";

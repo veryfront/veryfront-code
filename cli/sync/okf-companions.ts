@@ -195,11 +195,14 @@ export function collectReferencedOkfCompanions(
   ignoreChecker: IgnoreChecker,
   availablePaths = new Set(files.map((file) => file.path)),
 ): Set<string> {
-  const bundleRoots = collectOkfBundleRoots(files);
+  const visibleFiles = files.filter((file) => !ignoreChecker.isIgnored(file.path));
+  const visiblePaths = new Set(
+    [...availablePaths].filter((path) => !ignoreChecker.isIgnored(path)),
+  );
+  const bundleRoots = collectOkfBundleRoots(visibleFiles);
   const referencedPaths = new Set<string>();
-  for (const file of files) {
+  for (const file of visibleFiles) {
     if (
-      ignoreChecker.isIgnored(file.path) ||
       !isMarkdownPath(file.path) ||
       typeof file.content !== "string"
     ) continue;
@@ -210,8 +213,8 @@ export function collectReferencedOkfCompanions(
       value: inspected.metadata,
       insideCompanionField: false,
       referencedPaths,
-      availablePaths,
-      bundleRoots: collectOkfBundleRootCandidates(file.path, bundleRoots, availablePaths),
+      availablePaths: visiblePaths,
+      bundleRoots: collectOkfBundleRootCandidates(file.path, bundleRoots, visiblePaths),
     });
   }
   return referencedPaths;
