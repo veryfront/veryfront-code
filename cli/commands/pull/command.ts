@@ -106,6 +106,8 @@ export type PullSource =
  * Pull command options
  */
 export interface PullOptions {
+  /** Internal host transport supplied by an embedding command after project configuration. */
+  transport?: typeof fetch;
   /** Project slug to pull from */
   projectSlug?: string;
   /** List of project slugs to pull (each into its own directory) */
@@ -978,13 +980,14 @@ async function pullSingleProject(
   prune: boolean,
   config: ResolvedConfig,
   quiet = false,
+  transport?: typeof fetch,
 ): Promise<PullProjectResult> {
   const sourceLabel = formatPullSource(source);
   let spinner = quiet
     ? createNoopSpinner()
     : createSpinner(`Fetching files from ${projectSlug} (${sourceLabel})...`);
 
-  const client = createApiClient({ ...config, projectSlug });
+  const client = createApiClient({ ...config, projectSlug }, transport);
 
   let files: ProjectFile[];
   try {
@@ -1239,7 +1242,9 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       let config: ResolvedConfig;
       try {
         // Use interactive auth - prompts for login if not authenticated
-        config = await resolveConfigWithAuth(projectDir);
+        config = await resolveConfigWithAuth(projectDir, undefined, {
+          transport: options.transport,
+        });
         if (slugOverride) config = { ...config, projectSlug: slugOverride };
       } catch (error) {
         spinner.stop();
@@ -1304,6 +1309,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           prune,
           config,
           quiet,
+          options.transport,
         );
         return;
       }
@@ -1337,6 +1343,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
             prune,
             config,
             quiet,
+            options.transport,
           );
           totalWritten += result.written;
           totalDeleted += result.deleted;

@@ -215,7 +215,7 @@ describe("cloud runtime system messages", () => {
     assertStringIncludes(dynamicMsg?.content ?? "", "Runtime facts");
   });
 
-  it("advertises bounded skill discovery through the exposed hosted loader name", () => {
+  it("advertises bounded skill discovery without embedding loader call recipes", () => {
     const skills = createLargeSkillCatalog();
 
     const canonicalText = buildInteractiveVeryfrontCloudRuntimeInstructions({
@@ -224,10 +224,11 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["tool_search", "veryfront__load_skill"],
+      availableToolNames: ["veryfront__load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
-    assertStringIncludes(canonicalText, "Call veryfront__load_skill({ inventory:");
-    assertEquals(canonicalText.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(canonicalText, "available through the skill inventory");
+    assertEquals(canonicalText.includes("Call veryfront__load_skill("), false);
+    assertEquals(canonicalText.includes("Call load_skill("), false);
 
     const legacyText = buildInteractiveVeryfrontCloudRuntimeInstructions({
       agentConfig: createAgent({ instructions: "Base instructions" }),
@@ -235,10 +236,11 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["load_skill", "tool_search"],
+      availableToolNames: ["load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
-    assertStringIncludes(legacyText, "Call load_skill({ inventory:");
-    assertEquals(legacyText.includes("Call veryfront__load_skill({ inventory:"), false);
+    assertStringIncludes(legacyText, "available through the skill inventory");
+    assertEquals(legacyText.includes("Call veryfront__load_skill("), false);
+    assertEquals(legacyText.includes("Call load_skill("), false);
 
     const collisionText = buildInteractiveVeryfrontCloudRuntimeInstructions({
       agentConfig: createAgent({ instructions: "Base instructions" }),
@@ -246,10 +248,11 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["load_skill", "tool_search", "veryfront__load_skill"],
+      availableToolNames: ["load_skill", "veryfront__load_skill", "veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
-    assertStringIncludes(collisionText, "Call veryfront__load_skill({ inventory:");
-    assertEquals(collisionText.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(collisionText, "available through the skill inventory");
+    assertEquals(collisionText.includes("Call veryfront__load_skill("), false);
+    assertEquals(collisionText.includes("Call load_skill("), false);
 
     const defaultText = buildInteractiveVeryfrontCloudRuntimeInstructions({
       agentConfig: createAgent({ instructions: "Base instructions" }),
@@ -258,7 +261,8 @@ describe("cloud runtime system messages", () => {
       instructions: "",
       skills,
     }).map((message) => message.content).join("\n");
-    assertStringIncludes(defaultText, "Call load_skill({ inventory:");
+    assertStringIncludes(defaultText, "available through the skill inventory");
+    assertEquals(defaultText.includes("Call load_skill("), false);
 
     const disabledText = buildInteractiveVeryfrontCloudRuntimeInstructions({
       agentConfig: createAgent({ instructions: "Base instructions" }),
@@ -266,7 +270,7 @@ describe("cloud runtime system messages", () => {
       branchId: null,
       instructions: "",
       skills,
-      availableToolNames: ["tool_search"],
+      availableToolNames: ["veryfront__tool_search"],
     }).map((message) => message.content).join("\n");
     assertEquals(disabledText.includes("<available_skills>"), false);
     assertEquals(disabledText.includes("Call load_skill({ inventory:"), false);

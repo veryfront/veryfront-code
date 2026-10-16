@@ -67,6 +67,14 @@ class ToolRegistryInternal extends ScopedRegistryFacade<Tool> {
     super.registerShared(id, sealToolPlatformDependencies(item));
   }
 
+  /** Register a framework-owned canonical platform tool outside the local namespace. */
+  registerPlatformShared(id: `veryfront__${string}`, item: Tool): void {
+    if (item.id !== id) {
+      throw INVALID_ARGUMENT.create({ detail: `Platform tool registration must preserve "${id}"` });
+    }
+    super.registerShared(id, item);
+  }
+
   getToolsForProvider(): ToolDefinition[] {
     return [...this.getAll().values()].map(toolToProviderDefinition);
   }

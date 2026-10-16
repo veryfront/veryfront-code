@@ -427,6 +427,28 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       });
     }
 
+    it("reports API unavailability instead of asking to log in during connected dev", async () => {
+      try {
+        setNonInteractive(true);
+        await withMockFetch(
+          (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch,
+          async () => {
+            const { ensureAuthenticated } = await import("./login.ts");
+            await assertRejects(
+              () =>
+                ensureAuthenticated({ ...testEnv, apiToken: "vf_test_secret" }, undefined, {
+                  throwOnCredentialValidationUnavailable: true,
+                }),
+              Error,
+              "API is unavailable",
+            );
+          },
+        );
+      } finally {
+        resetInteractiveMode();
+      }
+    });
+
     it("retains a stored session and propagates unexpected validation failures", async () => {
       const originalFetch = globalThis.fetch;
       await saveToken("stored-unexpected-token", testEnv);
@@ -3526,5 +3548,46 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       assertEquals(typeof userInfo.id, "string");
       assertEquals(typeof userInfo.email, "string");
     });
+  });
+});
+
+Deno.test("authentication preflight does not use project-mutated fetch when given host transport", async () => {
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
+    const { ensureAuthenticated, login } = await import("./login.ts");
+    const credential = await ensureAuthenticated(
+      {
+        ...createTestEnvironmentConfig(),
+        apiUrl: "https://api.veryfront.com",
+        apiBaseUrl: "https://api.veryfront.com",
+        apiToken: "vf_private_test",
+      },
+      undefined,
+      {
+        transport: ((_input, init) => {
+          assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer vf_private_test");
+          return Promise.resolve(Response.json({ data: [], page_info: {} }));
+        }) as typeof fetch,
+      },
+    );
+    assertEquals(credential, { authenticated: true, type: "apiKey" });
+    const loggedIn = await login(
+      undefined,
+      {
+        ...createTestEnvironmentConfig(),
+        apiUrl: "https://api.veryfront.com",
+        apiBaseUrl: "https://api.veryfront.com",
+        apiToken: "vf_private_test",
+      },
+      undefined,
+      {
+        transport: ((_input, init) => {
+          assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer vf_private_test");
+          return Promise.resolve(Response.json({ data: [], page_info: {} }));
+        }) as typeof fetch,
+      },
+    );
+    assertEquals(loggedIn, { authenticated: true, type: "apiKey" });
   });
 });

@@ -5500,6 +5500,39 @@ describe("Sandbox", () => {
       await sandbox.close();
       assertEquals(fetchCalls.length, 1);
     });
+    it("sends the selected billing project in capabilities without changing its value", async () => {
+      mockFetch([jsonResponse({
+        private_creation: true,
+        private_always_on: false,
+        coding_agent_terminal: true,
+        limits: {
+          max_ttl_hours: 24,
+          max_command_timeout_seconds: 55,
+          max_background_timeout_seconds: 600,
+          max_command_output_bytes: 1048576,
+          max_page_size: 100,
+          max_file_bytes: 1048576,
+          max_write_files: 100,
+        },
+        defaults: { command_timeout_seconds: 30, background_timeout_seconds: 600, page_size: 20 },
+      })]);
+      const projectReference = "project + ?&=#";
+      const options = { authToken: "token", apiUrl: "https://api.test.com", projectReference };
+      const capabilities = await Sandbox.capabilities(options);
+      const url = new URL(fetchCalls[0]!.url);
+      assertEquals(url.pathname, "/sandboxes/capabilities");
+      assertEquals([...url.searchParams], [["project_reference", projectReference]]);
+      assertEquals(capabilities.privateAlwaysOn, false);
+      assertEquals(capabilities.privateCreation, true);
+    });
+    for (const projectReference of ["", "   "]) {
+      it(`rejects capabilities with an empty billing project ${JSON.stringify(projectReference)}`, async () => {
+        mockFetch([]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com", projectReference };
+        await assertRejects(() => Sandbox.capabilities(options), Error, "projectReference");
+        assertEquals(fetchCalls.length, 0);
+      });
+    }
     it("reads capabilities with SDK field names", async () => {
       mockFetch([jsonResponse({
         private_creation: true,

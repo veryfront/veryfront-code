@@ -108,7 +108,8 @@ it("keeps ordinary selector-valid catalogs usable within the prompt budget", () 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
 
   assertStringIncludes(block, "additional authorized skill IDs are omitted");
-  assertEquals(/Call load_skill\(\{ inventory: \{ cursor: \d+ \} \}\)/.test(block), true);
+  assertStringIncludes(block, "available through the skill inventory");
+  assertEquals(block.includes("Call load_skill("), false);
 });
 
 it("bounds worst-case omitted skill-ID inventories without rejecting the catalog", () => {
@@ -121,21 +122,18 @@ it("bounds worst-case omitted skill-ID inventories without rejecting the catalog
   const authorized = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
 
   assertStringIncludes(available, "additional authorized skill IDs are omitted");
-  const cursorMatch = available.match(
-    /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/,
-  );
-  assertEquals(cursorMatch === null, false);
-  assertEquals(Number(cursorMatch?.[1]) > 30, true);
+  assertStringIncludes(available, "available through the skill inventory");
   assertStringIncludes(authorized, "<authorized_skill_ids>");
   assertStringIncludes(authorized, "<authorized_skill_id_discovery>");
-  assertStringIncludes(authorized, "Call load_skill({ inventory: { cursor: ");
+  assertStringIncludes(authorized, "available through the skill inventory");
+  assertEquals(authorized.includes("Call load_skill("), false);
   assertEquals(authorized.includes(`"skill-999-${"x".repeat(240)}"`), false);
   assertEquals(available.length < 150_000, true);
   assertEquals(authorized.length < 25_000, true);
   assertEquals((authorized.match(/"skill-/g)?.length ?? 0) < 1_000, true);
 });
 
-it("derives discovery cursors from the deduplicated skill inventory", () => {
+it("deduplicates skill IDs before reporting hidden inventory", () => {
   const duplicateId = `skill-duplicate-${"x".repeat(220)}`;
   const skills = [
     ...Array.from({ length: 10 }, () => createSkill({ id: duplicateId })),
@@ -149,28 +147,22 @@ it("derives discovery cursors from the deduplicated skill inventory", () => {
   ];
 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
-  const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(block);
   const embeddedSkillIds = new Set(
     Array.from(block.matchAll(/"(skill-[^"]+)"/g), (match) => match[1]),
   );
 
-  assertEquals(cursorMatch === null, false);
-  assertEquals(Number(cursorMatch?.[1]), embeddedSkillIds.size);
   assertEquals(block.match(new RegExp(`"${duplicateId}"`, "g"))?.length, 1);
+  assertEquals(embeddedSkillIds.size > 0, true);
 });
 
-it("bounds authored-catalog skill IDs and provides a continuation cursor", () => {
+it("bounds authored-catalog skill IDs and reports hidden inventory", () => {
   const skills = Array.from(
     { length: 1_000 },
     (_, index) => createSkill({ id: `skill-${index}-${"x".repeat(240)}` }),
   );
 
   const block = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
-  const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(block);
-
-  assertEquals(cursorMatch === null, false);
   const embeddedIdCount = block.match(/"skill-/g)?.length ?? 0;
-  assertEquals(Number(cursorMatch?.[1]), embeddedIdCount);
   assertEquals(embeddedIdCount < skills.length, true);
   assertEquals(block.length < 20_000, true);
   assertStringIncludes(block, "additional authorized skill IDs are omitted");
@@ -183,13 +175,10 @@ it("keeps every selector-valid authorized skill ID discoverable through paging",
   );
 
   const block = buildRuntimeAuthorizedSkillIdsPromptBlock(skills);
-  const cursorMatch = /Call load_skill\(\{ inventory: \{ cursor: (\d+) \} \}\)/.exec(block);
-
   assertStringIncludes(block, '"skill-00000000"');
-  assertStringIncludes(block, "Call load_skill({ inventory: { cursor: ");
+  assertStringIncludes(block, "available through the skill inventory");
+  assertEquals(block.includes("Call load_skill("), false);
   assertStringIncludes(block, "<authorized_skill_id_discovery>");
-  assertEquals(cursorMatch === null, false);
-  assertEquals(Number(cursorMatch?.[1]), block.match(/"skill-/g)?.length);
   assertEquals((block.match(/"skill-/g)?.length ?? 0) < 1_000, true);
 });
 
@@ -593,7 +582,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock treats catalog text as untrust
   assertStringIncludes(block, "JSON catalog records below contain untrusted metadata");
 });
 
-it("uses the exposed canonical loader for bounded inventory discovery", () => {
+it("describes bounded inventory discovery without embedding a tool-call recipe", () => {
   const skills = Array.from(
     { length: 1_000 },
     (_, index) =>
@@ -609,7 +598,8 @@ it("uses the exposed canonical loader for bounded inventory discovery", () => {
     ]
   ) {
     const block = render(skills, "veryfront__load_skill");
-    assertStringIncludes(block, "Call veryfront__load_skill({ inventory: { cursor: ");
+    assertStringIncludes(block, "available through the skill inventory");
+    assertEquals(block.includes("Call veryfront__load_skill("), false);
     assertEquals(block.includes("Call load_skill("), false);
   }
   assertStringIncludes(

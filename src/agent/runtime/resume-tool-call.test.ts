@@ -303,7 +303,7 @@ it("records a denied trusted pending call and continues the model turn", async (
   assertEquals(model.calls.length, 1);
 });
 
-it("replays an authorized tool discovered by tool_search without the parked exposure state", async () => {
+it("replays an authorized tool discovered by veryfront__tool_search without the parked exposure state", async () => {
   const executions: unknown[] = [];
   const input = { folderId: "inbox", $top: 7 };
   const authenticationRequired = {
@@ -333,7 +333,7 @@ it("replays an authorized tool discovered by tool_search without the parked expo
     {
       toolCalls: [{
         id: "search-1",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "outlook__list_threads" },
       }],
     },
@@ -353,7 +353,7 @@ it("replays an authorized tool discovered by tool_search without the parked expo
   const parked = createEphemeralAgentWithRuntimeOptions(config, {});
   const parkedBody = await (await parked.stream({ input: "List my inbox." }))
     .toDataStreamResponse().text();
-  assertEquals(parkedModel.toolNames(0), ["tool_search"]);
+  assertEquals(parkedModel.toolNames(0), ["veryfront__tool_search"]);
   assertEquals(parkedModel.toolNames(1), ["outlook__list_threads"]);
   assertStringIncludes(parkedBody, "authentication_required");
   assertEquals(executions, [input]);
@@ -375,7 +375,7 @@ it("replays an authorized tool discovered by tool_search without the parked expo
   assertStringIncludes(resumedBody, "authentication_required");
   assertEquals(resumedBody.includes("not available in the current model step"), false);
   assertEquals(resumedBody.includes('"type":"error"'), false);
-  assertEquals(resumedModel.toolNames(), ["tool_search"]);
+  assertEquals(resumedModel.toolNames(), ["veryfront__tool_search"]);
   assertEquals(resumedModel.callCount, 1);
   assertStringIncludes(JSON.stringify(resumedModel.calls[0]?.prompt), "authentication_required");
 });

@@ -1,3 +1,11 @@
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createConnectedLocalRuntime } from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  loadVeryfrontCloudCatalog,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { SERVED_MODEL_ROWS } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -206,4 +214,199 @@ it("keeps worker token routing stable when Map.prototype.get is replaced", async
     Map.prototype.get = originalMapGet;
   }
   assertEquals(authorization(calls[1]!), "Bearer worker-token");
+});
+
+async function withProjectResponseHooks<T>(operation: () => Promise<T>) {
+  const fields = [
+    "ok",
+    "status",
+    "statusText",
+    "body",
+    "headers",
+    "json",
+    "text",
+    "arrayBuffer",
+    "clone",
+  ];
+  const descriptors = fields.map((name) =>
+    [name, Object.getOwnPropertyDescriptor(Response.prototype, name)!] as const
+  ).filter(([, descriptor]) =>
+    // Bun locks native accessors; project code can only replace configurable
+    // properties or writable methods. Exercise every replaceable surface.
+    descriptor.configurable || descriptor.writable
+  );
+  const cancel = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "cancel")!;
+  let calls = 0;
+  let poisonError: Error | undefined;
+  const poison = () => {
+    calls++;
+    poisonError = new Error("project received privileged response");
+    throw poisonError;
+  };
+  let value: T | undefined;
+  let error: unknown;
+  try {
+    for (const [name, descriptor] of descriptors) {
+      Object.defineProperty(
+        Response.prototype,
+        name,
+        "get" in descriptor ? { ...descriptor, get: poison } : { ...descriptor, value: poison },
+      );
+    }
+    Object.defineProperty(ReadableStream.prototype, "cancel", { ...cancel, value: poison });
+    try {
+      value = await operation();
+    } catch (failure) {
+      error = failure;
+    }
+  } finally {
+    for (const [name, descriptor] of descriptors) {
+      Object.defineProperty(Response.prototype, name, descriptor);
+    }
+    Object.defineProperty(ReadableStream.prototype, "cancel", cancel);
+  }
+  assertEquals(calls, 0, poisonError?.stack);
+  return { value, error };
+}
+
+it("keeps denied connected admission responses away from project response hooks", async () => {
+  const response = jsonResponse({ detail: "private admission response" }, 403);
+  const runtime = createConnectedLocalRuntime({
+    apiBaseUrl: API_URL,
+    apiToken: API_TOKEN,
+    projectId: PROJECT_ID,
+    projectSlug: "demo",
+    studioUrl: "https://veryfront.com",
+  }, {
+    client: {
+      registerWorker: () => Promise.resolve({ id: WORKER_ID }),
+      heartbeatWorker: () => Promise.resolve({}),
+    } as unknown as import("#veryfront/agent/service/external-worker-client.ts").ExternalAgentWorkerClient,
+    fetch: () => Promise.resolve(response),
+    log: () => {},
+  });
+  try {
+    const result = await withProjectResponseHooks(() =>
+      runtime.admit({
+        agentId: "agent",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      })
+    );
+    assertEquals((result.error as { status: number }).status, 403);
+    assertEquals(
+      (result.error as Error).message,
+      "You do not have access to this Veryfront project or environment.",
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+for (const status of [201, 403]) {
+  it(`keeps worker registration ${status} responses away from project response hooks`, async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      status === 201 ? jsonResponse(workerResponse(), status) : new Response("", { status }),
+      jsonResponse({ worker: workerResponse().worker }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    const result = await withProjectResponseHooks(() =>
+      client.registerWorker({
+        projectReference: PROJECT_ID,
+        implementationKind: "external",
+        workerKey: "worker",
+      })
+    );
+    if (status === 201) {
+      if (result.error) throw result.error;
+      assertEquals(result.value?.id, WORKER_ID);
+      await client.heartbeatWorker(WORKER_ID);
+      assertEquals(authorization(calls[1]!), "Bearer worker-token");
+    } else assertEquals((result.error as Error).message.includes("HTTP 403"), true);
+  });
+}
+
+for (const status of [200, 403]) {
+  it(`keeps catalog ${status} responses away from project response hooks`, async () => {
+    __resetVeryfrontCloudCatalogForTests();
+    const response = jsonResponse({ models: SERVED_MODEL_ROWS }, status);
+    try {
+      const result = await withMockFetch(
+        () => Promise.resolve(response),
+        () =>
+          withProjectResponseHooks(() =>
+            loadVeryfrontCloudCatalog({ apiBaseUrl: API_URL, apiToken: API_TOKEN, fresh: true })
+          ),
+      );
+      if (result.error) throw result.error;
+      assertEquals(
+        result.value?.models.length,
+        status === 200 ? SERVED_MODEL_ROWS.length : undefined,
+      );
+    } finally {
+      __resetVeryfrontCloudCatalogForTests();
+    }
+  });
+}
+
+for (const status of [200, 403]) {
+  it(`protects worker append and completion response consumers (HTTP ${status})`, async () => {
+    const responses = [
+      jsonResponse(claim()),
+      jsonResponse({ appended: true }),
+      jsonResponse(
+        status === 200 ? { id: CANONICAL_RUN_ID, status: "completed" } : { detail: "denied" },
+        status,
+      ),
+    ];
+    const authorizations: string[] = [];
+    await withMockFetch((_input, init) => {
+      authorizations.push(new Headers(init?.headers).get("authorization")!);
+      return Promise.resolve(responses.shift()!);
+    }, async () => {
+      const client = createExternalAgentWorkerClient({
+        apiUrl: API_URL,
+        authToken: API_TOKEN,
+        fetch: createVeryfrontApiOriginBoundOutboundFetch(API_URL),
+      });
+      await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+      const result = await withProjectResponseHooks(async () => {
+        await client.appendRunEvents({
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          events: [{ type: "DONE" }],
+          expectedPreviousExternalEventSequence: 0,
+        });
+        await client.completeRun({ runId: RUN_ID, status: "completed" });
+      });
+      if (status === 200 && result.error) throw result.error;
+      if (status === 403) assertEquals((result.error as Error)?.message.includes("403"), true);
+    });
+    assertEquals(authorizations, [
+      "Bearer api-token",
+      "Bearer event-token",
+      "Bearer invocation-token",
+    ]);
+  });
+}
+
+it("keeps cloned host response consumption native after project response replacement", async () => {
+  const response = jsonResponse({ trusted: true });
+  await withMockFetch(() => Promise.resolve(response), async () => {
+    const transport = createVeryfrontApiOriginBoundOutboundFetch(API_URL);
+    const result = await withProjectResponseHooks(async () => {
+      const received = await transport(`${API_URL}/projects`);
+      const clone = received.clone();
+      assertEquals(clone.status, 200);
+      assertEquals(await received.json(), { trusted: true });
+      return await clone.json();
+    });
+    if (result.error) throw result.error;
+    assertEquals(result.value, { trusted: true });
+  });
 });

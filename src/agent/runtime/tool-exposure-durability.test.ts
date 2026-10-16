@@ -51,9 +51,13 @@ for (const mode of ["generate", "stream"] as const) {
     const callOrder: string[] = [];
     const model = scriptedModel([
       () => {
-        callOrder.push("tool_search");
+        callOrder.push("veryfront__tool_search");
         return {
-          toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "get_release" } }],
+          toolCalls: [{
+            id: "search-1",
+            name: "veryfront__tool_search",
+            input: { query: "get_release" },
+          }],
         };
       },
       () => {
@@ -84,7 +88,7 @@ for (const mode of ["generate", "stream"] as const) {
     await runRuntime(mode, config);
 
     assertEquals(callOrder, [
-      "tool_search",
+      "veryfront__tool_search",
       "persist_checkpoint:start",
       "persist_checkpoint:done",
       "next_model_step",
@@ -96,7 +100,13 @@ for (const mode of ["generate", "stream"] as const) {
 it("a new runtime restores a persisted checkpoint and calls the target without another search", async () => {
   let checkpoint: ToolExposureCheckpoint | undefined;
   const firstModel = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "get_release" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "get_release" },
+      }],
+    },
     { text: "pause" },
   ], { modelId: "hosted/checkpoint-first-invocation", only: "generate" });
   const baseConfig = {
@@ -137,7 +147,7 @@ it("a new runtime restores a persisted checkpoint and calls the target without a
 
   assertEquals(resumedModel.toolNames(0).includes("get_release"), true);
   assertEquals(targetExecutions, 1);
-  assertEquals(response.toolCalls.some((call) => call.name === "tool_search"), false);
+  assertEquals(response.toolCalls.some((call) => call.name === "veryfront__tool_search"), false);
 });
 
 it("stream exposes a restored tool on step zero without another search", async () => {
@@ -190,13 +200,19 @@ for (const mode of ["generate", "stream"] as const) {
       "Continue",
     );
 
-    assertEquals(model.toolNames(model.callCount - 1), ["tool_search"]);
+    assertEquals(model.toolNames(model.callCount - 1), ["veryfront__tool_search"]);
   });
 }
 
 it("restores the invocation checkpoint only on step zero", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "list_projects" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "list_projects" },
+      }],
+    },
     { text: "done" },
   ], { modelId: "hosted/checkpoint-step-zero", only: "generate" });
   const config = {
@@ -226,7 +242,13 @@ it("restores the invocation checkpoint only on step zero", async () => {
 
 it("required durable checkpoint persistence fails closed when the callback is absent", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "get_release" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "get_release" },
+      }],
+    },
     { text: "must not run" },
   ], { modelId: "hosted/missing-checkpoint-persister", only: "generate" });
   const config = {
@@ -252,7 +274,13 @@ it("required durable checkpoint persistence fails closed when the callback is ab
 it("checkpoint persistence rejection aborts before continuation and target execution", async () => {
   let targetExecutions = 0;
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "get_release" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "get_release" },
+      }],
+    },
     { toolCalls: [{ id: "release-1", name: "get_release", input: {} }] },
   ], { modelId: "hosted/rejected-checkpoint-persister", only: "generate" });
   const config = {
@@ -279,7 +307,13 @@ it("checkpoint persistence rejection aborts before continuation and target execu
 
 it("stream checkpoint persistence rejection is reported before continuation", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "get_release" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "get_release" },
+      }],
+    },
     { text: "must not run" },
   ], { modelId: "hosted/rejected-stream-checkpoint-persister", only: "stream" });
   const body = await runRuntime(

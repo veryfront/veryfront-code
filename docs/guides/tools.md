@@ -56,10 +56,9 @@ export default agent({
 });
 ```
 
-Existing noncolliding platform selectors such as `get_file` remain supported.
+Use canonical platform selectors such as `veryfront__get_file`.
 Integration tools retain names such as `github__list_repos`. Project tool IDs
-cannot use the reserved double-underscore namespace. Platform aliases retain
-the same project scope and policy restrictions as their legacy names.
+cannot use the reserved double-underscore namespace. Platform tools retain their project scope and policy restrictions.
 
 Connector allowlists do not remove trusted platform capabilities. That exception
 requires host-owned provenance; a remote source cannot claim it with a tool name
@@ -72,10 +71,11 @@ Reserved platform names resolve only through trusted sources, regardless of
 custom server ordering. Hosted discovery applies connector policy to the same
 catalog snapshot it lists, without fetching each catalog a second time.
 
-Parent, child, hosted-project, and standalone API sources derive canonical aliases
-from the authenticated legacy catalog. API MCP allow/deny entries apply to both
-spellings; a run's tool-name ceiling still grants only its exact selected names.
-Canonical calls use the legacy wire name after project and access checks.
+Parent, child, hosted-project, and standalone API sources publish only canonical
+`veryfront__` names from the authenticated catalog. Bare transport names are
+normalized internally and do not create duplicate tool definitions. Internal
+policy checks recognize both spellings; an explicit tool-name ceiling remains
+restrictive. Host-provided platform tools also publish one canonical identity.
 
 Runtime
 dispatch reuses the source selected during authorization for that call.
@@ -148,9 +148,9 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 An explicit tool map authorizes only the selected tools and sends those schemas
 to the model immediately. Use `tools: true` for a broad authorized scope. The
-framework initially sends only the `load_skill` bootstrap schema when it is
-authorized, plus `tool_search`, then loads matching schemas for the next model
-step. `form_input` is authorized but deferred until it is needed. Omit `tools`
+framework initially sends only the `veryfront__load_skill` bootstrap schema when it is
+authorized, plus `veryfront__tool_search`, then loads matching schemas for the next model
+step. `veryfront__form_input` is authorized but deferred until it is needed. Omit `tools`
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
 
@@ -169,7 +169,7 @@ Use an explicit map such as `tools: { getWeather: true }` when the model needs a
 selected schema on its first step. Schema loading and tool authorization stay
 separate, and execution rechecks authorization.
 
-`tool_search` accepts exactly one of four mode fields. All arguments are
+`veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
 top-level strings or integers:
 
 - `schema: "<exact name>"` returns one exact tool's input schema and loads it
@@ -234,7 +234,7 @@ Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", an agent with `tools: true`:
 
-1. Sends the question with `tool_search` to the model.
+1. Sends the question with `veryfront__tool_search` to the model.
 2. The model searches for a weather capability.
 3. The framework loads the matching authorized `getWeather` schema.
 4. The next model step calls `getWeather({ city: "Tokyo" })`.
@@ -256,7 +256,7 @@ Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
 Use `providerTools` for provider-executed capabilities. In deferred mode,
-`tool_search` can load a configured capability when the selected model supports
+`veryfront__tool_search` can load a configured capability when the selected model supports
 it:
 
 ```ts
@@ -295,7 +295,7 @@ duplicating transport configuration.
 export default agent({
   id: "project-reader",
   system: "Use project evidence when answering.",
-  tools: { get_file: true, list_files: true },
+  tools: { veryfront__get_file: true, veryfront__list_files: true },
 });
 ```
 

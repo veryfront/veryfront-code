@@ -475,7 +475,8 @@ async function assertActiveSkillFileAvailable(
     throw toError(
       createError({
         type: "agent",
-        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+        message:
+          `${input.toolName} can only access ${input.kind} files advertised by the active skill.`,
       }),
     );
   }
@@ -502,7 +503,8 @@ async function assertActiveSkillFileAvailable(
     throw toError(
       createError({
         type: "agent",
-        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+        message:
+          `${input.toolName} can only access ${input.kind} files advertised by the active skill.`,
       }),
     );
   }
@@ -597,7 +599,7 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       await assertActiveSkillFileAvailable(
         {
-          toolName: "load_skill_reference",
+          toolName: "veryfront__load_skill_reference",
           skillId: skill.id,
           requestedSkillId: input.skillId,
           path: input.reference,
@@ -646,7 +648,7 @@ export function createExecuteSkillScriptTool(
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       const authoritativeScripts = await assertActiveSkillFileAvailable(
         {
-          toolName: "execute_skill_script",
+          toolName: "veryfront__execute_skill_script",
           skillId: skill.id,
           requestedSkillId: input.skillId,
           path: input.script,

@@ -713,15 +713,15 @@ it("authored knowledge supplies its loader independently and client overrides on
     configuredKnowledge: { "knowledge/support/**": true },
   };
   assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: undefined }), [
-    "search_knowledge",
+    "veryfront__search_knowledge",
   ]);
   assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: [] }), []);
   assertEquals(
     resolveHostedRuntimeAllowedTools({
       ...input,
-      requestedTools: ["search_knowledge", "get_file"],
+      requestedTools: ["veryfront__search_knowledge", "get_file"],
     }),
-    ["search_knowledge"],
+    ["veryfront__search_knowledge"],
   );
 });
 

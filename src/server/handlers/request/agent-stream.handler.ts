@@ -1,9 +1,11 @@
 import { isTerminalRunToolName } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
+  createLivePlatformMcpSource,
   createPlatformMcpCatalogSource,
   platformMcpLegacyName,
   withPlatformMcpPolicyAliases,
+  withPlatformMcpToolNameAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
 import { createHostOwnedAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
@@ -47,6 +49,7 @@ import {
   getRequestedUnresolvedBooleanToolNames,
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
+  VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_TOOL_PREFIX,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -645,9 +648,8 @@ export async function withVeryfrontPlatformRemoteTools(input: {
     platformRemoteToolSource,
     platformToolDefinitions,
   );
-  const { aliases } = platformCatalog;
   platformToolDefinitions = platformCatalog.definitions;
-  for (const [, wireName] of aliases) {
+  for (const { name: wireName } of platformToolDefinitions) {
     const legacyName = platformMcpLegacyName(wireName);
     const canonicalName = `veryfront__${legacyName}`;
     if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
@@ -773,7 +775,9 @@ function withoutOptionalStudioMcpServers(agent: Agent): Agent {
   const mcpServers = agent.config.mcpServers?.filter((server) => {
     if (isExplicitStudioMcpServer(server) && server.required === false) {
       skippedOptionalStudio = true;
-      for (const toolName of server.toolPolicy?.allow ?? []) skippedToolNames.add(toolName);
+      for (
+        const toolName of withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? [])
+      ) skippedToolNames.add(toolName);
       return false;
     }
     return true;
@@ -789,6 +793,7 @@ function withoutOptionalStudioMcpServers(agent: Agent): Agent {
     ? [
       ...(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes ?? []),
       VERYFRONT_STUDIO_TOOL_PREFIX,
+      VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX,
     ]
     : runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes;
   return {
@@ -844,7 +849,9 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     agentId: input.agent.id,
     availableToolNames: input.availableToolNames,
   }).filter((toolName) =>
-    configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
+    configuredServers.some((server) =>
+      createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)).allows(toolName)
+    )
   );
 
   const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
@@ -869,9 +876,9 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     });
     if (!remoteConfig) continue;
     resolvedStudioSources.push({
-      policy: createMcpToolPolicyGate(server.toolPolicy),
+      policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createRemoteMCPToolSource(remoteConfig),
+      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig)),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;

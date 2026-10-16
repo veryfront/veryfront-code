@@ -107,8 +107,8 @@ Local agent evals can use `mockTools` to replace the agent's tool set for one
 run while keeping the real agent answer and trace. Static mock tools are reused;
 resolver mock tools are created once per example repetition. This is strict and
 local-only: hosted AG-UI evals reject `mockTools` before calling the endpoint,
-and skills agents retain only the read-only `load_skill` and
-`load_skill_reference` tools unless the eval explicitly supplies more tools.
+and skills agents retain only the read-only `veryfront__load_skill` and
+`veryfront__load_skill_reference` tools unless the eval explicitly supplies more tools.
 
 Mocked evals use `agent.generate({ tools })`; there is no streaming equivalent.
 Loaded-skill allowed-tool policies and delegation overrides are disabled while

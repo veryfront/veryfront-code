@@ -97,7 +97,7 @@ it("requires generate providers to observe a skill body before reading its refer
   assertEquals(sameBatchReferenceResult?.status, "error");
   assertStringIncludes(
     sameBatchReferenceResult?.error ?? "",
-    'Read the load_skill result for "review" before requesting reference files.',
+    'Reference files for skill "review" are unavailable until its instructions have been read.',
   );
   assertEquals(
     JSON.stringify(sameBatchReferenceResult).includes("Detailed checklist content"),

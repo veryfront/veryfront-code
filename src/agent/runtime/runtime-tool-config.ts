@@ -146,10 +146,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isToolSearchDenied(config: AgentConfig): boolean {
   const deniedTools = (config as { deniedTools?: unknown }).deniedTools;
-  if (ArrayIsArray(deniedTools) && deniedTools.includes(TOOL_SEARCH_TOOL_NAME)) {
+  if (
+    ArrayIsArray(deniedTools) &&
+    (deniedTools.includes(TOOL_SEARCH_TOOL_NAME) || deniedTools.includes("tool_search"))
+  ) {
     return true;
   }
-  return isRecord(config.tools) && config.tools[TOOL_SEARCH_TOOL_NAME] === false;
+  return isRecord(config.tools) &&
+    (config.tools[TOOL_SEARCH_TOOL_NAME] === false || config.tools.tool_search === false);
 }
 
 function resolveToolLoadingWithDenials(
@@ -219,7 +223,8 @@ export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly s
       name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
     ) {
       throw CONFIG_INVALID.create({
-        detail: "bootstrapTools requires exact executable tool names, excluding tool_search",
+        detail:
+          "bootstrapTools requires exact executable tool names, excluding veryfront__tool_search",
       });
     }
   }
