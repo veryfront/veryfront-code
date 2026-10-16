@@ -1,3 +1,6 @@
+import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
+import { configureHostedPlatformDependencySource } from "./platform-dependency-credential.ts";
+import { createHostedProjectRemoteToolSources } from "./project-remote-tool-source.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
@@ -222,6 +225,61 @@ export async function createAgentRuntime(
   );
   // Delegated child runtimes inherit the same budgets through private authority.
   bindHostedChildModelStreamTimeouts(options, hostedRuntimeOptions?.modelStreamTimeouts);
+  if (terminalRequest) {
+    const sourceFactory = getRemoteToolSourceFactory(context);
+    await configureHostedPlatformDependencySource(
+      terminalRequest,
+      async (scope, authToken, owner) => {
+        const agentConfig = owner === terminalRequest
+          ? options.liveProjectSteering?.agent
+          : scope.projectId === (config.VERYFRONT_PROJECT_ID ?? options.projectId) &&
+              getProjectAgentRuntime(context).agents.has(scope.agentId)
+          ? await resolveAgentConfig(context, scope.agentId)
+          : await fetchHostedProjectAgentDefinition({
+            apiUrl: config.VERYFRONT_API_URL,
+            authToken,
+            projectId: scope.projectId,
+            agentId: scope.agentId,
+            branchId: scope.projectId === options.projectId ? options.branchId : null,
+            runtimeTargetKind: scope.projectId === options.projectId
+              ? options.runtimeTargetKind
+              : null,
+          });
+        if (!agentConfig) return undefined;
+        // The private runner enforces the signed wrapper grant. Model inventory
+        // allow lists do not restrict it; service ceilings and explicit denials do.
+        const mcpServers = resolveMcpServers(context.options, agentConfig)
+          .filter((server) => server.kind === "veryfront-api")
+          .map((server) => ({
+            ...server,
+            toolPolicy: {
+              ...server.toolPolicy,
+              deny: [
+                ...new Set([
+                  ...(server.toolPolicy?.deny ?? []),
+                  ...(agentConfig.deniedTools ?? []),
+                ]),
+              ],
+              allow: context.options.mcpServers?.find((host) =>
+                host.kind === server.kind && host.id === server.id
+              )?.toolPolicy?.allow,
+            },
+          }));
+        return createHostedProjectRemoteToolSources({
+          authToken,
+          apiMcpUrl: config.VERYFRONT_MCP_URL,
+          mcpServers,
+          getProjectId: () => scope.projectId,
+          defaultProjectId: scope.projectId,
+          createRemoteToolSource: hostedTerminalToolSourceFactory(
+            owner,
+            config.VERYFRONT_MCP_URL,
+            sourceFactory,
+          ),
+        })[0];
+      },
+    );
+  }
   const projectRuntime = getProjectAgentRuntime(context);
   const refreshSystem = createProjectSteeringRefresh(context);
   const localToolRuntime = createHostedRootLocalToolRuntime({

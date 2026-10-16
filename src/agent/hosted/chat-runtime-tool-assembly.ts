@@ -1,4 +1,7 @@
-import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
+import {
+  canonicalPlatformHostTools,
+  retainTrustedSkillLoaderAliases,
+} from "../platform-host-tools.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
@@ -88,7 +91,7 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 
 function ownEntries<T>(value: Record<string, T>): Array<[string, T]> {
   return apply(objectEntries, Object, [value]) as Array<[string, T]>;
@@ -313,7 +316,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * sources. Deprecated: no framework path populates this. It is retained
    * because `PrepareHostedChatRuntimeToolAssemblyInput` is public API.
    *
-   * @deprecated Use `tool_search` deferred loading. See
+   * @deprecated Use `veryfront__tool_search` deferred loading. See
    * `docs/architecture/28-model-driven-tool-discovery.md`.
    */
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;
@@ -864,7 +867,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   configDerivedSelector: boolean,
 ): Promise<FacadedHostedChatRuntimeToolAssemblyResult> {
   const projectToolNames = createPrivateSet<string>();
-  for (const name of ownKeys(input.localTools)) {
+  const projectToolKeys = ownKeys(input.localTools);
+  for (let index = 0; index < projectToolKeys.length; index++) {
+    if (!objectHasOwn(projectToolKeys, index)) continue;
+    const name = projectToolKeys[index]!;
     const definition = ownDataValue(input.localTools, name);
     if (typeof definition !== "object" || definition === null) continue;
     const owner = ownDataValue(definition, "ownerAgentId");
@@ -956,9 +962,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       );
     }
   }
-  const sortedLocalTools = recordFromEntries(
+  const sortedLocalTools = canonicalPlatformHostTools(recordFromEntries(
     sortValues(sortedLocalToolEntries, (left, right) => compareStrings(left[0], right[0])),
-  );
+  ));
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;
@@ -1141,7 +1147,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // cannot advertise capabilities that the runtime cannot execute.
   const localRuntimeTools = createToolsFromHostDefinitions(localHostTools);
   const localToolNames = ownKeys(localRuntimeTools);
-  const toolSearchDenied = deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME);
+  const toolSearchDenied = deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME) ||
+    deniedProviderToolNames.has("tool_search");
   const requestedToolLoadingMode: RuntimeToolLoadingMode = input.toolLoading ??
     (normalizedAllowedToolNames === null && !toolSearchDenied ? "deferred" : "eager");
   const toolLoadingMode: RuntimeToolLoadingMode = requestedToolLoadingMode === "deferred" &&

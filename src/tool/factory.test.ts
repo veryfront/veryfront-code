@@ -804,3 +804,29 @@ describe("tool factory", () => {
     });
   });
 });
+
+Deno.test("tool factory retains an independent platform dependency request snapshot", () => {
+  const dependencies = ["outlook__upload_attachment"];
+  const value = tool({
+    id: "fixture_intake",
+    description: "Code-owned intake",
+    ...{ delegatedPlatformTools: dependencies },
+    inputSchema: { type: "object", properties: {} },
+    execute: async () => "done",
+  });
+  dependencies.push("veryfront__delete_file");
+  assertEquals(Reflect.get(value, "delegatedPlatformTools"), ["outlook__upload_attachment"]);
+});
+
+Deno.test("dynamic wrapper retains its independent platform dependency request", () => {
+  const dependencies = ["veryfront__create_file"];
+  const value = dynamicTool({
+    id: "fixture_snapshot",
+    description: "Code-owned writer",
+    ...{ delegatedPlatformTools: dependencies },
+    inputSchema: { type: "object", properties: {} },
+    execute: async () => "done",
+  });
+  dependencies.push("veryfront__delete_file");
+  assertEquals(Reflect.get(value, "delegatedPlatformTools"), ["veryfront__create_file"]);
+});

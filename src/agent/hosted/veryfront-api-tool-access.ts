@@ -45,6 +45,7 @@ type VeryfrontApiToolAccessRule = {
 type FilterMode = "open" | "closed";
 
 const TOOL_ACCESS_PROFILE_TOOL_NAME = "get_tool_access_profile";
+const CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME = `veryfront__${TOOL_ACCESS_PROFILE_TOOL_NAME}`;
 
 const toolAccessRules = new Map<string, VeryfrontApiToolAccessRule>([
   ["create_project_invitation", { family: "collaboration", action: "create_invite" }],
@@ -252,13 +253,29 @@ export function filterVeryfrontApiToolDefinitionsByAccessProfile(input: {
   );
 }
 
+/** Resolve the access-profile operation's raw transport spelling from its catalog. */
+export function resolveVeryfrontApiToolAccessProfileToolName(
+  toolDefinitions: readonly ToolDefinition[],
+): string {
+  if (toolDefinitions.some(({ name }) => name === CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME)) {
+    return CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME;
+  }
+  if (toolDefinitions.some(({ name }) => name === TOOL_ACCESS_PROFILE_TOOL_NAME)) {
+    return TOOL_ACCESS_PROFILE_TOOL_NAME;
+  }
+  return toolDefinitions.some(({ name }) => name.startsWith("veryfront__"))
+    ? CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME
+    : TOOL_ACCESS_PROFILE_TOOL_NAME;
+}
+
 export async function fetchVeryfrontApiToolAccessProfile(input: {
   source: RemoteToolSource;
   projectId: string;
   context?: ToolExecutionContext;
+  toolName?: string;
 }): Promise<VeryfrontApiToolAccessProfile | null> {
   const rawProfile = await input.source.executeTool(
-    TOOL_ACCESS_PROFILE_TOOL_NAME,
+    input.toolName ?? CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME,
     { project_reference: input.projectId },
     input.context,
   );
@@ -271,6 +288,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
   projectId: string | null;
   context?: ToolExecutionContext;
   nowMs?: number;
+  profileToolName?: string;
 }): Promise<ToolDefinition[]> {
   if (!input.projectId) {
     return [...input.toolDefinitions];
@@ -281,6 +299,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
       source: input.source,
       projectId: input.projectId,
       context: input.context,
+      toolName: input.profileToolName,
     });
     if (profile && isVeryfrontApiToolAccessProfileFresh(profile, input.nowMs)) {
       return filterVeryfrontApiToolDefinitionsByAccessProfile({

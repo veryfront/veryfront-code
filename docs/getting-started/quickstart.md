@@ -22,6 +22,10 @@ cd support-agent
 The starter contains an assistant agent, `calculator.ts` tool, chat page,
 AG-UI route, and smoke eval.
 
+Answer **No** to **Use Veryfront Cloud?** to follow this direct-provider
+tutorial. To use Veryfront inference and inspect local runs in Studio without
+a provider API key, follow the [Cloud quickstart](./cloud-quickstart.md).
+
 ## Configure inference
 
 Set the API key in the terminal where you run Veryfront:
@@ -42,8 +46,8 @@ npm run dev
 The CLI confirms the server and available inference path:
 
 ```text
-✓ Ready in 1.3s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 Inference OpenAI direct
 ```
 

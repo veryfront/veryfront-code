@@ -63,6 +63,12 @@ describe("commands/dev/handler", () => {
       assertEquals(args.port, 3000);
     });
 
+    it("accepts an explicit shared Cloud environment", () => {
+      const result = parseDevArgs(parseCliArgs(["dev", "--env", "staging"]));
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.env, "staging");
+    });
+
     it("supports project path via --project flag", () => {
       const args: ParsedArgs = {
         _: ["dev"],

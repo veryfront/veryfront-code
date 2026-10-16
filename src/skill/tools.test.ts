@@ -487,7 +487,7 @@ Do work.`,
           },
         }),
       Error,
-      "load_skill_reference requires an active loaded skill.",
+      "veryfront__load_skill_reference requires an active loaded skill.",
     );
     assertEquals(readCount, 0);
 
@@ -498,7 +498,7 @@ Do work.`,
           reference: "references/guide.md",
         }, { activeSkillId: "my-skill" }),
       Error,
-      "load_skill_reference requires an active loaded skill.",
+      "veryfront__load_skill_reference requires an active loaded skill.",
     );
     assertEquals(readCount, 0);
   });
@@ -959,7 +959,7 @@ describe("load_skill orchestration contract", () => {
     //
     // So the clause must be conditional: a no-op when invoke_agent is absent,
     // accurate when it is present. veryfront/veryfront-issue-inbox#411.
-    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If invoke_agent is available");
+    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If veryfront__invoke_agent is available");
     assertEquals(
       LOAD_SKILL_OVERRIDE_FORWARDING.includes("the available delegation tool"),
       false,

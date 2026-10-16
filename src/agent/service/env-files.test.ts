@@ -1,6 +1,12 @@
 import { assertEquals } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  deleteEnv,
+  getEnv,
+  getHostEnvExcludingEnvFile,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
+import { clearEnvFileValueSource } from "#veryfront/platform/compat/process/env.ts";
 import { loadAgentServiceEnvFiles, loadHostedAgentServiceEnvFiles } from "./env-files.ts";
 
 const TEST_KEYS = [
@@ -17,12 +23,14 @@ describe("loadAgentServiceEnvFiles", () => {
     tempDir = await Deno.makeTempDir({ prefix: "hosted-agent-env-files-" });
     for (const key of TEST_KEYS) {
       deleteEnv(key);
+      clearEnvFileValueSource(key);
     }
   });
 
   afterEach(async () => {
     for (const key of TEST_KEYS) {
       deleteEnv(key);
+      clearEnvFileValueSource(key);
     }
 
     if (tempDir) {
@@ -54,6 +62,9 @@ describe("loadAgentServiceEnvFiles", () => {
     assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_SHARED"), "from-local");
     assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_LOCAL_ONLY"), "local");
     assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_PROTECTED"), "from-process");
+    assertEquals(getHostEnvExcludingEnvFile("VF_AGENT_ENV_FILE_TEST_SHARED"), undefined);
+    assertEquals(getHostEnvExcludingEnvFile("VF_AGENT_ENV_FILE_TEST_LOCAL_ONLY"), undefined);
+    assertEquals(getHostEnvExcludingEnvFile("VF_AGENT_ENV_FILE_TEST_PROTECTED"), "from-process");
   });
 
   it("supports empty values from env files", async () => {

@@ -13,7 +13,7 @@ import { startDevServer } from "veryfront/server";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { isPersistentLocalCacheEnabled } from "veryfront/cache";
 import { validateProviderConfig } from "veryfront/discovery";
-import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
+import { brand, dim, error as errorColor, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
@@ -21,7 +21,12 @@ import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.t
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { type AuthIdentity, isApiKeyIdentity, login } from "../../auth/login.ts";
+import {
+  type AuthIdentity,
+  ensureAuthenticated,
+  isApiKeyIdentity,
+  login,
+} from "../../auth/login.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
 import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
@@ -31,7 +36,30 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
-import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
+import { captureDevDisplayOptions } from "./display-options.ts";
+import { captureLocalWorkerName } from "./worker-name.ts";
+import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
+import {
+  applyConnectedDevProjectSlug,
+  connectedDevApiBaseUrl,
+  connectedDevStudioBaseUrl,
+  createConnectedDevControlPlane,
+  prepareConnectedDev,
+  resolveConnectedDevProject,
+  stopDevServices,
+} from "./connected-dev.ts";
+import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
+import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
+import { isInteractive } from "../../shared/interactive.ts";
+import {
+  getConnectedLocalRuntime,
+  installConnectedLocalRuntime,
+} from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -44,6 +72,8 @@ export interface DevOptions {
    */
   portExplicit?: boolean;
   projectDir: string;
+  /** Shared Cloud environment used by this local runtime. */
+  environment?: string;
   hmr?: boolean;
   open?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
@@ -72,10 +102,28 @@ export interface DevCommandResult {
   stop: () => Promise<void>;
 }
 
+function authDisplayName(identity: AuthIdentity): string {
+  return isApiKeyIdentity(identity) ? "API key" : identity.email;
+}
+
 function authStatus(identity: AuthIdentity): string {
   return isApiKeyIdentity(identity)
     ? "Authenticated with an API key"
     : `Logged in as ${identity.email}`;
+}
+
+/** Authentication options used after executable project configuration has loaded. */
+export function createConnectedDevAuthenticationOptions(apiBaseUrl: string, timeoutMs = 10_000) {
+  return {
+    throwOnCredentialValidationUnavailable: true,
+    transport: createCloudOnboardingTransport(apiBaseUrl, timeoutMs),
+    timeoutMs,
+  };
+}
+
+/** Host transport for source sync; responses remain streaming for large files. */
+export function createConnectedDevSyncTransport(apiBaseUrl: string): typeof fetch {
+  return createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl);
 }
 
 export async function preloadDevAuth(
@@ -222,8 +270,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         demoMode = false,
         clearLocalCaches = false,
       } = options;
-      const startTime = Date.now();
 
+      const displayOptions = captureDevDisplayOptions();
+      const workerDisplayName = captureLocalWorkerName();
       captureHostApiEnvironment();
       trustOperatorConfiguredVeryfrontApiOrigins();
 
@@ -262,11 +311,85 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       const env = getEnvironmentConfig();
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
-      const linkedProjectSlug = await resolveLinkedProjectSlug(
+      let linkedProjectSlug = await resolveLinkedProjectSlug(
         projectDir,
         config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       );
-      const runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      if (!linkedProjectSlug && !isProxyMode && isTTY() && isInteractive()) {
+        await chooseCloudProject(projectDir);
+        linkedProjectSlug = await resolveLinkedProjectSlug(projectDir);
+      }
+      let preflightIdentity: AuthIdentity | null = null;
+      let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      const connectedTarget = await prepareConnectedDev(
+        linkedProjectSlug,
+        options.environment ?? "preview",
+        {
+          authenticate: async () => {
+            preflightIdentity = await ensureAuthenticated(
+              getEnvironmentConfig(),
+              projectDir,
+              createConnectedDevAuthenticationOptions(
+                connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+              ),
+            );
+            return Boolean(preflightIdentity);
+          },
+          resolve: async (projectSlug, environmentName) => {
+            runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
+            runtimeAuth.apiBaseUrl = connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl);
+            if (!runtimeAuth.apiToken || !runtimeAuth.apiBaseUrl) {
+              throw new Error(
+                "Veryfront Cloud credentials are unavailable. Run veryfront login and retry.",
+              );
+            }
+            const controlPlane = createConnectedDevControlPlane({
+              apiUrl: runtimeAuth.apiBaseUrl,
+              apiToken: runtimeAuth.apiToken,
+              apiTokenSource: runtimeAuth.apiTokenSource,
+              projectSlug,
+            });
+            const project = await resolveConnectedDevProject(controlPlane, projectDir, {
+              apiUrl: runtimeAuth.apiBaseUrl,
+              apiToken: runtimeAuth.apiToken,
+              apiTokenSource: runtimeAuth.apiTokenSource,
+              projectSlug,
+            });
+            const environment = await controlPlane.getEnvironment(project.id, environmentName);
+            if (!environment) {
+              throw new Error(
+                `Environment "${environmentName}" does not exist in project "${project.slug}". Choose an existing environment with --env <name>.`,
+              );
+            }
+            await saveSharedProjectAssociation(projectDir, project.slug, runtimeAuth.apiBaseUrl);
+            runtimeAuth = applyConnectedDevProjectSlug(runtimeAuth, project.slug);
+            linkedProjectSlug = project.slug;
+            return {
+              projectId: project.id,
+              projectSlug: project.slug,
+              environmentId: environment.id,
+              environmentName: environment.name,
+            };
+          },
+        },
+        isProxyMode,
+      );
+      const studioBase = connectedTarget
+        ? connectedDevStudioBaseUrl(
+          connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+          displayOptions.studioUrl,
+        )
+        : "";
+      const disposeConnectedRuntime =
+        connectedTarget && runtimeAuth.apiToken && runtimeAuth.apiBaseUrl
+          ? installConnectedLocalRuntime({
+            ...connectedTarget,
+            workerDisplayName,
+            apiToken: runtimeAuth.apiToken,
+            apiBaseUrl: runtimeAuth.apiBaseUrl,
+            studioUrl: studioBase,
+          })
+          : undefined;
       const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken, projectDir).catch(() => ({
         identity: null,
         projects: [],
@@ -300,14 +423,20 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
-      const started = await startDevServerOnFreePort(finalPort, (port) =>
-        startDevServer({
-          port,
-          projectDir,
-          enableHMR,
-          enableFastRefresh: true,
-          signal: shutdownController.signal,
-        }));
+      let started: { server: Awaited<ReturnType<typeof startDevServer>>; port: number };
+      try {
+        started = await startDevServerOnFreePort(finalPort, (port) =>
+          startDevServer({
+            port,
+            projectDir,
+            enableHMR,
+            enableFastRefresh: true,
+            signal: shutdownController.signal,
+          }));
+      } catch (error) {
+        await disposeConnectedRuntime?.();
+        throw error;
+      }
       devServer = started.server;
       const boundPort = started.port;
 
@@ -357,22 +486,35 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       async function shutdown(): Promise<void> {
         if (shuttingDown) {
-          if (!demoMode) exitProcess(0);
+          if (!demoMode) {
+            console.log("  ! Stopping immediately. Run cancellation may not have been saved.");
+            exitProcess(1);
+          }
           return;
         }
         shuttingDown = true;
-
-        const timeout = demoMode ? null : setTimeout(() => exitProcess(0), 3000);
+        let shutdownExitCode = 0;
 
         try {
           keyboardHandler?.stop();
           shutdownController.abort();
-          await mcpServer?.stop();
-          await devServer?.stop();
+          await stopDevServices(
+            [
+              () => disposeConnectedRuntime?.(),
+              () => mcpServer?.stop(),
+              () => devServer?.stop(),
+            ],
+            demoMode ? undefined : {
+              connected: Boolean(disposeConnectedRuntime),
+              forceExit: () => {
+                console.log("  ! Shutdown timed out. Run cancellation may not have been saved.");
+                exitProcess(1);
+              },
+            },
+          );
         } catch {
-          // ignore
-        } finally {
-          if (timeout) clearTimeout(timeout);
+          shutdownExitCode = 1;
+          console.log("  ! Cleanup failed. Run cancellation may not have been saved.");
         }
 
         if (demoMode) {
@@ -380,7 +522,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           return;
         }
 
-        exitProcess(0);
+        exitProcess(shutdownExitCode);
       }
 
       registerTerminationSignals(() => void shutdown());
@@ -395,11 +537,27 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const serverUrl = `http://localhost:${boundPort}`;
-      const elapsed = Date.now() - startTime;
-
       console.log();
-      console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
-      console.log(`  ${brand(serverUrl)}`);
+      for (
+        const line of devReadinessLines({
+          appUrl: serverUrl,
+          connection: connectedTarget
+            ? {
+              apiUrl: connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+              project: connectedTarget.projectSlug,
+              environment: connectedTarget.environmentName,
+              signedIn: preflightIdentity ? authDisplayName(preflightIdentity) : undefined,
+              studioUrl: `${studioBase.replace(/\/$/, "")}/projects/${
+                encodeURIComponent(connectedTarget.projectSlug)
+              }?panels=runs`,
+            }
+            : undefined,
+        })
+      ) console.log(line);
+      if (isVerbose()) {
+        const runtimeId = getConnectedLocalRuntime()?.runtimeId;
+        if (runtimeId) console.log(`    ${dim("Runtime")} ${runtimeId}`);
+      }
       const inferenceOptions = listInferenceOptions({
         apiToken: runtimeAuth.apiToken,
         projectSlug: runtimeAuth.projectSlug,
@@ -410,7 +568,25 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         mistralApiKey: getEnv("MISTRAL_API_KEY"),
       });
       if (inferenceOptions.length > 0) {
-        console.log(`  ${dim("Inference")} ${brand(inferenceOptions.join(", "))}`);
+        console.log(
+          `  ${dim("Inference")} ${
+            brand(
+              inferenceOptions.map((option) =>
+                option.replace(
+                  "Veryfront Cloud AI Gateway",
+                  `${
+                    veryfrontServiceName(connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl))
+                  } AI Gateway`,
+                )
+              ).join(", "),
+            )
+          }`,
+        );
+        if (displayOptions.defaultModel) {
+          console.log(
+            `  ${dim("Default model")} ${brand(displayOptions.defaultModel)} (configured)`,
+          );
+        }
       }
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored
@@ -431,9 +607,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);
       }
-      if (isTTY()) {
-        console.log(devShortcuts());
-      }
+      console.log(`  Waiting for requests…${isTTY() ? "  Press ? for shortcuts." : ""}`);
       console.log();
 
       if (open) {
@@ -469,7 +643,16 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Opening browser...")}`);
-            const result = await loginForDevShortcut();
+            const result = await loginForDevShortcut(() =>
+              login(
+                undefined,
+                getEnvironmentConfig(),
+                projectDir,
+                createConnectedDevAuthenticationOptions(
+                  connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                ),
+              )
+            );
             if (!result) return;
 
             identity = result;
@@ -490,7 +673,15 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log(`  ${dim("Pulling...")}`);
             await runSyncAction(
               () =>
-                pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+                pullCommand({
+                  projectSlug: project.slug,
+                  projectDir,
+                  force: true,
+                  quiet: true,
+                  transport: createConnectedDevSyncTransport(
+                    connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                  ),
+                }),
               "Pulled",
             );
           },
@@ -504,7 +695,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log(`  ${dim("Pushing...")}`);
             const pushOptions = createSelectedProjectPushOptions(projectDir, project);
             await runSyncAction(
-              () => pushCommand(pushOptions),
+              () =>
+                pushCommand({
+                  ...pushOptions,
+                  transport: createConnectedDevSyncTransport(
+                    connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+                  ),
+                }),
               `Pushed to ${pushOptions.branch} ${dim("- merge in Studio")}`,
             );
           },

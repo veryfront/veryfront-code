@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
   createInvokeAgentTool,
   isFrameworkChildRunTool,
   isProviderSafeDelegateId,
@@ -16,6 +17,8 @@ import {
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getAvailableTools } from "./tool-helpers.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 
 it("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
@@ -122,6 +125,65 @@ it("delegate tool reports an error when the target agent is unavailable", async 
 });
 
 describe("invoke_agent", () => {
+  it("exports provider-compatible selection bounds through the direct runtime conversion", () => {
+    const invokeAgent = createInvokeAgentTool();
+    const definition = toolToProviderDefinition(invokeAgent);
+    const runtimeTools = convertToolsToRuntimeTools([definition], {
+      model: "openai/qwen2.5-7b-instruct",
+    });
+    const runtimeTool = runtimeTools?.[CANONICAL_INVOKE_AGENT_TOOL_ID] as {
+      inputSchema: { jsonSchema: { properties: { agent_id: Record<string, unknown> } } };
+    };
+    const selection = runtimeTool.inputSchema.jsonSchema.properties.agent_id;
+    assertEquals(selection.type, "string");
+    assertEquals(selection.minLength, 1);
+    assertEquals(selection.pattern, undefined);
+
+    for (
+      const [agentId, accepted] of [
+        ["writer", true],
+        [" \nwriter\r\n ", true],
+        ["first\nsecond", true],
+        ["\u2003writer\u2028", true],
+        ["", false],
+        [" \t\r\n", false],
+        ["\u2003\u2028\uFEFF", false],
+      ] as const
+    ) {
+      assertEquals(
+        invokeAgent.inputSchema.safeParse({
+          agent_id: agentId,
+          description: "Draft reply",
+          prompt: "Draft it.",
+        }).success,
+        accepted,
+      );
+    }
+  });
+
+  it("rejects blank selections before resolving a direct-runtime child", async () => {
+    let childResolutions = 0;
+    const invokeAgent = createInvokeAgentTool({
+      resolveAgent: () => {
+        childResolutions++;
+        return undefined;
+      },
+    });
+    for (const agentId of ["   ", " \t\r\n", "\u2003\u2028\uFEFF"]) {
+      await assertRejects(
+        () =>
+          invokeAgent.execute({
+            agent_id: agentId,
+            description: "Draft reply",
+            prompt: "Draft it.",
+          }),
+        Error,
+        "agent_id must not be blank",
+      );
+    }
+    assertEquals(childResolutions, 0);
+  });
+
   it("resolves and runs a registered project agent", async () => {
     let streamedInput: string | undefined;
     const writer = {
@@ -138,6 +200,7 @@ describe("invoke_agent", () => {
       resolveAgent: (id) => id === "writer" ? writer : undefined,
     });
 
+    assertEquals(invokeAgent.id, "veryfront__invoke_agent");
     const result = await invokeAgent.execute({
       agent_id: "writer",
       description: "Draft support reply",

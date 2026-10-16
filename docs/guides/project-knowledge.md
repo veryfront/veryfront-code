@@ -18,7 +18,7 @@ For turning PDFs, Office documents, and uploads into Markdown first, see
 ## Give an agent controlled access
 
 Select knowledge in the TypeScript agent definition. The framework supplies
-`search_knowledge`; no separate `tools` binding is required.
+`veryfront__search_knowledge`; no separate `tools` binding is required.
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -182,7 +182,7 @@ path returns an empty `data` array.
 
 ## Expose the lookup as a tool
 
-Create the hosted-compatible `search_knowledge` tool when an agent should
+Create a project-authored `search_knowledge` tool when an agent should
 choose queries and cursors:
 
 ```ts
@@ -196,7 +196,7 @@ export default createSearchKnowledgeTool({
 
 The tool validates its input, accepts the same query, cursor, limit, and shard
 options as `lookup()`, and returns the same compact response shape as
-Veryfront Cloud's hosted `search_knowledge` tool.
+Veryfront Cloud's hosted `veryfront__search_knowledge` tool.
 
 ## Use hosted project content
 

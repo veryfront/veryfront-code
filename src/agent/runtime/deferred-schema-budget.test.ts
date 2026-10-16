@@ -58,7 +58,7 @@ it("evicts an older loaded schema only when the assembled request needs room", (
   assertEquals(inspect(fitted.plan).fits, true);
   assertEquals(fitted.evictedNames, ["create_agent"]);
   assertEquals(fitted.plan.visible.some((tool) => tool.name === "create_agent"), false);
-  assertEquals(fitted.plan.visible.some((tool) => tool.name === "tool_search"), true);
+  assertEquals(fitted.plan.visible.some((tool) => tool.name === "veryfront__tool_search"), true);
   assertEquals(fitted.plan.deferred.some((tool) => tool.name === "create_agent"), true);
   assertEquals(plan.visible.some((tool) => tool.name === "create_agent"), true);
   assertEquals([...state.loadedToolNames], ["create_agent"]);
@@ -87,7 +87,7 @@ it("keeps a just-used schema and a newly activated schema awaiting its first cal
   assertEquals(justUsed.evictedNames, []);
   const justLoaded = fitDeferredToolSchemasToBudget({
     plan,
-    sourceMessages: toolTurn("tool_search", "load"),
+    sourceMessages: toolTurn("veryfront__tool_search", "load"),
     inspect,
   });
   assertEquals(justLoaded.evictedNames, []);
@@ -109,7 +109,12 @@ it("protects every schema returned by the most recent search batch", () => {
     {
       id: "search-call",
       role: "assistant",
-      parts: [{ type: "tool-call", toolCallId: "search", toolName: "tool_search", args: {} }],
+      parts: [{
+        type: "tool-call",
+        toolCallId: "search",
+        toolName: "veryfront__tool_search",
+        args: {},
+      }],
     },
     {
       id: "search-result",
@@ -117,7 +122,7 @@ it("protects every schema returned by the most recent search batch", () => {
       parts: [{
         type: "tool-result",
         toolCallId: "search",
-        toolName: "tool_search",
+        toolName: "veryfront__tool_search",
         result: {
           matches: [
             { name: "first", status: "loaded", description: "First" },
@@ -170,14 +175,14 @@ function searchTurn(id: string, loaded: readonly string[]): Message[] {
   return [{
     id: `${id}-call`,
     role: "assistant",
-    parts: [{ type: "tool-call", toolCallId: id, toolName: "tool_search", args: {} }],
+    parts: [{ type: "tool-call", toolCallId: id, toolName: "veryfront__tool_search", args: {} }],
   }, {
     id: `${id}-result`,
     role: "tool",
     parts: [{
       type: "tool-result",
       toolCallId: id,
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       result: {
         matches: loaded.map((name) => ({ name, status: "loaded", description: name })),
         resultCount: loaded.length,
@@ -266,14 +271,14 @@ it("evicts an unused schema from an older search batch while protecting the late
   ): Message[] => [{
     id: id + "-call",
     role: "assistant",
-    parts: [{ type: "tool-call", toolCallId: id, toolName: "tool_search", args: {} }],
+    parts: [{ type: "tool-call", toolCallId: id, toolName: "veryfront__tool_search", args: {} }],
   }, {
     id: id + "-result",
     role: "tool",
     parts: [{
       type: "tool-result",
       toolCallId: id,
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       result: { matches: [{ name, status: "loaded" }] },
     }],
   }];
@@ -304,7 +309,7 @@ it("protects schemas from parallel searches in the same new model decision", () 
       parts: ["first", "second"].map((name) => ({
         type: "tool-call",
         toolCallId: name,
-        toolName: "tool_search",
+        toolName: "veryfront__tool_search",
         args: {},
       })),
     },
@@ -314,7 +319,7 @@ it("protects schemas from parallel searches in the same new model decision", () 
       parts: [{
         type: "tool-result",
         toolCallId: name,
-        toolName: "tool_search",
+        toolName: "veryfront__tool_search",
         result: { matches: [{ name, status: "loaded" }] },
       }],
     })),
@@ -349,14 +354,19 @@ it("does not protect a stale schema after a search that loaded nothing", () => {
   const searchMiss: Message[] = [{
     id: "miss-call",
     role: "assistant",
-    parts: [{ type: "tool-call", toolCallId: "miss", toolName: "tool_search", args: {} }],
+    parts: [{
+      type: "tool-call",
+      toolCallId: "miss",
+      toolName: "veryfront__tool_search",
+      args: {},
+    }],
   }, {
     id: "miss-result",
     role: "tool",
     parts: [{
       type: "tool-result",
       toolCallId: "miss",
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       result: { matches: [] },
     }],
   }];
@@ -380,7 +390,7 @@ it("amortizes the tool_search schema across several small schema evictions", () 
         ["small_a", "small_b"].filter((name) =>
           !candidate.visible.some((tool) => tool.name === name)
         ).length +
-      (candidate.visible.some((tool) => tool.name === "tool_search") ? searchCost : 0);
+      (candidate.visible.some((tool) => tool.name === "veryfront__tool_search") ? searchCost : 0);
     return { fits: estimate <= 970, outputExceeded: false, estimatedInputTokens: estimate };
   };
   const fitted = fitDeferredToolSchemasToBudget({ plan, sourceMessages: [], inspect });
@@ -399,7 +409,7 @@ it("amortizes the search schema over multiple deferred evictions", () => {
     });
     const inspect = (candidate: typeof plan) => {
       const removed = count - candidate.loadedToolNames.size;
-      const helper = candidate.visible.some((tool) => tool.name === "tool_search");
+      const helper = candidate.visible.some((tool) => tool.name === "veryfront__tool_search");
       const estimate = 2_000 - removed * 400 + (helper ? 600 : 0);
       return { fits: estimate <= 1_900, outputExceeded: false, estimatedInputTokens: estimate };
     };
@@ -449,7 +459,7 @@ it("protects the newest schema when one of parallel searches has an unreadable r
     parts: ["empty", "opaque"].map((id) => ({
       type: "tool-call" as const,
       toolCallId: id,
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       args: {},
     })),
   }, {
@@ -458,7 +468,7 @@ it("protects the newest schema when one of parallel searches has an unreadable r
     parts: [{
       type: "tool-result",
       toolCallId: "empty",
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       result: { matches: [] },
     }],
   }, {
@@ -467,7 +477,7 @@ it("protects the newest schema when one of parallel searches has an unreadable r
     parts: [{
       type: "tool-result",
       toolCallId: "opaque",
-      toolName: "tool_search",
+      toolName: "veryfront__tool_search",
       result: "Loaded a tool.",
     }],
   }];

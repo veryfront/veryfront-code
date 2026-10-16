@@ -1,5 +1,9 @@
 import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
+import {
+  createLivePlatformMcpSource,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
@@ -30,6 +34,7 @@ import {
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource, ToolDefinition } from "#veryfront/tool";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -114,6 +119,7 @@ const objectPrototype = Object.prototype;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
 const stringStartsWith = String.prototype.startsWith;
+const stringIndexOf = String.prototype.indexOf;
 const arrayIsArray = Array.isArray;
 const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
@@ -123,7 +129,7 @@ const numberIsSafeInteger = Number.isSafeInteger;
 const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const iteratorSymbol = Symbol.iterator;
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
   "load_skill",
   "load_skill_reference",
@@ -200,10 +206,17 @@ async function pruneUnavailableOptionalStudioToolNames(
     const allowedNames = server.toolPolicy?.allow;
     if (allowedNames === undefined) {
       unavailablePrefixes.add("studio_");
+      unavailablePrefixes.add("veryfront__studio_");
       continue;
     }
     unavailableNames.add("studio_open_project");
-    forEachPrivateArray(allowedNames, (toolName) => unavailableNames.add(toolName));
+    unavailableNames.add("veryfront__studio_open_project");
+    forEachPrivateArray(allowedNames, (toolName) => {
+      unavailableNames.add(toolName);
+      if (apply(stringIndexOf, toolName, ["__"]) === -1) {
+        unavailableNames.add(`veryfront__${toolName}`);
+      }
+    });
   }
   if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) {
     return slicePrivateArray(names);
@@ -709,6 +722,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         const id = grant.remoteToolSourceIds[index];
         if (id === undefined) continue;
         let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
+        const isPlatformSource = hasTrustedPlatformSource(remoteToolSource);
+        if (isPlatformSource) {
+          remoteToolSource = createLivePlatformMcpSource(remoteToolSource);
+        }
         const servers = filter(
           definition.mcpServers ?? [],
           (server) => (server.id ?? server.kind) === id,
@@ -718,7 +735,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           if (server !== undefined) {
             remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
               remoteToolSource,
-              server.toolPolicy,
+              isPlatformSource
+                ? withPlatformMcpPolicyAliases(server.toolPolicy)
+                : server.toolPolicy,
             );
           }
         }
@@ -755,7 +774,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         remoteToolCatalogs,
         context.signal,
       );
-      if (includes(allowedToolNames, "studio_open_project")) {
+      if (
+        includes(allowedToolNames, "studio_open_project") ||
+        includes(allowedToolNames, "veryfront__studio_open_project")
+      ) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
       const providerToolNames = intersectNames(
@@ -1006,7 +1028,17 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
-        if (!includes(toolAssembly.authorizedToolNames, name)) {
+        if (includes(toolAssembly.authorizedToolNames, name)) continue;
+        const localToolDescriptor = objectGetOwnPropertyDescriptor(assemblyInput.localTools, name);
+        const localTool = localToolDescriptor && hasOwn(localToolDescriptor, "value")
+          ? localToolDescriptor.value
+          : undefined;
+        const isBareTrustedHostTool = apply(stringIndexOf, name, ["__"]) === -1 &&
+          hasTrustedHostToolProvenance(localTool);
+        if (
+          !isBareTrustedHostTool ||
+          !includes(toolAssembly.authorizedToolNames, `veryfront__${name}`)
+        ) {
           refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
         }
       }

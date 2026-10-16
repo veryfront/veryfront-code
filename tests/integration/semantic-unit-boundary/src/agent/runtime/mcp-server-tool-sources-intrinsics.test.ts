@@ -113,7 +113,7 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
     }
 
     assertEquals(patchedIncludesCalls, 0);
-    assertEquals(result, { names: [], prefixes: ["studio_"] });
+    assertEquals(result, { names: [], prefixes: ["studio_", "veryfront__studio_"] });
   });
 
   it("records unavailable Studio tools without inherited numeric setters", () => {
@@ -136,11 +136,11 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
         [],
       );
     } finally {
-      delete (Array.prototype as Record<string, unknown>)["0"];
+      Reflect.deleteProperty(Array.prototype, "0");
     }
 
     assertEquals(setterCalls, []);
-    assertEquals(result, { names: [], prefixes: ["studio_"] });
+    assertEquals(result, { names: [], prefixes: ["studio_", "veryfront__studio_"] });
   });
 
   it("copies optional Studio policy names without the mutable array iterator", () => {
@@ -170,9 +170,46 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
 
     assertEquals(iteratorCalls, 0);
     assertEquals(result, {
-      names: ["studio_open_project", "studio_search"],
-      prefixes: ["studio_"],
+      names: [
+        "studio_open_project",
+        "veryfront__studio_open_project",
+        "studio_search",
+        "veryfront__studio_search",
+      ],
+      prefixes: ["studio_", "veryfront__studio_"],
     });
+  });
+
+  it("ignores inherited optional Studio policy array entries", () => {
+    const allow = new Array<string>(1);
+    let inheritedReads = 0;
+    Object.defineProperty(Array.prototype, "0", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return "studio_inherited";
+      },
+    });
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{
+            kind: "veryfront-studio",
+            required: false,
+            toolPolicy: { allow },
+          }],
+        },
+        [],
+      );
+    } finally {
+      Reflect.deleteProperty(Array.prototype, "0");
+    }
+
+    assertEquals(inheritedReads, 0);
+    assertEquals(result, { names: [], prefixes: ["studio_", "veryfront__studio_"] });
   });
 
   it("ignores a replaced string replace method when resolving its endpoint", async () => {

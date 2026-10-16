@@ -130,7 +130,7 @@ it("keeps references gated when a checkpoint carries no body provenance", async 
   assertEquals(reference.status, "error");
   assertStringIncludes(
     reference.error ?? "",
-    'Read the load_skill result for "review" before requesting reference files.',
+    'Reference files for skill "review" are unavailable until its instructions have been read.',
   );
   assertEquals(reference.result.includes("Detailed checklist content"), false);
 });
@@ -181,7 +181,7 @@ it("restores provenance only for the load_skill results the checkpoint lists", a
   assertEquals(reference.status, "error");
   assertStringIncludes(
     reference.error ?? "",
-    'Read the load_skill result for "other" before requesting reference files.',
+    'Reference files for skill "other" are unavailable until its instructions have been read.',
   );
   assertEquals(reference.result.includes("Detailed checklist content"), false);
 });
@@ -297,7 +297,7 @@ it("does not count a body result from the parked turn as observed by the resumed
   assertEquals(resumed?.status, "error");
   assertStringIncludes(
     resumed?.error ?? "",
-    'Read the load_skill result for "review" before requesting reference files.',
+    'Reference files for skill "review" are unavailable until its instructions have been read.',
   );
   assertEquals(
     JSON.stringify(resumed?.result ?? null).includes("Detailed checklist content"),

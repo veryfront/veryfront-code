@@ -49,6 +49,15 @@ This protects model calls from oversized history, but it is still a preflight
 transformation. The result is not persisted as a compaction event and is not
 available as a rebuild source for future turns.
 
+Hosted child startup skills are a bounded exception to historical output masking.
+The child preparer retains the original authorized `load_skill` call/result pair
+(up to the 16 KiB startup limit), preserves its in-memory provenance only when the
+identity and payload match, and rejects preparation if the existing context
+budget cannot retain it. The final resolved system instructions count toward
+that check. It does not expand the budget or synthesize replacement history.
+Provider output envelopes are removed once when converting back to runtime
+messages, so repeated preparation does not nest ordinary tool result payloads.
+
 ### Internal runtime stream compaction
 
 `src/internal-agents/run-stream.ts` converts runtime messages to provider

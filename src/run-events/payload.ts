@@ -317,7 +317,7 @@ export const getInputRequestUpdatedPayloadSchema = defineRunEventSchema((v) =>
   })
 );
 
-/** Payload of an `invoke_agent` child run's lifecycle transition. */
+/** Payload of a `veryfront__invoke_agent` child run's lifecycle transition. */
 export const getChildRunStatusChangedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "CHILD_RUN_STATUS_CHANGED", {
     toolCallId: requiredString(v),
