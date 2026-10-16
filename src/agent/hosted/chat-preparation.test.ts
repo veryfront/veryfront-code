@@ -642,7 +642,7 @@ it("prepareHostedChatRuntimeCreationOptions exposes canonical loader when the ho
     },
     projectId: "project-1",
     authToken: "token-1",
-    hostToolPolicy: { allow: ["veryfront__load_skill", "tool_search"] },
+    hostToolPolicy: { allow: ["veryfront__load_skill", "veryfront__tool_search"] },
     resolveModelId: (modelId) => modelId,
     fetchSteering: () =>
       Promise.resolve({
@@ -666,7 +666,7 @@ it("prepareHostedChatRuntimeCreationOptions exposes canonical loader when the ho
     ? instructions.map((message) => message.content).join("\n")
     : instructions;
   assertEquals(system.includes("Deploy the project"), true);
-  assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
+  assertEquals(visibleToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
 });
 
 it("prepareHostedChatRuntimeCreationOptions exposes one skill loader when both spellings are host-allowed", async () => {
@@ -683,7 +683,7 @@ it("prepareHostedChatRuntimeCreationOptions exposes one skill loader when both s
     },
     projectId: "project-1",
     authToken: "token-1",
-    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "tool_search"] },
+    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "veryfront__tool_search"] },
     resolveModelId: (modelId) => modelId,
     fetchSteering: () =>
       Promise.resolve({
@@ -702,7 +702,7 @@ it("prepareHostedChatRuntimeCreationOptions exposes one skill loader when both s
     },
   });
 
-  assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
+  assertEquals(visibleToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
 });
 
 it("prepareHostedChatRuntimeCreationOptions normalizes requested loader aliases to one visible spelling", async () => {
@@ -721,7 +721,7 @@ it("prepareHostedChatRuntimeCreationOptions normalizes requested loader aliases 
     },
     projectId: "project-1",
     authToken: "token-1",
-    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "tool_search"] },
+    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "veryfront__tool_search"] },
     resolveModelId: (modelId) => modelId,
     fetchSteering: () =>
       Promise.resolve({
@@ -753,7 +753,7 @@ it("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is deni
       description: "Hosted agent",
       instructions: "Base instructions",
       tools: ["get_agent"],
-      deniedTools: ["load_skill", "tool_search"],
+      deniedTools: ["load_skill", "veryfront__tool_search"],
       skills: true,
     },
     projectId: "project-1",
@@ -782,7 +782,7 @@ it("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is deni
     : instructions;
   assertEquals(system.includes("<available_skills>"), false);
   assertEquals(system.includes("Deploy the project"), false);
-  assertEquals(visibleToolNames?.includes("tool_search") ?? false, false);
+  assertEquals(visibleToolNames?.includes("veryfront__tool_search") ?? false, false);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {

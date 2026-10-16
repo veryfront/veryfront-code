@@ -43,6 +43,20 @@ persisted source authorization and credential-renewal contract; ordinary same-pr
 workflows and explicit calls to the consuming project's existing APIs keep their
 existing behavior.
 
+## Runtime identity
+
+Accepted authenticated service invocations report the receiving process through
+`x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and
+`x-veryfront-runtime-mode: service` response headers. The ID remains the same for
+the process lifetime. Each replica and restarted process has a different ID, even
+when several replicas share one service URL.
+
+Set `VERYFRONT_RUNTIME_NAME` in the trusted service environment to override the
+hostname used as the display name. The trimmed name must contain at most 128
+UTF-16 code units, valid Unicode, and no control characters. The name header uses
+`encodeURIComponent` encoding. These headers identify the accepting process;
+they do not grant access. Existing runtime-owner URL headers remain unchanged.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see
@@ -416,7 +430,7 @@ Managed brokers can use `createManagedBrokerProjectState()` from
 `veryfront/agent/managed-broker` for project instructions and skill catalogs.
 The executor sends its effective tool selection on each steering refresh. The
 broker validates that selection against the installed grant before constructing
-instructions, and includes skills only when `load_skill` remains available.
+instructions, and includes skills only when `veryfront__load_skill` remains available.
 Refreshes without a tool selection omit the skill catalog.
 
 Managed broker ingress checks application strings and property names for known

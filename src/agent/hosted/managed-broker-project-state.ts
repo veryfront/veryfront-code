@@ -29,7 +29,7 @@ type Scope = { projectId: string | null; branchId?: string | null };
 
 /**
  * Create broker-owned project steering. Refreshes show skills only when the
- * broker-validated effective tool selection includes `load_skill`.
+ * broker-validated effective tool selection includes `veryfront__load_skill`.
  */
 export function createManagedBrokerProjectState(
   options: Scope & {

@@ -125,8 +125,8 @@ npx veryfront dev
 The CLI prints the URL it bound:
 
 ```text
-✓ Ready in 2.1s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 ```
 
 The dev server uses port 3000 by default. When that port is taken it falls

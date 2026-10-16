@@ -54,7 +54,7 @@ it("recovers the recorded Mistral tool-search then empty-stop sequence", async (
   const responses = [
     [
       'data: {"choices":[{"delta":{"content":"I will update the file."}}]}',
-      toolCallSse("search002", "tool_search", { query: "update_file" }),
+      toolCallSse("search002", "veryfront__tool_search", { query: "update_file" }),
     ].join("\n\n"),
     issue1834CapturedEmptyVertexSse,
     toolCallSse("update001", "update_file", {
@@ -232,7 +232,7 @@ it("retains the preceding file evidence through preparation and the Mistral edit
 
   const bodies: Array<Record<string, unknown>> = [];
   const responses = [
-    toolCallSse("search003", "tool_search", { query: "update_file" }),
+    toolCallSse("search003", "veryfront__tool_search", { query: "update_file" }),
     toolCallSse("update002", "update_file", {
       path: "src/example.ts",
       project_reference: "example-project",

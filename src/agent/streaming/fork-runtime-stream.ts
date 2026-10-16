@@ -3,6 +3,12 @@ import { estimateOverhead } from "../../chat/message-prep.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "../runtime/message-adapter.ts";
 import type { RuntimeStateResolver } from "../types.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { canonicalPlatformHostTools } from "../platform-host-tools.ts";
+import {
+  hostedPlatformDependencyRuntimeContext,
+  inheritHostedPlatformDependencyRuntime,
+} from "../hosted/platform-dependency-credential.ts";
 import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
@@ -190,12 +196,19 @@ export function startAgentRuntimeForkWithHostTools<
   streamResult: ForkRuntimeStreamResult;
   forkToolNames: string[];
 } {
+  const canonicalTools = canonicalPlatformHostTools(input.forkTools);
   const forkTools = input.traceTools
-    ? traceHostTools(input.forkTools, input.traceTools)
-    : input.forkTools;
+    ? traceHostTools(canonicalTools, input.traceTools)
+    : canonicalTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
   const requestedForkToolNames = input.forkToolNames
-    ? [...input.forkToolNames]
+    ? [
+      ...new Set(input.forkToolNames.map((name) =>
+        !name.includes("__") && hasTrustedHostToolProvenance(input.forkTools[name])
+          ? `veryfront__${name}`
+          : name
+      )),
+    ]
     : getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,
@@ -413,10 +426,11 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     };
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
+    const dependencyContext = hostedPlatformDependencyRuntimeContext(input, input.projectId);
     // Host-owned model stream budgets apply to delegated child model calls too.
     const modelStreamTimeouts = readHostedChildModelStreamTimeouts(input);
     const runtime = new AgentRuntime(
-      "invoke-agent-child-runtime",
+      dependencyContext?.agentId ?? "invoke-agent-child-runtime",
       runtimeConfig,
       resolveModelRuntime || modelStreamTimeouts
         ? {
@@ -435,7 +449,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       () =>
         runtime.stream(
           input.messages,
-          input.projectId ? { projectId: input.projectId } : undefined,
+          dependencyContext ?? (input.projectId ? { projectId: input.projectId } : undefined),
           {
             onFinish: (response) => {
               input.abortSignal?.removeEventListener("abort", abortHandler);
@@ -738,5 +752,6 @@ function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
   source: HostedInferenceAuthorityOwner,
 ): T {
   inheritHostedChildInferenceAuthority(target, source);
+  inheritHostedPlatformDependencyRuntime(target, source);
   return target;
 }

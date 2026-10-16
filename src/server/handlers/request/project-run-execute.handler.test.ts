@@ -12022,7 +12022,7 @@ describe("project run inference credential header", () => {
             {
               type: "tool-call",
               toolCallId: "parent-alpha",
-              toolName: "invoke_agent",
+              toolName: "veryfront__invoke_agent",
               input: {
                 agent_id: "child-alpha",
                 description: "Run alpha",
@@ -12033,7 +12033,7 @@ describe("project run inference credential header", () => {
             {
               type: "tool-call",
               toolCallId: "parent-beta",
-              toolName: "invoke_agent",
+              toolName: "veryfront__invoke_agent",
               input: {
                 agent_id: "child-beta",
                 description: "Run beta",
@@ -12065,7 +12065,7 @@ describe("project run inference credential header", () => {
             {
               type: "tool-call",
               toolCallId: "alpha-nested",
-              toolName: "invoke_agent",
+              toolName: "veryfront__invoke_agent",
               input: {
                 agent_id: "child-grand",
                 description: "Run grand",

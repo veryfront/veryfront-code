@@ -80,7 +80,7 @@ export default schedule({
 | `none`             | Runs standalone with no hosted conversation           |
 
 `none` is the default, and it is the wrong choice for any agent that delegates.
-Delegation through `invoke_agent` needs a hosted conversation to attach the
+Delegation through `veryfront__invoke_agent` needs a hosted conversation to attach the
 child run to, so a scheduled agent that delegates fails on every occurrence
 under `none`. Use `create_new` for those agents.
 

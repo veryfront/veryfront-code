@@ -55,7 +55,7 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
             {
               type: "tool-call",
               toolCallId: "search-1",
-              toolName: "tool_search",
+              toolName: "veryfront__tool_search",
               input: { query: "release marker" },
             },
             { type: "finish", finishReason: "tool-calls" },
@@ -131,8 +131,12 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
   );
   const body = await response.text();
 
-  assertEquals(observedTools[0], ["tool_search", "veryfront__load_skill"]);
-  assertEquals(observedTools[1], ["read_release_marker", "tool_search", "veryfront__load_skill"]);
+  assertEquals(observedTools[0], ["veryfront__load_skill", "veryfront__tool_search"]);
+  assertEquals(observedTools[1], [
+    "read_release_marker",
+    "veryfront__load_skill",
+    "veryfront__tool_search",
+  ]);
   assertEquals(executionCount, 1);
   assert(body.includes("marker-1"), "respond should stream the final marker");
 });

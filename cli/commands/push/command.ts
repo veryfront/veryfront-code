@@ -1,3 +1,4 @@
+import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 /**
  * Push command - Upload local project files to a Veryfront branch
  *
@@ -157,6 +158,8 @@ export function parsePushArgs(
  * Push command options
  */
 export interface PushOptions {
+  /** Internal host transport supplied by an embedding command after project configuration. */
+  transport?: typeof fetch;
   /** Project slug to push to (overrides config) */
   projectSlug?: string;
   /** Project directory (defaults to cwd) */
@@ -320,7 +323,16 @@ export async function scanLocalFiles(
         detail: `Veryfront push requires a regular file: "${path}".`,
       });
     }
-    ops.push({ path, content: await fs.readTextFile(join(projectDir, path)) });
+    const bytes = await fs.readFile(join(projectDir, path));
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch {
+      throw INVALID_ARGUMENT.create({
+        detail: `Veryfront push requires a UTF-8 text companion: "${path}".`,
+      });
+    }
+    ops.push({ path, content });
   }
   return annotateOkfBundleMembers(ops.filter((op) => !ignoreChecker.isIgnored(op.path)));
 }
@@ -1490,7 +1502,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let projectReferenceSource: ProjectReferenceSource;
       try {
         // Use interactive auth - prompts for login if not authenticated
-        const resolved = await resolveConfigWithAuthDetails(projectDir);
+        const resolved = await resolveConfigWithAuthDetails(projectDir, undefined, {
+          transport: options.transport,
+        });
         config = resolved.config;
         projectReferenceSource = resolved.projectReferenceSource;
       } catch (error) {
@@ -1528,7 +1542,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       };
 
       spinner.update("Fetching remote files...");
-      const client = createApiClient(config);
+      const client = createApiClient(config, options.transport);
       const branchName = branch;
       const isMainBranch = branchName === "main";
 
@@ -1544,14 +1558,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       const resolutionClient: ProjectResolutionClient = {
         getProject: (reference) => getProjectTarget(client, reference),
-        reserveSlug: async (slug, options) => {
+        reserveSlug: async (slug, reservationOptions) => {
           spinner.update("Creating project...");
           const reserved = await reserveProjectSlug(
             slug,
             config.apiToken,
             undefined,
             config.apiUrl,
-            options,
+            { ...reservationOptions, transport: options.transport },
           );
           return { slug: reserved.slug, projectId: reserved.projectId };
         },
@@ -1620,6 +1634,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
+      if (!dryRun && outcome.kind !== "planned-create" && outcome.persisted) {
+        await saveSharedProjectAssociation(projectDir, outcome.project.slug, config.apiUrl);
+      }
       spinner.update("Scanning local files...");
       let sourceSnapshot: PushSourceSnapshot;
       try {

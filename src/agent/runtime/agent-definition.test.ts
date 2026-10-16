@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createRuntimeAgentSystemMessages,
@@ -269,7 +269,7 @@ describe("createRuntimeAgentSystemMessages", () => {
     assertEquals(result[1]?.providerOptions, undefined);
   });
 
-  it("points skill inventory discovery at the bootstrapped loader alias", () => {
+  it("reports bounded skill inventory without embedding loader recipes", () => {
     const largeCatalog = Array.from(
       { length: 1_000 },
       (_, index) => ({
@@ -292,16 +292,19 @@ describe("createRuntimeAgentSystemMessages", () => {
       }).map((message) => message.content).join("\n\n");
 
     const both = render(["load_skill", "veryfront__load_skill"]);
-    assertEquals(both.includes("Call veryfront__load_skill({ inventory:"), true);
-    assertEquals(both.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(both, "additional authorized skill IDs");
+    assertStringIncludes(both, "available through the skill inventory");
+    assertEquals(both.includes("Call veryfront__load_skill("), false);
+    assertEquals(both.includes("Call load_skill("), false);
 
     const unavailable = render(["web_search"]);
     assertEquals(unavailable.includes("load_skill"), false);
     assertEquals(unavailable.includes("skill-0"), false);
 
     const legacy = render(["load_skill"]);
-    assertEquals(legacy.includes("Call load_skill({ inventory:"), true);
-    assertEquals(legacy.includes("Call veryfront__load_skill({ inventory:"), false);
+    assertStringIncludes(legacy, "available through the skill inventory");
+    assertEquals(legacy.includes("Call load_skill("), false);
+    assertEquals(legacy.includes("Call veryfront__load_skill("), false);
   });
 });
 

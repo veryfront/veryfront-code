@@ -145,7 +145,9 @@ Deno.test("withHostedChildStreamIdleTimeout settles an abandoned next() when the
   // The underlying stream's pending next() rejects *after* the idle timeout
   // fires. Without handling, this becomes an unhandled rejection that can crash
   // the process. The watchdog must settle the abandoned iterator before throwing.
-  let rejectPendingNext: ((reason: unknown) => void) | null = null;
+  // Widen via `as` so control-flow analysis does not narrow this closure-assigned
+  // binding to `null` (which made the later `rejectPendingNext?.(...)` call `never`).
+  let rejectPendingNext = null as ((reason: unknown) => void) | null;
   let returnCalled = false;
 
   const iterator: AsyncIterator<number> = {
@@ -211,7 +213,9 @@ Deno.test("withHostedChildStreamIdleTimeout surfaces the original error when ret
   // A custom async iterable whose return() throws *synchronously* during
   // cleanup must not let that throw escape the finally and replace the original
   // idle-timeout error. Cleanup failures stay fire-and-forget.
-  let rejectPendingNext: ((reason: unknown) => void) | null = null;
+  // Widen via `as` so control-flow analysis does not narrow this closure-assigned
+  // binding to `null` (which made the later `rejectPendingNext?.(...)` call `never`).
+  let rejectPendingNext = null as ((reason: unknown) => void) | null;
 
   const iterator: AsyncIterator<number> = {
     next() {
@@ -339,6 +343,9 @@ Deno.test("withHostedChildStreamIdleTimeout throws when the retry callback stops
     },
     HostedChildStreamIdleTimeoutError,
   );
+  if (!(error instanceof HostedChildStreamIdleTimeoutError)) {
+    throw new Error("Expected a HostedChildStreamIdleTimeoutError");
+  }
 
   assertEquals(values, [1], "the watchdog must throw before the stream resumes");
   assertEquals(error.phase, "post_tool_idle", "the thrown error must carry the watchdog phase");
@@ -390,6 +397,7 @@ Deno.test("withHostedChildStreamIdleTimeout stops iterating once the child run a
     },
     Error,
   );
+  if (!(error instanceof Error)) throw new Error("Expected an Error");
 
   assertEquals(error.name, "AbortError", "a child run abort must surface as an AbortError");
   assertEquals(values, [1], "no values may be yielded after the child run abort");

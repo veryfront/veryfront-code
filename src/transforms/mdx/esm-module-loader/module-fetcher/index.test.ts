@@ -104,7 +104,11 @@ interface CountingAdapter {
  */
 function createProjectAdapter(
   marker: string,
-  options: { failFirstReadOf?: string; missingPaths?: readonly string[] } = {},
+  options: {
+    failFirstReadOf?: string;
+    missingPaths?: readonly string[];
+    onRead?: (path: string) => void;
+  } = {},
 ): CountingAdapter {
   const sourceByPath = new Map<string, string>([
     [
@@ -131,6 +135,7 @@ function createProjectAdapter(
         // Only project module sources count; config lookups also use this adapter.
         if (path.startsWith("/virtual/")) reads.push(path);
         await delay(REMOTE_LATENCY_MS);
+        options.onRead?.(path);
         if (options.failFirstReadOf === path && !failed) {
           failed = true;
           throw new Error(`Project source unavailable: ${path}`);
@@ -1060,21 +1065,32 @@ describe("module-fetcher", () => {
     });
 
     it("retries alone when the leading render hits its own deadline", async () => {
-      const project = createProjectAdapter("deadline");
+      let expired = false;
+      const project = createProjectAdapter("deadline", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts" && !expired) {
+            expired = true;
+            leader.transformDeadline = 0;
+          }
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-deadline-cache-"),
         projectDir: await tempDir("vf-shared-deadline-proj-"),
       };
       const leader = await newRender(project.adapter, "p-deadline", dirs);
-      // The leading render is almost out of time; nested fetches start after it.
-      leader.transformDeadline = Date.now() + REMOTE_LATENCY_MS / 2;
       const follower = await newRender(project.adapter, "p-deadline", dirs);
+
+      // Expire the leader when its entry source returns, before nested imports
+      // are admitted. The follower retains its own deadline without depending
+      // on elapsed wall-clock time or CI scheduling.
 
       const [leaderResult, followerResult] = await Promise.allSettled([
         fetchAndCacheModule("/_vf_modules/page.js", leader),
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
+      assertEquals(expired, true, "the leader must read the entry source");
       assertEquals(leaderResult.status, "rejected");
       assert(
         leaderResult.status === "rejected" &&

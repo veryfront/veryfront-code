@@ -14,7 +14,7 @@ export type RuntimeToolCatalogEntry = {
  * runs carries the earlier run's tool names into the later one and overrides
  * that run's `allowedToolNames`.
  *
- * @deprecated Use `tool_search` deferred loading. See
+ * @deprecated Use `veryfront__tool_search` deferred loading. See
  * `docs/architecture/28-model-driven-tool-discovery.md`. This type is retained
  * because it is reachable from the public
  * `PrepareHostedChatRuntimeToolAssemblyInput.toolDiscoveryContext` field.

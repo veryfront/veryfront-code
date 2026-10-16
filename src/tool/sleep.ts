@@ -109,11 +109,15 @@ export const sleepTool: Tool<SleepToolInput, SleepToolOutput> = new Proxy(
     has(_target, prop) {
       return prop in getDefaultSleepTool();
     },
-    ownKeys() {
-      return Reflect.ownKeys(getDefaultSleepTool());
+    ownKeys(target) {
+      return [...new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(getDefaultSleepTool())])];
     },
-    getOwnPropertyDescriptor(_target, prop) {
-      return Object.getOwnPropertyDescriptor(getDefaultSleepTool(), prop);
+    getOwnPropertyDescriptor(target, prop) {
+      const ownDescriptor = Object.getOwnPropertyDescriptor(target, prop);
+      if (ownDescriptor) return ownDescriptor;
+      const descriptor = Object.getOwnPropertyDescriptor(getDefaultSleepTool(), prop);
+      // The empty proxy target can expose only configurable virtual properties.
+      return descriptor ? { ...descriptor, configurable: true } : undefined;
     },
   },
 );

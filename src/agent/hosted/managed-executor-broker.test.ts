@@ -661,7 +661,7 @@ describe("managed executor broker", () => {
     assertEquals(untrusted.result.content, undefined);
     assertStringIncludes(
       untrusted.result.error ?? "",
-      'Read the load_skill result for "review"',
+      'Reference files for skill "review" are unavailable until its instructions have been read.',
     );
   });
   it("enables the producer from an exact runtime-observation persistence sink", async () => {
@@ -787,10 +787,10 @@ describe("managed executor broker", () => {
     });
   }
 
-  it("executes an owned host tool selected by its short alias through installed runtime facades", async () => {
+  it("executes an owned host tool under its canonical identity after short selection", async () => {
     const f = fixture();
     const model = scriptedModel([
-      { toolCalls: [{ id: "call", name: "owned-paper", input: {} }] },
+      { toolCalls: [{ id: "call", name: "veryfront__owned-paper", input: {} }] },
       { text: "Complete" },
     ], { only: "stream", modelId: "synthetic", provider: "openai" });
     const executions: string[] = [];
@@ -907,7 +907,7 @@ describe("managed executor broker", () => {
         abortSignal: new AbortController().signal,
       });
       const events = await Array.fromAsync(stream.toUIMessageStream());
-      assertEquals(model.toolNames(), ["owned-paper"]);
+      assertEquals(model.toolNames(), ["veryfront__owned-paper"]);
       assertEquals(executions, ["owned-paper"]);
       assertEquals(model.callCount, 2);
       assert(events.some((event) => event.type === "finish"));
@@ -1990,15 +1990,15 @@ describe("broker-local trusted runtime", () => {
     assert(f.input.trustedRuntime);
     f.input.trustedRuntime.projectToolNames = [];
     f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
-    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
     f.input.installation.grant.execution.branchId = "feature-x";
-    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
     f.input.model.resolver = () =>
       scriptedModel([
         {
           toolCalls: [{
             id: "knowledge-call",
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             input: { query: "managed needle" },
           }],
         },
@@ -2047,14 +2047,14 @@ describe("broker-local trusted runtime", () => {
     });
     assert(f.input.trustedRuntime);
     f.input.trustedRuntime.projectToolNames = [];
-    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
-    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
+    f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
     f.input.model.resolver = () =>
       scriptedModel([
         {
           toolCalls: [{
             id: "knowledge-call",
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             input: { query: "managed needle" },
           }],
         },

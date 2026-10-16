@@ -50,7 +50,7 @@ async function initializeDistributedCachesWithInitializers(
   backend: DistributedCacheStatus["backend"],
   initializers: DistributedCacheInitializers,
 ): Promise<DistributedCacheStatus> {
-  logger.info("Initializing caches...", { backend });
+  logger.debug("Initializing caches...", { backend });
 
   const cacheNames = [
     "transformCache",
@@ -101,7 +101,7 @@ async function initializeDistributedCachesWithInitializers(
     return status;
   }
 
-  logger.info("Initialization complete", {
+  logger.debug("Initialization complete", {
     backend,
     enabled,
     transform: status.transformCache,

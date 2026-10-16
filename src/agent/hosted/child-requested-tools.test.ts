@@ -106,6 +106,11 @@ Deno.test("buildHostedChildToolDescription describes child agent usage", () => {
 Deno.test("DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES excludes UI-only tools", () => {
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_panel_control"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_suggestions"), true);
+  assertEquals(
+    DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__studio_panel_control"),
+    true,
+  );
+  assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__studio_suggestions"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("form_input"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("veryfront__form_input"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("invoke_agent"), true);
@@ -589,4 +594,72 @@ it("prunes either sandbox spelling beside either artifact spelling", () => {
       [artifact, ...sandbox],
     );
   }
+});
+
+Deno.test("legacy child selectors require an own trusted canonical data binding", () => {
+  const platform = markTrustedHostToolProvenance({
+    id: "veryfront__get_file",
+    description: "Read file",
+    inputSchemaJson: {},
+    execute: () => ({ ok: true }),
+  });
+  const project = {
+    id: "get_file",
+    description: "Project file",
+    inputSchemaJson: {},
+    execute: () => ({ ok: true }),
+  };
+  const select = (forkTools: HostToolSet, requestedTools = ["get_file"]) =>
+    selectDefaultHostedChildForkRuntimeTools({
+      provider: "anthropic",
+      forkTools,
+      effectivePrompt: "Read metadata.",
+      requestedTools,
+    });
+  const canonical = select({ veryfront__get_file: platform }, ["get_file", "veryfront__get_file"]);
+  assertEquals(canonical.ok && Object.keys(canonical.forkTools), ["veryfront__get_file"]);
+  const collision = select({ veryfront__get_file: platform, get_file: project });
+  assertEquals(collision.ok && Object.keys(collision.forkTools), ["get_file"]);
+  const untrusted = select({ veryfront__get_file: { ...platform } });
+  assertEquals(untrusted.ok, false);
+  assertEquals(select({ veryfront__get_file: platform }, ["crm__get_file"]).ok, false);
+  let getterCalls = 0;
+  const accessors: HostToolSet = {};
+  Object.defineProperty(accessors, "veryfront__get_file", {
+    get: () => {
+      getterCalls++;
+      return platform;
+    },
+  });
+  assertEquals(select(accessors).ok, false);
+  assertEquals(getterCalls, 0);
+  Object.defineProperty(accessors, "get_file", {
+    get: () => {
+      getterCalls++;
+      return project;
+    },
+  });
+  assertEquals(select(accessors).ok, false);
+  assertEquals(getterCalls, 0);
+});
+
+Deno.test("saved child ceilings do not grant auto-added write companions", () => {
+  const definition = (id: string) =>
+    markTrustedHostToolProvenance({
+      id,
+      description: id,
+      inputSchemaJson: {},
+      execute: () => ({ ok: true }),
+    });
+  const selected = selectDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    forkTools: {
+      veryfront__create_file: definition("veryfront__create_file"),
+      veryfront__update_file: definition("veryfront__update_file"),
+    },
+    effectivePrompt: "Write a project note.",
+    requestedTools: ["create_file"],
+    allowedTools: ["create_file"],
+  });
+  assertEquals(selected.ok && Object.keys(selected.forkTools), ["veryfront__create_file"]);
 });

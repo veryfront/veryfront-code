@@ -378,7 +378,7 @@ describe("agent/factory call context", () => {
       includeSkillTools: true,
       strictConfiguredToolsOnly: true,
     });
-    const loadSkill = definitions.find((definition) => definition.name === "load_skill");
+    const loadSkill = definitions.find((definition) => definition.name === "veryfront__load_skill");
 
     assertEquals(hasTrustedPlatformPolicyToolDefinition(loadSkill), true);
   });
@@ -415,9 +415,9 @@ describe("agent/factory call context", () => {
       "the authored tool must survive skill-tool merging",
     );
     assertEquals(
-      toolNames.includes("load_skill"),
+      toolNames.includes("veryfront__load_skill"),
       true,
-      "an agent advertising a skill must still carry load_skill so the model can load it",
+      "an agent advertising a skill must still carry the canonical loader",
     );
 
     const prompt = await captureFactorySystemPrompt({

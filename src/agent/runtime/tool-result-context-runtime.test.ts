@@ -37,7 +37,7 @@ function listRecordsTool(result = LARGE_RESULT) {
 
 function customGetToolResultTool() {
   return tool({
-    id: "get_tool_result",
+    id: "veryfront__get_tool_result",
     description: "Custom tool that intentionally collides with the framework reader",
     inputSchema: defineSchema((v) => v.object({ ref: v.string() }))(),
     execute: () => ({ custom: true }),
@@ -211,11 +211,11 @@ describe("agent runtime tool result context integration", () => {
         assertExists(compactOutput.ref);
         ref = compactOutput.ref;
         assert(compactOutput.preview!.length < LARGE_RESULT.length);
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), true);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), true);
         return {
           toolCalls: [{
             id: "call-read",
-            name: "get_tool_result",
+            name: "veryfront__get_tool_result",
             input: { ref: compactOutput.ref, maxBytes: 1_000 },
           }],
         };
@@ -236,9 +236,9 @@ describe("agent runtime tool result context integration", () => {
     const response = await assistant.generate({ input: "List records then read the full result." });
 
     assertEquals(response.text, "done");
-    assertEquals(toolNamesFromCall(model.calls[0]).includes("get_tool_result"), false);
+    assertEquals(toolNamesFromCall(model.calls[0]).includes("veryfront__get_tool_result"), false);
     assertEquals(toolResultValue(toolResultMessage(response, "list_records")), LARGE_RESULT);
-    assertEquals(toolResultValue(toolResultMessage(response, "get_tool_result")), {
+    assertEquals(toolResultValue(toolResultMessage(response, "veryfront__get_tool_result")), {
       type: "tool_result_section",
       ref,
       toolCallId: "call-list",
@@ -397,7 +397,7 @@ describe("agent runtime tool result context integration", () => {
     assertEquals(toolResultValue(toolResultMessage(finished, "list_records")), HUGE_EMAIL_RESULT);
   });
 
-  it("keeps get_tool_result visible under OpenAI's 128-tool cap after references exist", async () => {
+  it("keeps veryfront__get_tool_result visible under OpenAI's 128-tool cap after references exist", async () => {
     let ref = "";
     const model = scriptedModel([
       { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
@@ -411,12 +411,12 @@ describe("agent runtime tool result context integration", () => {
         ref = compactOutput.ref;
         const names = toolNamesFromCall(options);
         assertEquals(names.length, 128);
-        assertEquals(names.includes("get_tool_result"), true);
+        assertEquals(names.includes("veryfront__get_tool_result"), true);
         assertEquals(names.includes("tool_127"), false);
         return {
           toolCalls: [{
             id: "call-read",
-            name: "get_tool_result",
+            name: "veryfront__get_tool_result",
             input: { ref: compactOutput.ref, maxBytes: 1_000 },
           }],
         };
@@ -445,7 +445,7 @@ describe("agent runtime tool result context integration", () => {
     const response = await assistant.generate({ input: "List records then read the result." });
 
     assertEquals(response.text, "done");
-    assertEquals(toolResultValue(toolResultMessage(response, "get_tool_result")), {
+    assertEquals(toolResultValue(toolResultMessage(response, "veryfront__get_tool_result")), {
       type: "tool_result_section",
       ref,
       toolCallId: "call-list",
@@ -459,14 +459,14 @@ describe("agent runtime tool result context integration", () => {
     });
   });
 
-  it("reserves the reader's slot so deferred loading keeps tool_search under the 128-tool cap", async () => {
+  it("reserves the reader's slot so deferred loading keeps veryfront__tool_search under the 128-tool cap", async () => {
     const model = scriptedModel([
       { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
       (options) => {
         const names = toolNamesFromCall(options);
         assertEquals(names.length <= 128, true);
-        assertEquals(names.includes("get_tool_result"), true);
-        assertEquals(names.includes("tool_search"), true);
+        assertEquals(names.includes("veryfront__get_tool_result"), true);
+        assertEquals(names.includes("veryfront__tool_search"), true);
         return { text: "done" };
       },
     ], {
@@ -530,7 +530,7 @@ describe("agent runtime tool result context integration", () => {
     assertEquals(response.text, "done");
     const [first = [], second = []] = stepNames;
     assertEquals(first.length, 127);
-    assertEquals(second.includes("get_tool_result"), true);
+    assertEquals(second.includes("veryfront__get_tool_result"), true);
     assertEquals(first.every((name) => second.includes(name)), true);
   });
 
@@ -539,7 +539,7 @@ describe("agent runtime tool result context integration", () => {
       { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
       (options) => {
         assertEquals(firstToolOutputValue(options, "list_records"), LARGE_RESULT);
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), false);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), false);
         return { text: "done" };
       },
     ], { only: "generate" });
@@ -647,7 +647,7 @@ describe("agent runtime tool result context integration", () => {
       { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
       (options) => {
         assertEquals(firstToolOutputValue(options, "list_records"), LARGE_RESULT);
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), false);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), false);
         return { text: "done" };
       },
     ], { only: "generate" });
@@ -668,33 +668,31 @@ describe("agent runtime tool result context integration", () => {
     });
   });
 
-  it("rejects before provider dispatch when a custom get_tool_result tool shadows the framework reader", async () => {
+  it("rejects before provider dispatch when a custom veryfront__get_tool_result tool shadows the framework reader", async () => {
     const model = scriptedModel([
       { text: "must not dispatch" },
     ], { only: "generate" });
 
-    const assistant = agent({
-      model: "hosted/tool-result-context-shadow",
-      system: "Use tools.",
-      skills: [],
-      tools: {
-        list_records: listRecordsTool(),
-        get_tool_result: customGetToolResultTool(),
-      },
-      toolResultContext: { maxInlineBytes: 32 },
-      maxSteps: 4,
-      resolveModelTransport: () => ({ model }),
-    });
-
     const error = await assertRejects(
-      () => assistant.generate({ input: "List records then read them." }),
+      async () => {
+        agent({
+          model: "hosted/tool-result-context-shadow",
+          system: "Use tools.",
+          skills: [],
+          tools: {
+            list_records: listRecordsTool(),
+            veryfront__get_tool_result: customGetToolResultTool(),
+          },
+          toolResultContext: { maxInlineBytes: 32 },
+          maxSteps: 4,
+          resolveModelTransport: () => ({ model }),
+        });
+      },
       Error,
-      "reserved for framework tool-result references",
+      "reserved integration tool namespace",
     );
-    if (!(error instanceof Error)) {
-      throw new Error("expected Error rejection");
-    }
-    assertStringIncludes(error.message, "get_tool_result");
+    if (!(error instanceof Error)) throw new Error("expected Error rejection");
+    assertStringIncludes(error.message, "veryfront__get_tool_result");
     assertEquals(model.callCount, 0);
   });
 
@@ -704,7 +702,7 @@ describe("agent runtime tool result context integration", () => {
     const model = scriptedModel([
       (options) => {
         assertEquals(firstToolOutputValue(options, "list_records"), smallResult);
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), false);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), false);
         return { text: "continued" };
       },
     ], { only: "stream" });
@@ -760,11 +758,11 @@ describe("agent runtime tool result context integration", () => {
         const serializedOutput = JSON.stringify(firstToolOutput(options, "list_records"));
         assertEquals(serializedOutput.includes(HUGE_EMAIL_RESULT), false);
         assert(serializedOutput.length < 6_000);
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), true);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), true);
         return {
           toolCalls: [{
             id: "call-read-resumed",
-            name: "get_tool_result",
+            name: "veryfront__get_tool_result",
             input: { ref: compactOutput.ref, maxBytes: 1_000 },
           }],
         };
@@ -807,7 +805,7 @@ describe("agent runtime tool result context integration", () => {
     assertEquals(observedToolResults, [HUGE_EMAIL_RESULT]);
     assertExists(finished);
     assertEquals(toolResultValue(toolResultMessage(finished, "list_records")), HUGE_EMAIL_RESULT);
-    assertEquals(toolResultValue(toolResultMessage(finished, "get_tool_result")), {
+    assertEquals(toolResultValue(toolResultMessage(finished, "veryfront__get_tool_result")), {
       type: "tool_result_section",
       ref,
       toolCallId: "call-list:resume-large",
@@ -828,7 +826,7 @@ describe("agent runtime tool result context integration", () => {
       (options) => {
         const compactOutput = firstToolOutputValue(options, "list_records") as { type?: string };
         assertEquals(compactOutput.type, "tool_result_reference");
-        assertEquals(toolNamesFromCall(options).includes("get_tool_result"), true);
+        assertEquals(toolNamesFromCall(options).includes("veryfront__get_tool_result"), true);
         return { text: "done" };
       },
     ], { only: "stream" });

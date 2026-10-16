@@ -152,7 +152,13 @@ describe("agent manual pause", () => {
 for (const pauseStep of [1, 2]) {
   it(`retains deferred tool exposure and empty-response recovery at step ${pauseStep}`, async () => {
     const model = scriptedModel([
-      { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "read_marker" } }] },
+      {
+        toolCalls: [{
+          id: "search-1",
+          name: "veryfront__tool_search",
+          input: { query: "read_marker" },
+        }],
+      },
       {
         parts: [{
           type: "finish",

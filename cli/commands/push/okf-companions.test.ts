@@ -117,6 +117,32 @@ describe("native push OKF companions", () => {
     });
   });
 
+  it("preserves a referenced text companion's BOM and Unicode bytes", async () => {
+    const content = "\uFEFFselect 'å';\r\n";
+    await withFiles({
+      "acme/index.md": "---\nokf_version: '0.1'\nsources: [data.sql]\n---\n",
+      "acme/data.sql": content,
+    }, async (directory) => {
+      const scanned = await scanLocalFiles(directory, await loadIgnoreChecker(directory));
+      assertEquals(scanned.find((file) => file.path === "acme/data.sql")?.content, content);
+    });
+  });
+
+  it("rejects referenced companions whose bytes are not valid UTF-8", async () => {
+    await withFiles({
+      "acme/index.md": "---\nokf_version: '0.1'\nsources: [data.bin]\n---\n",
+      "acme/data.bin": "placeholder",
+    }, async (directory) => {
+      await Deno.writeFile(join(directory, "acme/data.bin"), new Uint8Array([255, 0, 128]));
+      const ignoreChecker = await loadIgnoreChecker(directory);
+      await assertRejects(
+        () => scanLocalFiles(directory, ignoreChecker),
+        Error,
+        "UTF-8",
+      );
+    });
+  });
+
   it("keeps ignored, protected, unreferenced and escaped assets excluded", async () => {
     await withFiles({
       "acme/index.md": "---\nokf_version: '0.1'\n---\n# Index\n",

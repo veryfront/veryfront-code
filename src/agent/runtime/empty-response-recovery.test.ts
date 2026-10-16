@@ -56,7 +56,7 @@ it("generate retries one empty stop after completed tools without replaying them
         {
           type: "tool-call",
           toolCallId: "search-1",
-          toolName: "tool_search",
+          toolName: "veryfront__tool_search",
           input: JSON.stringify({ query: "update_file" }),
         },
       ],
@@ -85,7 +85,7 @@ it("stream retries one empty stop after completed tools without replaying them",
         {
           type: "tool-call",
           toolCallId: "search-1",
-          toolName: "tool_search",
+          toolName: "veryfront__tool_search",
           input: { query: "update_file" },
         },
         { type: "finish", finishReason: "tool-calls", totalUsage: usage },
@@ -113,7 +113,13 @@ it("stream retries one empty stop after completed tools without replaying them",
 
 it("generate rejects when the bounded empty-response retry is also empty", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "update_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "update_file" },
+      }],
+    },
     { content: [], finishReason: "stop" },
     { content: [], finishReason: "stop" },
   ], { modelId: "hosted/repeated-empty-generate", only: "generate" });
@@ -131,7 +137,13 @@ it("generate rejects when the bounded empty-response retry is also empty", async
 
 it("stream emits an error when the bounded empty-response retry is also empty", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "update_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "update_file" },
+      }],
+    },
     { parts: [{ type: "finish", finishReason: "stop", totalUsage: emptyUsage }] },
     { parts: [{ type: "finish", finishReason: "stop", totalUsage: emptyUsage }] },
   ], { modelId: "hosted/repeated-empty-stream", only: "stream" });
@@ -151,7 +163,13 @@ it("stream emits an error when the bounded empty-response retry is also empty", 
 
 it("fails explicitly when an empty post-tool stop exhausts maxSteps", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "update_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "update_file" },
+      }],
+    },
     { content: [], finishReason: "stop" },
   ], { modelId: "hosted/empty-response-no-budget", only: "generate" });
   const assistant = createDeferredAgent(model, () => {}, 2);

@@ -157,7 +157,11 @@ class CredentialValidationUnavailableError extends Error {
     readonly kind: CredentialValidationUnavailableKind,
     readonly status?: number,
   ) {
-    super("Could not validate existing login credentials");
+    super(
+      `Veryfront API is unavailable (${kind}${
+        status ? `, HTTP ${status}` : ""
+      }). Check the API URL and service, then retry. Your login was retained.`,
+    );
   }
 }
 
@@ -626,6 +630,7 @@ function writeAuthoritativeCredentialUnavailableMessage(
 async function describeExistingSession(
   env: EnvironmentConfig,
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | "failure-output" | null> {
   const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
   if (candidates.length === 0) return null;
@@ -647,6 +652,7 @@ async function describeExistingSession(
       // checked must still stop, because later commands will resolve it ahead
       // of any replacement login.
       identity = await validateCredential(apiToken, validationEnv, {
+        ...validationOptions,
         signal,
         throwOnCredentialValidationUnavailable: true,
       });
@@ -753,6 +759,7 @@ export async function login(
   method?: AuthMethod,
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | null> {
   if (isJsonMode() && method !== undefined) {
     await outputLoginExplicitMethodJson();
@@ -765,7 +772,7 @@ export async function login(
   // intent to sign in again, so account switching still works — and a session
   // that no longer validates falls through to the normal flow.
   if (method === undefined) {
-    const existing = await describeExistingSession(env, projectDir);
+    const existing = await describeExistingSession(env, projectDir, validationOptions);
     if (existing === "failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
@@ -796,7 +803,10 @@ export async function login(
     spinner.update("Validating token...");
     let identity: AuthIdentity | null;
     try {
-      identity = await validateCredential(token, env, { throwOnNetworkError: true });
+      identity = await validateCredential(token, env, {
+        ...validationOptions,
+        throwOnNetworkError: true,
+      });
     } catch (e) {
       if (e instanceof NetworkError) {
         spinner.stop();
@@ -830,7 +840,10 @@ export async function login(
 
   let identity: AuthIdentity | null;
   try {
-    identity = await validateCredential(token, env, { throwOnNetworkError: true });
+    identity = await validateCredential(token, env, {
+      ...validationOptions,
+      throwOnNetworkError: true,
+    });
   } catch (e) {
     if (e instanceof NetworkError) {
       console.log();
@@ -860,6 +873,7 @@ export async function login(
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | null> {
   const humanOutput = !isJsonMode();
 
@@ -870,14 +884,18 @@ export async function ensureAuthenticated(
       credential = await validateCredential(
         candidate.apiToken,
         candidate.validationEnv,
-        candidate.apiTokenSource === "token-store"
-          ? { throwOnCredentialValidationUnavailable: true }
-          : undefined,
+        {
+          ...(candidate.apiTokenSource === "token-store"
+            ? { throwOnCredentialValidationUnavailable: true }
+            : {}),
+          ...validationOptions,
+        },
       );
     } catch (error) {
       if (
         candidate.apiTokenSource === "token-store" &&
-        error instanceof CredentialValidationUnavailableError
+        error instanceof CredentialValidationUnavailableError &&
+        !validationOptions.throwOnCredentialValidationUnavailable
       ) {
         return null;
       }
@@ -907,7 +925,7 @@ export async function ensureAuthenticated(
     return null;
   }
 
-  return login(undefined, env, projectDir);
+  return login(undefined, env, projectDir, validationOptions);
 }
 
 const CREDENTIAL_VALIDATION_UNAVAILABLE = Symbol("credential-validation-unavailable");

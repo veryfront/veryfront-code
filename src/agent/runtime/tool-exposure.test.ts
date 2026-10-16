@@ -261,8 +261,8 @@ it("keeps hidden provider-schema aliases authorized but out of model exposure", 
     "project_loader",
   ]);
   assertEquals(plan.visible.map((entry) => entry.name), [
-    TOOL_SEARCH_TOOL_NAME,
     "veryfront__load_skill",
+    TOOL_SEARCH_TOOL_NAME,
   ]);
   assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
   assertEquals(
@@ -324,7 +324,7 @@ it("deferred exposure keeps form_input searchable and omits search for load_skil
   assertEquals(loadSkillOnly.deferred, []);
 });
 
-it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
+it("deferred exposure keeps injected veryfront__tool_search in visible ASCII order", () => {
   const deferred = createToolExposurePlan({
     authorized: [
       definition("z_bootstrap", "Always visible"),
@@ -559,7 +559,7 @@ it("tool search misses when a common verb is the only match in a realistic catal
   );
 });
 
-it("tool_search parameters are authored without root combinators", () => {
+it("veryfront__tool_search parameters are authored without root combinators", () => {
   // OpenAI rejects root combinators; the definition itself must not rely on a
   // provider sanitizer to remove them.
   const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
@@ -569,7 +569,7 @@ it("tool_search parameters are authored without root combinators", () => {
   }
 });
 
-it("tool_search parameters have no root combinator for any provider profile", () => {
+it("veryfront__tool_search parameters have no root combinator for any provider profile", () => {
   const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
   for (
     const model of [
@@ -587,7 +587,7 @@ it("tool_search parameters have no root combinator for any provider profile", ()
   }
 });
 
-it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
+it("veryfront__tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
   const properties = (search.parameters as {
     properties?: Record<string, { description?: string; maxLength?: number }>;
@@ -609,7 +609,7 @@ it("tool_search tells the model to search before declaring a requested tool unav
   assertEquals(properties.query?.maxLength, undefined);
 });
 
-it("tool_search parameters are flat top-level scalars", () => {
+it("veryfront__tool_search parameters are flat top-level scalars", () => {
   // Nested mode objects such as {"search":{"query":"..."}} led Claude models
   // to stream invalid JSON under fine-grained tool streaming.
   const parameters = createToolSearchDefinition().parameters as {
@@ -627,7 +627,7 @@ it("tool_search parameters are flat top-level scalars", () => {
   assertEquals(parameters.properties.inventory?.enum, ["all", "platform"]);
 });
 
-it("tool_search raw parameter schema declares no root combinator", () => {
+it("veryfront__tool_search raw parameter schema declares no root combinator", () => {
   const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
   assertEquals(parameters.type, "object");
   for (const key of ["oneOf", "anyOf", "allOf", "not", "if", "then", "else"]) {
@@ -1187,8 +1187,8 @@ it("keeps the hosted framework loader visible when a local skill loader is also 
   const state = createToolExposureState();
   const initial = createToolExposurePlan({ authorized, mode: "deferred", state });
   assertEquals(initial.visible.map((tool) => tool.name), [
-    TOOL_SEARCH_TOOL_NAME,
     "veryfront__load_skill",
+    TOOL_SEARCH_TOOL_NAME,
   ]);
   assertEquals(initial.deferred.map((tool) => tool.name), ["load_skill"]);
   const searched = searchToolExposure({
@@ -1229,7 +1229,7 @@ it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
 
   assertEquals(
     plan.visible.map((tool) => tool.name),
-    [TOOL_SEARCH_TOOL_NAME, "veryfront__load_skill"],
+    ["veryfront__load_skill", TOOL_SEARCH_TOOL_NAME],
   );
 });
 
@@ -1449,8 +1449,8 @@ it("new and child runs start with fresh tool exposure state", () => {
   assertEquals([...child.loadedToolNames], []);
 });
 
-it("tool_search is reserved only when deferred framework search is injected", () => {
-  const customSearch = definition("tool_search", "Custom eager search");
+it("veryfront__tool_search is reserved only when deferred framework search is injected", () => {
+  const customSearch = definition("veryfront__tool_search", "Custom eager search");
   const eager = createToolExposurePlan({
     authorized: [customSearch],
     mode: "eager",
