@@ -8,6 +8,25 @@ const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEW_RECEIPT_PREFIX = "<!-- codex-review-receipt:v1 -->\n\n";
+
+// Only one known receipt envelope may surround a clean connector verdict.
+function isCodexCleanVerdict(body, allowLegacyWhitespace = false) {
+  const normalized = body.replaceAll("\r\n", "\n");
+  const markers = normalized.match(/<!--\s*codex-review-receipt\b/g) ?? [];
+  if (markers.length === 0) {
+    const legacy = allowLegacyWhitespace ? normalized.trim() : normalized;
+    return legacy.startsWith(CODEX_NO_FINDINGS);
+  }
+  if (
+    markers.length !== 1 || !normalized.startsWith(CODEX_REVIEW_RECEIPT_PREFIX)
+  ) {
+    return false;
+  }
+  return normalized.slice(CODEX_REVIEW_RECEIPT_PREFIX.length).startsWith(
+    CODEX_NO_FINDINGS,
+  );
+}
+
 const CODEX_REVIEW_STATE_METADATA =
   /^<!-- codex-review-state:v1 (\{[^\r\n]{1,4096}\}) -->$/;
 const CODEX_REVIEW_SUMMARY_MARKER =
@@ -308,6 +327,7 @@ function parseCompletedCodexStateMetadata(line) {
   if (
     typeof code.commit_sha !== "string" || code.status !== "completed" ||
     code.has_any_findings !== false || code.has_unresolved_findings !== false ||
+    security.has_unresolved_findings === true ||
     (security.commit_sha !== null &&
       security.commit_sha.toLowerCase() !== code.commit_sha.toLowerCase())
   ) return undefined;
@@ -321,8 +341,10 @@ function parseCompletedCodexSummary(comment) {
   ) return undefined;
   const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
   let stateHead;
-  if (lines[1]?.startsWith("<!-- codex-review-state:")) {
-    stateHead = parseCompletedCodexStateMetadata(lines[1]);
+  const stateMarkers = comment.body.match(/<!--\s*codex-review-state\b/g) ?? [];
+  if (stateMarkers.length > 0) {
+    if (stateMarkers.length !== 1) return undefined;
+    stateHead = parseCompletedCodexStateMetadata(lines[1] ?? "");
     if (!stateHead) return undefined;
     lines.splice(1, 1);
   }
@@ -1304,10 +1326,7 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      const verdictBody = comment.body.startsWith(CODEX_REVIEW_RECEIPT_PREFIX)
-        ? comment.body.slice(CODEX_REVIEW_RECEIPT_PREFIX.length)
-        : comment.body;
-      const cleanVerdict = verdictBody.startsWith(CODEX_NO_FINDINGS);
+      const cleanVerdict = isCodexCleanVerdict(comment.body);
       const freshness = evidenceFreshness(
         comment,
         "commented",
