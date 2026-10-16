@@ -109,6 +109,13 @@ describe("platform/cloud/resolver", () => {
     });
   });
 
+  it("defaults managed embeddings to the gateway's EU-resident registry model", () => {
+    assertEquals(
+      getDefaultVeryfrontCloudEmbeddingModel(),
+      "veryfront-cloud/google/gemini-embedding-001",
+    );
+  });
+
   it("normalizes default cloud model overrides without requiring the prefix", () => {
     setEnv("VERYFRONT_DEFAULT_MODEL", "openai/gpt-5.2");
     setEnv("VERYFRONT_DEFAULT_EMBEDDING_MODEL", "openai/text-embedding-3-small");

@@ -70,7 +70,7 @@ async function fixture() {
         path: sourcePath,
         checksum,
         indexed_chunk_count: 1,
-        model: { provider: "openai", name: "text-embedding-3-small", dimension: 1536 },
+        model: { provider: "google", name: "gemini-embedding-001", dimension: 3072 },
       } as T);
     },
   };
@@ -81,7 +81,7 @@ async function fixture() {
     createReader: () => client,
     embed: (text) => {
       assertEquals(text, "Complete current canonical body.\n");
-      return Promise.resolve(Array(1536).fill(0.125));
+      return Promise.resolve(Array(3072).fill(0.125));
     },
   });
   return { probe, request: { sourcePath, content, signal: new AbortController().signal }, wires };

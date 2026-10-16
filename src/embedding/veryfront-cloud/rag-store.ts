@@ -772,13 +772,16 @@ async function writeDocumentContent(
 function buildSearchRequestBody(
   vector: number[],
   dimension: SupportedDimension,
+  model: string,
   limit: number,
   threshold: number,
   documentScope?: RagDocumentScope,
 ): Record<string, unknown> {
+  const descriptor = normalizeEmbeddingModelDescriptor(model, dimension);
   return {
     vector,
     dimension,
+    model: { name: descriptor.name, provider: descriptor.provider },
     limit,
     threshold,
     ...(documentScope ? { document_scope: documentScope } : {}),
@@ -988,6 +991,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
           body: JSON.stringify(buildSearchRequestBody(
             vector,
             dimension,
+            config.model,
             limit,
             options?.threshold ?? 0,
             options?.documentScope,

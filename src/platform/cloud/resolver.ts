@@ -122,7 +122,7 @@ export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
 /** Built-in default model, used until the served catalog names one. */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/mistral/mistral-small-2503";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
-  "veryfront-cloud/openai/text-embedding-3-small";
+  "veryfront-cloud/google/gemini-embedding-001";
 
 export interface VeryfrontCloudBootstrap {
   apiBaseUrl: string;

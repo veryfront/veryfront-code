@@ -9070,3 +9070,175 @@ Deno.test("fresh run-bound lifecycle keys retain their epoch for review requests
     });
   }
 });
+
+describe("versioned envelope uniqueness", () => {
+  it("rejects summary proof with unresolved security findings", async () => {
+    const original = codexReviewSummary();
+    const state = {
+      code_review: {
+        commit_sha: HEAD,
+        has_any_findings: false,
+        has_unresolved_findings: false,
+        status: "completed",
+      },
+      security_review: {
+        commit_sha: HEAD,
+        has_any_findings: true,
+        has_unresolved_findings: true,
+        status: "completed",
+      },
+    };
+    const lines = original.body.split("\n");
+    lines.splice(
+      1,
+      0,
+      `<!-- codex-review-state:v1 ${JSON.stringify(state)} -->`,
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [{ ...original, body: lines.join("\n") }],
+          reactions: [codexCompletionReaction()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("rejects receipt markers after a clean verdict", async () => {
+    const original = codexComment();
+    const prefix = "<!-- codex-review-receipt:v1 -->\n\n";
+    for (
+      const body of [
+        `${prefix}${original.body}${prefix}`,
+        `${original.body}${prefix}`,
+        `${prefix}${original.body}<!-- codex-review-receipt:v2 -->`,
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [{ ...original, body }] },
+          HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("rejects trailing or misplaced state metadata in summaries", async () => {
+    const original = codexReviewSummary();
+    const state = {
+      code_review: {
+        commit_sha: HEAD,
+        has_any_findings: false,
+        has_unresolved_findings: false,
+        status: "completed",
+      },
+      security_review: {
+        commit_sha: null,
+        has_any_findings: null,
+        has_unresolved_findings: null,
+        status: null,
+      },
+    };
+    const marker = `<!-- codex-review-state:v1 ${JSON.stringify(state)} -->`;
+    const lines = original.body.split("\n");
+    lines.splice(1, 0, marker);
+    const valid = lines.join("\n");
+    for (
+      const body of [
+        valid + "\n" + marker,
+        valid + "\n" + marker.replace("state:v1", "state:v2"),
+        original.body + "\n" + marker,
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [{ ...original, body }],
+            reactions: [codexCompletionReaction()],
+          },
+          HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+      );
+    }
+  });
+});
+
+describe("authenticated summary finding order", () => {
+  const findingSummary = (section: string) => {
+    const metadata = {
+      code_review: {
+        commit_sha: HEAD, has_any_findings: false,
+        has_unresolved_findings: false, status: "completed",
+      },
+      security_review: {
+        commit_sha: null, has_any_findings: null,
+        has_unresolved_findings: null, status: null,
+      },
+      [section]: {
+        commit_sha: HEAD, has_any_findings: true,
+        has_unresolved_findings: true, status: "completed",
+      },
+    };
+    const summary = codexReviewSummary();
+    const lines = summary.body.split("\n");
+    lines.splice(1, 0, `<!-- codex-review-state:v1 ${JSON.stringify(metadata)} -->`);
+    return { ...summary, body: lines.join("\n") };
+  };
+
+  it("requires a later clean verdict after explicit code or security findings", async () => {
+    for (const section of ["code_review", "security_review"]) {
+      const comments = [findingSummary(section), codexComment(undefined, {
+        created_at: "2026-09-06T14:20:00Z",
+      })];
+      assertEquals(await findAutomatedReview({ reviews: [], comments }, HEAD,
+        () => Promise.resolve(HEAD)), undefined);
+      comments.push(codexComment(undefined, {
+        created_at: "2026-09-06T14:40:00Z",
+      }));
+      assertEquals((await findAutomatedReview({ reviews: [], comments }, HEAD,
+        () => Promise.resolve(HEAD)))?.source, "codex-comment");
+    }
+  });
+
+  it("retains ambiguous finding updates at the epoch timestamp", async () => {
+    const summary = findingSummary("security_review");
+    summary.body = summary.body.replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:10:00Z");
+    summary.updated_at = "2026-09-06T14:20:00Z";
+    const clean = { ...codexComment(undefined, { created_at: "2026-09-06T14:20:00Z" }), id: 88 };
+    const evidence = { reviews: [], comments: [summary, clean],
+      events: [{ id: 77, event: "base_ref_changed", created_at: "2026-09-06T14:20:00Z" }],
+      timeline: [{ id: summary.id, event: "commented" }, { id: 77, event: "base_ref_changed" }, { id: clean.id, event: "commented" }] };
+    assertEquals(await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)), undefined);
+  });
+
+  it("retains post-epoch finding updates from an older code completion", async () => {
+    const summary = findingSummary("security_review");
+    summary.body = summary.body.replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:10:00Z");
+    const comments = [summary, codexComment(undefined, { created_at: "2026-09-06T14:30:00Z" })];
+    const evidence = { reviews: [], comments, events: [{ id: 77, event: "base_ref_changed", created_at: "2026-09-06T14:20:00Z" }] };
+    assertEquals(await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)), undefined);
+    comments.push(codexComment(undefined, { created_at: "2026-09-06T14:40:00Z" }));
+    assertEquals((await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))?.source, "codex-comment");
+  });
+
+  it("retains a newer authenticated finding update after an older verdict edit", async () => {
+    const summary = findingSummary("security_review");
+    const comments = [summary, codexFindingComment(undefined, {
+      created_at: "2026-09-06T14:15:00Z", updated_at: "2026-09-06T14:22:00Z",
+    }), codexComment(undefined, { created_at: "2026-09-06T14:30:00Z" })];
+    assertEquals(await findAutomatedReview({ reviews: [], comments }, HEAD,
+      () => Promise.resolve(HEAD)), undefined);
+    comments.push(codexComment(undefined, { created_at: "2026-09-06T14:40:00Z" }));
+    assertEquals((await findAutomatedReview({ reviews: [], comments }, HEAD,
+      () => Promise.resolve(HEAD)))?.source, "codex-comment");
+  });
+});

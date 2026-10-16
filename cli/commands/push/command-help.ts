@@ -28,7 +28,8 @@ export const pushHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Intentionally overwrite remote changes and bypass concurrency guards",
+      description:
+        "Intentionally overwrite remote changes (new OKF bundle files retain creation guards)",
     },
     {
       flag: "-q, --quiet",
@@ -62,6 +63,10 @@ export const pushHelp: CommandHelp = {
     "Use --force only when you intend to overwrite remote changes",
     "Use --prune to remove managed remote files that are missing locally",
     "Run veryfront deploy when the preview is ready for an environment",
+    "Push includes text assets explicitly referenced by OKF frontmatter, including SQL, Python, CSV, and notebook files",
+    "New files in declared knowledge bundles retain their bundle root for absolute Markdown links; edits preserve existing file metadata",
+    "Unchanged files do not receive a metadata backfill",
+    "Unreferenced unsupported files remain outside sync; referenced assets still follow ignore and path safety rules",
     ".vfignore excludes matching local files and preserves matching remote files",
     "Files Git ignores (.gitignore, .git/info/exclude, core.excludesFile) are not uploaded",
     "Add a .vfignore negation such as !dist to upload a path Git ignores",

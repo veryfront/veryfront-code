@@ -1,3 +1,6 @@
+import { runTask } from "#veryfront/task/runner.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
+import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import {
   createProjectRunRuntimeOwnershipProbe,
   type RuntimeOwnershipProbeReceipt,
@@ -88,6 +91,13 @@ function canonicalKnowledgeIndexResponse(
 ): Response | undefined {
   const body = requestJsonBody(init);
   const parsedUrl = new URL(url);
+  if (url.endsWith(":embedContent")) {
+    return Response.json({ embedding: { values: Array(3072).fill(0.25) } });
+  }
+  if (url.endsWith(":batchEmbedContents")) {
+    const requests = Array.isArray(body?.requests) ? body.requests : [];
+    return Response.json({ embeddings: requests.map(() => ({ values: Array(3072).fill(0.25) })) });
+  }
   if (/^\/runs\/[^/]+\/events$/.test(parsedUrl.pathname)) {
     return Response.json({
       run_id: parsedUrl.pathname.split("/").at(-2),
@@ -95,7 +105,10 @@ function canonicalKnowledgeIndexResponse(
       appended_count: Array.isArray(body?.events) ? body.events.length : 0,
     });
   }
-  if (url.endsWith("/embeddings")) {
+  if (
+    (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+      url.endsWith(":batchEmbedContents"))
+  ) {
     const inputs = Array.isArray(body?.input) ? body.input : [body?.input];
     return Response.json({
       object: "list",
@@ -866,11 +879,10 @@ function createDeps(
   overrides: Partial<ProjectRunExecuteHandlerDeps> = {},
 ): ProjectRunExecuteHandlerDeps {
   return {
-    runTask: async (_options) => ({
-      success: true,
-      result: { synced: 12 },
-      durationMs: 42,
-    }),
+    runTask: async (options) => {
+      options.onExecutionStarted?.();
+      return { success: true, result: { synced: 12 }, durationMs: 42 };
+    },
     findWorkflowById: async (target) =>
       target === "publish"
         ? {
@@ -894,11 +906,25 @@ function createDeps(
           }),
         }
         : null,
-    createWorkflowClient: () => ({
+    createWorkflowClient: (config) => ({
       register: () => {},
-      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
-        runId: options?.runId ?? "workflow-run",
-      }),
+      start: async (workflowId: string, input: unknown, options?: { runId?: string }) => {
+        const runId = options?.runId ?? "workflow-run";
+        config?.executor?.onStart?.({
+          id: runId,
+          workflowId,
+          input,
+          status: "running",
+          nodeStates: {},
+          currentNodes: [],
+          context: { input, steps: {}, variables: {} },
+          checkpoints: [],
+          pendingApprovals: [],
+          createdAt: new Date(),
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+        });
+        return { runId };
+      },
       getRun: async () => ({
         status: "completed",
         output: { deployed: true },
@@ -965,6 +991,7 @@ const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (option
   const startedAt = performance.now();
   try {
     options.signal?.throwIfAborted();
+    options.onExecutionStarted?.();
     const result = await options.task.definition.run({
       env: {},
       config: options.config ?? {},
@@ -1357,6 +1384,285 @@ describe("workflow capability transport boundary", () => {
 });
 
 describe("server/handlers/request/project-run-execute.handler", () => {
+  for (
+    const target of [
+      "knowledge-ingest",
+      "release-asset-build",
+      "dependency-artifact-build",
+      "style-artifact-build",
+    ]
+  ) {
+    it(`omits runtime process attribution for invalid builtin ${target}`, async () => {
+      const handler = new ProjectRunExecuteHandler();
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_builtin_refused/execute",
+        {
+          runId: "run_builtin_refused",
+          projectId: "proj-1",
+          kind: "task",
+          target: `task:${target}`,
+          config: target === "knowledge-ingest" ? { mode: "index_existing_canonical" } : {},
+        },
+      );
+      await withMockFetch(() => {
+        throw new Error("Invalid preflight must not make a request");
+      }, async () => {
+        const result = await handler.handle(request, createCtx(publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, false);
+        for (const name of ["id", "mode", "name"]) {
+          assertEquals(result.response.headers.get(`x-veryfront-runtime-${name}`), null);
+        }
+      });
+    });
+  }
+
+  it("retains runtime process attribution when workflow dynamic steps fail after admission", async () => {
+    let entries = 0;
+    const definition = workflow({
+      id: "publish",
+      steps: () => {
+        entries++;
+        throw new Error("Workflow failed after actual entry");
+      },
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: (config) => createWorkflowClient(config),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_failed/execute",
+      {
+        runId: "run_workflow_failed",
+        projectId: "proj-1",
+        kind: "workflow",
+        target: "workflow:publish",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const body = await result.response.json();
+    assertEquals(entries, 1);
+    assertEquals(body.success, false);
+    assertStringIncludes(body.error, "Workflow failed after actual entry");
+    const identity = getServiceRuntimeIdentity();
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), identity.mode);
+    assertEquals(
+      result.response.headers.get("x-veryfront-runtime-name"),
+      encodeURIComponent(identity.name),
+    );
+  });
+
+  for (const mode of ["invalid", "throws"] as const) {
+    it(`reports actual task entry for ${mode} task input or execution`, async () => {
+      let entered = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("checked", {
+            inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+            run: () => {
+              entered++;
+              throw new Error("Failure after actual entry");
+            },
+          });
+          return discovery;
+        },
+        runTask: (options) => runTask(options, createInMemoryHostRuntime()),
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_checked/execute",
+        {
+          runId: "run_checked",
+          projectId: "proj-1",
+          kind: "task",
+          target: "task:checked",
+          input: { value: mode === "invalid" ? 1 : "ok" },
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, false);
+      assertEquals(entered, mode === "invalid" ? 0 : 1);
+      const identity = getServiceRuntimeIdentity();
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-id"),
+        mode === "invalid" ? null : identity.id,
+      );
+    });
+  }
+
+  for (
+    const refusal of [
+      {
+        name: "expired task",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        deadlineAt: "2000-01-01T00:00:00.000Z",
+      },
+      { name: "missing task", kind: "task", target: "task:missing" },
+      { name: "eval without id", kind: "task", target: "task:eval" },
+      { name: "missing eval", kind: "task", target: "task:eval", config: { eval_id: "missing" } },
+      { name: "missing workflow", kind: "workflow", target: "workflow:missing" },
+      {
+        name: "missing workflow resume",
+        kind: "workflow",
+        target: "workflow:missing",
+        resume: { type: "manual" },
+      },
+    ]
+  ) {
+    it(`omits runtime process attribution for ${refusal.name}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_refused/execute",
+        {
+          runId: "run_refused",
+          projectId: "proj-1",
+          ...refusal,
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, false);
+      for (const name of ["id", "mode", "name"]) {
+        assertEquals(result.response.headers.get(`x-veryfront-runtime-${name}`), null);
+      }
+    });
+  }
+
+  for (const state of ["missing", "completed"] as const) {
+    it(`omits runtime process attribution for an unadmitted ${state} workflow resume`, async () => {
+      const deps = createDeps();
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: async (config, scope) => ({
+          ...await deps.createWorkflowClient(config, scope),
+          statePersistence: "durable",
+          register: () => {},
+          start: async () => {
+            throw new Error("Resume must not start a new run");
+          },
+          getRun: async () =>
+            state === "missing" ? null : ({ status: state, output: {}, currentNodes: [] }),
+          cancel: async () => {},
+          destroy: async () => {},
+        }),
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_resume_refused/execute",
+        {
+          runId: "run_resume_refused",
+          projectId: "proj-1",
+          kind: "workflow",
+          target: "workflow:publish",
+          resume: { type: "manual" },
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      for (const name of ["id", "mode", "name"]) {
+        assertEquals(result.response.headers.get(`x-veryfront-runtime-${name}`), null);
+      }
+    });
+  }
+
+  for (const kind of ["task", "workflow"] as const) {
+    it(`returns runtime process attribution for an accepted ${kind}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process/execute",
+        {
+          runId: "run_process",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const identity = getServiceRuntimeIdentity();
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
+      const body = await result.response.json();
+      assertEquals(body.success, true);
+      assertEquals(body.result, kind === "task" ? { synced: 12 } : { deployed: true });
+    });
+  }
+
+  for (const kind of ["task", "workflow"] as const) {
+    it(`protects accepted ${kind} attribution from a replaced header setter`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process_patched/execute",
+        {
+          runId: "run_process_patched",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+      );
+      const originalSet = Headers.prototype.set;
+      try {
+        Headers.prototype.set = function (name: string, value: string) {
+          return originalSet.call(
+            this,
+            name,
+            name.startsWith("x-veryfront-runtime-") ? "forged" : value,
+          );
+        };
+        const result = await handler.handle(request, createCtx(publicKeyPem));
+        assertExists(result.response);
+        const identity = getServiceRuntimeIdentity();
+        assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+        assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), identity.mode);
+        assertEquals(
+          result.response.headers.get("x-veryfront-runtime-name"),
+          encodeURIComponent(identity.name),
+        );
+      } finally {
+        Headers.prototype.set = originalSet;
+      }
+    });
+
+    it(`omits ${kind} attribution when observation admission rejects`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          started = true;
+          throw new Error("must not execute");
+        },
+        findWorkflowById: async () => {
+          started = true;
+          throw new Error("must not execute");
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_process_refused/execute",
+        {
+          runId: "run_process_refused",
+          projectId: "proj-1",
+          kind,
+          target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        },
+        { "X-Veryfront-Inference-Token": "process-attribution-admission-canary" },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, false);
+      assertEquals(started, false);
+      for (const name of ["id", "mode", "name"]) {
+        assertEquals(result.response.headers.get(`x-veryfront-runtime-${name}`), null);
+      }
+    });
+  }
+
   afterAll(async () => {
     await stopEsbuild();
   });
@@ -1384,6 +1690,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(result.response);
       assertEquals(result.response.status, 400);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
       assertEquals(await result.response.json(), { error: refusal.error });
     });
   }
@@ -2970,7 +3277,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             );
             assertEquals(
               headers.get("Authorization"),
-              url.endsWith("/embeddings")
+              (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+                  url.endsWith(":batchEmbedContents"))
                 ? "Bearer managed-embedding-fixture"
                 : "Bearer test-token",
             );
@@ -2984,7 +3292,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
             if (indexed) {
               if (url.endsWith("/index")) indexCalls++;
-              if (url.endsWith("/embeddings")) embeddingCalls++;
+              if (
+                (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+                  url.endsWith(":batchEmbedContents"))
+              ) embeddingCalls++;
               return indexed;
             }
             if (url.endsWith("/projects/demo-project/uploads/uploads%2Facme%2Fguide.md")) {
@@ -3103,7 +3414,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               new Headers(observed.headers).get("X-Veryfront-Run-Event-Token"),
               url.pathname.endsWith("/index") ? createKnowledgeIngestEventToken(body) : null,
             );
-            if (url.pathname.endsWith("/embeddings")) {
+            if (
+              (url.pathname.endsWith("/embeddings") || url.pathname.endsWith(":embedContent") ||
+                url.pathname.endsWith(":batchEmbedContents"))
+            ) {
               assertEquals(
                 new Headers(observed.headers).get("authorization"),
                 "Bearer managed-embedding-fixture",
@@ -3293,7 +3607,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               appended_count: events.length,
             });
           }
-          if (url.endsWith("/embeddings")) {
+          if (
+            (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+              url.endsWith(":batchEmbedContents"))
+          ) {
             if (failure === "provider") {
               return Response.json({
                 error: { message: "Provider unavailable", type: "provider_error" },
@@ -3383,7 +3700,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               headers: { "Content-Type": "application/octet-stream" },
             });
           }
-          if (url.endsWith("/embeddings")) {
+          if (
+            (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+              url.endsWith(":batchEmbedContents"))
+          ) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("authorization"),
               "Bearer managed-embedding-fixture",
@@ -3504,7 +3824,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             headers: { "Content-Type": "application/octet-stream" },
           });
         }
-        if (url.endsWith("/embeddings")) {
+        if (
+          (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+            url.endsWith(":batchEmbedContents"))
+        ) {
           assertEquals(
             new Headers(observeFetchRequestInit(init).headers).get("authorization"),
             "Bearer managed-embedding-fixture",
@@ -3541,12 +3864,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         controller.abort(new Error("Run cancelled during embeddings"));
         assertEquals(acknowledgements, []);
         settled.resolve(
-          Response.json({
-            object: "list",
-            model: "text-embedding-3-small",
-            data: [{ object: "embedding", index: 0, embedding: Array(1536).fill(0.25) }],
-            usage: { prompt_tokens: 1, total_tokens: 1 },
-          }),
+          Response.json({ embedding: { values: Array(3072).fill(0.25) } }),
         );
         const result = await pending;
         assertExists(result.response);
@@ -7381,6 +7699,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     const payload = await result.response.json();
     assertEquals(payload.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
     assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
     // No outputSchema is declared, so the field is omitted as on a schema-less task.
     assertEquals("output_schema_sha256" in payload, false);
@@ -17272,6 +17591,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     resume?: Record<string, unknown>,
     signal?: AbortSignal,
     stopToken = "opaque-stop-capability",
+    expectRuntimeAttribution = false,
   ): Promise<Record<string, unknown>> {
     const { request, publicKeyPem } = await signedRequest(
       `/api/control-plane/runs/${runId}/execute`,
@@ -17289,6 +17609,13 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       createCtx(publicKeyPem),
     );
     assertExists(result.response);
+    if (expectRuntimeAttribution) {
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-id"),
+        getServiceRuntimeIdentity().id,
+      );
+      assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
+    }
     return await Reflect.apply(responseJson, result.response, []);
   }
 
@@ -17355,7 +17682,13 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       pauseRequested = false;
       return Response.json({ stop: paused });
     }, async () => {
-      const first = await dispatch(createHandler(backend, definition));
+      const first = await dispatch(
+        createHandler(backend, definition),
+        undefined,
+        undefined,
+        "opaque-stop-capability",
+        true,
+      );
       assertEquals(first, {
         success: true,
         status: "waiting",
@@ -17369,7 +17702,13 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       assertEquals(paused?.status, "waiting");
       assertEquals(paused?.currentNodes, []);
 
-      const resumed = await dispatch(createHandler(backend, definition), { type: "manual" });
+      const resumed = await dispatch(
+        createHandler(backend, definition),
+        { type: "manual" },
+        undefined,
+        "opaque-stop-capability",
+        true,
+      );
       assertEquals(resumed.success, true);
       assertEquals(resumed.status, undefined);
       assertEquals(resumed.error, undefined);
