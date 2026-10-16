@@ -1,4 +1,7 @@
-import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
+import {
+  IMPORT_FROM,
+  IMPORT_TRIVIA,
+} from "../../src/modules/loader-shared/import-syntax.mjs";
 import { normalizeReactPeerDependencies } from "./npm-react-peers.ts";
 import {
   dirname,
@@ -674,11 +677,17 @@ function addExportTypes(pkg: {
 
 const BARE_IMPORT_SPECIFIER_PATTERNS = [
   // Static imports with bindings: `import x from "pkg"`, `import { a } from "pkg"`.
-  new RegExp(String.raw`^[^\S\n]*import(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?["']([^"'\n]+)["']`, "gmu"),
-  // Side-effect-only static imports: `import "pkg";`.
-  /^[^\S\n]*import\s*["']([^"'\n]+)["']/gm,
+  new RegExp(
+    String
+      .raw`^[^\S\n]*import(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?["']([^"'\n]+)["']`,
+    "gmu",
+  ),
   // Re-exports: `export { a } from "pkg"`, `export * from "pkg"`.
-  new RegExp(String.raw`^[^\S\n]*export(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}["']([^"'\n]+)["']`, "gmu"),
+  new RegExp(
+    String
+      .raw`^[^\S\n]*export(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}["']([^"'\n]+)["']`,
+    "gmu",
+  ),
   // Dynamic imports: `import("pkg")`.
   /\bimport\s*\(\s*["']([^"'\n]+)["']\s*\)/g,
   // CommonJS requires: `require("pkg")`.

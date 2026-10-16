@@ -725,7 +725,11 @@ class EnvelopeCipher {
   #keyRing: Uint8Array<ArrayBuffer>[];
 
   constructor(keyRing: readonly Uint8Array<ArrayBuffer>[]) {
-    this.#keyRing = keyRing.map((key) => new Uint8Array(key));
+    this.#keyRing = keyRing.map((key) => {
+      const owned = new Uint8Array(key);
+      key.fill(0);
+      return owned;
+    });
   }
 
   #getKeys(): Promise<EnvelopeKey[]> {

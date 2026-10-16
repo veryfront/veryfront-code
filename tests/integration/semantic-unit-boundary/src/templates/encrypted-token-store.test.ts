@@ -66,6 +66,33 @@ async function withEncryptionKey(operation: () => Promise<void>): Promise<void> 
 }
 
 describe("generated encrypted OAuth token store", () => {
+  it("clears source key buffers after copying and owned buffers after import", async () => {
+    await withEncryptionKey(async () => {
+      const OriginalUint8Array = globalThis.Uint8Array;
+      const keyBuffers: Uint8Array[] = [];
+      const backend = createRecordingBackend();
+      let store: ReturnType<typeof createEncryptedTokenStore>;
+      // Observe raw-key allocations only during synchronous construction.
+      globalThis.Uint8Array = new Proxy(OriginalUint8Array, {
+        construct(target, args) {
+          const bytes = Reflect.construct(target, args) as Uint8Array;
+          if (bytes.length === 32) keyBuffers.push(bytes);
+          return bytes;
+        },
+      });
+      try {
+        store = createEncryptedTokenStore(backend);
+      } finally {
+        globalThis.Uint8Array = OriginalUint8Array;
+      }
+      assertEquals(keyBuffers.length, 2);
+      assertEquals([...keyBuffers[0]!], Array(32).fill(0));
+      await store.setTokens("drive", "alice", { accessToken: "key-cleanup-token" });
+      for (const bytes of keyBuffers) assertEquals([...bytes], Array(32).fill(0));
+      assertEquals((await store.getTokens("drive", "alice"))?.accessToken, "key-cleanup-token");
+    });
+  });
+
   it("encrypts with the configured AES key, verified independently of the store reader", async () => {
     await withEncryptionKey(async () => {
       const configured = getEnv(ENCRYPTION_KEY_ENV)!;

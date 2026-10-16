@@ -1,6 +1,7 @@
 /** Shared lexical fragments for import/export scanners; all groups are non-capturing. */
 const BLOCK_COMMENT = String.raw`\/\*[^*]*(?:\*(?!\/)[^*]*)*\*\/`;
-const LINE_COMMENT = String.raw`\/\/[^\r\n]*(?:\r?\n|$)`;
+// A true end-of-input assertion keeps this unambiguous with the multiline flag.
+const LINE_COMMENT = String.raw`\/\/[^\r\n]*(?:\r?\n|(?![\s\S]))`;
 const TRIVIA = String.raw`(?:\s|${BLOCK_COMMENT}|${LINE_COMMENT})`;
 const QUOTED = String.raw`(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')`;
 const IDENTIFIER_ESCAPE = String.raw`\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]{1,6}\})`;

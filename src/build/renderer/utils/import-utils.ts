@@ -86,6 +86,11 @@ function delimiterCloseIndexes( // NOSONAR: scanner state must stay synchronized
   const blocks: JavaScriptBlockContext[] = [];
   const controlFlowCloses = new Set<number>();
   const statementBlockCloses = new Set<number>();
+  const regexContext: RegexLineContext = {
+    controlFlowCloses,
+    statementBlockCloses,
+    canStartAtLineStart: true,
+  };
   let quote: string | undefined;
   let inBlockComment = false;
   let lastDivisionSlashIndex = -1;
@@ -116,11 +121,7 @@ function delimiterCloseIndexes( // NOSONAR: scanner state must stay synchronized
       const regexEnd = findRegexLiteralEnd(
         line,
         index,
-        {
-          controlFlowCloses,
-          statementBlockCloses,
-          canStartAtLineStart: true,
-        },
+        regexContext,
         followsDivision,
       );
       if (regexEnd >= 0) {
@@ -152,6 +153,7 @@ function delimiterCloseIndexes( // NOSONAR: scanner state must stay synchronized
         javascriptBlockContext(
           line,
           index,
+          regexContext,
           blocks,
           lineStartRequiresExpression,
           lineStartFollowsArrow,
@@ -168,6 +170,7 @@ function delimiterCloseIndexes( // NOSONAR: scanner state must stay synchronized
 function javascriptBlockContext(
   line: string,
   openIndex: number,
+  regexContext: RegexLineContext,
   enclosingBlocks: readonly JavaScriptBlockContext[] = [],
   lineStartRequiresExpression = false,
   lineStartFollowsArrow = false,
@@ -176,7 +179,7 @@ function javascriptBlockContext(
   const previousIndex = previousJavaScriptTokenIndex(line, openIndex);
   const previous = line[previousIndex];
   const word = previousIndex < 0 ? "" : precedingWord(line, previousIndex);
-  const classHead = trailingClassHead(line, openIndex - 1);
+  const classHead = trailingClassHead(line, openIndex - 1, regexContext);
   const classBody = classHead !== null || (previousIndex < 0 && lineStartFollowsClassExpression);
   const classExpressionBody = classBody &&
     (classHead === null || !classHeadIsStatement(classHead.prefix));
@@ -288,42 +291,61 @@ function endsWithArrow(line: ArrayLike<string>, endIndex: number): boolean {
   return line[endIndex] === ">" && line[endIndex - 1] === "=";
 }
 
-function trailingClassHead(line: string, endIndex: number): { prefix: string } | null {
+interface ClassHeadScan {
+  index: number;
+  quote?: string;
+  readonly templateDepths: number[];
+  readonly classStarts: number[];
+}
+
+const classHeadScans = new WeakMap<RegexLineContext, ClassHeadScan>();
+
+function trailingClassHead(
+  line: string,
+  endIndex: number,
+  context?: RegexLineContext,
+): { prefix: string } | null {
   const prefix = line.slice(0, endIndex + 1).trimEnd();
-  let classStart = -1;
-  let quote: string | undefined;
-  const templateDepths: number[] = [];
-  const expressionContext: RegexLineContext = {
-    controlFlowCloses: new Set(),
-    statementBlockCloses: new Set(),
-    canStartAtLineStart: true,
-  };
-  for (let index = 0; index < prefix.length; index++) {
+  const expressionContext = context ?? regexLineContext(prefix);
+  let scan = classHeadScans.get(expressionContext);
+  if (!scan) {
+    scan = { index: -1, templateDepths: [], classStarts: [] };
+    classHeadScans.set(expressionContext, scan);
+  }
+  const { templateDepths, classStarts } = scan;
+  let index = scan.index;
+  while (++index < prefix.length) {
     const current = prefix[index]!;
     const next = prefix[index + 1];
-    if (quote) {
+    if (scan.quote) {
       if (current === "\\") index++;
-      else if (current === quote) quote = undefined;
-      else if (quote === "`" && current === "$" && next === "{") {
+      else if (current === scan.quote) scan.quote = undefined;
+      else if (scan.quote === "`" && current === "$" && next === "{") {
         templateDepths.push(1);
-        quote = undefined;
+        scan.quote = undefined;
         index++;
       }
       continue;
     }
     if (current === "'" || current === '"' || current === "`") {
-      quote = current;
+      scan.quote = current;
       continue;
     }
     if (current === "/" && next === "*") {
       const close = prefix.indexOf("*/", index + 2);
-      if (close === -1) break;
+      if (close === -1) {
+        index--;
+        break;
+      }
       index = close + 1;
       continue;
     }
     if (current === "/" && next === "/") {
       const newline = prefix.indexOf("\n", index + 2);
-      if (newline === -1) break;
+      if (newline === -1) {
+        index--;
+        break;
+      }
       index = newline;
       continue;
     }
@@ -339,7 +361,7 @@ function trailingClassHead(line: string, endIndex: number): { prefix: string } |
       if (current === "{") templateDepths[depth]!++;
       if (current === "}" && --templateDepths[depth]! === 0) {
         templateDepths.pop();
-        quote = "`";
+        scan.quote = "`";
       }
     }
     if (
@@ -348,10 +370,21 @@ function trailingClassHead(line: string, endIndex: number): { prefix: string } |
       !/[\w$]/.test(prefix[index + 5] ?? "")
     ) {
       const previous = previousJavaScriptTokenIndex(prefix, index);
-      if (previous < 0 || prefix[previous] !== ".") classStart = index;
+      if (previous < 0 || prefix[previous] !== ".") classStarts.push(index);
       index += 4;
     }
   }
+  scan.index = Math.max(scan.index, Math.min(index, prefix.length - 1));
+  // Callers usually advance along one line, but cached contexts can also be
+  // queried at an earlier offset. Keep lookup independent of scan order.
+  let low = 0;
+  let high = classStarts.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (classStarts[middle]! <= endIndex) low = middle + 1;
+    else high = middle;
+  }
+  const classStart = classStarts[low - 1] ?? -1;
   if (classStart < 0) return null;
   const head = prefix.slice(classStart);
   if (!/^class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^\s{}][^{}]*)?$/.test(head)) {
@@ -432,19 +465,18 @@ function findRegexLiteralEnd(
   return -1;
 }
 
-function findRegexLiteralEndAt(
+function regexLineContextAt(
   code: string,
-  slashIndex: number,
+  index: number,
   contextCache: Map<number, RegexLineContext>,
   contextCharacters: readonly string[],
-  forceCanStart = false,
-): number {
-  const lineStart = code.lastIndexOf("\n", slashIndex - 1) + 1;
-  const nextLine = code.indexOf("\n", slashIndex);
-  const lineEnd = nextLine < 0 ? code.length : nextLine;
-  const line = code.slice(lineStart, lineEnd);
+): RegexLineContext {
+  const lineStart = code.lastIndexOf("\n", index - 1) + 1;
   let context = contextCache.get(lineStart);
   if (!context) {
+    const nextLine = code.indexOf("\n", index);
+    const lineEnd = nextLine < 0 ? code.length : nextLine;
+    const line = code.slice(lineStart, lineEnd);
     const previousIndex = previousSignificantIndex(contextCharacters, lineStart);
     let canStartAtLineStart = true;
     let lineStartRequiresExpression = false;
@@ -482,6 +514,21 @@ function findRegexLiteralEndAt(
     );
     contextCache.set(lineStart, context);
   }
+  return context;
+}
+
+function findRegexLiteralEndAt(
+  code: string,
+  slashIndex: number,
+  contextCache: Map<number, RegexLineContext>,
+  contextCharacters: readonly string[],
+  forceCanStart = false,
+): number {
+  const lineStart = code.lastIndexOf("\n", slashIndex - 1) + 1;
+  const nextLine = code.indexOf("\n", slashIndex);
+  const lineEnd = nextLine < 0 ? code.length : nextLine;
+  const line = code.slice(lineStart, lineEnd);
+  const context = regexLineContextAt(code, slashIndex, contextCache, contextCharacters);
   const regexEnd = findRegexLiteralEnd(
     line,
     slashIndex - lineStart,
@@ -632,6 +679,7 @@ function scanMdxExpressionLine( // NOSONAR: line scanner coordinates MDX express
         javascriptBlockContext(
           line,
           index,
+          regexContext,
           state.statementBlocks,
           state.lineStartRequiresExpression,
           state.lineStartFollowsArrow,
@@ -1447,6 +1495,7 @@ function maskComments( // NOSONAR: top-level masking scanner coordinates JS, JSX
         javascriptBlockContext(
           code.slice(lineStart, index + 1),
           index - lineStart,
+          regexLineContextAt(code, index, regexContextsByLine, characters),
           statementBlocks,
           previousIndex >= 0 && previousIndex < lineStart &&
             requiresExpressionAfter(characters, previousIndex),
@@ -1486,6 +1535,7 @@ function maskComments( // NOSONAR: top-level masking scanner coordinates JS, JSX
         javascriptBlockContext(
           code.slice(lineStart, index + 1),
           index - lineStart,
+          regexLineContextAt(code, index, regexContextsByLine, characters),
           statementBlocks,
           previousIndex >= 0 && previousIndex < lineStart &&
             requiresExpressionAfter(characters, previousIndex),

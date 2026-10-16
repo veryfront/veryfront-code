@@ -317,6 +317,38 @@ describe("build/renderer/utils/import-utils", () => {
       }
     });
 
+    it("retains imports after regexes following control flow and class declarations", async () => {
+      for (const prefix of ['if (x) /"/.test(x);', 'if (x) {} /"/.test(x);']) {
+        const source = `${prefix} class Foo {} /"/.test(x); const child = import("./child.mdx");`;
+        assertEquals(extractImports(source), ["./child.mdx"]);
+        assertEquals(
+          await processImports(
+            source,
+            "/project/page.ts",
+            "/project",
+            () => Promise.resolve("./resolved.mdx"),
+          ),
+          source.replace("./child.mdx", "./resolved.mdx"),
+        );
+      }
+    });
+
+    it("reuses delimiter context across many object literals on one line", async () => {
+      const source = "const values = [" + "{},".repeat(6_400) + ']; import("./child.mdx")';
+      const start = performance.now();
+      assertEquals(extractImports(source), ["./child.mdx"]);
+      assertEquals(
+        await processImports(
+          source,
+          "/project/page.ts",
+          "/project",
+          () => Promise.resolve("./resolved.mdx"),
+        ),
+        source.replace("./child.mdx", "./resolved.mdx"),
+      );
+      assertEquals(performance.now() - start < 1_500, true, "Minified modules must scan promptly");
+    });
+
     it("recognizes regex literals after class extends", () => {
       for (
         const code of [
