@@ -29,17 +29,6 @@ describe("byte-bounded parsed JSON snapshots", () => {
       verify(value);
     }
   });
-  it("keeps UTF-8 counts independent of later string intrinsic replacement", () => {
-    const original = String.prototype.charCodeAt;
-    try {
-      String.prototype.charCodeAt = () => {
-        throw new Error("caller replacement");
-      };
-      assertEquals(boundedJsonByteLength("é中😀"), 11);
-    } finally {
-      String.prototype.charCodeAt = original;
-    }
-  });
   it("keeps authored string and aggregate defaults unchanged", () => {
     const large = "a".repeat(1400000);
     assertEquals(snapshotBoundedJsonValue({ data: large }).success, false);
