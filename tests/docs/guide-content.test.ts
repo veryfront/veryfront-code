@@ -366,7 +366,6 @@ describe("guide content contracts", () => {
     for (
       const step of [
         "npm create veryfront@latest support-agent -- --template ai-agent",
-        "npx veryfront@latest login",
         "npx veryfront@latest push",
         "npm run dev",
         "npm run eval -- assistant",
@@ -375,7 +374,15 @@ describe("guide content contracts", () => {
     ) {
       assertStringIncludes(quickstart, step);
     }
+    assertStringIncludes(quickstart, "Never commit credentials");
+    assertStringIncludes(quickstart, "remove any existing `apiToken`");
+    assertStringIncludes(quickstart, "`veryfront login`");
+    assertStringIncludes(quickstart, "private login store");
     assertStringIncludes(quickstart, "Veryfront Cloud AI Gateway");
+    assertStringIncludes(quickstart, "browser sign-in prompt when needed");
+    assertStringIncludes(quickstart, "new or existing cloud project");
+    assertStringIncludes(quickstart, "npx veryfront@latest pull <PROJECT_SLUG>");
+    assertStringIncludes(quickstart, "Studio link printed beside the run ID");
     assertStringIncludes(quickstart, "protected by default");
     assertStringIncludes(quickstart, "## Verify it worked");
 
@@ -1309,6 +1316,50 @@ describe("guide content contracts", () => {
     );
     // The runs-owned webhook run list keeps its released operation name.
     assertStringIncludes(guide, "| `webhook-list` | `listProjectWebhookRuns` |");
+  });
+
+  it("documents the pinned runs contract, getRun and the RUN_* error kinds", async () => {
+    const guide = (await Deno.readTextFile(
+      new URL("docs/guides/runs.md", repoRoot),
+    )).replace(/\s+/g, " ");
+    const pin = JSON.parse(
+      await Deno.readTextFile(new URL("src/runs/contract/pin.json", repoRoot)),
+    ) as { contract: string };
+
+    assertStringIncludes(guide, `serves the Runs ${pin.contract} contract`);
+    assertStringIncludes(guide, `for the ${pin.contract} contract`);
+    assertEquals(guide.match(/Runs? \d+\.\d+\.\d+ contract/g)?.length, 1);
+    // get() is deprecated; every example reads the grouped resource.
+    assertEquals(guide.includes("runs.get("), false);
+    assertStringIncludes(guide, "The older `get()` is deprecated");
+    // Field guidance describes the grouped getRun() shape, with flat names scoped to get().
+    assertStringIncludes(guide, "`execution` holds `logs`, `duration_ms`, `exit_code`");
+    assertStringIncludes(guide, "carries `schemas.input` and `schemas.output`");
+    assertEquals(guide.includes("stores the terminal execution shape directly"), false);
+    // A non-Problem error body surfaces the SDK fallback code, not a RUN_* code.
+    assertStringIncludes(guide, "with the code `UNEXPECTED_RESPONSE`");
+    // Valid Problems may carry non-RUN_* server codes; the guide must not say match only RUN_*.
+    assertStringIncludes(guide, "fall back to the Problem `status` for any other code");
+    assertEquals(guide.includes("Match on the `RUN_*` code"), false);
+    for (
+      const [code, kind] of [
+        ["RUN_INVALID_INPUT", "invalid_input"],
+        ["RUN_UNAUTHENTICATED", "unauthenticated"],
+        ["RUN_FORBIDDEN", "forbidden"],
+        ["RUN_NOT_FOUND", "not_found"],
+        ["RUN_GONE", "not_found"],
+        ["RUN_CONFLICT", "conflict"],
+        ["RUN_SNAPSHOT_LIMIT_EXCEEDED", "limit_exceeded"],
+        ["RUN_EVENT_IDENTITY_PENDING", "not_ready"],
+        ["RUN_INTERNAL_ERROR", "internal"],
+        ["RUN_ERROR", "internal"],
+      ]
+    ) {
+      assertStringIncludes(guide, `| \`${code}\` | \`${kind}\` |`);
+    }
+    // succeed and fail are the primary terminal actions; finalize is compatibility.
+    assert(guide.indexOf("runs succeed --run-id") < guide.indexOf("runs finalize --run-id"));
+    assertStringIncludes(guide, "`finalize` remains for compatibility");
   });
 });
 

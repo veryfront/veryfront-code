@@ -460,7 +460,11 @@ export class VeryfrontRunsClient {
     });
   }
 
-  /** Read a canonical UUID; adapts the grouped resource for existing framework callers. */
+  /**
+   * Read a canonical UUID; adapts the grouped resource for existing framework callers.
+   *
+   * @deprecated Use {@link VeryfrontRunsClient.getRun}, which returns the grouped run resource.
+   */
   async get(runId: string): Promise<Run> {
     return compatibilityRun(await this.getRun(runId));
   }

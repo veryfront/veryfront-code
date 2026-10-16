@@ -5,8 +5,9 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorker,
-} from "./external-worker-client.ts";
-import type { AgentWorkerRuntimeOwnershipProbe } from "./agent-worker-runtime-ownership-probe.ts";
+  readExternalAgentWorkerRunAuthority,
+} from "#veryfront/agent/service/external-worker-client.ts";
+import type { AgentWorkerRuntimeOwnershipProbe } from "#veryfront/agent/service/agent-worker-runtime-ownership-probe.ts";
 
 const API_URL = "https://api.example.com";
 const API_TOKEN = "api-token";
@@ -235,6 +236,7 @@ describe("external agent worker client", () => {
     const run = await client.claimRun({
       workerId: registeredWorker.id,
       leaseDurationSeconds: 30,
+      canonicalRunId: CANONICAL_RUN_ID,
     });
     assertEquals(run?.source_target_kind, "release");
     assertEquals(run?.source_target_release_version, "2026.05.08");
@@ -266,7 +268,10 @@ describe("external agent worker client", () => {
     );
     assertEquals(authorization(calls[1]!), `Bearer ${WORKER_TOKEN}`);
     assertEquals(calls[1]?.[1]?.method, "POST", "claiming a run must POST to the claim endpoint");
-    assertEquals(requestBody(calls[1]!), { lease_duration_seconds: 30 });
+    assertEquals(requestBody(calls[1]!), {
+      lease_duration_seconds: 30,
+      canonical_run_id: CANONICAL_RUN_ID,
+    });
     assertEquals(
       String(calls[2]?.[0]),
       `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/session`,
@@ -294,6 +299,40 @@ describe("external agent worker client", () => {
       { status: "completed", output: null },
       "completeRun must post the terminal status",
     );
+  });
+
+  it("keeps inference credentials private and refreshes them with the lease", async () => {
+    const first = {
+      ...claim(),
+      credentials: { ...credentials, inference_token: "inference-first" },
+    };
+    const second = {
+      ...claim(),
+      credentials: { ...credentials, inference_token: "inference-renewed" },
+    };
+    const { fetchImpl } = fetchSequence(
+      jsonResponse(first),
+      jsonResponse(second),
+      jsonResponse({ run: null }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    const run = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    assertEquals(JSON.stringify(run).includes("inference-first"), false);
+    assertEquals(
+      readExternalAgentWorkerRunAuthority(client, RUN_ID).inference_token,
+      "inference-first",
+    );
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    assertEquals(
+      readExternalAgentWorkerRunAuthority(client, RUN_ID).inference_token,
+      "inference-renewed",
+    );
+    await client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 });
+    await assertRejects(async () => readExternalAgentWorkerRunAuthority(client, RUN_ID));
   });
 
   it("clears previous authority when renewal cannot issue current credentials", async () => {
@@ -769,4 +808,40 @@ describe("external agent worker client", () => {
       "an unauthorized claim must reject rather than resolve to null",
     );
   });
+});
+
+it("worker credentials bypass project-replaced Response readers", async () => {
+  const originalJson = Response.prototype.json;
+  const originalText = Response.prototype.text;
+  let intercepted = 0;
+  const { fetchImpl } = fetchSequence(
+    jsonResponse({ worker: worker(), token: WORKER_TOKEN }, 201),
+    jsonResponse({ detail: "host error" }, 503),
+  );
+  const client = createExternalAgentWorkerClient({
+    apiUrl: API_URL,
+    authToken: API_TOKEN,
+    fetch: fetchImpl,
+  });
+  try {
+    Response.prototype.json = function () {
+      intercepted++;
+      return Reflect.apply(originalJson, this, []);
+    };
+    Response.prototype.text = function () {
+      intercepted++;
+      return Reflect.apply(originalText, this, []);
+    };
+    await client.registerWorker({
+      projectReference: PROJECT_REFERENCE,
+      implementationKind: "veryfront-local",
+      implementationDisplayName: "Veryfront local",
+      workerKey: "local",
+    });
+    await assertRejects(() => client.heartbeatWorker(WORKER_ID), Error, "host error");
+    assertEquals(intercepted, 0);
+  } finally {
+    Response.prototype.json = originalJson;
+    Response.prototype.text = originalText;
+  }
 });

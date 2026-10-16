@@ -85,6 +85,8 @@ export interface ProjectCreationObserver {
 }
 
 export interface CreateProjectDependencies {
+  /** Finish optional project association before the initial commit. */
+  beforeGitInitialization?: (projectDir: string) => Promise<void>;
   observer?: ProjectCreationObserver;
   /** Filesystem capability used for preflight and materialization. */
   fileSystem?: FileSystem;
@@ -811,6 +813,7 @@ export async function createProject(
     request.installDependencies,
     dependencies.observer,
   );
+  await dependencies.beforeGitInitialization?.(projectDir);
   const gitInitialization = await initializeGit(
     projectDir,
     projectName,

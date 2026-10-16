@@ -31,6 +31,7 @@ describe(
           const server = await context.startDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: scaleMs(100),
+            readinessCheckPath: "/healthz",
           });
 
           assertExists(server, "Server should be created");
@@ -54,6 +55,7 @@ describe(
           const server = await context.startDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: scaleMs(100),
+            readinessCheckPath: "/healthz",
           });
 
           await writeTextFile(

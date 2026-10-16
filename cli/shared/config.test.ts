@@ -2053,3 +2053,22 @@ describe("authenticated binary API downloads", () => {
     );
   });
 });
+
+Deno.test("API management client keeps credentials on the supplied host transport", async () => {
+  let requests = 0;
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
+    const transport = ((_input, init) => {
+      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
+      requests++;
+      return Promise.resolve(Response.json({ data: [] }));
+    }) as typeof fetch;
+    await createApiClient({
+      apiUrl: "https://api.veryfront.com",
+      apiToken: "private-token",
+      projectSlug: "demo",
+    }, transport).get("/projects");
+    assertEquals(requests, 1);
+  });
+});

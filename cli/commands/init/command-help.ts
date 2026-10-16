@@ -52,7 +52,9 @@ export const initHelp: CommandHelp = {
   ],
   notes: [
     "Run without arguments for interactive wizard",
-    "Interactive mode prompts for: location, template, and git initialization",
+    "Interactive mode prompts for: location, template, runtime, and git initialization",
+    "After scaffolding, optionally create or choose a Cloud project without publishing source",
+    "Project identity is saved in veryfront.json; remove any credentials before committing it",
     "Use --deploy to create, push, and deploy in one step",
     "Config file supports: name, template, runtime, integrations, skipInstall, skipEnvPrompt, env",
   ],

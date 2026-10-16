@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
 
@@ -191,12 +192,34 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
   ),
 );
 
-type RunCredentials = { auth_token: string; run_event_token: string; run_terminal_token: string };
+type RunCredentials = {
+  auth_token: string;
+  run_event_token: string;
+  run_terminal_token: string;
+  inference_token?: string;
+};
+const privateWorkerCredentials = createPrivateWeakStore<
+  ExternalAgentWorkerClient,
+  (runId: string) => RunCredentials
+>();
+/** @internal Trusted local runtime access, excluded from public exports. */
+export function readExternalAgentWorkerRunAuthority(
+  client: ExternalAgentWorkerClient,
+  runId: string,
+) {
+  const read = privateWorkerCredentials.get(client);
+  if (!read) throw new Error("Trusted worker claim authority is unavailable.");
+  return read(runId);
+}
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
+const responseJson = Response.prototype.json;
+const responseText = Response.prototype.text;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
 const stringIncludes = String.prototype.includes;
 function errorMessageIncludes(error: unknown, expected: string): boolean {
   if (error === null || typeof error !== "object") return false;
@@ -218,6 +241,7 @@ const WorkerClaimSchema = lazySchema(
         auth_token: v.string().min(1),
         run_event_token: v.string().min(1),
         run_terminal_token: v.string().min(1),
+        inference_token: v.string().min(1).optional(),
       }).optional(),
     })
   ),
@@ -244,6 +268,8 @@ export interface RegisterExternalAgentWorkerInput {
 /** Input payload for claim external agent worker run. */
 export interface ClaimExternalAgentWorkerRunInput {
   workerId: string;
+  /** Claim only this canonical run, or preserve FIFO when omitted. */
+  canonicalRunId?: string;
   leaseDurationSeconds: number;
 }
 
@@ -322,6 +348,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
+    privateWorkerCredentials.set(this, (runId) => this.#credentialsFor(runId));
     this.#apiUrl = options.apiUrl.replace(/\/$/, "");
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;
@@ -348,14 +375,14 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
+    if (!apply(responseOk, response, [])) {
+      const body = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
       throw NETWORK_ERROR.create({
-        detail: body || `Veryfront API returned HTTP ${response.status}`,
+        detail: body || `Veryfront API returned HTTP ${apply(responseStatus, response, [])}`,
       });
     }
 
-    return schema.parse(await response.json());
+    return schema.parse(await apply(responseJson, response, []));
   }
 
   async registerWorker(
@@ -506,7 +533,10 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       WorkerClaimSchema,
       {
         method: "POST",
-        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+        body: JSON.stringify({
+          lease_duration_seconds: input.leaseDurationSeconds,
+          ...(input.canonicalRunId ? { canonical_run_id: input.canonicalRunId } : {}),
+        }),
       },
       { workerId: input.workerId },
     );

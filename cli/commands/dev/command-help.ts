@@ -16,6 +16,10 @@ export const devHelp: CommandHelp = {
       description: "Run a local project directory (defaults to the current directory)",
     },
     {
+      flag: "--env <name>",
+      description: "Shared Cloud environment for local execution (default: preview)",
+    },
+    {
       flag: "--no-hmr",
       description: "Disable hot module replacement",
     },
@@ -30,6 +34,7 @@ export const devHelp: CommandHelp = {
     "veryfront dev --project ./my-app",
     "PORT=3001 veryfront dev",
     "veryfront dev --open",
+    "veryfront dev --env preview",
     "veryfront dev --no-hmr",
   ],
   notes: [

@@ -11,6 +11,7 @@ import {
   RUNTIME_MODE_HEADER,
   RUNTIME_NAME_HEADER,
 } from "#veryfront/agent/service/runtime-identity.ts";
+import { isTerminalRunToolName } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
   createLivePlatformMcpSource,
@@ -142,6 +143,11 @@ import {
 } from "../../project-env/index.ts";
 import { runWithTrustedProjectEnv } from "../../project-env/storage.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import {
+  capturePlatformDependencySource,
+  getVerifiedPlatformToolDependencies,
+  registerPlatformDependencyOwner,
+} from "#veryfront/agent/service/auth.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -604,11 +610,15 @@ function readRunTerminalToken(req: Request): string | null {
   }
 }
 
-async function withVeryfrontPlatformRemoteTools(input: {
+export async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
   availableToolNames?: string[];
+  /** Host-only names derived from the original private run proof, never model configuration. */
+  programmaticPlatformToolNames?: readonly string[];
+  programmaticPlatformRunId?: string;
+  captureProgrammaticPlatformSource?: (source: RemoteToolSource) => void;
   terminalAuthority?: { token: string; runId: string } | null;
   fileWriterToken?: string | null;
 }): Promise<Agent> {
@@ -623,8 +633,15 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const requestedToolNames = implicitlyRequestedToolNames.concat(
     veryfrontApiMcpPolicy.requestedToolNames,
   );
+  const platformServerEnabled = input.agent.config.mcpServers === undefined ||
+    input.agent.config.mcpServers.some((server) => server.kind === "veryfront-api");
+  const programmaticNames = platformServerEnabled && input.programmaticPlatformRunId &&
+      input.captureProgrammaticPlatformSource
+    ? [...new Set(input.programmaticPlatformToolNames ?? [])]
+    : [];
   if (
-    (!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) ||
+    (!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0 &&
+      programmaticNames.length === 0) ||
     !input.token ||
     !input.projectId
   ) {
@@ -691,17 +708,72 @@ async function withVeryfrontPlatformRemoteTools(input: {
       !veryfrontApiMcpPolicy.deniedToolNames.has(platformMcpLegacyName(toolName)) &&
       !veryfrontApiMcpPolicy.deniedToolNames.has(`veryfront__${platformMcpLegacyName(toolName)}`)
     );
+  const admittedProgrammaticNames = programmaticNames.filter((toolName) =>
+    platformToolNames.has(toolName) &&
+    !isPlatformToolDeniedByAgent(input.agent, toolName) &&
+    !veryfrontApiMcpPolicy.deniedToolNames.has(toolName) &&
+    !veryfrontApiMcpPolicy.deniedToolNames.has(platformMcpLegacyName(toolName)) &&
+    !veryfrontApiMcpPolicy.deniedToolNames.has(`veryfront__${platformMcpLegacyName(toolName)}`)
+  );
+  if (admittedProgrammaticNames.length > 0) {
+    const source = markTrustedPlatformSource(bindRemoteToolSourceToProject(
+      wrapRemoteToolSourceWithMcpPolicy(platformCatalog.source, {
+        allow: admittedProgrammaticNames,
+      }),
+      input.projectId,
+    ));
+    const runId = input.programmaticPlatformRunId!;
+    const projectId = input.projectId;
+    const authToken = input.token;
+    const agentId = input.agent.id;
+    // Capture privately before returning model configuration. Preserve private
+    // terminal control symbols while pinning the source's credential owner.
+    input.captureProgrammaticPlatformSource?.(markTrustedPlatformSource({
+      id: source.id,
+      listTools: async (context) => {
+        context?.abortSignal?.throwIfAborted();
+        const tools = await source.listTools({
+          projectId,
+          runId,
+          authToken,
+          agentId,
+          abortSignal: context?.abortSignal,
+        });
+        context?.abortSignal?.throwIfAborted();
+        return tools;
+      },
+      executeTool: async (name, args, context) => {
+        if (isTerminalRunToolName(name) && context?.runId !== runId) {
+          throw PERMISSION_DENIED.create({
+            detail: "Terminal tool context does not match the source run",
+          });
+        }
+        return await source.executeTool(name, args, {
+          ...context,
+          projectId,
+          runId,
+          authToken,
+          agentId,
+          runIdBindsToolAuthorization: true,
+        });
+      },
+    }));
+  }
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
-  const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    markTrustedPlatformSource(bindRemoteToolSourceToProject(
-      wrapRemoteToolSourceWithMcpPolicy(
-        platformCatalog.source,
-        { allow: requestedPlatformToolNames },
-      ),
-      input.projectId,
-    )),
-  ];
+  const platformRemoteToolSources =
+    (!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) ||
+      hasVeryfrontPlatformRemoteToolSource(remoteTools)
+      ? []
+      : [
+        markTrustedPlatformSource(bindRemoteToolSourceToProject(
+          wrapRemoteToolSourceWithMcpPolicy(
+            platformCatalog.source,
+            { allow: requestedPlatformToolNames },
+          ),
+          input.projectId,
+        )),
+      ];
 
   const mcpServers = input.agent.config.mcpServers?.map((server) =>
     server.kind === "veryfront-api"
@@ -1261,6 +1333,27 @@ export class AgentStreamHandler extends BaseHandler {
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
       const runtimeNameHeader = EncodeURIComponent(runtimeIdentity.name);
+      const platformDependencyScope = {
+        projectId: payload.executionProject?.projectId ?? ctx.projectId,
+        runId: payload.runId,
+        agentId: payload.agentId,
+      };
+      const platformDependencies = platformDependencyScope.projectId
+        ? getVerifiedPlatformToolDependencies(verifiedClaims, {
+          ...platformDependencyScope,
+          projectId: platformDependencyScope.projectId,
+        })
+        : undefined;
+      if (
+        Object.hasOwn(
+          IntrinsicReflectApply(JsonParse, JSON, [rawBody]),
+          "platformToolDependencies",
+        ) && platformDependencies === undefined
+      ) {
+        throw PERMISSION_DENIED.create({
+          detail: "Operator-verified platform dependency authority is unavailable",
+        });
+      }
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
@@ -1463,6 +1556,12 @@ export class AgentStreamHandler extends BaseHandler {
                           toRuntimeRunAgentInput(payload),
                           runtimeBaseAgent as Agent,
                         );
+                        if (platformDependencies && platformDependencyScope.projectId) {
+                          registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
+                            ...platformDependencyScope,
+                            projectId: platformDependencyScope.projectId,
+                          });
+                        }
                         const providerReplayCheckpoints =
                           getServerResolvedProviderReplayCheckpoints({
                             forwardedProps: runtimeInput.forwardedProps,
@@ -1488,6 +1587,13 @@ export class AgentStreamHandler extends BaseHandler {
                           projectId: executionProject?.projectId ??
                             projectScopedContext.projectId ?? null,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                          programmaticPlatformToolNames: platformDependencies?.flatMap(
+                            (entry) => [...entry.platformTools],
+                          ),
+                          programmaticPlatformRunId: runtimeInput.runId,
+                          captureProgrammaticPlatformSource: platformDependencies
+                            ? (source) => capturePlatformDependencySource(runtimeInput, source)
+                            : undefined,
                           // The API binds the terminal token to the signed run-bound credential,
                           // never to the host proxy token this source would otherwise fall back to.
                           fileWriterToken: payload.credentials?.authToken

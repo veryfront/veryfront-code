@@ -27,6 +27,7 @@ export {
   type CanonicalRunStreamFrame,
   createRunsSdk,
   type RunsArgs,
+  type RunsArtifactInput,
   type RunsCallOptions,
   type RunsDeleteAcknowledgement,
   type RunsInput,
