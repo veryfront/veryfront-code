@@ -88,13 +88,13 @@ function createCloudEmbeddingModel(
           fetch,
         });
       }
-      throw toError(
-        createError({
-          type: "config",
-          message:
-            "Google provider not installed. Add @veryfront/ext-llm-google to use google/* embedding models via veryfront-cloud.",
-        }),
-      );
+      // Scoped Cloud callers need the built-in transport before a project initializes extensions.
+      return createGoogleProviderEmbedding(upstreamModelId, {
+        credential: providerCredential,
+        baseURL,
+        name: "veryfront-cloud",
+        fetch,
+      });
     }
   }
 

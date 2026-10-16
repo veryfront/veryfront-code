@@ -1966,10 +1966,12 @@ describe("broker-local trusted runtime", () => {
     });
     f.input.installation.grant.execution.userId = "synthetic-user";
     f.input.installation.grant.execution.projectSlug = "synthetic-slug";
+    f.input.installation.grant.execution.branchId = "synthetic-branch";
     await drainTrustedFixture(f);
     assertEquals(observed.length, 1);
     assertEquals(observed[0]!.userId, "synthetic-user");
     assertEquals(observed[0]!.projectSlug, "synthetic-slug");
+    assertEquals(observed[0]!.branch, "synthetic-branch");
     assertEquals(observed[0]!.activeSkillToolAvailability, {
       hasActiveSkill: false,
       references: [],

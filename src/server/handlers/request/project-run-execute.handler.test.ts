@@ -88,6 +88,13 @@ function canonicalKnowledgeIndexResponse(
 ): Response | undefined {
   const body = requestJsonBody(init);
   const parsedUrl = new URL(url);
+  if (url.endsWith(":embedContent")) {
+    return Response.json({ embedding: { values: Array(3072).fill(0.25) } });
+  }
+  if (url.endsWith(":batchEmbedContents")) {
+    const requests = Array.isArray(body?.requests) ? body.requests : [];
+    return Response.json({ embeddings: requests.map(() => ({ values: Array(3072).fill(0.25) })) });
+  }
   if (/^\/runs\/[^/]+\/events$/.test(parsedUrl.pathname)) {
     return Response.json({
       run_id: parsedUrl.pathname.split("/").at(-2),
@@ -95,7 +102,10 @@ function canonicalKnowledgeIndexResponse(
       appended_count: Array.isArray(body?.events) ? body.events.length : 0,
     });
   }
-  if (url.endsWith("/embeddings")) {
+  if (
+    (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+      url.endsWith(":batchEmbedContents"))
+  ) {
     const inputs = Array.isArray(body?.input) ? body.input : [body?.input];
     return Response.json({
       object: "list",
@@ -2970,7 +2980,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             );
             assertEquals(
               headers.get("Authorization"),
-              url.endsWith("/embeddings")
+              (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+                  url.endsWith(":batchEmbedContents"))
                 ? "Bearer managed-embedding-fixture"
                 : "Bearer test-token",
             );
@@ -2984,7 +2995,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
             if (indexed) {
               if (url.endsWith("/index")) indexCalls++;
-              if (url.endsWith("/embeddings")) embeddingCalls++;
+              if (
+                (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+                  url.endsWith(":batchEmbedContents"))
+              ) embeddingCalls++;
               return indexed;
             }
             if (url.endsWith("/projects/demo-project/uploads/uploads%2Facme%2Fguide.md")) {
@@ -3103,7 +3117,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               new Headers(observed.headers).get("X-Veryfront-Run-Event-Token"),
               url.pathname.endsWith("/index") ? createKnowledgeIngestEventToken(body) : null,
             );
-            if (url.pathname.endsWith("/embeddings")) {
+            if (
+              (url.pathname.endsWith("/embeddings") || url.pathname.endsWith(":embedContent") ||
+                url.pathname.endsWith(":batchEmbedContents"))
+            ) {
               assertEquals(
                 new Headers(observed.headers).get("authorization"),
                 "Bearer managed-embedding-fixture",
@@ -3293,7 +3310,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               appended_count: events.length,
             });
           }
-          if (url.endsWith("/embeddings")) {
+          if (
+            (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+              url.endsWith(":batchEmbedContents"))
+          ) {
             if (failure === "provider") {
               return Response.json({
                 error: { message: "Provider unavailable", type: "provider_error" },
@@ -3383,7 +3403,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               headers: { "Content-Type": "application/octet-stream" },
             });
           }
-          if (url.endsWith("/embeddings")) {
+          if (
+            (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+              url.endsWith(":batchEmbedContents"))
+          ) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("authorization"),
               "Bearer managed-embedding-fixture",
@@ -3504,7 +3527,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             headers: { "Content-Type": "application/octet-stream" },
           });
         }
-        if (url.endsWith("/embeddings")) {
+        if (
+          (url.endsWith("/embeddings") || url.endsWith(":embedContent") ||
+            url.endsWith(":batchEmbedContents"))
+        ) {
           assertEquals(
             new Headers(observeFetchRequestInit(init).headers).get("authorization"),
             "Bearer managed-embedding-fixture",
@@ -3541,12 +3567,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         controller.abort(new Error("Run cancelled during embeddings"));
         assertEquals(acknowledgements, []);
         settled.resolve(
-          Response.json({
-            object: "list",
-            model: "text-embedding-3-small",
-            data: [{ object: "embedding", index: 0, embedding: Array(1536).fill(0.25) }],
-            usage: { prompt_tokens: 1, total_tokens: 1 },
-          }),
+          Response.json({ embedding: { values: Array(3072).fill(0.25) } }),
         );
         const result = await pending;
         assertExists(result.response);

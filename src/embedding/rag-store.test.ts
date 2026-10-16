@@ -1898,6 +1898,7 @@ describe("ragStore", () => {
       const observedBody = observedBodies.at(-1);
       assert(observedBody !== undefined);
       assertEquals(observedBody.limit, 75);
+      assertEquals(observedBody.model, { name: "demo", provider: "test" });
       const documentScope = observedBody.document_scope as Record<string, unknown> | undefined;
       assertEquals(documentScope?.version, 1);
       assertEquals(documentScope?.path_flavor, "posix");

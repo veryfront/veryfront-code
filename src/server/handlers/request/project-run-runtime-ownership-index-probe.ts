@@ -123,7 +123,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
     const body = inspected.body;
     const vector = await input.embed(body, signal);
     if (
-      !arrayIsArray(vector) || vector.length !== 1536 || (() => {
+      !arrayIsArray(vector) || vector.length !== 3072 || (() => {
         for (let i = 0; i < vector.length; i++) {
           const value = vector[i];
           if (typeof value !== "number" || !finite(value) || !finite(float32(value))) return true;
@@ -134,7 +134,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
     const offset = request.content.length - body.length;
     const payload = {
       expected_version_id: canonicalVersionId,
-      model: { provider: "openai", name: "text-embedding-3-small", dimension: 1536 },
+      model: { provider: "google", name: "gemini-embedding-001", dimension: 3072 },
       chunks: [{
         chunk_index: 0,
         content: body,
@@ -162,8 +162,8 @@ export function createRuntimeOwnershipIndexProbe(input: {
       own(acknowledgement, "path") !== request.sourcePath ||
       own(acknowledgement, "checksum") !== canonicalChecksum ||
       own(acknowledgement, "indexed_chunk_count") !== 1 ||
-      own(model, "name") !== "text-embedding-3-small" ||
-      own(model, "provider") !== "openai" || own(model, "dimension") !== 1536
+      own(model, "name") !== "gemini-embedding-001" ||
+      own(model, "provider") !== "google" || own(model, "dimension") !== 3072
     ) throw new Error("Canonical index acknowledgement mismatched");
     const after = await ready();
     retained = {

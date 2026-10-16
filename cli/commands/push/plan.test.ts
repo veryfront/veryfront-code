@@ -9,6 +9,36 @@ const VERSION_1 = "00000000-0000-4000-8000-000000000001";
 const VERSION_2 = "00000000-0000-4000-8000-000000000002";
 
 describe("planPushChanges", () => {
+  it("does not backfill unchanged metadata or replace metadata on edits", async () => {
+    const path = "knowledge/acme/doc.md";
+    const metadata = { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } };
+    const baselineFiles = {
+      [path]: { digest: await computeContentDigest("before"), versionId: VERSION_1 },
+    };
+    for (const force of [false, true]) {
+      const edited = await planPushChanges({
+        localFiles: [{ path, content: "after", metadata }],
+        remoteFiles: [{ path, content: "before", version_id: VERSION_1 }],
+        baselineFiles,
+        deletePaths: [],
+        force,
+      });
+      assertEquals(edited.uploads, [{
+        path,
+        content: "after",
+        ...(!force ? { expectedVersionId: VERSION_1 } : {}),
+      }]);
+    }
+    const unchanged = await planPushChanges({
+      localFiles: [{ path, content: "before", metadata }],
+      remoteFiles: [{ path, content: "before", version_id: VERSION_1 }],
+      baselineFiles,
+      deletePaths: [],
+      force: false,
+    });
+    assertEquals(unchanged.uploads, []);
+  });
+
   it("skips identical files and refreshes their observed version", async () => {
     const digest = await computeContentDigest("same\n");
     const plan = await planPushChanges({

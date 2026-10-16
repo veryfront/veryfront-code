@@ -5684,7 +5684,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                   const { createEmbeddingFacade } = await import(
                     "#veryfront/embedding/embedding.ts"
                   );
-                  const modelId = "veryfront-cloud/openai/text-embedding-3-small";
+                  const modelId = "veryfront-cloud/google/gemini-embedding-001";
                   const model = createProjectRunInferenceEmbeddingModel(modelId);
                   if (!model) {
                     throw new Error(

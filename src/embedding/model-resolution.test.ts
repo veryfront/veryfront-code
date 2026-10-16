@@ -77,7 +77,7 @@ describe("embedding/model-resolution", () => {
 
       assertEquals(
         resolveConfiguredEmbeddingModel(),
-        "veryfront-cloud/openai/text-embedding-3-small",
+        "veryfront-cloud/google/gemini-embedding-001",
       );
     });
 
@@ -117,7 +117,7 @@ describe("embedding/model-resolution", () => {
 
       assertEquals(
         resolveConfiguredEmbeddingModel(),
-        "veryfront-cloud/openai/text-embedding-3-small",
+        "veryfront-cloud/google/gemini-embedding-001",
         "veryfront cloud should take priority over bare API keys",
       );
     });
@@ -133,7 +133,7 @@ describe("embedding/model-resolution", () => {
 
       assertEquals(
         resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
-        "veryfront-cloud/openai/text-embedding-3-small",
+        "veryfront-cloud/google/gemini-embedding-001",
         "a configured veryfront cloud project must outrank a bare OPENAI_API_KEY even in a compiled binary",
       );
     });
