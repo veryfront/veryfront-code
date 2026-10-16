@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { annotateOkfBundleMembers } from "../../../../../../cli/sync/okf-companions.ts";
 import { loadIgnoreChecker } from "../../../../../../cli/sync/ignore.ts";
@@ -19,7 +20,7 @@ const companions = [
   "references/xml/order-schema.xml",
 ];
 async function withFiles(files: Record<string, string>, run: (directory: string) => Promise<void>) {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     for (const [path, content] of Object.entries(files)) {
       await Deno.mkdir(dirname(join(directory, path)), { recursive: true });
@@ -212,7 +213,23 @@ describe("native push OKF companions", () => {
               return Response.json({
                 data: branch === "main" || url.searchParams.get("ref") === `branch:${branch}`
                   ? [...remote.values()]
-                  : [],
+                  : [
+                    {
+                      path: "index.md",
+                      content: "---\nokf_version: '0.1'\n---\n",
+                      version_id: "00000000-0000-4000-8000-000000000007",
+                    },
+                    {
+                      path: "doc.md",
+                      content: "---\ntype: Metric\ncomputation: /preview-unmanaged.sql\n---\n",
+                      version_id: "00000000-0000-4000-8000-000000000008",
+                    },
+                    {
+                      path: "preview-unmanaged.sql",
+                      content: "main bytes",
+                      version_id: "00000000-0000-4000-8000-000000000009",
+                    },
+                  ],
                 page_info: {},
               });
             }
@@ -293,6 +310,11 @@ describe("native push OKF companions", () => {
               "---\ntype: Metric\ncomputation: /references/query.sql\nsources: [/references/branch-only.sql]\n---\nEdited\r\n",
             );
             if (branch !== "main") {
+              remote.set("preview-unmanaged.sql", {
+                path: "preview-unmanaged.sql",
+                content: "preview-owned bytes",
+                version_id: "00000000-0000-4000-8000-000000000010",
+              });
               remote.set("knowledge/acme/references/branch-only.sql", {
                 path: "knowledge/acme/references/branch-only.sql",
                 content: "select 2;",
@@ -310,6 +332,9 @@ describe("native push OKF companions", () => {
             });
             assertEquals(remote.has("knowledge/acme/references/query.sql"), false);
             assertEquals(remote.has("knowledge/acme/references/branch-only.sql"), false);
+            if (branch !== "main") {
+              assertEquals(remote.get("preview-unmanaged.sql")?.content, "preview-owned bytes");
+            }
           });
         } finally {
           keys.forEach((key, index) => {
@@ -322,6 +347,30 @@ describe("native push OKF companions", () => {
       });
     });
   }
+
+  it("queries Git only for supported files and referenced companions", async () => {
+    await withFiles({
+      "index.md": "---\nokf_version: '0.1'\n---\n",
+      "doc.md": "---\ntype: Metric\ncomputation: /query.sql\n---\n",
+      "query.sql": "select 1;",
+      ...Object.fromEntries(
+        Array.from({ length: 200 }, (_, index) => [`assets/image${index}.png`, "unused"]),
+      ),
+    }, async (directory) => {
+      await Deno.symlink(join(directory, "query.sql"), join(directory, "unused-link.sql"));
+      const checker = await loadIgnoreChecker(directory);
+      const checkedPaths: string[] = [];
+      await scanLocalFiles(directory, {
+        ...checker,
+        resolveGitIgnoredCandidates: async (paths) => {
+          const candidates = [...paths];
+          checkedPaths.push(...candidates);
+          await checker.resolveGitIgnoredCandidates(candidates);
+        },
+      });
+      assertEquals(checkedPaths.sort(), ["doc.md", "index.md", "query.sql"]);
+    });
+  });
 
   it("rejects an explicitly referenced opaque symbolic link before reading its content", async () => {
     await withFiles({

@@ -289,21 +289,23 @@ export async function scanLocalFiles(
   }
 
   await walk(projectDir);
-  // The Git ignore listing is a snapshot taken when the checker was loaded. Ask
-  // Git about every file this scan found, so one created since then is still
-  // excluded when the checkout ignores it.
-  await ignoreChecker.resolveGitIgnoredCandidates([
-    ...ops.map((op) => op.path),
-    ...opaquePaths,
-    ...symlinks,
-  ]);
-  // A symbolic link is rejected only once Git confirms the checkout does not
-  // ignore it, so an ignored link created since the listing is skipped instead.
+  // Resolve document ignore state before discovering references: an ignored
+  // index or document must not admit otherwise unsupported companions.
+  await ignoreChecker.resolveGitIgnoredCandidates(ops.map((op) => op.path));
   const referencedCompanions = collectReferencedOkfCompanions(
     ops,
     ignoreChecker,
     new Set([...ops.map((op) => op.path), ...opaquePaths, ...symlinks]),
   );
+  // Unreferenced opaque assets and unsupported links cannot affect this push.
+  // Ask Git only about supported links and explicitly referenced companions.
+  await ignoreChecker.resolveGitIgnoredCandidates([
+    ...opaquePaths.filter((path) => referencedCompanions.has(path)),
+    ...symlinks.filter((path) =>
+      ignoreChecker.isSupportedExtension(path) || referencedCompanions.has(path)
+    ),
+  ]);
+  // An ignored link created since the initial listing must still be skipped.
   const rejectedSymlink = symlinks.find((path) =>
     !ignoreChecker.isIgnored(path) &&
     (ignoreChecker.isSupportedExtension(path) || referencedCompanions.has(path))
@@ -1717,6 +1719,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           const message = error instanceof Error ? error.message : String(error);
           throw new Error(`Failed to prepare branch "${branchName}": ${message}`);
         }
+      }
+
+      // Main was listed to resolve/create the target branch, but its references
+      // do not grant ownership over unsupported files in an existing preview.
+      // Classify only the final target snapshot before planning pruning/receipts.
+      companionPaths.clear();
+      for (const path of collectReferencedOkfCompanions(target.remoteFiles, baseIgnoreChecker)) {
+        companionPaths.add(path);
       }
 
       const project = outcome.kind === "planned-create" ? null : outcome.project;
