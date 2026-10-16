@@ -210,6 +210,14 @@ describe("cicd coverage workflow", () => {
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
     assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), fixture);
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), fixture);
+    const headerFixture =
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), headerFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), headerFixture);
+    const cleanupFixture =
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), cleanupFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), cleanupFixture);
     const startupFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts";
     assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), startupFixture);

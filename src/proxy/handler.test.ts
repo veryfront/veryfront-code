@@ -2466,8 +2466,8 @@ describe("Proxy Handler", () => {
       const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       let handler: ReturnType<typeof createHandler> | undefined;
       try {
-        // An environment runtime target paired with a branch agent source is
-        // un-signable: validation rejects it before any branch binding exists.
+        // Source and runtime targets may differ. This environment runtime is
+        // invalid because its own environment ID is missing.
         const body = JSON.stringify({
           run: {
             agentServiceId: "veryfront-platform-agent",
@@ -2508,7 +2508,7 @@ describe("Proxy Handler", () => {
         );
 
         assertEquals(ctx.error?.status, 400);
-        assertEquals(ctx.error?.message, "Invalid control-plane environment source");
+        assertEquals(ctx.error?.message, "Invalid control-plane runtime target");
         assertEquals(ctx.projectId, "proj-123");
 
         const rejectionWarnings = entries.filter((entry) =>
@@ -2518,7 +2518,7 @@ describe("Proxy Handler", () => {
         assertEquals(rejectionWarnings.length, 1);
         assertEquals(rejectionWarnings[0]?.extra, {
           status: 400,
-          message: "Invalid control-plane environment source",
+          message: "Invalid control-plane runtime target",
           projectSlug: "protected-project",
           projectId: "proj-123",
           host: "protected.example.com",
@@ -4175,6 +4175,11 @@ describe("Proxy Handler", () => {
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), "env-789");
       assertEquals(injected.headers.get("x-environment-name"), "staging");
+      const unicode = injectContextHeaders(req, { ...ctx, environmentName: "日本語\nblue" });
+      assertEquals(
+        unicode.headers.get("x-environment-name"),
+        "vf-utf8:%E6%97%A5%E6%9C%AC%E8%AA%9E%0Ablue",
+      );
       assertEquals(injected.headers.get("x-project-id"), "proj-123");
       assertEquals(injected.headers.get("x-release-id"), "rel-456");
     });

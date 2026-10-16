@@ -21,6 +21,16 @@ identifies the project that owns conversations, runs, tools, and billing, while
 The signed request audience remains the source runtime's project. Registration
 alone does not authorize another project or relax the runtime's signature checks.
 
+Source selection is independent of execution placement. Invocation project context
+retains `sourceTargetEnvironmentId` and `sourceTargetBranchId` separately from
+`runtimeTarget*` execution selectors. Signed environment and preview sources use
+their own persisted source IDs; release sources retain the immutable release ID
+for every execution target. Explicit null source branch identity selects the root
+branch. A branch source executing on an environment requires an explicit source
+branch ID or null; an omitted ID is rejected. Legacy invocations without source IDs retain their matching environment
+or preview selector behavior. Deploy a framework accepting these independent
+selectors before enabling the API producer.
+
 Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
 project's environment variables and runtime token are not passed to the connected
 execution. Platform tool calls and inference use the consuming run's credentials.
@@ -56,6 +66,11 @@ hostname used as the display name. The trimmed name must contain at most 128
 UTF-16 code units, valid Unicode, and no control characters. The name header uses
 `encodeURIComponent` encoding. These headers identify the accepting process;
 they do not grant access. Existing runtime-owner URL headers remain unchanged.
+
+Signed managed agent streams report the same process identity on HTTP 200 SSE
+responses. Identity is captured from the host before loading project environment
+values. The API records it for the exact dispatched execution, including streams
+without a runtime-owner URL. Error responses do not supply process attribution.
 
 ## Prerequisites
 

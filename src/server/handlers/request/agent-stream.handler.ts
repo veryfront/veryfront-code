@@ -1,3 +1,16 @@
+import {
+  copyNativeResponse,
+  readResponseValue,
+  ResponseBodyGet,
+  ResponseHeadersGet,
+  ResponseStatusGet,
+} from "./native-response.ts";
+import {
+  getServiceRuntimeIdentity,
+  RUNTIME_ID_HEADER,
+  RUNTIME_MODE_HEADER,
+  RUNTIME_NAME_HEADER,
+} from "#veryfront/agent/service/runtime-identity.ts";
 import { isTerminalRunToolName } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
@@ -174,6 +187,8 @@ type AgentSourceTargetIdentity = Pick<
   | "runtimeTargetEnvironmentId"
   | "runtimeTargetBranchId"
   | "executionEnvironmentId"
+  | "sourceTargetEnvironmentId"
+  | "sourceTargetBranchId"
 >;
 
 export type AgentSourceEnvironmentLoader = (
@@ -197,6 +212,14 @@ const defaultDeps: AgentStreamHandlerDeps = {
 const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
 const IntrinsicReflectApply = Reflect.apply;
+const EncodeURIComponent = encodeURIComponent;
+const HeadersForEach = Headers.prototype.forEach;
+const HeadersSet = Headers.prototype.set;
+const HeadersGet = Headers.prototype.get;
+const HeadersHas = Headers.prototype.has;
+const RegExpExec = RegExp.prototype.exec;
+const SseContentType = /^\s*text\/event-stream\s*(?:;|$)/i;
+
 const JsonParse = JSON.parse;
 const TrustedInternalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
 const TrustedInternalAgentStreamRequestParse = TrustedInternalAgentStreamRequestSchema.parse;
@@ -466,6 +489,19 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
  * control-plane invocation. Unbound branches and bare releases receive no
  * project variables. Named sources retain their exact release-bound target.
  */
+function sourceEnvironmentIdOf(target: AgentSourceTargetIdentity): string | null | undefined {
+  return target.sourceTargetEnvironmentId === undefined &&
+      target.runtimeTargetKind === "environment"
+    ? target.runtimeTargetEnvironmentId
+    : target.sourceTargetEnvironmentId;
+}
+
+function sourceBranchIdOf(target: AgentSourceTargetIdentity): string | null | undefined {
+  return target.sourceTargetBranchId === undefined && target.runtimeTargetKind === "preview_branch"
+    ? target.runtimeTargetBranchId
+    : target.sourceTargetBranchId;
+}
+
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
@@ -489,11 +525,8 @@ async function resolveAgentSourceEnvironment(
       projectId: ctx.projectId,
     });
   }
-  if (
-    targetIdentity.runtimeTargetKind !== "environment" ||
-    !targetIdentity.runtimeTargetEnvironmentId ||
-    targetIdentity.runtimeTargetBranchId
-  ) {
+  const sourceEnvironmentId = sourceEnvironmentIdOf(targetIdentity);
+  if (!sourceEnvironmentId) {
     throw INVALID_ARGUMENT.create({
       detail: "Named agent source requires an exact signed environment target",
     });
@@ -506,7 +539,7 @@ async function resolveAgentSourceEnvironment(
       projectId: ctx.projectId,
       token: apiAuthToken,
       environmentName: sourceContext.environmentName,
-      expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId,
+      expectedEnvironmentId: sourceEnvironmentId,
       expectedReleaseId: sourceContext.releaseId,
     },
     signal,
@@ -1127,12 +1160,14 @@ function assertAgentSourceMatchesHostedTarget(
 ): void {
   const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
   if (!fsWrapper.isMultiProjectMode?.()) return;
-  if (payload.runtimeTargetKind === "preview_branch") {
+  if (payload.agentSource.type !== "branch") return;
+  const sourceBranchId = sourceBranchIdOf(payload);
+  if (sourceBranchId) {
     if (
       payload.agentSource.type !== "branch" ||
       !ctx.branchId ||
       !ctx.branchName ||
-      payload.runtimeTargetBranchId !== ctx.branchId ||
+      sourceBranchId !== ctx.branchId ||
       payload.agentSource.branch !== ctx.branchName
     ) {
       throw PERMISSION_DENIED.create({
@@ -1143,8 +1178,7 @@ function assertAgentSourceMatchesHostedTarget(
   }
 
   if (
-    payload.runtimeTargetKind === "main_branch" &&
-    payload.agentSource.type === "branch" &&
+    !sourceBranchId &&
     (!ctx.defaultBranchName || payload.agentSource.branch !== ctx.defaultBranchName)
   ) {
     throw PERMISSION_DENIED.create({
@@ -1180,28 +1214,29 @@ function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
 }
 
 function applyBuilderHeaders(target: Response, source: Headers): Response {
-  const headers = new Headers(target.headers);
-  for (const [key, value] of source.entries()) {
-    if (!headers.has(key)) {
-      headers.set(key, value);
-    }
-  }
-
-  return new Response(target.body, {
-    status: target.status,
-    statusText: target.statusText,
-    headers,
-  });
+  const result = copyNativeResponse(target);
+  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+  IntrinsicReflectApply(HeadersForEach, source, [
+    (value: string, key: string) => {
+      if (!IntrinsicReflectApply(HeadersHas, headers, [key])) {
+        IntrinsicReflectApply(HeadersSet, headers, [key, value]);
+      }
+    },
+  ]);
+  return result;
 }
 
-function setResponseHeader(target: Response, key: string, value: string): Response {
-  const headers = new Headers(target.headers);
-  headers.set(key, value);
-  return new Response(target.body, {
-    status: target.status,
-    statusText: target.statusText,
-    headers,
-  });
+function setResponseHeaders(
+  target: Response,
+  entries: readonly (readonly [string, string])[],
+): Response {
+  const result = copyNativeResponse(target);
+  const headers = readResponseValue<Headers>(result, ResponseHeadersGet);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    IntrinsicReflectApply(HeadersSet, headers, [entry[0], entry[1]]);
+  }
+  return result;
 }
 
 function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
@@ -1295,6 +1330,9 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
+      // Capture host process identity before entering project-controlled environment scopes.
+      const runtimeIdentity = getServiceRuntimeIdentity();
+      const runtimeNameHeader = EncodeURIComponent(runtimeIdentity.name);
       const platformDependencyScope = {
         projectId: payload.executionProject?.projectId ?? ctx.projectId,
         runId: payload.runId,
@@ -1360,7 +1398,7 @@ export class AgentStreamHandler extends BaseHandler {
         // request header into the environment used for hosted evaluation.
         environmentId: payload.agentSource.type === "branch"
           ? payload.executionEnvironmentId
-          : payload.runtimeTargetEnvironmentId ?? undefined,
+          : sourceEnvironmentIdOf(payload) ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: sourceAuthToken }
           : ctx.requestContext,
@@ -1397,6 +1435,12 @@ export class AgentStreamHandler extends BaseHandler {
                   runtimeTargetEnvironmentId: payload.runtimeTargetEnvironmentId,
                   runtimeTargetBranchId: payload.runtimeTargetBranchId,
                   executionEnvironmentId: payload.executionEnvironmentId,
+                  ...(payload.sourceTargetEnvironmentId !== undefined
+                    ? { sourceTargetEnvironmentId: payload.sourceTargetEnvironmentId }
+                    : {}),
+                  ...(payload.sourceTargetBranchId !== undefined
+                    ? { sourceTargetBranchId: payload.sourceTargetBranchId }
+                    : {}),
                 },
                 sourceAuthToken,
                 req.signal,
@@ -1655,7 +1699,27 @@ export class AgentStreamHandler extends BaseHandler {
                               )
                               : await runWithProjectEnv(agentEnv, runAgentStream)
                             : await runAgentStream();
-                        const response = await executeStream();
+                        let response = await executeStream();
+                        if (
+                          readResponseValue<number>(response, ResponseStatusGet) === 200 &&
+                          readResponseValue<ReadableStream<Uint8Array> | null>(
+                            response,
+                            ResponseBodyGet,
+                          ) &&
+                          IntrinsicReflectApply(RegExpExec, SseContentType, [
+                              IntrinsicReflectApply(
+                                HeadersGet,
+                                readResponseValue<Headers>(response, ResponseHeadersGet),
+                                ["content-type"],
+                              ) ?? "",
+                            ]) !== null
+                        ) {
+                          response = setResponseHeaders(response, [
+                            [RUNTIME_ID_HEADER, runtimeIdentity.id],
+                            [RUNTIME_NAME_HEADER, runtimeNameHeader],
+                            [RUNTIME_MODE_HEADER, runtimeIdentity.mode],
+                          ]);
+                        }
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,
                           threadId: payload.threadId,
@@ -1667,11 +1731,10 @@ export class AgentStreamHandler extends BaseHandler {
                           await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
                             null;
                         const responseWithOwner = runtimeOwnerInvokeUrl
-                          ? setResponseHeader(
-                            response,
+                          ? setResponseHeaders(response, [[
                             RUNTIME_OWNER_INVOKE_URL_HEADER,
                             runtimeOwnerInvokeUrl,
-                          )
+                          ]])
                           : response;
                         return this.respond(
                           applyBuilderHeaders(responseWithOwner, builder.headers),
@@ -1754,7 +1817,7 @@ export class AgentStreamHandler extends BaseHandler {
         const response = errorToResponse(error, new URL(req.url).pathname);
         // errorToResponse strips `detail` from 5xx bodies, so the log and the
         // reported event are the only places it survives.
-        if (response.status >= 500 && !replayed) {
+        if (readResponseValue<number>(response, ResponseStatusGet) >= 500 && !replayed) {
           const cause = describeErrorCause(error.cause);
           // A branch edit landing mid-request is retried by the control plane
           // on the next generation; only other 5xx failures are errors here.
@@ -1762,7 +1825,7 @@ export class AgentStreamHandler extends BaseHandler {
           log.call(logger, "Internal agent stream request failed", {
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
-            status: response.status,
+            status: readResponseValue<number>(response, ResponseStatusGet),
             slug: error.slug,
             category: error.category,
             detail: error.detail,
@@ -1772,7 +1835,7 @@ export class AgentStreamHandler extends BaseHandler {
           reportHandlerFailure(error, {
             boundary: "agent.stream.request",
             method: req.method,
-            status: response.status,
+            status: readResponseValue<number>(response, ResponseStatusGet),
             runId: safeRunId(req),
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
