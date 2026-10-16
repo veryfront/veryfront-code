@@ -2,7 +2,6 @@
   "cli/app/state.test.ts",
   "cli/commands/lint/handler.test.ts",
   "cli/commands/merge/command.test.ts",
-  "cli/commands/test/handler.test.ts",
   "cli/commands/worker/handler.test.ts",
   "cli/mcp/jsonrpc.test.ts",
   "cli/mcp/tools/dev-tools.test.ts",
