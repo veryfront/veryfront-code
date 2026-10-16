@@ -180,6 +180,10 @@ denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preser
 the existing defaults above. Deferred inventories show up to 20 descriptions;
 `veryfront__tool_search` also finds authorized tools omitted from that initial inventory.
 
+Tool schema compatibility follows the model backend as well as its wire protocol. Veryfront Cloud
+Mistral models retain root `oneOf` tool schemas, including each variant's required fields and
+`additionalProperties` constraints. Native OpenAI models retain their root schema restrictions.
+
 ### Expose a startup tool set
 
 To expose a small startup set while leaving the rest of the catalog deferred,
