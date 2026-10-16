@@ -82,6 +82,7 @@ describe("exact-version registry smoke", () => {
     const packageDir = `${tempDir}/package`;
     const binDir = `${tempDir}/bin`;
     const manifestPath = `${tempDir}/installed-manifest.json`;
+    const denoConfigPath = `${tempDir}/installed-deno.json`;
     const version = "1.2.3-rc.45";
     await Deno.mkdir(packageDir);
     await Deno.mkdir(binDir);
@@ -133,7 +134,7 @@ describe("exact-version registry smoke", () => {
     await writeExecutable(
       `${binDir}/node`,
       `#!/bin/sh
-"$VF_REAL_NODE" -e 'require("node:fs").copyFileSync("package.json", process.env.VF_CAPTURE_MANIFEST)'
+"$VF_REAL_NODE" -e 'require("node:fs").copyFileSync("package.json", process.env.VF_CAPTURE_MANIFEST); require("node:fs").copyFileSync("deno.json", process.env.VF_CAPTURE_DENO_CONFIG)'
 exit 86
 `,
     );
@@ -147,6 +148,7 @@ exit 86
           VF_REAL_NPM: npmPath,
           VF_REAL_NODE: nodePath,
           VF_CAPTURE_MANIFEST: manifestPath,
+          VF_CAPTURE_DENO_CONFIG: denoConfigPath,
           // npm exec can inherit the repository's save-exact setting; the
           // release smoke runs in a clean consumer with npm's range default.
           NPM_CONFIG_SAVE_EXACT: "false",
@@ -164,6 +166,12 @@ exit 86
       assertStringIncludes(decoder.decode(output.stderr), "CLI --version failed on root install");
       const manifest = JSON.parse(await Deno.readTextFile(manifestPath));
       assertEquals(manifest.dependencies.veryfront, version);
+      assertEquals(JSON.parse(await Deno.readTextFile(denoConfigPath)), {
+        minimumDependencyAge: {
+          age: "P1D",
+          exclude: ["npm:veryfront", "npm:@veryfront/ext-auth-jwt"],
+        },
+      });
     } finally {
       await server.shutdown();
       await Deno.remove(tempDir, { recursive: true });
