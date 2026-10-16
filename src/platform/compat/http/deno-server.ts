@@ -2,6 +2,7 @@ import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { recordDenoServeRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { LOCALHOST } from "../constants.ts";
 import { getNativeDeno, getNativeResponse, toNativeResponse } from "./native-response.ts";
+import { scopeRequestAsyncContext } from "./request-async-scope.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
 import {
   INITIALIZATION_ERROR,
@@ -72,11 +73,11 @@ export class DenoHttpServer implements HttpServer {
     }
     const NativeResponse = getNativeResponse();
     const controller = new AbortController();
-    const wrappedHandler = async (request: Request, info: unknown) => {
+    const wrappedHandler = scopeRequestAsyncContext(async (request: Request, info: unknown) => {
       recordDenoServeRequestPeer(request, info);
       const response = await handler(request);
       return toNativeResponse(response, NativeResponse);
-    };
+    });
 
     const nativeServer = nativeDeno.serve({
       port,

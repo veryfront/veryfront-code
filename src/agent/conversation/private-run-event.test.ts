@@ -64,6 +64,47 @@ describe("agent/conversation/private-run-event", () => {
     );
   });
 
+  it("accepts strict assistant replay metadata only on assistant messages", () => {
+    const event = (role: string, providerMetadata: unknown) => ({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      messages: [{ role, content: [{ type: "text", text: "Continue" }], providerMetadata }],
+    });
+    assertEquals(
+      isPrivateConversationRunEvent(
+        event("assistant", {
+          anthropic: {
+            rawAssistantMessages: [[{
+              type: "tool_use",
+              id: "child",
+              name: "invoke_agent",
+              input: { value: null, enabled: false, count: 0 },
+            }]],
+          },
+        }),
+      ),
+      true,
+    );
+    for (
+      const metadata of [null, [], "invalid", 1, { value: NaN }, { value: () => 1 }, { value: 1n }]
+    ) {
+      assertEquals(isPrivateConversationRunEvent(event("assistant", metadata)), false);
+    }
+    for (const role of ["user", "tool", "system"]) {
+      assertEquals(isPrivateConversationRunEvent(event(role, {})), false);
+    }
+    let reads = 0;
+    const withGetter = event("assistant", {});
+    Object.defineProperty(withGetter.messages[0], "providerMetadata", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return {};
+      },
+    });
+    assertEquals(isPrivateConversationRunEvent(withGetter), false);
+    assertEquals(reads, 0);
+  });
+
   it("recognizes only well-shaped private model-call context events", () => {
     assertEquals(
       isPrivateConversationRunEvent({

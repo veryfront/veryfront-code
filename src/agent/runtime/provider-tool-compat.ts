@@ -20,6 +20,8 @@ export interface ProviderToolProfile {
   provider: ProviderToolCompatProvider;
   maxTools?: number;
   sanitizeSchema: boolean;
+  /** Backend accepts root JSON Schema compositions on its resolved wire surface. */
+  supportsRootSchemaComposition?: boolean;
 }
 
 /** Options accepted by provider tool compat. */
@@ -106,6 +108,14 @@ export function getProviderToolProfile(
       // An OpenAI-compatible wire retains the backend's reference restrictions.
       if (provider === "moonshot" || provider === "moonshotai") {
         return { provider: "moonshot", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: true };
+      }
+      if (provider === "mistral") {
+        return {
+          provider: "openai",
+          maxTools: OPENAI_MAX_TOOLS,
+          sanitizeSchema: false,
+          supportsRootSchemaComposition: true,
+        };
       }
       return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
     }
@@ -1143,7 +1153,7 @@ export function sanitizeProviderToolSchema(
   const profile = getProviderToolProfile(options.model, options.wireSurface);
   // OpenAI keeps its property keys as authored; only the root shape is fixed.
   if (profile.provider === "openai") {
-    return sanitizeOpenAISchemaRoot(schema);
+    return profile.supportsRootSchemaComposition ? schema : sanitizeOpenAISchemaRoot(schema);
   }
   if (!profile.sanitizeSchema) return schema;
 
