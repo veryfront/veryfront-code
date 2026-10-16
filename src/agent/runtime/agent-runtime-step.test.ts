@@ -161,6 +161,40 @@ describe("agent/runtime-step", () => {
     assertEquals(state.loadedToolNames.has("write_state"), true);
   });
 
+  it("optional hints do not load a catalog for a model without tool calling", async () => {
+    const input = bootstrapStepInput([]);
+    let catalogLoads = 0;
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      supportsToolCalling: false,
+      config: { ...input.config, optionalBootstrapTools: ["write_state"] },
+      getAvailableTools: async () => {
+        catalogLoads++;
+        throw new Error("Required MCP server unavailable");
+      },
+    });
+    assertEquals(catalogLoads, 0);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.toolExposurePlan.authorized, []);
+  });
+
+  it("required bootstrap validation still loads the catalog without model tool calling", async () => {
+    const input = bootstrapStepInput(["read_state"]);
+    let catalogLoads = 0;
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      supportsToolCalling: false,
+      config: { ...input.config, optionalBootstrapTools: ["write_state"] },
+      getAvailableTools: async () => {
+        catalogLoads++;
+        return [toolDefinition("read_state"), toolDefinition("write_state")];
+      },
+    });
+    assertEquals(catalogLoads, 1);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.configuredBootstrapToolNames, ["read_state"]);
+  });
+
   it("reports host-merged startup tools for provider capping to retain", async () => {
     const input = bootstrapStepInput([]);
     const prepared = await prepareAgentRuntimeStep({

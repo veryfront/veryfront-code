@@ -314,7 +314,7 @@ export async function prepareAgentRuntimeStep(
     "optionalBootstrapTools",
   );
   const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools ||
-      configuredBootstrapNames.length > 0 || optionalBootstrapNames.length > 0
+      configuredBootstrapNames.length > 0
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
       includeSkillTools: shouldIncludeSkillTools(input.config, input.agentId),

@@ -3246,6 +3246,40 @@ it("hosted eager capping retains the selected authored remote startup tool", asy
   assertEquals(assembly.modelVisibleToolNames?.length, 128);
 });
 
+it("hosted eager selection prioritizes authorized optional schemas after mandatory tools", async () => {
+  const tools = Array.from(
+    { length: 130 },
+    (_, index) => remoteTool(`remote_${String(index).padStart(3, "0")}`, "Remote"),
+  );
+  for (const scenario of ["capacity", "mandatory-only", "denied"] as const) {
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: { authToken: "token", projectId: "project-1", model: "openai/gpt-4.1" },
+      instructions: "Base",
+      localTools: {},
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      mcpServers: [{ id: "custom", endpoint: "https://custom.example/mcp" }],
+      toolLoading: "eager",
+      bootstrapTools: ["remote_128"],
+      optionalBootstrapTools: ["remote_129", "missing_tool"],
+      ...(scenario === "mandatory-only" ? { reservedToolSlots: 127 } : {}),
+      ...(scenario === "denied" ? { deniedToolNames: ["remote_129"] } : {}),
+      preloadLatestConversationUserText: false,
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "platform",
+        listTools: async () => tools,
+        executeTool: async () => "ok",
+      }),
+    });
+    assertEquals(assembly.modelVisibleToolNames?.includes("remote_128"), true);
+    assertEquals(assembly.modelVisibleToolNames?.includes("remote_129"), scenario === "capacity");
+    assertEquals(assembly.availableToolNames.includes("remote_129"), scenario === "capacity");
+    assertEquals(assembly.availableToolNames.includes("missing_tool"), false);
+    assertEquals(assembly.modelVisibleToolNames?.length, scenario === "mandatory-only" ? 1 : 128);
+  }
+});
+
 it("hosted optional bootstrap exposes only authorized schemas without requiring absent write tools", async () => {
   for (const denied of [false, true]) {
     const assembly = await prepareHostedChatRuntimeToolAssembly({

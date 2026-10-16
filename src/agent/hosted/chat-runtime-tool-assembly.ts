@@ -1190,6 +1190,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
   const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(input.bootstrapTools);
+  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.optionalBootstrapTools,
+    "optionalBootstrapTools",
+  );
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
@@ -1199,6 +1203,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         ...configuredBootstrapNames,
         ...eagerBootstrapToolNames,
         ...providerVisibleLocalToolNames,
+        // Best-effort startup priorities follow the existing mandatory schemas.
+        // Selection only retains names from the authorized provider-visible catalog.
+        ...optionalBootstrapNames,
       ],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
@@ -1224,10 +1231,6 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     }
     sortValues(bootstrapToolNames, compareStrings);
   }
-  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
-    input.optionalBootstrapTools,
-    "optionalBootstrapTools",
-  );
   if (optionalBootstrapNames.length > 0) {
     const candidates = [...bootstrapToolNames];
     for (let index = 0; index < optionalBootstrapNames.length; index++) {
