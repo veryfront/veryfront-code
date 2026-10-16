@@ -19,6 +19,7 @@ export type {
 
 // Interfaces
 export type {
+  JsonSchemaCompilationOptions,
   JsonSchemaValidationFailure,
   JsonSchemaValidationIssue,
   JsonSchemaValidationSuccess,

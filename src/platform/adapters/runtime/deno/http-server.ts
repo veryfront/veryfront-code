@@ -10,6 +10,7 @@ import { isErrorAcrossRealms } from "../../../compat/error-introspection.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { recordDenoServeRequestPeer } from "../shared/request-peer.ts";
+import { scopeRequestAsyncContext } from "../../../compat/http/request-async-scope.ts";
 
 type DenoRequestHandler = (
   request: Request,
@@ -252,7 +253,7 @@ export async function createDenoServerWithRuntime(
       port,
       hostname,
       signal: controller.signal,
-      handler: async (request, info) => {
+      handler: scopeRequestAsyncContext(async (request: Request, info: unknown) => {
         try {
           recordDenoServeRequestPeer(request, info);
           const response = await wrappedHandler(request);
@@ -261,7 +262,7 @@ export async function createDenoServerWithRuntime(
           serverLogger.error("Deno request handler failed", { error });
           return new NativeResponse("Internal Server Error", { status: 500 });
         }
-      },
+      }),
       // Suppress Deno's default console output. The portable callback runs only
       // after the bound address has been validated and ownership is established.
       onListen: () => {},

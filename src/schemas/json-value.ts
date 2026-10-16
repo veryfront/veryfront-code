@@ -14,7 +14,6 @@ export const JSON_VALUE_MAX_NODES = 100_000;
 export const JSON_VALUE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 export const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_VALUE_MAX_KEY_BYTES = 16 * 1024;
-const JSON_UTF8_ENCODER = new TextEncoder();
 const NativeSet = Set;
 const OBJECT_PROTOTYPE = Object.prototype;
 const arrayIsArray = Array.isArray;
@@ -29,11 +28,9 @@ const reflectOwnKeys = Reflect.ownKeys;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
-const textEncoderEncode = TextEncoder.prototype.encode;
-const typedArrayByteLengthGetter = reflectGetOwnPropertyDescriptor(
-  reflectGetPrototypeOf(Uint8Array.prototype)!,
-  "byteLength",
-)!.get!;
+const stringCharCodeAt: (value: string, index: number) => number = Function.prototype.call.bind(
+  String.prototype.charCodeAt,
+);
 
 /** Data-only JSON shape; runtime ceilings are imposed by the snapshot entry point. */
 export type BoundedJsonValue =
@@ -125,13 +122,23 @@ function snapshotPrimitiveBytes(
   return typeof value === "string" ? encodedByteLength(value) + 2 : 0;
 }
 
+// Count UTF-8 without allocating an encoded array for every primitive and key.
+// Unpaired UTF-16 surrogates encode as the three-byte replacement character.
 function encodedByteLength(value: string): number {
-  const encoded = reflectApply(
-    textEncoderEncode,
-    JSON_UTF8_ENCODER,
-    [value],
-  ) as Uint8Array;
-  return reflectApply(typedArrayByteLengthGetter, encoded, []) as number;
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = stringCharCodeAt(value, index);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (
+      code >= 0xd800 && code <= 0xdbff && index + 1 < value.length &&
+      stringCharCodeAt(value, index + 1) >= 0xdc00 && stringCharCodeAt(value, index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index++;
+    } else bytes += 3;
+  }
+  return bytes;
 }
 
 /**

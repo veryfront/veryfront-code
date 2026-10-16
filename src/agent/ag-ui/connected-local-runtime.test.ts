@@ -688,6 +688,7 @@ describe("connected local execution", () => {
         skills: false,
       });
       assertEquals(source.config.tools, true);
+      assertEquals(resolveRuntimeToolLoading(source.config).mode, "deferred");
 
       const prepared = await run.prepareAgent(source);
       const preparedTools = prepared.config.tools;

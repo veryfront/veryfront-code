@@ -487,6 +487,142 @@ describe("model-tool-converter", () => {
     assertEquals(getRuntimeToolSchema(result?.veryfront__tool_search), parameters);
   });
 
+  it("preserves exclusive root tool variants on the Veryfront Cloud Mistral backend", () => {
+    const parameters = {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "disposition": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                },
+                "version_id": {
+                  "type": "string",
+                },
+                "sha256": {
+                  "type": "string",
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                },
+              },
+              "required": [
+                "path",
+                "version_id",
+                "sha256",
+                "size_bytes",
+              ],
+              "additionalProperties": false,
+            },
+          },
+          "required": [
+            "disposition",
+          ],
+          "additionalProperties": false,
+        },
+        {
+          "type": "object",
+          "properties": {
+            "processed": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                },
+                "version_id": {
+                  "type": "string",
+                },
+                "sha256": {
+                  "type": "string",
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                },
+              },
+              "required": [
+                "path",
+                "version_id",
+                "sha256",
+                "size_bytes",
+              ],
+              "additionalProperties": false,
+            },
+          },
+          "required": [
+            "processed",
+          ],
+          "additionalProperties": false,
+        },
+      ],
+    };
+    const result = convertToolsToRuntimeTools(
+      [{ name: "record_result", description: "Record a result", parameters }] as never,
+      {
+        model: "veryfront-cloud/mistral/mistral-small-2503",
+        wireSurface: "openai",
+      },
+    );
+    assertEquals(getRuntimeToolSchema(result?.record_result), parameters);
+  });
+
+  it("keeps root restrictions for native OpenAI and other OpenAI-compatible backends", () => {
+    const parameters = {
+      type: "object",
+      oneOf: [
+        { type: "object", properties: { first: { type: "string" } }, required: ["first"] },
+        { type: "object", properties: { second: { type: "string" } }, required: ["second"] },
+      ],
+    };
+    for (
+      const options of [
+        { model: "openai/gpt-4.1" },
+        { model: "veryfront-cloud/openai/gpt-4.1", wireSurface: "openai" as const },
+        { model: "veryfront-cloud/google/local-model", wireSurface: "openai" as const },
+        {
+          model: "veryfront-cloud/mistral/mistral-small-2503",
+          toolSchemaModel: "openai/gpt-4.1",
+          wireSurface: "openai" as const,
+        },
+      ]
+    ) {
+      const result = convertToolsToRuntimeTools(
+        [{ name: "choose", description: "Choose a variant", parameters }] as never,
+        options,
+      );
+      assertEquals(getRuntimeToolSchema(result?.choose), {
+        type: "object",
+        properties: { first: {}, second: {} },
+      });
+    }
+  });
+
+  it("uses the Mistral schema model capability without lifting the wire tool limit", () => {
+    const parameters = {
+      type: "object",
+      oneOf: [{ type: "object", properties: { value: { type: "string" } }, required: ["value"] }],
+    };
+    const result = convertToolsToRuntimeTools(
+      Array.from({ length: 129 }, (_, index) => ({
+        name: `tool_${index}`,
+        description: "Choose a variant",
+        parameters,
+      })) as never,
+      {
+        model: "veryfront-cloud/alias/default",
+        toolSchemaModel: "veryfront-cloud/mistral/mistral-small-2503",
+        wireSurface: "openai",
+      },
+    );
+    assertEquals(Object.keys(result!).length, 128);
+    assertEquals(getRuntimeToolSchema(result?.tool_0), parameters);
+  });
+
   it("normalizes Moonshot-compatible runtime tool schemas", () => {
     const result = convertToolsToRuntimeTools([
       {

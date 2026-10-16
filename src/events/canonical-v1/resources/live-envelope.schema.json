@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:live-envelope",
+  "allOf": [
+    {
+      "$ref": "urn:veryfront:events:1:envelope"
+    },
+    {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.paused"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.paused:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.paused:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.paused"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.paused:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.paused:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.stream.heartbeat.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:stream.heartbeat.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:stream.heartbeat.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.stream.heartbeat.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:stream.heartbeat.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:stream.heartbeat.emitted:diagnostic"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "required": [
+        "runid",
+        "runkind",
+        "subject",
+        "time"
+      ],
+      "properties": {
+        "id": {
+          "pattern": "^live:[1-9][0-9]*$"
+        },
+        "source": {
+          "format": "uri",
+          "pattern": "^https://[^?#]+/runs/[^/?#]+/streams/[^/?#]+$"
+        }
+      },
+      "not": {
+        "required": [
+          "recordedat"
+        ]
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "com.veryfront.run.paused"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "const": "waiting_for_integration_auth"
+              },
+              "lastEventId": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "x-view-rule": "The selected payload schema is chosen from the trusted authorization view, not client-declared data."
+}

@@ -1,3 +1,4 @@
+import { type CanonicalEventsV1Facade, createCanonicalEventsV1Facade } from "./canonical-v1.ts";
 /**
  * Typed SDK for the Runs target contract (veryfront-issue-inbox#2522). One method per
  * contract operation; request and response types come from the pinned contract.
@@ -158,6 +159,7 @@ export interface RunsArtifactInput {
 export type RunsSdk =
   & { readonly [K in RunsOperationId]: (...args: RunsArgs<K>) => RunsResult<K> }
   & {
+    readonly canonicalEventsV1: CanonicalEventsV1Facade;
     /**
      * Downloads a file a run produced (`GET /runs/{run_id}/artifacts/{artifact_id}`) as a
      * `Blob`, bounded by `maxResponseBytes`. An error response rejects like every other method.
@@ -311,7 +313,11 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
   const readRunArtifact = async (input: RunsArtifactInput, options: RunsCallOptions = {}) =>
     await send("readRunArtifact", input, options) as Blob;
 
-  const methods: Record<string, unknown> = { paginate, readRunArtifact };
+  const methods: Record<string, unknown> = {
+    paginate,
+    readRunArtifact,
+    canonicalEventsV1: createCanonicalEventsV1Facade(config.transport),
+  };
   for (const [operationId, route] of Object.entries(RUNS_OPERATIONS)) {
     methods[operationId] = "stream" in route
       ? (input?: WireInput, options?: RunsCallOptions) =>
