@@ -89,7 +89,8 @@ export interface ModelCallRequest {
 /**
  * Provider-agnostic input persisted before one model dispatch. System-message
  * provider options contain only validated prompt-cache metadata. Exact managed
- * capture also retains assistant replay metadata; legacy observations omit it.
+ * capture retains assistant replay metadata in the mandatory sink only. Public
+ * observations and legacy capture omit it.
  */
 export type AgentRunModelCallContextEvent = {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";

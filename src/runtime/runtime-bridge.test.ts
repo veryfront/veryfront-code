@@ -1543,20 +1543,29 @@ describe("runtime-bridge", () => {
       ),
     );
 
-    await runWithMandatoryRunEventSink(
-      sink,
-      async () =>
-        await generateText({
-          model,
-          messages: [{
-            role: "assistant",
-            content: [{ type: "text", text: "Prior answer" }],
-            providerMetadata: {
-              google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
-            },
-          }, { role: "user", content: "Continue" }],
-        }),
-    );
+    let publicMessages: unknown;
+    await runWithRunEventSink((event) => {
+      assertModelCallContextEvent(event);
+      publicMessages = event.messages;
+    }, () =>
+      runWithMandatoryRunEventSink(
+        sink,
+        async () =>
+          await generateText({
+            model,
+            messages: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Prior answer" }],
+              providerMetadata: {
+                google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+              },
+            }, { role: "user", content: "Continue" }],
+          }),
+      ));
+    assertEquals(publicMessages, [
+      { role: "assistant", content: [{ type: "text", text: "Prior answer" }] },
+      { role: "user", content: [{ type: "text", text: "Continue" }] },
+    ]);
     assertEquals(sinkCalls, 1);
     assertEquals(dispatches, 1);
     assertEquals((capturedMessages as Array<{ providerMetadata?: unknown }>)[0]?.providerMetadata, {

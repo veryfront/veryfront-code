@@ -998,11 +998,17 @@ async function emitModelCallContextEvent(
     writerBinding?.assertActive();
   };
 
-  const cloneEvent = ():
+  const cloneEvent = (includeExactMetadata = true):
     | { ok: true; event: AgentRunModelCallContextEvent }
     | { ok: false; error: unknown } => {
     try {
-      return { ok: true, event: cloneStructured(event) };
+      const observedEvent = includeExactMetadata ? event : {
+        ...event,
+        messages: snapshotModelCallContextMessages(
+          sanitizeModelCallContextMessages(directOptions.prompt),
+        ),
+      };
+      return { ok: true, event: cloneStructured(observedEvent) };
     } catch (error) {
       const failureClass = error instanceof DOMException && error.name === "DataCloneError"
         ? "DataCloneError"
@@ -1025,7 +1031,9 @@ async function emitModelCallContextEvent(
     );
   }
   const mandatoryEvent = mandatoryClone?.ok ? mandatoryClone.event : undefined;
-  const publicClone = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
+  const publicClone = sinks.public && sinks.public !== sinks.mandatory
+    ? cloneEvent(false)
+    : undefined;
   const publicEvent = publicClone?.ok ? publicClone.event : undefined;
   let acknowledgement: unknown;
   if (sinks.mandatory && mandatoryEvent) {

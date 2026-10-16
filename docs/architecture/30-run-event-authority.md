@@ -16,7 +16,7 @@ The trusted API runtime configuration enables `modelCallCaptureReceipts` only af
 
 After activation, the hosted model broker persists one logical `modelCallId` for each generation or streaming operation before provider dispatch. It requires an exact capture receipt matching the authenticated project grant. Provider retries keep the same logical call identity. Missing receipts cannot downgrade an activated run to legacy dispatch.
 
-Exact capture retains assistant `providerMetadata` as a bounded, strict JSON object. This includes native tool-use blocks and signed thinking data required for a provider continuation. The captured messages retain the same metadata sent to the provider. Invalid or non-JSON metadata refuses dispatch; it is never silently removed. Legacy observations continue to omit assistant provider metadata.
+Exact capture retains assistant `providerMetadata` as a bounded, strict JSON object. This includes native tool-use blocks and signed thinking data required for a provider continuation. The captured messages retain the same metadata sent to the provider. Invalid or non-JSON metadata refuses dispatch; it is never silently removed. Distinct public observation sinks and legacy observations continue to omit assistant provider metadata.
 
 Deploy the additive API assistant-metadata ingestion contract before publishing framework packages that emit this field. Qualify the package with an actual parent run that invokes a child and completes its next model step.
 
