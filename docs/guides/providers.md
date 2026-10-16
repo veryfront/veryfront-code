@@ -91,6 +91,20 @@ curl https://api.veryfront.com/ai/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
+The response lists `deployments`, one for each place a model runs. Each
+deployment separates three things:
+
+- `model`: what the model is. `model.id` is the name to send, and
+  `model.aliases` are other names that select the same model.
+- `model_provider`: who made the model, for example Anthropic or Mistral.
+- `inference_provider`: who runs it, for example Google. `region` says where.
+
+A model can run with more than one inference provider. Its deployments are
+listed in routing order, and the gateway uses the first one with
+`enabled: true`. A deployment that a policy in force refuses is listed with
+`enabled: false`, and `disabled_by` names that policy: `account`, `project`
+or `api_key`. The deployment with `is_default: true` is the default model.
+
 Install the clients for the examples you want to run:
 
 ```bash
