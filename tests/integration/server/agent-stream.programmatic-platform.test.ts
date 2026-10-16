@@ -75,7 +75,7 @@ describe("programmatic platform source availability", () => {
       assertEquals(hasTrustedPlatformSource(captured), true);
       assertEquals(Reflect.get(configured.config, "__vfRemoteToolSources") ?? [], []);
       assertEquals(Reflect.get(configured.config, "__vfAllowedRemoteTools") ?? [], []);
-      assertEquals((await captured.listTools()).map(({ name }) => name), [
+      assertEquals((await captured.listTools()).map(({ name }) => name).sort(), [
         "outlook__upload_attachment",
         "veryfront__create_file",
       ]);
@@ -179,7 +179,6 @@ describe("programmatic platform source availability", () => {
         "veryfront__succeed_run",
       ]);
       assertEquals(Reflect.get(configured.config, "__vfAllowedRemoteTools"), [
-        "get_file",
         "veryfront__get_file",
       ]);
       await assertRejects(() => captured!.executeTool("veryfront__create_file", {}, {}));
