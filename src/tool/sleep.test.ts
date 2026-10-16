@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
+import { toolRegistryInternal } from "./registry.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
 function withTestTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
@@ -104,6 +105,22 @@ describe("tool/sleep", () => {
       TypeError,
       "wait",
     );
+  });
+
+  it("preserves lazy proxy descriptors after registry binding", () => {
+    toolRegistryInternal.register("sleep", sleepTool);
+    try {
+      assertEquals(Object.getOwnPropertyDescriptor(sleepTool, "id")?.configurable, false);
+      assertEquals(
+        Object.getOwnPropertyDescriptor(sleepTool, "delegatedPlatformTools")?.writable,
+        false,
+      );
+      assertEquals(Object.keys(sleepTool).includes("id"), true);
+      assertEquals({ ...sleepTool }.id, "sleep");
+      assertEquals(sleepTool.inputSchema.safeParse({ seconds: 1 }).success, true);
+    } finally {
+      toolRegistryInternal.delete("sleep");
+    }
   });
 
   it("rejects values outside the configured public schema bounds", async () => {

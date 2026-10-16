@@ -6,6 +6,10 @@ import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { canonicalPlatformHostTools } from "../platform-host-tools.ts";
 import {
+  hostedPlatformDependencyRuntimeContext,
+  inheritHostedPlatformDependencyRuntime,
+} from "../hosted/platform-dependency-credential.ts";
+import {
   createHostedChildInferenceModelResolver,
   type HostedInferenceAuthorityOwner,
   inheritHostedChildInferenceAuthority,
@@ -422,10 +426,11 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     };
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
+    const dependencyContext = hostedPlatformDependencyRuntimeContext(input, input.projectId);
     // Host-owned model stream budgets apply to delegated child model calls too.
     const modelStreamTimeouts = readHostedChildModelStreamTimeouts(input);
     const runtime = new AgentRuntime(
-      "invoke-agent-child-runtime",
+      dependencyContext?.agentId ?? "invoke-agent-child-runtime",
       runtimeConfig,
       resolveModelRuntime || modelStreamTimeouts
         ? {
@@ -444,7 +449,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       () =>
         runtime.stream(
           input.messages,
-          input.projectId ? { projectId: input.projectId } : undefined,
+          dependencyContext ?? (input.projectId ? { projectId: input.projectId } : undefined),
           {
             onFinish: (response) => {
               input.abortSignal?.removeEventListener("abort", abortHandler);
@@ -747,5 +752,6 @@ function inheritForkInference<T extends HostedInferenceAuthorityOwner>(
   source: HostedInferenceAuthorityOwner,
 ): T {
   inheritHostedChildInferenceAuthority(target, source);
+  inheritHostedPlatformDependencyRuntime(target, source);
   return target;
 }

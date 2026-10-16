@@ -910,7 +910,9 @@ it("agent service routes accept a default-chat start when the replica address ca
 });
 
 it("agent service routes bind verified run-event tokens on both production launch paths", async () => {
-  const verifications: Array<{ token: string; projectId: string; runId: string }> = [];
+  const verifications: Array<
+    { token: string; projectId: string; runId: string; agentId?: string }
+  > = [];
   const { routeSet, preparedRequests } = createRouteSet({
     verifyRunEventAppendToken: (input) => {
       verifications.push(input);
@@ -983,6 +985,7 @@ it("agent service routes bind verified run-event tokens on both production launc
       token: "run-event-service-token",
       projectId: "00000000-0000-4000-8000-000000000005",
       runId: "run-1",
+      agentId: "builder",
     },
   ]);
 });
