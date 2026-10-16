@@ -16,6 +16,10 @@ The trusted API runtime configuration enables `modelCallCaptureReceipts` only af
 
 After activation, the hosted model broker persists one logical `modelCallId` for each generation or streaming operation before provider dispatch. It requires an exact capture receipt matching the authenticated project grant. Provider retries keep the same logical call identity. Missing receipts cannot downgrade an activated run to legacy dispatch.
 
+Exact capture retains assistant `providerMetadata` as a bounded, strict JSON object. This includes native tool-use blocks and signed thinking data required for a provider continuation. The captured messages retain the same metadata sent to the provider. Invalid or non-JSON metadata refuses dispatch; it is never silently removed. Distinct public observation sinks and legacy observations continue to omit assistant provider metadata.
+
+Deploy the additive API assistant-metadata ingestion contract before publishing framework packages that emit this field. Qualify the package with an actual parent run that invokes a child and completes its next model step.
+
 The append response uses the additive `model_call_captures` array. Each receipt contains `event_id`, `model_call_id`, `run_id`, and `project_id`. Only complete captures submitted in that append, including an acknowledged replay, can receive receipts. Preserve `event_id` as the exact server-issued string. A batch cursor or an append count cannot identify a capture occurrence.
 
 Cloud transport removes caller correlation headers and sends `x-veryfront-model-call-id` and `x-veryfront-model-call-capture-event-id` from the acknowledged dispatch scope. The gateway must verify the stored capture and authenticated project/run authority before accepting correlation. These headers and receipts grant no input-read permission.

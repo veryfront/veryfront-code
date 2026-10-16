@@ -1213,6 +1213,17 @@ function snapshotModelCallMutableArray(
   return snapshot as ModelCallMessage[] | ModelCallTool[];
 }
 
+/** Preserve bounded JSON-object assistant replay metadata for exact private capture. */
+export function snapshotModelCallAssistantProviderMetadata(
+  value: unknown,
+): Record<string, unknown> {
+  const snapshot = snapshotProviderJsonValue(value);
+  if (snapshot === null || typeof snapshot !== "object" || ArrayIsArray(snapshot)) {
+    throw new TypeError("Assistant provider metadata must be a JSON object");
+  }
+  return snapshot as Record<string, unknown>;
+}
+
 export function snapshotModelCallContextMessages(
   value: ModelCallMessage[],
 ): ModelCallMessage[] {

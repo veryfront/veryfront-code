@@ -76,6 +76,7 @@ import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-recei
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallAssistantProviderMetadata,
   snapshotModelCallContextMessages,
   snapshotModelCallContextTools,
   snapshotModelCallProviderOptions,
@@ -501,10 +502,19 @@ function sanitizePersistedProviderOptions(
 
 function sanitizeModelCallContextMessages(
   messages: readonly DirectModelMessage[],
+  captureProviderMetadata = false,
 ): ModelCallMessage[] {
   return mapPrivateArray(messages, (message) => {
     if (message.role === "assistant") {
-      return { role: "assistant", content: message.content };
+      return {
+        role: "assistant",
+        content: message.content,
+        ...(captureProviderMetadata && message.providerMetadata !== undefined
+          ? {
+            providerMetadata: snapshotModelCallAssistantProviderMetadata(message.providerMetadata),
+          }
+          : {}),
+      };
     }
     if (message.role !== "system") {
       return message;
@@ -855,14 +865,6 @@ function hasUnsupportedExactCapturePromptProviderOptions(
   });
 }
 
-function hasUnsupportedExactCaptureAssistantProviderMetadata(
-  directOptions: DirectModelOptions,
-): boolean {
-  return somePrivateArray(directOptions.prompt, (message) => {
-    return message.role === "assistant" && message.providerMetadata !== undefined;
-  });
-}
-
 function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
@@ -880,9 +882,6 @@ function assertExactModelCallCaptureControlsSupported(
   );
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     pushPrivateArray(unsupportedControls, "system.providerOptions");
-  }
-  if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
-    pushPrivateArray(unsupportedControls, "assistant.providerMetadata");
   }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(
@@ -980,7 +979,7 @@ async function emitModelCallContextEvent(
       : {}),
     ...(request ? { request } : {}),
     messages: snapshotModelCallContextMessages(
-      sanitizeModelCallContextMessages(directOptions.prompt),
+      sanitizeModelCallContextMessages(directOptions.prompt, captureEnabled),
     ),
     ...(directOptions.tools ? { tools: snapshotModelCallContextTools(directOptions.tools) } : {}),
   };
@@ -992,11 +991,17 @@ async function emitModelCallContextEvent(
     writerBinding?.assertActive();
   };
 
-  const cloneEvent = ():
+  const cloneEvent = (includeExactMetadata = true):
     | { ok: true; event: AgentRunModelCallContextEvent }
     | { ok: false; error: unknown } => {
     try {
-      return { ok: true, event: cloneStructured(event) };
+      const observedEvent = includeExactMetadata ? event : {
+        ...event,
+        messages: snapshotModelCallContextMessages(
+          sanitizeModelCallContextMessages(directOptions.prompt),
+        ),
+      };
+      return { ok: true, event: cloneStructured(observedEvent) };
     } catch (error) {
       const failureClass = error instanceof DOMException && error.name === "DataCloneError"
         ? "DataCloneError"
@@ -1019,7 +1024,9 @@ async function emitModelCallContextEvent(
     );
   }
   const mandatoryEvent = mandatoryClone?.ok ? mandatoryClone.event : undefined;
-  const publicClone = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
+  const publicClone = sinks.public && sinks.public !== sinks.mandatory
+    ? cloneEvent(false)
+    : undefined;
   const publicEvent = publicClone?.ok ? publicClone.event : undefined;
   let acknowledgement: unknown;
   if (sinks.mandatory && mandatoryEvent) {
