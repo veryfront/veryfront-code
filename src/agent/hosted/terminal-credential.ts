@@ -245,20 +245,29 @@ export function hostedTerminalToolSourceFactory(
   };
 }
 
+type HostedInheritedRunAdmitter<Result> = (toolCallId: string, prompt: string) => (
+  input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
+    conversationId?: string;
+  },
+) => Promise<Result>;
+type InheritedAdmissionTransport = { apiUrl: string; fetch?: typeof globalThis.fetch };
+
 /** Build an inherited admission transport bound to an authentic parent capability. */
 export function hostedInheritedRunAdmitter(
   request: ParsedHostedChatRequest | HostedTerminalDescriptor,
-  transport: { apiUrl: string; fetch?: typeof globalThis.fetch },
-):
-  | ((
-    toolCallId: string,
-    prompt: string,
-  ) => (
-    input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
-      conversationId?: string;
-    },
-  ) => Promise<ConversationRunProjection>)
-  | undefined {
+  transport: InheritedAdmissionTransport,
+  terminalReplay: true,
+): HostedInheritedRunAdmitter<ConversationRunProjection | InheritedRunResult> | undefined;
+export function hostedInheritedRunAdmitter(
+  request: ParsedHostedChatRequest | HostedTerminalDescriptor,
+  transport: InheritedAdmissionTransport,
+  terminalReplay?: false,
+): HostedInheritedRunAdmitter<ConversationRunProjection> | undefined;
+export function hostedInheritedRunAdmitter(
+  request: ParsedHostedChatRequest | HostedTerminalDescriptor,
+  transport: InheritedAdmissionTransport,
+  terminalReplay = false,
+): HostedInheritedRunAdmitter<ConversationRunProjection | InheritedRunResult> | undefined {
   const parent = credentials.get(request);
   if (!parent?.authToken) return undefined;
   const parentId = terminalRoute(parent.token, parent.runId).id;
@@ -288,7 +297,10 @@ export function hostedInheritedRunAdmitter(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    return acceptInheritedRunAdmission(response, {
+    const decode = terminalReplay
+      ? acceptWorkflowInheritedRunAdmission
+      : acceptInheritedRunAdmission;
+    return decode(response, {
       projectId: childProjectId,
       conversationId: input.conversationId,
       parentRunId: parentId,
@@ -366,11 +378,12 @@ export async function acceptWorkflowInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
+  dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection | InheritedRunResult> {
   response = await normalizeInheritedExecutionResponse(response, binding);
   const row = await response.clone().json();
   if (row?.status !== "completed" && row?.status !== "failed" && row?.status !== "cancelled") {
-    return await acceptInheritedRunAdmission(response, binding);
+    return await acceptInheritedRunAdmission(response, binding, dependencyParent);
   }
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (
@@ -483,15 +496,23 @@ export async function acceptInheritedRunAdmission(
 }
 
 /** Create inference transport only from this inherited child's private admission authority. */
-export function hostedInheritedInferenceModelResolver(descriptor: HostedTerminalDescriptor) {
+export function hostedInheritedInferenceModelResolver(
+  descriptor: HostedTerminalDescriptor,
+  options: { projectModels?: boolean; signal?: AbortSignal } = {},
+) {
   const authority = credentials.get(descriptor);
   if (!authority) return undefined;
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  return createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+  const resolver = createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
     apiBaseUrl: authority.apiUrl,
+    assertParentActive: () => options.signal?.throwIfAborted(),
   });
+  return options.projectModels
+    ? (model: string) =>
+      resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)
+    : resolver;
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */

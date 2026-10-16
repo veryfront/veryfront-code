@@ -79,7 +79,7 @@ Deno.test("project reservation keeps credentials on the supplied host transport"
   await withMockFetch(() => {
     throw new Error("project fetch must not receive credentials");
   }, async () => {
-    const transport = ((_input, init) => {
+    const transport = ((_input: unknown, init?: RequestInit) => {
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
       return Promise.resolve(Response.json({ id: "project-id" }));
     }) as typeof fetch;
