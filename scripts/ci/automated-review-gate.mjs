@@ -326,12 +326,17 @@ function parseCompletedCodexStateMetadata(line) {
   const security = metadata.security_review;
   if (
     typeof code.commit_sha !== "string" || code.status !== "completed" ||
-    code.has_any_findings !== false || code.has_unresolved_findings !== false ||
-    security.has_unresolved_findings === true ||
     (security.commit_sha !== null &&
       security.commit_sha.toLowerCase() !== code.commit_sha.toLowerCase())
   ) return undefined;
-  return code.commit_sha;
+  return {
+    head: code.commit_sha,
+    hasFindings: [code, security].some((state) =>
+      state.has_any_findings === true || state.has_unresolved_findings === true
+    ),
+    clean: code.has_any_findings === false &&
+      code.has_unresolved_findings === false,
+  };
 }
 
 function parseCompletedCodexSummary(comment) {
@@ -340,12 +345,12 @@ function parseCompletedCodexSummary(comment) {
     typeof comment?.body !== "string"
   ) return undefined;
   const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
-  let stateHead;
+  let stateMetadata;
   const stateMarkers = comment.body.match(/<!--\s*codex-review-state\b/g) ?? [];
   if (stateMarkers.length > 0) {
     if (stateMarkers.length !== 1) return undefined;
-    stateHead = parseCompletedCodexStateMetadata(lines[1] ?? "");
-    if (!stateHead) return undefined;
+    stateMetadata = parseCompletedCodexStateMetadata(lines[1] ?? "");
+    if (!stateMetadata) return undefined;
     lines.splice(1, 1);
   }
   // The connector now includes its separate security-review display in this
@@ -410,7 +415,8 @@ function parseCompletedCodexSummary(comment) {
     completedAt,
     updatedAt,
     securityHead: securityDisplay?.headSha,
-    stateHead,
+    stateHead: stateMetadata?.head,
+    stateMetadata,
   };
 }
 
@@ -428,8 +434,11 @@ async function resolvedCompletedCodexSummary(
     (summary.securityHead !== undefined &&
       summary.securityHead.toLowerCase() !== headSha.toLowerCase()) ||
     (boundary !== undefined &&
-      (summary.completedAt <= boundary.time ||
-        summary.updatedAt <= boundary.time)) ||
+      ((!summary.stateMetadata?.hasFindings &&
+        summary.completedAt <= boundary.time) ||
+        (summary.stateMetadata?.hasFindings
+          ? summary.updatedAt < boundary.time
+          : summary.updatedAt <= boundary.time))) ||
     !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
   ) return undefined;
   const resolved = await resolveCommit(summary.shortRef);
@@ -1289,6 +1298,23 @@ export async function findAutomatedReview(
       resolveCommit,
     );
     if (!summary) continue;
+    if (summary.stateMetadata?.hasFindings) {
+      const freshness = boundary && summary.updatedAt === boundary.time
+        ? "ambiguous"
+        : evidenceFreshness(
+          comment, "commented", boundary, timeline, "finding",
+        );
+      if (freshness !== "older") {
+        codexFindings.push({
+          evidence: comment,
+          freshness,
+          time: summary.updatedAt,
+          timelineEvent: "commented",
+        });
+      }
+      continue;
+    }
+    if (summary.stateMetadata && !summary.stateMetadata.clean) continue;
     const reaction = codexCompletionReaction(reactions, summary, boundary);
     if (!reaction) continue;
     codexSuccesses.push({
@@ -1906,6 +1932,8 @@ export async function publishAutomatedReviewStatus({
             );
             if (
               summary &&
+              !summary.stateMetadata?.hasFindings &&
+              (!summary.stateMetadata || summary.stateMetadata.clean) &&
               !codexCompletionReaction(reactions, summary, summaryBoundary)
             ) {
               waitsForReaction = true;
