@@ -1075,6 +1075,9 @@ function getRemoteToolDiscoveryContext(input: {
     ...(input.deps.projectAgentSandbox?.projectId
       ? { projectId: input.deps.projectAgentSandbox.projectId }
       : {}),
+    ...(input.deps.projectAgentSandbox?.branchId === undefined
+      ? {}
+      : { branch: input.deps.projectAgentSandbox.branchId }),
     ...(input.runInput.parentRunId ? { parentRunId: input.runInput.parentRunId } : {}),
     ...(input.runInput.state !== undefined ? { state: input.runInput.state } : {}),
     context: input.runInput.context,
@@ -1565,6 +1568,9 @@ export async function createRuntimeAgentStreamResponse(
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
         : {}),
+      ...(deps.projectAgentSandbox?.branchId === undefined
+        ? {}
+        : { branch: deps.projectAgentSandbox.branchId }),
       ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
       ...(input.state !== undefined ? { state: input.state } : {}),
       context: input.context,
