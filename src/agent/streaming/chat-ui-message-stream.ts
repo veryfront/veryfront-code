@@ -32,6 +32,11 @@ import {
   getPrivateRuntimeObservationSchema,
   type PrivateRuntimeObservation,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  bindSyntheticToolResultRecovery,
+  bindToolResultSequence,
+  getToolResultSequenceSchema,
+} from "#veryfront/runtime/tool-result-sequence.ts";
 
 /** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
@@ -85,6 +90,8 @@ export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   privateToolCallAdmissions?: boolean;
   /** @internal Consume private runtime-observation sidecars for trusted durable mirrors only. */
   privateRuntimeObservations?: boolean;
+  /** @internal Consume executor-only result positions; never expose them in UI chunks. */
+  privateToolResultSequences?: boolean;
   generateMessageId?: () => string;
   sendReasoning?: boolean;
   onError?: (error: unknown, context?: { code?: string }) => string;
@@ -113,7 +120,7 @@ type ToolPart = {
   order: number;
   inputText: string;
   input: Record<string, unknown>;
-  state: "input-available" | "output-available" | "output-error";
+  state: "input-available" | "output-available" | "output-error" | "output-denied";
   providerExecuted?: boolean;
   output?: unknown;
   errorText?: string;
@@ -371,6 +378,7 @@ function observeChatStreamEvent(input: {
       return;
     }
     case "tool-output-available": {
+      if (event.preliminary === true) return;
       const toolPart = state.toolParts.get(event.toolCallId);
       if (!toolPart) {
         return;
@@ -380,6 +388,11 @@ function observeChatStreamEvent(input: {
       if (event.providerExecuted !== undefined) {
         toolPart.providerExecuted = event.providerExecuted;
       }
+      return;
+    }
+    case "tool-output-denied": {
+      const toolPart = state.toolParts.get(event.toolCallId);
+      if (toolPart) toolPart.state = "output-denied";
       return;
     }
     case "tool-output-error":
@@ -550,6 +563,8 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
         state: "output-available",
         output: toolPart.output,
       }
+      : toolPart.state === "output-denied"
+      ? { ...basePart, state: "output-denied" }
       : toolPart.state === "output-error"
       ? {
         ...basePart,
@@ -773,8 +788,21 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           privateToolCallOccurrenceId,
           privateObservedToolResult,
           privateRuntimeObservation,
+          privateToolResultSequence,
           ...event
         } = rawEvent;
+        const trustedToolResultSequence = options.privateToolResultSequences &&
+            privateToolResultSequence !== undefined
+          ? getToolResultSequenceSchema().parse(privateToolResultSequence)
+          : undefined;
+        if (
+          trustedToolResultSequence &&
+          !((event.type === "tool-output-available" && event.preliminary !== true) ||
+            event.type === "tool-output-error" || event.type === "tool-output-denied" ||
+            event.type === "tool-input-error")
+        ) {
+          throw new TypeError("Private tool result sequence is attached to an incompatible event");
+        }
         const trustedRuntimeObservation = options.privateRuntimeObservations &&
             privateRuntimeObservation !== undefined
           ? parseTrustedRuntimeObservation(privateRuntimeObservation)
@@ -820,6 +848,13 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
             });
           }
           const chunk = toUiChunk(chatEvent);
+          if (
+            trustedToolResultSequence && chunk &&
+            chunk.type === event.type && "toolCallId" in chunk &&
+            chunk.toolCallId === event.toolCallId
+          ) {
+            bindToolResultSequence(chunk, trustedToolResultSequence);
+          }
           if (
             options.privateToolCallAdmissions && event.type === "tool-input-start" &&
             chunk?.type === "tool-input-start" && typeof privateToolCallOccurrenceId === "string"
@@ -900,13 +935,17 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         });
         state.nextOrder += 1;
 
-        yield {
+        const recovery = {
           type: "tool-input-error",
           toolCallId,
           toolName: "unknown",
           input: toolInput,
           errorText,
-        };
+        } as const;
+        // This diagnostic is synthesized only after the producer stream ends.
+        // It cannot be an input to a later model call in that stream.
+        bindSyntheticToolResultRecovery(recovery);
+        yield recovery;
       }
       state.pendingToolDeltas.clear();
 

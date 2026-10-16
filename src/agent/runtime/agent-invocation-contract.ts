@@ -705,7 +705,7 @@ type DenyAllNormalization = { value: unknown; denyAll: boolean };
  * tool names are dropped from the allowlist with a warning, so they can never
  * re-grant the host tool.
  *
- * `bootstrapTools` and `bootstrapSkill` are dropped: both run through callable
+ * `bootstrapTools`, `optionalBootstrapTools`, and `bootstrapSkill` are dropped: these run through callable
  * tools (a startup skill is a synthetic `load_skill` call), which deny-all
  * forbids. Every other value passes through unchanged.
  */
@@ -739,6 +739,7 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // under a non-empty allowlist from re-adding them.
   const normalizedAgentConfig = copyOwnDataRecord(agentConfig, [
     "bootstrapTools",
+    "optionalBootstrapTools",
     "bootstrapSkill",
   ]);
   defineOwnData(normalizedAgentConfig, "tools", []);

@@ -42,7 +42,7 @@ function snapshot(
 
 function mirror(input: {
   append?: (events: unknown[]) => Promise<void>;
-  flush?: () => Promise<ConversationRunMirrorSnapshot>;
+  flush?: ConversationRunChunkMirror["flush"];
   capture?: (modelCallId: string) => AgentRunModelCallCaptureReceipt | undefined;
 } = {}) {
   const appended: unknown[][] = [];
@@ -240,7 +240,10 @@ describe("agent/hosted/durable-run-event-sink", () => {
     };
     const order: string[] = [];
     const target = mirror({
-      flush: () => {
+      flush: (options) => {
+        assertEquals(options?.waitForRetries, true);
+        assertInstanceOf(options?.abortSignal, AbortSignal);
+        assertEquals(options?.throwOnTimeoutRetry, true);
         order.push("flush");
         return Promise.resolve(snapshot({ latestEventId: 9 }));
       },

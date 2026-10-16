@@ -2,6 +2,14 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
+import { sendSSE } from "#veryfront/agent/runtime/sse-utils.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { withRuntimeStreamOwnership } from "#veryfront/runtime/runtime-stream-ownership.ts";
+import {
+  acknowledgeMirroredToolResult,
+  waitForQueuedToolResults,
+} from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 import {
   _resetShimForTests,
   setGlobalTracerProvider,
@@ -1007,7 +1015,12 @@ function tokenReceipt(token: unknown, run_id = "22222222-2222-4222-8222-22222222
   };
 }
 
-function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutOnce = false) {
+function inheritedAdmissionFixture(
+  timeoutMs = 1000,
+  retryOnce = false,
+  timeoutOnce = false,
+  observed = false,
+) {
   const runId = "44444444-4444-4444-8444-444444444444";
   let admissionCount = 0;
   let attempts = 0;
@@ -1019,6 +1032,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
   const capability = createHostedRunEventWriterCapability({
     apiUrl: "https://trusted.example.test",
     runId,
+    ...(observed ? { canonicalRunId: "55555555-5555-4555-8555-555555555555" } : {}),
     runEventAppendToken: "synthetic-parent-token",
     timeoutMs,
     inheritedAdmitter: () => async () => {
@@ -1050,6 +1064,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
     conversationId: "11111111-1111-4111-8111-111111111111",
     latestEventId: 0,
     latestExternalEventSequence: 0,
+    ...(observed ? { runtimeObservations: true } : {}),
   })!;
   return {
     mirror,
@@ -1058,6 +1073,52 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
     admit: inheritedChildAdmitter(capability, runId, "child-tool", "prompt"),
   };
 }
+
+Deno.test("inherited child mirror preserves the result barrier through its admission wrapper", async () => {
+  const fixture = inheritedAdmissionFixture(1000, false, false, true);
+  try {
+    const sink = createDurableRunEventSink({ mirror: fixture.mirror });
+    const encoder = new TextEncoder();
+    const stream = runWithMandatoryRunEventSink(
+      sink,
+      () =>
+        withRuntimeStreamOwnership(() =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              sendSSE(controller, encoder, { type: "message-start", messageId: "message-1" });
+              sendSSE(controller, encoder, {
+                type: "tool-output-available",
+                toolCallId: "fresh-result",
+                output: {},
+              });
+              controller.close();
+            },
+          })
+        ),
+    );
+    await stream.cancel();
+    let captureUnblocked = false;
+    const capture = waitForQueuedToolResults(fixture.mirror, [{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "fresh-result",
+        toolName: "reader",
+        output: { type: "json", value: {} },
+      }],
+    }], new AbortController().signal).then(() => {
+      captureUnblocked = true;
+    });
+    await Promise.resolve();
+    assertEquals(captureUnblocked, false);
+    acknowledgeMirroredToolResult(fixture.mirror, "fresh-result");
+    await capture;
+    assertEquals(captureUnblocked, true);
+  } finally {
+    fixture.acknowledge();
+    fixture.mirror.dispose();
+  }
+});
 
 for (const differentTool of [false, true]) {
   Deno.test(`inherited child admission ${differentTool ? "ignores a different persisted tool start" : "waits for its durable parent tool start"}`, async () => {

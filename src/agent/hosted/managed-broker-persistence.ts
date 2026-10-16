@@ -48,6 +48,10 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import {
+  bindManagedToolResultFence,
+  createManagedToolResultFence,
+} from "./managed-tool-result-fence.ts";
+import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
@@ -238,6 +242,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
       ? { timeoutMs: input.eventPersistenceTimeoutMs }
       : {}),
   });
+  const resultFence = runtimeObservationScope ? createManagedToolResultFence() : undefined;
   let tail = Promise.resolve();
   let failure: unknown;
   let failed = false;
@@ -266,6 +271,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         failure = error;
         failed = true;
         rejectToolAdmissions(error);
+        resultFence?.fail(error);
         throw error;
       }
     });
@@ -285,6 +291,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     });
   const modelRunEventSink: AgentRunEventSink = (event) =>
     queue(async () => await durableSink(event));
+  if (resultFence) bindManagedToolResultFence(modelRunEventSink, resultFence);
   if (runtimeObservationScope) {
     bindRuntimeObservationWriterCapability(
       modelRunEventSink,
@@ -311,6 +318,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
       return queue(async () => {
         await durableMirror.handleChunk(chunk);
         await flush();
+        resultFence?.resultPersisted(chunk);
         if (
           admissionScope && chunk.type === "tool-input-start" &&
           !isObservedToolResultStart(chunk)
@@ -399,12 +407,18 @@ export function createManagedBrokerPersistenceFromCapability(input: {
           throw terminalDispatchError;
         }
         if (terminalFailure.failed && !priorFailure.failed) throw terminalFailure.error;
+        resultFence?.fail(
+          new DurableRunEventPersistenceError(
+            "Managed output finished before the required tool result was persisted",
+          ),
+        );
       }, true);
     },
   };
   async function cleanup(): Promise<void> {
     if (cleaned) return;
     cleaned = true;
+    resultFence?.fail(new DurableRunEventPersistenceError("Managed result owner closed"));
     rejectToolAdmissions(new DurableRunEventPersistenceError("Tool-call admission owner closed"));
     toolAdmissions.clear();
     await tail;

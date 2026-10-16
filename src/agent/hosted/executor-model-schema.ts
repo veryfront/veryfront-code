@@ -4,6 +4,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getExecutorModelFailureSchema } from "./executor-model-errors.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { getToolResultSequenceSchema } from "#veryfront/runtime/tool-result-sequence.ts";
 
 const isArray = Array.isArray;
 const getPrototypeOf = Object.getPrototypeOf;
@@ -157,7 +158,9 @@ export const getExecutorModelOptionsSchema = defineSchema((v) => {
       v.object({
         type: v.literal("provider"),
         name: v.string(),
-        id: v.string().regex(/^.+\..+$/).transform((id) => id as `${string}.${string}`),
+        id: v.string().refine((id) =>
+          !/[\r\n\u2028\u2029]/.test(id) && id.slice(1, -1).includes(".")
+        ).transform((id) => id as `${string}.${string}`),
         args: v.record(v.string(), json),
       }).strict(),
     ])).max(MAX_ITEMS).optional(),
@@ -210,7 +213,11 @@ export const getExecutorModelReconciliationResultSchema = defineSchema((v) =>
 );
 
 export const getExecutorModelCallSchema = defineSchema((v) =>
-  v.object({ modelId: getModelIdSchema(), options: getExecutorModelOptionsSchema() }).strict()
+  v.object({
+    modelId: getModelIdSchema(),
+    options: getExecutorModelOptionsSchema(),
+    privateToolResultSequence: getToolResultSequenceSchema().optional(),
+  }).strict()
 );
 
 export const getExecutorModelMetadataSchema = defineSchema((v) =>

@@ -923,6 +923,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         ...(definition.bootstrapTools !== undefined
           ? { bootstrapTools: definition.bootstrapTools }
           : {}),
+        ...(definition.optionalBootstrapTools !== undefined
+          ? { optionalBootstrapTools: definition.optionalBootstrapTools }
+          : {}),
         ...(definition.bootstrapSkill !== undefined
           ? { bootstrapSkill: definition.bootstrapSkill }
           : {}),
@@ -986,6 +989,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedProviderToolNames: providerToolNames,
         toolLoading: definition.toolLoading,
         bootstrapTools: definition.bootstrapTools,
+        optionalBootstrapTools: definition.optionalBootstrapTools,
         knowledge: definition.knowledge,
         hostedKnowledgeContext: facades.hostedKnowledgeContext,
         // Executor models run through Veryfront Cloud whatever their id form.

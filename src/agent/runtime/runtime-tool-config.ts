@@ -207,14 +207,17 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
 export const MAX_CONFIGURED_BOOTSTRAP_TOOLS = 16;
 
 /** Snapshot an authored startup selection without widening its tool authorization. */
-export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly string[] {
+export function snapshotConfiguredToolBootstrapNames(
+  value: unknown,
+  field: "bootstrapTools" | "optionalBootstrapTools" = "bootstrapTools",
+): readonly string[] {
   if (value === undefined) return [];
   const names = ArrayIsArray(value) && value.length <= MAX_CONFIGURED_BOOTSTRAP_TOOLS
     ? snapshotStringArray(value)
     : undefined;
   if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
     throw CONFIG_INVALID.create({
-      detail: "bootstrapTools must contain at most 16 exact tool names",
+      detail: `${field} must contain at most 16 exact tool names`,
     });
   }
   for (let index = 0; index < names.length; index++) {
@@ -223,8 +226,7 @@ export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly s
       name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
     ) {
       throw CONFIG_INVALID.create({
-        detail:
-          "bootstrapTools requires exact executable tool names, excluding veryfront__tool_search",
+        detail: `${field} requires exact executable tool names, excluding veryfront__tool_search`,
       });
     }
   }

@@ -729,6 +729,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
         tools: false,
         providerTools: ["web_search", "code_execution"],
         bootstrapTools: ["load_skill"],
+        optionalBootstrapTools: ["create_file"],
         bootstrapSkill: "support-triage",
       },
       forwardedProps: {
@@ -741,6 +742,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.agentConfig?.providerTools, ["web_search", "code_execution"]);
     assertEquals(parsed.agentConfig?.skills, []);
     assertEquals(parsed.agentConfig?.bootstrapTools, undefined);
+    assertEquals(parsed.agentConfig?.optionalBootstrapTools, undefined);
     assertEquals(parsed.agentConfig?.bootstrapSkill, undefined);
     assertEquals(parsed.forwardedProps, {
       activeChatId: "chat_123",

@@ -294,6 +294,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   toolLoading?: RuntimeToolLoadingMode;
   /** Exact authored startup schemas, constrained by the authorized catalog. */
   bootstrapTools?: AgentConfig["bootstrapTools"];
+  optionalBootstrapTools?: AgentConfig["optionalBootstrapTools"];
   /** Authored framework knowledge selector supplied by trusted agent config. */
   knowledge?: AgentConfig["knowledge"];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -1189,6 +1190,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
   const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(input.bootstrapTools);
+  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.optionalBootstrapTools,
+    "optionalBootstrapTools",
+  );
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
@@ -1198,6 +1203,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         ...configuredBootstrapNames,
         ...eagerBootstrapToolNames,
         ...providerVisibleLocalToolNames,
+        // Best-effort startup priorities follow the existing mandatory schemas.
+        // Selection only retains names from the authorized provider-visible catalog.
+        ...optionalBootstrapNames,
       ],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
@@ -1217,6 +1225,32 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
           detail: "bootstrapTools contains a tool outside the authorized executable catalog",
         });
       }
+      if (!includesValue(bootstrapToolNames, name)) {
+        bootstrapToolNames[bootstrapToolNames.length] = name;
+      }
+    }
+    sortValues(bootstrapToolNames, compareStrings);
+  }
+  if (optionalBootstrapNames.length > 0) {
+    const candidates = [...bootstrapToolNames];
+    for (let index = 0; index < optionalBootstrapNames.length; index++) {
+      const name = optionalBootstrapNames[index]!;
+      const localTool = localRuntimeTools[name];
+      if (
+        includesValue(availableToolNames, name) &&
+        (localTool === undefined || !isRuntimeProviderSchemaHiddenTool(localTool)) &&
+        !includesValue(candidates, name)
+      ) candidates[candidates.length] = name;
+    }
+    const selected = selectProviderCompatibleToolNames(candidates, {
+      ...(input.toolSchemaTarget ?? { model: input.taskContext.model }),
+      requiredToolNames: bootstrapToolNames,
+      // Preserve slots for discovery and at least one discovered schema.
+      reservedToolSlots: (input.reservedToolSlots ?? 0) +
+        (toolLoadingMode === "deferred" && !toolSearchDenied ? 2 : 0),
+    });
+    for (let index = 0; index < selected.length; index++) {
+      const name = selected[index]!;
       if (!includesValue(bootstrapToolNames, name)) {
         bootstrapToolNames[bootstrapToolNames.length] = name;
       }
