@@ -1,3 +1,4 @@
+import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -1638,6 +1639,22 @@ describe("runtime-bridge", () => {
       (contexts[0]!.messages[0] as { providerMetadata?: unknown }).providerMetadata,
       providerMetadata,
     );
+    const replay = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      { prompt: contexts[0]!.messages, maxOutputTokens: 64 },
+      false,
+      {
+        push() {},
+        drain() {
+          return [];
+        },
+      },
+    );
+    assertEquals(replay.messages[0], {
+      role: "assistant",
+      content: providerMetadata.anthropic.rawAssistantMessages[0],
+    });
     providerMetadata.anthropic.rawAssistantMessages[0]![0]!.text = "Mutated";
     assertEquals(JSON.stringify(contexts[0]).includes("Mutated"), false);
   });
