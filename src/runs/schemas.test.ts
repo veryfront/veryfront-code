@@ -188,7 +188,7 @@ describe("runs/schemas", () => {
     );
   });
 
-  it("accepts the legacy schedules key and rejects a response with neither list key", () => {
+  it("reads the data list key and rejects a response without it", () => {
     const schedule = {
       id: "schedule_1",
       name: "Sync helpdesk",
@@ -200,17 +200,11 @@ describe("runs/schemas", () => {
     };
 
     const canonical = getScheduleReferenceListSchema().parse({ data: [schedule] });
-    assertEquals(canonical.data?.[0]?.id, "schedule_1");
-    assertEquals(canonical.schedules, undefined);
+    assertEquals(canonical.data[0]?.id, "schedule_1");
 
-    const legacy = getScheduleReferenceListSchema().parse({ schedules: [schedule] });
-    assertEquals(legacy.schedules?.[0]?.id, "schedule_1");
-    assertEquals(legacy.data, undefined);
-
-    assertEquals(
-      getScheduleReferenceListSchema().safeParse({ source_schedules: [] }).success,
-      false,
-    );
+    for (const response of [{ schedules: [schedule] }, { source_schedules: [] }]) {
+      assertEquals(getScheduleReferenceListSchema().safeParse(response).success, false);
+    }
   });
 
   it("requires source schedule timeouts to be positive integers", () => {

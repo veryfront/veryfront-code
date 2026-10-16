@@ -159,7 +159,12 @@ export interface ListRunsOptions extends ProjectScopedOptions {
 export interface ListRunEventsOptions {
   /** The previous page_info.next cursor. */
   cursor?: string;
-  /** Deprecated ascending cursor. Use cursor; do not supply both. */
+  /**
+   * Ascending, exclusive event ID cursor; 0 means no cursor. Sent as `cursor` with
+   * `sort_order=asc`. Do not supply both.
+   *
+   * @deprecated Use {@link ListRunEventsOptions.cursor}.
+   */
   afterEventId?: number;
   limit?: number;
 }
@@ -415,9 +420,7 @@ export class VeryfrontRunsClient {
       ),
       ScheduleReferenceListSchema,
     );
-    // `data` is the canonical list key. `schedules` is the legacy key that API
-    // deployments without `data` still return.
-    const schedule = (listed.data ?? listed.schedules ?? []).find((candidate) =>
+    const schedule = listed.data.find((candidate) =>
       candidate.status === "active" &&
       candidate.definition_source === "source" &&
       candidate.source_trigger_id === input.sourceTriggerId
@@ -478,12 +481,26 @@ export class VeryfrontRunsClient {
     runId: string,
     options: ListRunEventsOptions = {},
   ): Promise<RunsOutput<"listRunEvents"> & { page_info: RunEventList["page_info"] }> {
-    if (options.cursor !== undefined && options.afterEventId !== undefined) {
+    const { afterEventId } = options;
+    if (options.cursor !== undefined && afterEventId !== undefined) {
       throw INVALID_ARGUMENT.create({ detail: "Use cursor or afterEventId, not both." });
     }
+    if (afterEventId !== undefined && !(Number.isSafeInteger(afterEventId) && afterEventId >= 0)) {
+      throw INVALID_ARGUMENT.create({ detail: "afterEventId must be a non-negative integer." });
+    }
+    // The API resolves an event ID cursor exactly as the deprecated after_event_id.
+    const cursor = afterEventId === undefined
+      ? options.cursor
+      : afterEventId > 0
+      ? String(afterEventId)
+      : undefined;
     const page = await this.sdk().listRunEvents({
       path: { run_id: runId },
-      query: { cursor: options.cursor, after_event_id: options.afterEventId, limit: options.limit },
+      query: {
+        cursor,
+        ...(afterEventId === undefined ? {} : { sort_order: "asc" as const }),
+        limit: options.limit,
+      },
     });
     return {
       ...page,
