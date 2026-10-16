@@ -1653,7 +1653,7 @@ describe("runtime-bridge", () => {
     );
     assertEquals(replay.messages[0], {
       role: "assistant",
-      content: providerMetadata.anthropic.rawAssistantMessages[0],
+      content: providerMetadata.anthropic.rawAssistantMessages[0]!,
     });
     providerMetadata.anthropic.rawAssistantMessages[0]![0]!.text = "Mutated";
     assertEquals(JSON.stringify(contexts[0]).includes("Mutated"), false);
