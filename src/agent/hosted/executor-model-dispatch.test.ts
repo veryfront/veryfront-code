@@ -213,12 +213,12 @@ describe("hosted executor model dispatch", () => {
           assertEquals(order, ["persist", "dispatch"]);
           assertModelCallContextEvent(captured);
           assertEquals(dispatched, continuation);
-          assertEquals(captured.messages[0], {
+          assertEquals<unknown>(captured.messages[0], {
             role: "assistant",
             content: continuation[0]!.content,
             ...(exact ? { providerMetadata } : {}),
           });
-          assertEquals(captured.messages[1], continuation[1]);
+          assertEquals<unknown>(captured.messages[1], continuation[1]);
           assertEquals(isPrivateConversationRunEvent(captured), true);
         } finally {
           await channels.close();
