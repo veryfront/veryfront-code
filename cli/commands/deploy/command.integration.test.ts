@@ -249,7 +249,7 @@ function createDeployFetchHandler(options: {
         project_id: PROJECT_ID,
       });
     }
-    if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)) {
+    if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)) {
       if (options.releaseFiles) {
         return Response.json({
           data: [...options.releaseFiles].map(([path, body]) => ({
@@ -1334,7 +1334,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       }
       if (
         request.method === "GET" &&
-        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
       ) {
         releaseSourceReads++;
         return Response.json({
@@ -1406,8 +1406,8 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `GET /api/projects/${PROJECT_ID}/environments`,
         `POST /api/projects/${PROJECT_ID}/releases`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
-        `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
-        `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
+        `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/files`,
+        `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/files`,
         `GET /api/projects/my-project/releases/${RELEASE_ID}/asset-manifest`,
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
@@ -1530,12 +1530,12 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       `GET /api/projects/${PROJECT_ID}/environments`,
       `POST /api/projects/${PROJECT_ID}/releases`,
       `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
-      `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
+      `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/files`,
     ]);
     assertEquals(
       requests.filter((request) =>
         request ===
-          `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`
+          `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/files`
       ).length,
       20,
     );
@@ -1638,7 +1638,7 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
       }
       if (
         request.method === "GET" &&
-        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
       ) {
         return Response.json({
           data: [{
@@ -1717,7 +1717,7 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
       }));
 
     assertEquals(
-      requests.includes(`GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`),
+      requests.includes(`GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/files`),
       true,
     );
     assertEquals(
@@ -2015,7 +2015,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
       }
       if (
         request.method === "GET" &&
-        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
       ) {
         return Response.json({
           data: [{
@@ -2194,7 +2194,7 @@ it("collects configured app and pages routes when projectDir has a trailing slas
       }
       if (
         request.method === "GET" &&
-        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
       ) {
         return Promise.resolve(Response.json({
           data: [{
@@ -2343,7 +2343,7 @@ it("rejects configured route directories outside projectDir before walking", asy
       }
       if (
         request.method === "GET" &&
-        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
       ) {
         return Promise.resolve(Response.json({
           data: [{
@@ -2481,7 +2481,7 @@ it("rejects absolute configured route directories before walking", async () => {
         }
         if (
           request.method === "GET" &&
-          url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+          url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
         ) {
           return Promise.resolve(Response.json({
             data: [{
