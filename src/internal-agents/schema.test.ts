@@ -423,20 +423,39 @@ describe("internal-agents/schema", () => {
     );
   });
 
-  it("rejects a signed target whose kind does not match the exact source", () => {
-    assertThrows(
-      () =>
-        getInternalAgentStreamRequestSchema().parse({
-          agentId: "agent_1",
-          threadId: "10000000-1000-4000-8000-100000000001",
-          runId: "run_1",
-          ...ENVIRONMENT_TARGET,
-          agentSource: { type: "branch", branch: "main" },
-          messages: [],
-        }),
-      Error,
-      "environment runtime target requires an environment agent source",
+  it("requires an explicit branch source selector on an environment execution", () => {
+    const input = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...ENVIRONMENT_TARGET,
+      messages: [],
+      agentSource: { type: "branch", branch: "feature/source" },
+    };
+    assertThrows(() => getInternalAgentStreamRequestSchema().parse(input));
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({
+        ...input,
+        sourceTargetBranchId: null,
+      }).sourceTargetBranchId,
+      null,
     );
+  });
+
+  it("preserves independent signed source IDs in the strict stream contract", () => {
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      sourceTargetEnvironmentId: ENVIRONMENT_TARGET.runtimeTargetEnvironmentId,
+      sourceTargetBranchId: null,
+      agentSource: { type: "environment", environmentName: "staging", releaseId: "release_1" },
+      messages: [],
+    });
+    assertEquals(parsed.sourceTargetEnvironmentId, ENVIRONMENT_TARGET.runtimeTargetEnvironmentId);
+    assertEquals(parsed.sourceTargetBranchId, null);
+    assertEquals(parsed.runtimeTargetKind, "main_branch");
   });
 
   it("accepts a canonical AG-UI-aligned runtime payload", () => {

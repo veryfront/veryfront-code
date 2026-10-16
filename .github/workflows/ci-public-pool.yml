@@ -198,6 +198,8 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
