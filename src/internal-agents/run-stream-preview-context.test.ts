@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { defineSchema } from "#veryfront/schemas";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent as createAgent } from "#veryfront/agent";
@@ -18,6 +19,7 @@ describe("canonical shared-host project tool preview scope", () => {
         id: "publish_email_ingestion",
         type: "function",
         description: "Publish a synthetic preview artifact",
+        inputSchema: defineSchema((v) => v.object({}))(),
         inputSchemaJson: { type: "object", properties: {} },
         execute(_input, context) {
           observed.push(context);
