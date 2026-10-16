@@ -22,6 +22,7 @@ import {
   normalizeNewlines,
   splitSseFrames,
 } from "#veryfront/utils/sse-frames.ts";
+import { copyResponseBodyChunk, InvalidResponseBodyError } from "#veryfront/utils/response-body.ts";
 import { RUNS_OPERATIONS } from "./operations.ts";
 
 /** Contract operation ID. */
@@ -407,16 +408,21 @@ async function readBlob(
       const { done, value } = await reader.read();
       signal?.throwIfAborted();
       if (done) break;
-      // A host stream may yield non-byte chunks; they would bypass the byte count.
-      if (!(value instanceof Uint8Array)) {
+      // A host stream may yield non-byte chunks or chunks with a replaced `byteLength`;
+      // count a native copy through captured intrinsics so neither bypasses the limit.
+      let chunk: { bytes: Uint8Array; byteLength: number };
+      try {
+        chunk = copyResponseBodyChunk(value);
+      } catch (cause) {
+        if (!(cause instanceof InvalidResponseBodyError)) throw cause;
         throw successfulResponseProtocolError(
           "readRunArtifact received a non-byte body chunk",
           url,
         );
       }
-      size += value.byteLength;
+      size += chunk.byteLength;
       if (size > limit) throw tooLarge();
-      chunks.push(value);
+      chunks.push(chunk.bytes);
     }
   } catch (error) {
     void reader.cancel().catch(() => {});

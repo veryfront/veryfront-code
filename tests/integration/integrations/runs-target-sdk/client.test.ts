@@ -776,6 +776,45 @@ describe("Runs target SDK", () => {
     assertEquals(error.status, 502);
   });
 
+  it("counts run artifact bytes even when byteLength is replaced", async () => {
+    const sdkFor = (makeChunk: () => Uint8Array) =>
+      createRunsSdk({
+        transport: {
+          request: async (_path, init) =>
+            await init!.onResponse!(
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(makeChunk());
+                    controller.close();
+                  },
+                }),
+              ),
+              { ...init, maxResponseBytes: 4 },
+              "https://api.example.test/runs/r/artifacts/a",
+            ),
+        },
+      });
+    const input = { path: { run_id: RUN_ID, artifact_id: "a" } };
+
+    const ownGetter = sdkFor(() => {
+      const chunk = new Uint8Array(8);
+      Object.defineProperty(chunk, "byteLength", { get: () => 1 });
+      return chunk;
+    });
+    assertEquals((await rejection(() => ownGetter.readRunArtifact(input))).status, 502);
+
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const original = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!;
+    const patched = sdkFor(() => new Uint8Array(8));
+    Object.defineProperty(typedArrayPrototype, "byteLength", { ...original, get: () => 1 });
+    try {
+      assertEquals((await rejection(() => patched.readRunArtifact(input))).status, 502);
+    } finally {
+      Object.defineProperty(typedArrayPrototype, "byteLength", original);
+    }
+  });
+
   it("rejects a run artifact call that is missing artifact_id before sending it", async () => {
     const { sdk, requests } = sdkWith([]);
     await assertRejects(
