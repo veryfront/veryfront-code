@@ -79,7 +79,7 @@ async function geminiStepToolCall(toolName: string): Promise<AdapterToolCall> {
 
 describe("Google anonymous tool call materialization across agent steps", () => {
   it("materializes one tool card per step for id-less Gemini calls", async () => {
-    const first = await geminiStepToolCall("tool_search");
+    const first = await geminiStepToolCall("veryfront__tool_search");
     const second = await geminiStepToolCall("veryfront__list_files");
     assertNotEquals(first.toolCallId, second.toolCallId);
 
@@ -128,7 +128,7 @@ describe("Google anonymous tool call materialization across agent steps", () => 
         .filter((chunk) => chunk.type === "tool-input-start")
         .map(({ toolCallId, toolName }) => ({ toolCallId, toolName })),
       [
-        { toolCallId: first.toolCallId, toolName: "tool_search" },
+        { toolCallId: first.toolCallId, toolName: "veryfront__tool_search" },
         { toolCallId: second.toolCallId, toolName: "veryfront__list_files" },
       ],
     );
@@ -146,7 +146,11 @@ describe("Google anonymous tool call materialization across agent steps", () => 
     assertEquals(
       toolCards.map(({ toolCallId, toolName, state }) => ({ toolCallId, toolName, state })),
       [
-        { toolCallId: first.toolCallId, toolName: "tool_search", state: "output-available" },
+        {
+          toolCallId: first.toolCallId,
+          toolName: "veryfront__tool_search",
+          state: "output-available",
+        },
         {
           toolCallId: second.toolCallId,
           toolName: "veryfront__list_files",
@@ -157,11 +161,14 @@ describe("Google anonymous tool call materialization across agent steps", () => 
   });
 
   it("gives two id-less calls in one Gemini response distinct ids", async () => {
-    const calls = await geminiResponseToolCalls(["tool_search", "veryfront__list_files"]);
+    const calls = await geminiResponseToolCalls([
+      "veryfront__tool_search",
+      "veryfront__list_files",
+    ]);
     assertNotEquals(calls[0]!.toolCallId, calls[1]!.toolCallId);
 
     // A later response must not reuse either id from the earlier one.
-    const next = await geminiStepToolCall("tool_search");
+    const next = await geminiStepToolCall("veryfront__tool_search");
     assertEquals(calls.some((call) => call.toolCallId === next.toolCallId), false);
   });
 });

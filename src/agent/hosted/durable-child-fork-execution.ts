@@ -9,6 +9,10 @@ import {
   type HostedAcceptedTaskInputReceipt,
   persistHostedAcceptedTaskInput,
 } from "./child-run-event-writer-token.ts";
+import {
+  revokeHostedPlatformDependencies,
+  runWithHostedPlatformDependencies,
+} from "./platform-dependency-credential.ts";
 import { boundChildResultTelemetry } from "../child-run/result-telemetry.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
@@ -783,7 +787,21 @@ async function executeHostedDurableChildLifecycle<
         () =>
           withHostedInheritedLease(
             identifiers,
-            (abortSignal) => input.executeLocal({ durableChildRun: identifiers, abortSignal }),
+            async (abortSignal) => {
+              const onAbort = () => revokeHostedPlatformDependencies(identifiers);
+              abortSignal?.addEventListener("abort", onAbort, { once: true });
+              try {
+                abortSignal?.throwIfAborted();
+                return await runWithHostedPlatformDependencies(
+                  identifiers,
+                  async () =>
+                    await input.executeLocal({ durableChildRun: identifiers, abortSignal }),
+                );
+              } finally {
+                revokeHostedPlatformDependencies(identifiers);
+                abortSignal?.removeEventListener("abort", onAbort);
+              }
+            },
             input.executionOptions.abortSignal,
           ),
       ),

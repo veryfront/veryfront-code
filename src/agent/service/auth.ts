@@ -1,9 +1,23 @@
+import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
+import type { RuntimeRunAgentInput } from "#veryfront/internal-agents/schema.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { isSafeHostedJwtVerificationEnvironment } from "./jwt-verification-environment.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  readPlatformToolDependencies,
+  type VerifiedPlatformToolDependencies,
+} from "./platform-tool-dependency-claims.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  getVerifiedControlPlanePlatformDependencies,
+  type VerifiedControlPlaneRequestClaims,
+} from "#veryfront/internal-agents/control-plane-auth.ts";
+import type { RemoteToolSource } from "#veryfront/tool/types.ts";
+import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
@@ -14,6 +28,162 @@ const HeadersGet = Headers.prototype.get;
 const RegExpExec = RegExp.prototype.exec;
 const StringStartsWith = String.prototype.startsWith;
 const StringSlice = String.prototype.slice;
+const ObjectFreeze = Object.freeze;
+
+type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
+type HostedWriterScope = Readonly<{ projectId: string; runId: string; agentId?: string }>;
+const verifiedHostedWriterScopes = createPrivateWeakStore<object, HostedWriterScope>();
+const verifiedPlatformDependencies = createPrivateWeakStore<
+  object,
+  PlatformDependencyScope & { dependencies: VerifiedPlatformToolDependencies }
+>();
+const platformDependencyStorage = new AsyncLocalStorage<
+  {
+    active: boolean;
+    scope: PlatformDependencyScope;
+    dependencies: VerifiedPlatformToolDependencies;
+    sources: readonly RemoteToolSource[];
+  }
+>();
+const StorageRun = AsyncLocalStorage.prototype.run;
+const StorageGet = AsyncLocalStorage.prototype.getStore;
+
+/** Run host execution under an original verified grant; a cloned result cannot admit execution. */
+export async function runWithVerifiedPlatformToolDependencies<T>(
+  verification: HostedServiceRunEventAppendTokenResult | VerifiedControlPlaneRequestClaims,
+  scope: PlatformDependencyScope,
+  execute: () => Promise<T>,
+): Promise<T> {
+  const runner = createVerifiedPlatformToolDependencyRunner(verification, scope);
+  try {
+    return await runner.run(execute);
+  } finally {
+    runner.revoke();
+  }
+}
+
+/** Private host lifetime adapter; never passed to tenant tool context or JSON transport. */
+export function createVerifiedPlatformToolDependencyRunner(
+  verification: HostedServiceRunEventAppendTokenResult | VerifiedControlPlaneRequestClaims,
+  scope: PlatformDependencyScope,
+): Readonly<
+  {
+    run<T>(execute: () => Promise<T>): Promise<T>;
+    revoke(): void;
+    captureSource(source: RemoteToolSource): void;
+  }
+> {
+  const dependencies = getVerifiedPlatformToolDependencies(verification, scope);
+  if (dependencies === undefined) throw new Error("Platform dependency authority is unavailable");
+  const state = {
+    active: true,
+    scope: ObjectFreeze({ ...scope }),
+    dependencies,
+    sources: [] as readonly RemoteToolSource[],
+  };
+  return ObjectFreeze({
+    run<T>(execute: () => Promise<T>): Promise<T> {
+      if (!state.active) throw new Error("Platform dependency authority is no longer active");
+      return ReflectApply(StorageRun, platformDependencyStorage, [state, execute]) as Promise<T>;
+    },
+    revoke() {
+      state.active = false;
+    },
+    captureSource(source: RemoteToolSource) {
+      if (!state.active || !hasTrustedPlatformSource(source)) {
+        throw new Error("Untrusted platform dependency source");
+      }
+      state.sources = ObjectFreeze([...state.sources, source]);
+    },
+  });
+}
+
+type PlatformDependencyRunner = ReturnType<typeof createVerifiedPlatformToolDependencyRunner>;
+const platformDependencyOwners = createPrivateWeakStore<
+  RuntimeRunAgentInput,
+  PlatformDependencyRunner
+>();
+
+/** Bind an actual host execution object; JSON clones and public context cannot acquire the grant. */
+export function registerPlatformDependencyOwner(
+  owner: RuntimeRunAgentInput,
+  verification: HostedServiceRunEventAppendTokenResult | VerifiedControlPlaneRequestClaims,
+  scope: PlatformDependencyScope,
+): void {
+  platformDependencyOwners.set(
+    owner,
+    createVerifiedPlatformToolDependencyRunner(verification, scope),
+  );
+}
+
+export function capturePlatformDependencySource(
+  owner: RuntimeRunAgentInput,
+  source: RemoteToolSource,
+): void {
+  const runner = platformDependencyOwners.get(owner);
+  if (!runner) throw new Error("Platform dependency owner is unavailable");
+  runner.captureSource(source);
+}
+
+export function runWithPlatformDependencyOwner<T>(
+  owner: RuntimeRunAgentInput,
+  execute: () => Promise<T>,
+): Promise<T> {
+  const runner = platformDependencyOwners.get(owner);
+  return runner ? runner.run(execute) : execute();
+}
+
+export function revokePlatformDependencyOwner(owner: RuntimeRunAgentInput): void {
+  platformDependencyOwners.get(owner)?.revoke();
+}
+
+/** Private runtime-only source lookup; never placed in application configuration or context. */
+export function getActivePlatformDependencySources(
+  scope: { projectId?: string; runId?: string; agentId?: string },
+): readonly RemoteToolSource[] {
+  const state = ReflectApply(StorageGet, platformDependencyStorage, []) as ReturnType<
+    typeof platformDependencyStorage.getStore
+  >;
+  return state?.active && state.scope.projectId === scope.projectId &&
+      state.scope.runId === scope.runId && state.scope.agentId === scope.agentId
+    ? state.sources
+    : [];
+}
+
+/** Internal runtime lookup, bound to the current authenticated project, run and agent. */
+export function getActivePlatformToolDependencies(
+  scope: { projectId?: string; runId?: string; agentId?: string },
+): VerifiedPlatformToolDependencies | undefined {
+  const state = ReflectApply(StorageGet, platformDependencyStorage, []) as ReturnType<
+    typeof platformDependencyStorage.getStore
+  >;
+  return state?.active && state.scope.projectId === scope.projectId &&
+      state.scope.runId === scope.runId && state.scope.agentId === scope.agentId
+    ? state.dependencies
+    : undefined;
+}
+
+/** Check original verified writer provenance even when this run declares no dependencies. */
+export function hasVerifiedHostedPlatformDependencyWriter(
+  verification: HostedServiceRunEventAppendTokenResult,
+  scope: HostedWriterScope,
+): boolean {
+  const verified = verifiedHostedWriterScopes.get(verification);
+  return verified?.projectId === scope.projectId && verified.runId === scope.runId &&
+    (scope.agentId === undefined || verified.agentId === scope.agentId);
+}
+
+/** Read host-owned grants only from the original signature-verification result and exact scope. */
+export function getVerifiedPlatformToolDependencies(
+  verification: HostedServiceRunEventAppendTokenResult | VerifiedControlPlaneRequestClaims,
+  scope: PlatformDependencyScope,
+): VerifiedPlatformToolDependencies | undefined {
+  const bound = verifiedPlatformDependencies.get(verification);
+  return bound?.projectId === scope.projectId && bound.runId === scope.runId &&
+      bound.agentId === scope.agentId
+    ? bound.dependencies
+    : getVerifiedControlPlanePlatformDependencies(verification, scope);
+}
 
 function readRequestHeader(request: Request, name: string): string | null {
   if (!RequestHeadersGetter) return null;
@@ -63,6 +233,7 @@ export type HostedServiceRunEventAppendTokenInput = {
   token: string;
   projectId: string;
   runId: string;
+  agentId?: string;
 };
 
 /**
@@ -318,6 +489,41 @@ async function getDefaultAuthProvider(): Promise<HostedServiceJwtVerifier> {
     "@veryfront/ext-auth-jwt",
   ).then(({ createAuthProvider }) => createAuthProvider({}));
   return await defaultAuthProviderPromise;
+}
+
+/** Independently verify dependency authority against operator values captured before tenant loading. */
+async function readOperatorWriterDependencies(input: HostedServiceRunEventAppendTokenInput) {
+  const publicKey = getHostBootEnv("OAUTH_PUBLIC_KEY");
+  const serviceAccountId = getHostBootEnv("SERVICE_ACCOUNT_VERYFRONT_SERVER_ID");
+  if (!publicKey || !serviceAccountId) return undefined;
+  try {
+    const verifier = await getDefaultAuthProvider();
+    const payload = await verifier.verifyWithPublicKey(input.token, publicKey, {
+      algorithms: ["RS256"],
+    });
+    const read = (key: string) =>
+      readOwnDataProperty(payload, key, "Operator writer claims", false);
+    const scope = read("scope");
+    const scopes = read("scopes");
+    const exactScopes =
+      (scopes === undefined && hasExactCancellationScopes(scope, RUN_EVENT_WRITER_V1_SCOPES)) ||
+      (scope === undefined && hasExactCancellationScopes(scopes, RUN_EVENT_WRITER_V2_SCOPES));
+    if (
+      read("actorType") !== "service_account" || read("tokenUse") !== RUN_EVENT_WRITER_TOKEN_USE ||
+      read("serviceAccountId") !== serviceAccountId || read("userId") !== serviceAccountId ||
+      read("projectId") !== input.projectId || read("runId") !== input.runId ||
+      (input.agentId !== undefined && read("agentId") !== input.agentId) || !exactScopes ||
+      read("runEventWriterTokenPurpose") !== undefined
+    ) return undefined;
+    const claim = read("platformToolDependencies");
+    const agentId = read("agentId");
+    return {
+      ...(typeof agentId === "string" && agentId.length > 0 ? { agentId } : {}),
+      dependencies: claim === undefined ? undefined : readPlatformToolDependencies(claim),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function getAuthProvider(
@@ -772,14 +978,52 @@ export function createHostedServiceAuth(
           ) return { verified: false };
         }
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
-        return {
+        const dependenciesClaim = readOwnDataProperty(
+          payload,
+          "platformToolDependencies",
+          "Writer claims",
+          false,
+        );
+        const dependencies = dependenciesClaim === undefined
+          ? undefined
+          : readPlatformToolDependencies(dependenciesClaim);
+        if (
+          dependencies !== undefined &&
+          (!input.agentId || payload.agentId !== input.agentId ||
+            readOwnDataProperty(payload, "runEventWriterTokenPurpose", "Writer claims", false) !==
+              undefined)
+        ) return { verified: false };
+        const result: HostedServiceRunEventAppendTokenResult = {
           verified: true,
           ...(rootRunId !== undefined ? { rootRunId } : {}),
           ...(taskInputSha256 !== undefined ? { taskInputSha256, taskInputRootRunId } : {}),
           ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
-        } as HostedServiceRunEventAppendTokenResult;
+        };
+        const operatorWriter = await readOperatorWriterDependencies(input);
+        if (operatorWriter) {
+          verifiedHostedWriterScopes.set(
+            result,
+            ObjectFreeze({
+              projectId: input.projectId,
+              runId: input.runId,
+              ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
+            }),
+          );
+        }
+        if (operatorWriter?.dependencies !== undefined && input.agentId) {
+          verifiedPlatformDependencies.set(
+            result,
+            ObjectFreeze({
+              projectId: input.projectId,
+              runId: input.runId,
+              agentId: input.agentId,
+              dependencies: operatorWriter.dependencies,
+            }),
+          );
+        }
+        return result;
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
           error: error instanceof Error ? error.message : String(error),

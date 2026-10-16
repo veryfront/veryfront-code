@@ -49,7 +49,7 @@ function isProviderSchemaVisibleToolDefinition(tool: ToolDefinition): boolean {
 }
 
 /** Framework-owned model-facing tool used to load authorized schemas. */
-export const TOOL_SEARCH_TOOL_NAME = "tool_search";
+export const TOOL_SEARCH_TOOL_NAME = "veryfront__tool_search";
 
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
 const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
@@ -435,7 +435,7 @@ function collectSearchCandidates(input: {
 }
 
 /**
- * Exact flat `tool_search` arguments carried forward by inventory pagination.
+ * Exact flat `veryfront__tool_search` arguments carried forward by inventory pagination.
  * `inventory` selects the mode and its scope; the other fields refine it.
  */
 export interface ToolInventorySelector {
@@ -461,7 +461,7 @@ export type ToolInventoryPage = {
   loadedCount: 0;
   miss: boolean;
   nextCursor: string | null;
-  /** Exact `tool_search` arguments for the next page, or null when complete. */
+  /** Exact `veryfront__tool_search` arguments for the next page, or null when complete. */
   nextPageInput: ToolInventorySelector | null;
   /** Present when a domain or resource filter matches no authorized tool. */
   invalidFilter?: {
@@ -469,7 +469,7 @@ export type ToolInventoryPage = {
     allowedValues: string[];
     truncated: boolean;
   };
-  /** Exact `tool_search` arguments that browse without the rejected filters. */
+  /** Exact `veryfront__tool_search` arguments that browse without the rejected filters. */
   restartInput?: ToolInventorySelector;
 };
 
@@ -920,7 +920,7 @@ export function readToolExposureContract(input: {
 }
 
 /**
- * Create the framework `tool_search` definition without exposing catalog
+ * Create the framework `veryfront__tool_search` definition without exposing catalog
  * schemas. The root schema has no `oneOf`, `anyOf`, or `allOf` because some
  * providers reject root combinators; the runtime enforces exactly one mode.
  * Every field is a top-level scalar: nested argument objects led models to

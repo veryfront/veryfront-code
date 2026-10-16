@@ -58,7 +58,7 @@ authenticated conflict headers supply append cursors; an event writer credential
 does not grant event-read access. This cutover does not preserve the old standalone
 helper contract.
 
-Hosted `form_input` suspends through the API's durable checkpoint owner. The old
+Hosted `veryfront__form_input` suspends through the API's durable checkpoint owner. The old
 turn stops after its tool call is persisted; submission resumes a new turn with
 the stored private tool result. Public input reads remain redacted for password
 fields. Only one form can wait in an execution turn; a second concurrent form
@@ -71,11 +71,11 @@ for password input. These limits do not change public secret redaction.
 
 ## Explicit agent outcomes
 
-A hosted agent can call `succeed_run` with final JSON `output`, or `fail_run` with
+A hosted agent can call `veryfront__succeed_run` with final JSON `output`, or `veryfront__fail_run` with
 an `error` containing `code`, `message`, and optional JSON `details`. Use `null`
 when success has no output. These platform tools infer the current run from
 private execution authority and do not accept a run ID or status.
 
 An accepted outcome stops further tool and model execution. Success records
 `completed`; failure records `failed`. A rejected terminal request leaves the
-agent able to continue. The existing `finalize` tool remains supported.
+agent able to continue. The existing `veryfront__finalize` tool remains supported.

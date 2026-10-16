@@ -19,6 +19,8 @@ import {
 import { VERSION } from "#cli/utils";
 
 const NOISY_DEFAULT_FRAGMENTS = [
+  "Initializing caches...",
+  "Initialization complete",
   "Dev server running at",
   "Listening on http://",
   "Shutting down dev server",
@@ -562,7 +564,7 @@ describe(
 
           const output = run.output();
           assertStringIncludes(output, `Veryfront (v${VERSION})`);
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           assert(!output.includes("Logged in as"));
           assert(!output.includes("Press s to"));
 
@@ -591,7 +593,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           assertIncludesAny(
             output,
             DEBUG_EXTENSION_DIAGNOSTICS,
@@ -650,7 +652,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
             assert(
               !output.includes(fragment),

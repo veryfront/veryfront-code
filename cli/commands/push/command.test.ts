@@ -1354,9 +1354,9 @@ describe("push receipt source snapshot", () => {
         assertEquals(link?.projectSlug, reservedSlug);
         assertEquals((await resolveConfig(projectDir)).projectId, "project-123");
         assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          reservedSlug,
         );
 
         const projectCreateRequestsAfterFirstPush = projectCreateRequests;
@@ -1367,7 +1367,7 @@ describe("push receipt source snapshot", () => {
           requests.filter((request) => request === "GET /projects/project-123/files").length > 0,
           true,
         );
-        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json"]);
+        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json", "veryfront.json"]);
         assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
       } finally {
         globalThis.fetch = originalFetch;
@@ -1448,9 +1448,9 @@ describe("push receipt source snapshot", () => {
         const link = await readProjectLink(projectDir);
         assertEquals(link?.projectId, "project-123");
         assertEquals(link?.projectSlug, reservedSlug);
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          reservedSlug,
         );
       } finally {
         globalThis.fetch = originalFetch;
@@ -1507,9 +1507,9 @@ describe("push receipt source snapshot", () => {
             const link = await readProjectLink(projectDir);
             assertEquals(link?.projectId, "project-123");
             assertEquals(link?.projectSlug, "my-project");
-            await assertRejects(
-              () => Deno.stat(`${projectDir}/veryfront.json`),
-              Deno.errors.NotFound,
+            assertEquals(
+              JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+              "my-project",
             );
             return Response.json({ error: "upload failed" }, { status: 500 });
           }
@@ -1526,9 +1526,9 @@ describe("push receipt source snapshot", () => {
         const link = await readProjectLink(projectDir);
         assertEquals(link?.projectId, "project-123");
         assertEquals(link?.projectSlug, "my-project");
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          "my-project",
         );
       } finally {
         globalThis.fetch = originalFetch;

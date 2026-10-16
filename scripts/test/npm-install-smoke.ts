@@ -1582,7 +1582,7 @@ async function checkStarterDevServer(
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     if (server.exited()) break;
-    if (server.log().includes("Ready in")) {
+    if (server.log().includes("✓ App ready")) {
       ready = true;
       break;
     }

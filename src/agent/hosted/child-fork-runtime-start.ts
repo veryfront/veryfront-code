@@ -4,6 +4,7 @@ import {
   hostedInheritedRootRunId,
   hostedInheritedTaskInput,
 } from "./terminal-credential.ts";
+import { bindHostedPlatformDependencyRuntime } from "./platform-dependency-credential.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import {
@@ -103,6 +104,7 @@ export function startHostedChildForkRuntimeWithHostTools<
   };
   inheritHostedChildInferenceAuthority(forkInput, runtimeInput);
   inheritHostedTaskInputAuthority(forkInput, runtimeInput);
+  if (durableChildRun) bindHostedPlatformDependencyRuntime(forkInput, durableChildRun);
   const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools(forkInput);
 
   return {

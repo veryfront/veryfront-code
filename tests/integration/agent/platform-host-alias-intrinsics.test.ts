@@ -1,7 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { HostToolSet } from "#veryfront/tool";
-import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
-import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  canonicalPlatformHostTools,
+  withPlatformHostToolAliases,
+} from "#veryfront/agent/platform-host-tools.ts";
 
 function definition(id: string): HostToolSet[string] {
   return {
@@ -53,4 +59,23 @@ Deno.test("platform aliases ignore patched array iterators", () => {
   assertEquals(tools.veryfront__load_skill, undefined);
   assertEquals(hasTrustedHostToolProvenance(forged), false);
   assertEquals(hasTrustedHostToolProvenance(tools.veryfront__sleep), true);
+});
+
+Deno.test("canonical platform host tools ignore patched array iterators", () => {
+  const platform = markTrustedHostToolProvenance(definition("load_skill"));
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  let tools: HostToolSet;
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...descriptor,
+      value: () => {
+        throw new Error("Array iterator must not run");
+      },
+    });
+    tools = canonicalPlatformHostTools({ load_skill: platform });
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+  }
+  assertEquals(Object.keys(tools), ["veryfront__load_skill"]);
+  assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
 });

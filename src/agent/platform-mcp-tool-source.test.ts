@@ -1,6 +1,11 @@
 import { inheritTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { createMcpToolPolicyGate } from "./mcp-tool-policy.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLivePlatformMcpSource,
@@ -26,9 +31,8 @@ describe("platform MCP catalog aliases", () => {
       },
     });
     assertEquals((await source.listTools()).map(({ name }) => name), [
-      "get_file",
-      "github__delete_repo",
       "veryfront__get_file",
+      "github__delete_repo",
     ]);
     assertEquals(
       platformMcpLegacyName("veryfront__github__delete_repo"),
@@ -55,7 +59,9 @@ describe("platform MCP catalog aliases", () => {
         return {};
       },
     }, definitions);
-    assertEquals(catalog.definitions, definitions);
+    const canonicalDefinition = definitions[1];
+    assertExists(canonicalDefinition);
+    assertEquals(catalog.definitions, [canonicalDefinition]);
     await catalog.source.executeTool("veryfront__get_file", {});
     assertEquals(calls, ["veryfront__get_file"]);
   });
@@ -91,11 +97,10 @@ it("live platform catalogs preserve existing canonical dispatch", async () => {
   });
   assertEquals((await source.listTools()).map(({ name }) => name), [
     "veryfront__get_file",
-    "get_file",
   ]);
   await source.executeTool("veryfront__get_file", {});
-  await source.executeTool("get_file", {});
-  assertEquals(calls, ["veryfront__get_file", "veryfront__get_file"]);
+  await assertRejects(() => source.executeTool("get_file", {}));
+  assertEquals(calls, ["veryfront__get_file"]);
 });
 
 it("live platform execution resolves undiscovered aliases without repeating known discovery", async () => {
@@ -126,6 +131,73 @@ it("live platform execution resolves undiscovered aliases without repeating know
   await source.executeTool("veryfront__update_file", {});
   assertEquals(calls, ["get_file", "get_file", "update_file"]);
   assertEquals(listings, 2);
+});
+
+it("live platform execution rejects every unadvertised qualified name after one refresh", async () => {
+  let listings = 0;
+  const calls: string[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      return [{
+        name: "get_file",
+        description: "Read",
+        parameters: { type: "object" as const, properties: {} },
+      }];
+    },
+    executeTool: async (name) => {
+      calls.push(name);
+      return {};
+    },
+  });
+
+  await assertRejects(
+    () => source.executeTool("veryfront__hidden_admin_operation", {}),
+    Error,
+    "not in the platform catalog",
+  );
+  await assertRejects(
+    () => source.executeTool("github__unknown", {}),
+    Error,
+    "not in the platform catalog",
+  );
+  await assertRejects(
+    () => source.executeTool("get_file", {}),
+    Error,
+    "not in the platform catalog",
+  );
+
+  assertEquals(listings, 3, "each absent name refreshes the live catalog exactly once");
+  assertEquals(calls, [], "unadvertised names must never reach the underlying source");
+});
+
+it("live platform execution discovers a newly advertised connector before dispatch", async () => {
+  let listings = 0;
+  const calls: string[] = [];
+  const names = ["get_file"];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      return names.map((name) => ({
+        name,
+        description: name,
+        parameters: { type: "object" as const, properties: {} },
+      }));
+    },
+    executeTool: async (name) => {
+      calls.push(name);
+      return {};
+    },
+  });
+
+  await source.listTools();
+  names.push("github__list_issues");
+  await source.executeTool("github__list_issues", {});
+
+  assertEquals(listings, 2);
+  assertEquals(calls, ["github__list_issues"]);
 });
 
 it("does not restore aliases removed by an outer policy when adapted again", async () => {

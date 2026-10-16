@@ -1,4 +1,6 @@
 import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
+import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
+import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
 import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
 import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
@@ -438,7 +440,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       ? {}
       : { __vfToolSchemaTarget: input.toolAssembly.toolSchemaTarget }),
     // Assembly consumed the authored startup tools; the runtime's provider
-    // capping pass (for example after exposing get_tool_result) must keep them.
+    // capping pass (for example after exposing veryfront__get_tool_result) must keep them.
     ...(input.options.bootstrapTools !== undefined
       ? { __vfRetainedBootstrapToolNames: input.options.bootstrapTools }
       : {}),
@@ -553,7 +555,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
     (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return inheritRuntimeProviderSchemaHiddenTool(
+      const scopedTool = inheritRuntimeProviderSchemaHiddenTool(
         tool,
         inheritTrustedHostToolProvenance(
           tool,
@@ -572,6 +574,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
           }),
         ),
       );
+      return sealToolPlatformDependencies(scopedTool);
     },
   );
 }
@@ -585,8 +588,8 @@ export function scopeHostedRuntimeTools(input: {
   const scopedTools = scopeHostedRuntimeToolResults(input.tools);
   return mapOwnRecord(
     scopedTools,
-    (_toolName, tool) =>
-      inheritRuntimeProviderSchemaHiddenTool(
+    (_toolName, tool) => {
+      const scopedTool = inheritRuntimeProviderSchemaHiddenTool(
         tool,
         inheritTrustedHostToolProvenance(
           tool,
@@ -600,7 +603,9 @@ export function scopeHostedRuntimeTools(input: {
               }),
           }),
         ),
-      ),
+      );
+      return sealToolPlatformDependencies(scopedTool);
+    },
   );
 }
 
@@ -653,6 +658,7 @@ export async function createDefaultHostedChatRuntime(
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
   const taskInput = resolveHostedTaskInput(input.options.taskInput, input.options);
+  const runWithPlatformDependencies = captureHostedPlatformDependencyExecution();
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
@@ -808,11 +814,13 @@ export async function createDefaultHostedChatRuntime(
               ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),
             }),
             runStream: (operation) =>
-              runWithDefaultHostedRequestContext({
-                taskContext,
-                cloudContext,
-                operation,
-              }),
+              runWithPlatformDependencies(() =>
+                runWithDefaultHostedRequestContext({
+                  taskContext,
+                  cloudContext,
+                  operation,
+                })
+              ),
             warnOrphanedToolInput: (message, metadata) => {
               input.logger?.warn(message, {
                 ...metadata,

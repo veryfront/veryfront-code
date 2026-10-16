@@ -753,6 +753,84 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
   });
 
+  it("publishes only canonical trusted host names in a child fork", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const traceCalls: string[] = [];
+    const attributes: Record<string, unknown>[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkTools: {
+        create_file: markTrustedHostToolProvenance({
+          description: "Create a file.",
+          inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+          execute: () => ({ ok: true }),
+        }),
+      },
+      forkToolNames: ["create_file", "veryfront__create_file"],
+      traceTools: {
+        trace: (spanName, operation) => {
+          traceCalls.push(spanName);
+          return operation();
+        },
+        buildAttributes: ({ toolName, toolCallId }) => ({ toolName, toolCallId }),
+        setAttributes: (nextAttributes) => {
+          attributes.push(nextAttributes);
+        },
+      },
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        const createFileTool = input.runtimeTools.veryfront__create_file;
+        if (createFileTool && typeof createFileTool !== "boolean") {
+          await createFileTool.execute({ path: "artifact.md" }, { toolCallId: "tool-call-1" });
+        }
+
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    const parts: ForkPart[] = [];
+    for await (const part of streamResult.fullStream) {
+      parts.push(part);
+    }
+
+    assertEquals(forkToolNames, ["veryfront__create_file"]);
+    assertEquals(capturedInputs[0]?.forkToolNames, forkToolNames);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["veryfront__create_file"]);
+    assertEquals(traceCalls, ["tool.veryfront__create_file"]);
+    assertEquals(attributes, [{ toolName: "veryfront__create_file", toolCallId: "tool-call-1" }]);
+    assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
+  });
+
   it("preserves and executes an authorized remote alias across repeated child runtimes", async () => {
     const providerId = "child-remote-tool-regression";
     let streamCalls = 0;

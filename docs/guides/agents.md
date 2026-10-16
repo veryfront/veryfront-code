@@ -65,9 +65,9 @@ capabilities beside it:
 agents/
   researcher/
     AGENT.md            # the agent definition (frontmatter + instructions)
-    SKILL.md            # the agent's own skill, loaded as load_skill("researcher")
+    SKILL.md            # the agent's own skill, loaded as veryfront__load_skill("researcher")
     skills/
-      cite/SKILL.md     # an extra skill, loaded as load_skill("researcher--cite")
+      cite/SKILL.md     # an extra skill, loaded as veryfront__load_skill("researcher--cite")
     tools/
       fetch-paper.ts    # a colocated tool, registered as "researcher--fetch-paper"
 ```
@@ -94,13 +94,13 @@ Research the question and cite every claim.
 
 - Omit `skills` or use `skills: true` to advertise and authorize every skill
   visible to the agent. Use `skills: []` to advertise none and to authorize no
-  project or configured skill for `load_skill`.
+  project or configured skill for `veryfront__load_skill`.
 - The difference between omitting `skills` and `skills: true` shows only when a
   project has no skills at all. An agent that omitted it gets no skill tools,
   because there is nothing for them to load. `skills: true` is a declaration,
   so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
-  schemas are deferred behind `tool_search` until the agent searches for them.
+  schemas are deferred behind `veryfront__tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
@@ -115,7 +115,7 @@ Research the question and cite every claim.
   namespaces collide are reported as discovery errors.
   The same catalog metadata is used by local and hosted runtime paths. Hosted
   skill loading uses the catalog `sourcePath`, not a path reconstructed from the
-  namespaced id, so `load_skill("researcher--cite")` resolves to the actual
+  namespaced id, so `veryfront__load_skill("researcher--cite")` resolves to the actual
   colocated `SKILL.md`.
 
 ## Add tools
@@ -169,7 +169,7 @@ The `tools` selector controls both authorization and initial schema exposure:
 - Omit `tools` to expose no project tools.
 - Use an explicit map to expose only those selected schemas immediately.
 - Use `tools: true` to authorize every tool in the current scope while initially
-  exposing only bootstrap tools and `tool_search`.
+  exposing only bootstrap tools and `veryfront__tool_search`.
 
 A successful search makes matching authorized schemas visible on the next model
 step.
@@ -178,14 +178,14 @@ Set `toolLoading: "deferred"` to use the same lookup flow with an explicit tool
 map. Authorization stays limited to the selected tools; lookup cannot enable a
 denied tool. Set `toolLoading: "eager"` to load schemas upfront. Omission preserves
 the existing defaults above. Deferred inventories show up to 20 descriptions;
-`tool_search` also finds authorized tools omitted from that initial inventory.
+`veryfront__tool_search` also finds authorized tools omitted from that initial inventory.
 
 ### Expose a startup tool set
 
 To expose a small startup set while leaving the rest of the catalog deferred,
 set `bootstrapTools` to up to 16 exact executable tool names. The selection does
 not grant access or replace the trusted skill loader. The runtime rejects names
-outside the authorized catalog, `tool_search`, and selections that exceed the
+outside the authorized catalog, `veryfront__tool_search`, and selections that exceed the
 model's schema limit. Per-step skill and execution restrictions still apply, so
 a startup tool removed by those restrictions is unavailable on that step. Other
 authorized tools remain discoverable. Omit `bootstrapTools` to keep the default
@@ -218,7 +218,7 @@ not make that mode deferred.
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
 The default inline limit is 16 KiB. Larger results become a run-scoped reference
-with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up to
+with a 4 KiB preview; the framework supplies `veryfront__get_tool_result` for reads of up to
 16 KiB per section. The result identifies its total size and next cursor.
 
 ```ts
@@ -279,7 +279,7 @@ const assistant = agent({
 });
 ```
 
-The framework `tool_search` fallback is provider-neutral. It searches the
+The framework `veryfront__tool_search` fallback is provider-neutral. It searches the
 authorized `tools` catalog and configured `providerTools` that the selected
 model supports. Provider-native entries contain only a name and description
 until a search loads them. The runtime attaches the provider's native schema on
@@ -287,7 +287,7 @@ the next model step.
 
 Search ranks an exact tool name first, followed by normalized substrings in the
 tool name, description, and input parameter descriptions. It returns at most
-five names and descriptions. Results never include schemas, and `tool_search`
+five names and descriptions. Results never include schemas, and `veryfront__tool_search`
 has no pagination options.
 
 Loading a schema never authorizes a tool. The runtime rechecks authorization
@@ -384,7 +384,7 @@ export default agent({
 
 Skills are reusable instruction packs discovered from your project's `skills/`
 directory. Agents with enabled skill access receive the visible skill catalog
-and `load_skill` automatically. Omitted `skills` uses the visible catalog when
+and `veryfront__load_skill` automatically. Omitted `skills` uses the visible catalog when
 one exists; `skills: false` and `skills: []` remove skill access.
 
 ```ts
@@ -403,12 +403,12 @@ export default agent({
 
 Use `skills: ["incident-response", "repo-maintainer"]` to advertise and
 authorize only those skills. Use `skills: []` to advertise no skills and to
-authorize none for `load_skill`. An explicit selector is an authorization
-boundary for `load_skill`, not just a prompt filter.
+authorize none for `veryfront__load_skill`. An explicit selector is an authorization
+boundary for `veryfront__load_skill`, not just a prompt filter.
 
-Local and project runtimes also expose `load_skill_reference` and
-`execute_skill_script`. Hosted chat reads an advertised reference through
-`load_skill({ reference: { skillId, file } })` and does not execute skill
+Local and project runtimes also expose `veryfront__load_skill_reference` and
+`veryfront__execute_skill_script`. Hosted chat reads an advertised reference through
+`veryfront__load_skill({ reference: { skillId, file } })` and does not execute skill
 scripts directly.
 
 For essential guidance at startup, set `bootstrapSkill` to one authorized skill
@@ -420,7 +420,16 @@ oversized root fails the run instead of being truncated. Keep the root focused o
 navigation and process, and put detailed guidance in references. The run fails
 before any model call when the agent has no authorized framework skill loader or
 the skill is not authorized. Omit `bootstrapSkill` to start without a preloaded
-skill. In Markdown agent definitions, use `bootstrap-skill`.
+skill. Use an exact skill ID or the agent's own short name, not a selector pattern.
+Hosted children load only the target agent's own configured startup skill.
+The parent's startup skill is not inherited. Loading runs once before the child's
+first model call; its instructions remain in history across tool steps and
+continuations. Hosted preparation retains the original trusted load and its full
+root, without loading it again. If that root cannot survive the existing context
+budget, preparation fails before inference. A fresh fork authorizes its own load;
+serialized history does not grant skill activation. Later steps fail before inference
+if that original authenticated result becomes missing, ambiguous or changed. In Markdown agent definitions,
+use `bootstrap-skill`.
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -440,21 +449,21 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 
 When an agent uses a skill, the flow is:
 
-1. Call `load_skill({ load: { skillId } })` to load the skill instructions and policy.
-2. Read an advertised reference with `load_skill_reference(...)` on local and
-   project runtimes, or `load_skill({ reference: { skillId, file } })` in hosted
+1. Call `veryfront__load_skill({ load: { skillId } })` to load the skill instructions and policy.
+2. Read an advertised reference with `veryfront__load_skill_reference(...)` on local and
+   project runtimes, or `veryfront__load_skill({ reference: { skillId, file } })` in hosted
    chat.
 3. On local and project runtimes, optionally call
-   `execute_skill_script(...)` to run scripts from `scripts/`.
+   `veryfront__execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls. Loading a skill does not change which
    tools the run may call.
 
-A step may batch `load_skill` with other tool calls. The runtime runs the calls
-in the order the model emitted them. A successful `load_skill` changes only
+A step may batch `veryfront__load_skill` with other tool calls. The runtime runs the calls
+in the order the model emitted them. A successful `veryfront__load_skill` changes only
 which skill's instructions are loaded and which reference and script files
-`load_skill_reference` and `execute_skill_script` can reach for later calls.
+`veryfront__load_skill_reference` and `veryfront__execute_skill_script` can reach for later calls.
 Ordinary tools are unaffected, whether they were emitted before or after
-`load_skill`, and a failed `load_skill` does not block the rest of the batch.
+`veryfront__load_skill`, and a failed `veryfront__load_skill` does not block the rest of the batch.
 
 ## Skill script execution
 
@@ -556,7 +565,7 @@ const extractor = agent({
 ```
 
 `maxSteps: 1` stops the runtime from taking a second turn it has no use for.
-`skills: false` removes the `load_skill` family from the request in a project
+`skills: false` removes the `veryfront__load_skill` family from the request in a project
 that does have skills - an agent with one job should not be offered a catalog
 it will never open.
 

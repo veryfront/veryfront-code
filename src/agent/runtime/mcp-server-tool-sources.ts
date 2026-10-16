@@ -2,6 +2,7 @@ import { bindTerminalRunCredentialOwner } from "./terminal-run-control.ts";
 import {
   createLivePlatformMcpSource,
   withPlatformMcpPolicyAliases,
+  withPlatformMcpToolNameAliases,
 } from "../platform-mcp-tool-source.ts";
 import {
   hasTrustedPlatformSource,
@@ -66,9 +67,11 @@ export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 /** Naming prefix for Studio MCP tools. */
 export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
+/** Canonical naming prefix for Studio MCP tools. */
+export const VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX = "veryfront__studio_";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const applyIntrinsic = Reflect.apply;
@@ -96,10 +99,10 @@ function appendUnique(target: string[], value: string): void {
 }
 
 export function getRuntimeUnavailableOptionalRemoteTools(
-  config: AgentConfig,
+  config: AgentConfig & RuntimeRemoteToolConfig,
   remoteToolSources: readonly RemoteToolSource[] | undefined,
 ): { names: string[]; prefixes: string[] } {
-  const runtimeConfig = config as RuntimeRemoteToolConfig;
+  const runtimeConfig = config;
   const names = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolNames);
   const prefixes = snapshotStringArray(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes);
   const remoteSourceIds = createPrivateSet(
@@ -110,8 +113,9 @@ export function getRuntimeUnavailableOptionalRemoteTools(
     if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
     if (remoteSourceIds.has(getFirstPartyMcpSourceId(server))) continue;
     appendUnique(prefixes, VERYFRONT_STUDIO_TOOL_PREFIX);
+    appendUnique(prefixes, VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX);
     forEachPrivateArray(
-      server.toolPolicy?.allow ?? [],
+      withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? []),
       (toolName) => appendUnique(names, toolName),
     );
   }
@@ -626,13 +630,16 @@ export function getRuntimeRemoteToolSources(
       // Trusted platform sources get the same live canonical catalog as a
       // configured platform server, so legacy-only listings still expose
       // `veryfront__*` names.
-      return propagateBootstrapIdentity(
+      return inheritAgentKnowledgeSource(
         source,
-        hasTrustedPlatformSource(source)
-          ? createLivePlatformMcpSource(
-            createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
-          )
-          : createMcpToolPolicySource(source, policy),
+        propagateBootstrapIdentity(
+          source,
+          hasTrustedPlatformSource(source)
+            ? createLivePlatformMcpSource(
+              createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
+            )
+            : createMcpToolPolicySource(source, policy),
+        ),
       );
     },
   );

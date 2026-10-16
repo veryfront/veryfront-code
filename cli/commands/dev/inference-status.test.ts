@@ -18,7 +18,7 @@ describe("commands/dev/inference-status", () => {
     assertEquals(
       listInferenceOptions({ apiToken: "<TOKEN>" }),
       [
-        "Veryfront Cloud AI Gateway (project required: set VERYFRONT_PROJECT_SLUG or add projectSlug to veryfront.config.ts)",
+        "Cloud (no project connected)",
       ],
     );
   });

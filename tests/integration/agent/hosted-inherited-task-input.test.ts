@@ -83,7 +83,12 @@ it("retains only signed admitted child input privately and transfers it to recre
     ...binding,
     verifyRunEventAppendToken: async (actual) => {
       calls++;
-      assertEquals(actual, { token: "events", projectId: project, runId: "child" });
+      assertEquals(actual, {
+        token: "events",
+        projectId: project,
+        runId: "child",
+        agentId: binding.agentId,
+      });
       return verification;
     },
   });
