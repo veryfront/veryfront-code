@@ -409,10 +409,11 @@ async function readBlob(
       signal?.throwIfAborted();
       if (done) break;
       // A host stream may yield non-byte chunks or chunks with a replaced `byteLength`;
-      // count a native copy through captured intrinsics so neither bypasses the limit.
-      let chunk: { bytes: Uint8Array; byteLength: number };
+      // count it through captured intrinsics so neither bypasses the limit, and reject a
+      // chunk over the remaining budget before copying it.
+      let chunk: { bytes: Uint8Array; byteLength: number } | null;
       try {
-        chunk = copyResponseBodyChunk(value);
+        chunk = copyResponseBodyChunk(value, limit - size);
       } catch (cause) {
         if (!(cause instanceof InvalidResponseBodyError)) throw cause;
         throw successfulResponseProtocolError(
@@ -420,8 +421,8 @@ async function readBlob(
           url,
         );
       }
+      if (chunk === null) throw tooLarge();
       size += chunk.byteLength;
-      if (size > limit) throw tooLarge();
       chunks.push(chunk.bytes);
     }
   } catch (error) {

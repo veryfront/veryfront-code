@@ -815,6 +815,33 @@ describe("Runs target SDK", () => {
     }
   });
 
+  it("rejects a run artifact chunk over the byte budget before copying it", async () => {
+    // A resizable buffer cannot be copied, so reaching the copy would report a non-byte chunk.
+    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    const sdk = createRunsSdk({
+      transport: {
+        request: async (_path, init) =>
+          await init!.onResponse!(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new Uint8Array(buffer));
+                  controller.close();
+                },
+              }),
+            ),
+            { ...init, maxResponseBytes: 4 },
+            "https://api.example.test/runs/r/artifacts/a",
+          ),
+      },
+    });
+    const error = await rejection(() =>
+      sdk.readRunArtifact({ path: { run_id: RUN_ID, artifact_id: "a" } })
+    );
+    assertEquals(error.status, 502);
+    assert(error.message.includes("over 4 bytes"), error.message);
+  });
+
   it("rejects a run artifact call that is missing artifact_id before sending it", async () => {
     const { sdk, requests } = sdkWith([]);
     await assertRejects(

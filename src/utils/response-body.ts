@@ -96,11 +96,13 @@ function setBytes(target: Uint8Array, source: Uint8Array): void {
  *
  * Validates and counts the chunk through captured intrinsics, so a chunk whose
  * `byteLength` (or its prototype's) was replaced cannot under-report its size,
- * and the copy cannot grow after the caller counted it.
+ * and the copy cannot grow after the caller counted it. A chunk longer than
+ * `maxBytes` returns `null` before anything is allocated.
  */
 export function copyResponseBodyChunk(
   chunk: unknown,
-): { bytes: Uint8Array; byteLength: number } {
+  maxBytes: number,
+): { bytes: Uint8Array; byteLength: number } | null {
   let tag: unknown;
   try {
     tag = ReflectApply(typedArrayToStringTagGetter, chunk, []);
@@ -112,6 +114,7 @@ export function copyResponseBodyChunk(
   }
   const bytes = chunk as Uint8Array;
   const byteLength = byteLengthOf(bytes);
+  if (byteLength > maxBytes) return null;
   const copy = new NativeUint8Array(byteLength);
   setBytes(copy, viewBytes(bytes, 0, byteLength));
   return { bytes: copy, byteLength };
