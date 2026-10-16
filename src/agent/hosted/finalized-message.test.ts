@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
@@ -2358,4 +2358,31 @@ Deno.test("a replayed framework reasoning id does not duplicate its block", asyn
   assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [
     { type: "reasoning", text: "First" },
   ]);
+});
+
+Deno.test("ownership metadata releases a failed append so a retry can persist the correction", async () => {
+  const state = createMirroredToolChunkState();
+  const events = [{
+    type: "CUSTOM",
+    name: "veryfront.tool_result_ownership",
+    value: { toolCallId: "retry" },
+  }];
+  let attempts = 0;
+  const mirror = {
+    appendEvents: () => {
+      attempts++;
+      return attempts === 1 ? Promise.reject(new Error("durable write failed")) : Promise.resolve();
+    },
+  };
+  await assertRejects(
+    () => persistToolResultOwnershipCorrections(events, mirror, state),
+    Error,
+    "durable write failed",
+  );
+  assertEquals(state.ownershipCorrectedToolCallIds?.has("retry") ?? false, false);
+  await persistToolResultOwnershipCorrections(events, mirror, state);
+  assertEquals(attempts, 2);
+  assertEquals(state.ownershipCorrectedToolCallIds?.has("retry"), true);
+  await persistToolResultOwnershipCorrections(events, mirror, state);
+  assertEquals(attempts, 2);
 });
