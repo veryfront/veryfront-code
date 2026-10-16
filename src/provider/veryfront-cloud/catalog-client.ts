@@ -248,6 +248,13 @@ function parseDeployment(
   return Object.freeze(deployment);
 }
 
+/** Match the API's Gemini provider-ID migration without equating arbitrary model aliases. */
+function canonicalCatalogModelId(modelId: string): string {
+  return modelId.startsWith("google-ai-studio/")
+    ? `google/${modelId.slice("google-ai-studio/".length)}`
+    : modelId;
+}
+
 /**
  * Read `deployments`, which lists every place a model runs in routing order.
  * Each model takes its first enabled deployment, the one the gateway routes
@@ -260,10 +267,15 @@ function parseDeployments(
   legacyModels: unknown,
 ): VeryfrontCloudCatalog {
   const legacy = new Map<string, VeryfrontCloudCatalogModel>();
+  const canonicalLegacy = new Map<string, VeryfrontCloudCatalogModel>();
   if (Array.isArray(legacyModels)) {
     for (const row of legacyModels) {
       const model = parseLegacyModel(row);
-      if (model && !legacy.has(model.modelId)) legacy.set(model.modelId, model);
+      if (model) {
+        if (!legacy.has(model.modelId)) legacy.set(model.modelId, model);
+        const canonicalId = canonicalCatalogModelId(model.modelId);
+        if (!canonicalLegacy.has(canonicalId)) canonicalLegacy.set(canonicalId, model);
+      }
     }
   }
   const models: VeryfrontCloudCatalogModel[] = [];
@@ -275,7 +287,8 @@ function parseDeployments(
     const modelId = optionalString(record(row.model).id);
     if (!modelId || listed.has(modelId)) continue;
     listed.add(modelId);
-    const legacyModel = legacy.get(modelId);
+    const legacyModel = legacy.get(modelId) ??
+      canonicalLegacy.get(canonicalCatalogModelId(modelId));
     const model = parseDeployment(row, legacyModel?.limit) ?? legacyModel;
     if (!model) {
       unreadable.push(modelId);

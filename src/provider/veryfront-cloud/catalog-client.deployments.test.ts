@@ -205,6 +205,47 @@ describe("provider/veryfront-cloud/catalog-client deployments", () => {
     assertEquals(catalog, { models: [], defaultModelId: undefined });
   });
 
+  it("preserves legacy token limits across the served Gemini canonical ID migration", () => {
+    const pro = legacyRow("gemini-2.5-pro");
+    const limit = { context: 1_000_000, output: 65_536 };
+    const deployment = deploymentOf(pro);
+    const catalog = parseVeryfrontCloudCatalog({
+      models: [{ ...pro, capabilities: { ...pro.capabilities, limit } }],
+      deployments: [{
+        ...deployment,
+        model: { ...deployment.model, id: "google/gemini-2.5-pro" },
+      }],
+    });
+    assertEquals(catalog?.models[0]?.limit, limit);
+  });
+
+  it("prefers exact legacy identities and never inherits limits through arbitrary aliases", () => {
+    const pro = legacyRow("gemini-2.5-pro");
+    const deployment = deploymentOf(pro);
+    const exactLimit = { context: 200_000, output: 32_000 };
+    const catalog = parseVeryfrontCloudCatalog({
+      models: [
+        { ...pro, capabilities: { ...pro.capabilities, limit: { context: 1_000_000 } } },
+        {
+          ...pro,
+          modelId: "google/gemini-2.5-pro",
+          capabilities: { ...pro.capabilities, limit: exactLimit },
+        },
+      ],
+      deployments: [{ ...deployment, model: { ...deployment.model, id: "google/gemini-2.5-pro" } }],
+    });
+    assertEquals(catalog?.models[0]?.limit, exactLimit);
+    const foreign = parseVeryfrontCloudCatalog({
+      models: [{
+        ...pro,
+        modelId: "foreign/gemini-2.5-pro",
+        capabilities: { ...pro.capabilities, limit: exactLimit },
+      }],
+      deployments: [{ ...deployment, model: { ...deployment.model, id: "google/gemini-2.5-pro" } }],
+    });
+    assertEquals(foreign?.models[0]?.limit, undefined);
+  });
+
   it("takes the default only from the first enabled deployment of a listed model", () => {
     const [gpt, mistral] = ["gpt-5.5", "mistral-small-2503"].map(legacyRow);
     const catalog = parseVeryfrontCloudCatalog({
