@@ -75,29 +75,11 @@ function warnThinHeadroomOnce(
   );
 }
 
-/**
- * Resolve only host-owned model stream budgets, leaving omitted fields at
- * framework defaults.
- *
- * An explicit model budget whose worst-case window does not fit under the
- * outer chat watchdog is a configuration error. An unset budget whose
- * framework default does not fit (for example a watchdog pinned to the
- * pre-150s default of 120000ms) is instead derived as the largest value that
- * fits with {@link hostedDerivedBudgetHeadroomMs} to spare, with a one-time
- * warning, so upgrades never reject every request.
- */
-export function resolveHostedModelStreamTimeouts(
-  config: Pick<
-    AgentServiceConfig,
-    | "VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS"
-    | "VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS"
-  >,
+function resolveHostedFirstProgressTimeout(
+  firstProgressTimeoutMs: number | undefined,
   outerIdleTimeoutMs: number,
-  warn?: HostedModelStreamTimeoutWarn,
-): ModelStreamTimeouts | undefined {
-  let firstProgressTimeoutMs = config.VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS;
-  let semanticIdleTimeoutMs = config.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS;
-
+  warn: HostedModelStreamTimeoutWarn | undefined,
+): number | undefined {
   if (firstProgressTimeoutMs !== undefined) {
     const windowMs = hostedFirstProgressWindowMs(firstProgressTimeoutMs);
     if (windowMs >= outerIdleTimeoutMs) {
@@ -138,6 +120,14 @@ export function resolveHostedModelStreamTimeouts(
     }
   }
 
+  return firstProgressTimeoutMs;
+}
+
+function resolveHostedSemanticIdleTimeout(
+  semanticIdleTimeoutMs: number | undefined,
+  outerIdleTimeoutMs: number,
+  warn: HostedModelStreamTimeoutWarn | undefined,
+): number | undefined {
   if (semanticIdleTimeoutMs !== undefined) {
     if (semanticIdleTimeoutMs >= outerIdleTimeoutMs) {
       throw new TypeError(
@@ -169,6 +159,43 @@ export function resolveHostedModelStreamTimeouts(
       );
     }
   }
+
+  return semanticIdleTimeoutMs;
+}
+
+/**
+ * Resolve only host-owned model stream budgets, leaving omitted fields at
+ * framework defaults.
+ *
+ * An explicit model budget whose worst-case window does not fit under the
+ * outer chat watchdog is a configuration error. An unset budget whose
+ * framework default does not fit (for example a watchdog pinned to the
+ * pre-150s default of 120000ms) is instead derived as the largest value that
+ * fits with {@link hostedDerivedBudgetHeadroomMs} to spare, with a one-time
+ * warning, so upgrades never reject every request.
+ */
+export function resolveHostedModelStreamTimeouts(
+  config: Pick<
+    AgentServiceConfig,
+    | "VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS"
+    | "VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS"
+  >,
+  outerIdleTimeoutMs: number,
+  warn?: HostedModelStreamTimeoutWarn,
+): ModelStreamTimeouts | undefined {
+  let firstProgressTimeoutMs = config.VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS;
+  let semanticIdleTimeoutMs = config.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS;
+
+  firstProgressTimeoutMs = resolveHostedFirstProgressTimeout(
+    firstProgressTimeoutMs,
+    outerIdleTimeoutMs,
+    warn,
+  );
+  semanticIdleTimeoutMs = resolveHostedSemanticIdleTimeout(
+    semanticIdleTimeoutMs,
+    outerIdleTimeoutMs,
+    warn,
+  );
 
   if (firstProgressTimeoutMs === undefined && semanticIdleTimeoutMs === undefined) {
     return undefined;
