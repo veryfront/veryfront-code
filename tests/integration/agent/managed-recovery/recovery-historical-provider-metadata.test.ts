@@ -83,95 +83,114 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import { AgentRuntime, type RuntimeToolFilterConfig } from "#veryfront/agent/runtime/index.ts";
 import { parseRecoverySnapshot } from "#veryfront/internal-agents/recovery-snapshot.ts";
 
-it("preserves historical Anthropic replay separately from current managed model turns", async () => {
-  const previous = Deno.env.get(envKey);
-  const directory = await makeTempDir();
-  try {
-    const value = admission();
-    const claims = await signed(value);
-    const owner = await RecoverySessionOwner.acquire({
-      claims,
-      directory: `${directory}/owner`,
-      validateCurrentOwnership: async () => receipt(value),
-      awaitRetiredPreviousOwner: async () => {},
-    });
-    let sequence = 0;
-    const writer = await createManagedRecoveryWriter({
-      claims,
-      owner,
-      directory,
-      bindAdmissionWriter: () => {},
-      append: async (_event, _occurrence, checkpoint) => {
-        sequence++;
-        return {
-          eventId: sequence + 100,
-          externalSequence: sequence,
-          toolAdmissions: [],
-          ...(checkpoint
-            ? {
-              recoveryCheckpoint: {
-                snapshot_event_id: sequence + 100,
-                snapshot_external_sequence: sequence,
-                checkpoint_event_id: sequence + 10000,
-              },
-            }
-            : {}),
-        };
-      },
-    });
-    writer.bindSignal(new AbortController().signal);
-    const config: RuntimeToolFilterConfig = {
-      model: "veryfront-cloud/anthropic/synthetic",
-      system: "Synthetic",
-      maxSteps: 1,
-      __vfProviderReplayCheckpoints: [{
-        version: 1,
-        messageId: "prior-assistant",
-        provider: "anthropic",
-        providerBlocks: [{
-          type: "provider-block",
+for (const nativeCurrentResponse of [false, true]) {
+  it(`preserves historical and current text-only Anthropic metadata (native current: ${nativeCurrentResponse})`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let sequence = 0;
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (_event, _occurrence, checkpoint) => {
+          sequence++;
+          return {
+            eventId: sequence + 100,
+            externalSequence: sequence,
+            toolAdmissions: [],
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: sequence + 100,
+                  snapshot_external_sequence: sequence,
+                  checkpoint_event_id: sequence + 10000,
+                },
+              }
+              : {}),
+          };
+        },
+      });
+      writer.bindSignal(new AbortController().signal);
+      const config: RuntimeToolFilterConfig = {
+        model: "veryfront-cloud/anthropic/synthetic",
+        system: "Synthetic",
+        maxSteps: 1,
+        __vfProviderReplayCheckpoints: [{
+          version: 1,
+          messageId: "prior-assistant",
           provider: "anthropic",
-          block: { type: "text", text: "Prior answer" },
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: { type: "text", text: "Prior answer" },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
         }],
-        providerBlockPositions: [0],
-        totalPartCount: 1,
-      }],
-    };
-    const model = scriptedModel([{ text: "New answer" }], {
-      only: "stream",
-      provider: "anthropic",
-    });
-    const runtime = new AgentRuntime("proof-agent", config, {
-      resolveModelRuntime: () => model,
-      persistRecoveryBoundary: writer.persistBoundary,
-    });
-    const result = await runtime.stream([{
-      id: "prior-user",
-      role: "user",
-      parts: [{ type: "text", text: "Prior question" }],
-    }, {
-      id: "prior-assistant",
-      role: "assistant",
-      parts: [{ type: "text", text: "Prior answer" }],
-    }, { id: "new-user", role: "user", parts: [{ type: "text", text: "New question" }] }]);
-    await new Response(result).text();
-    assertEquals(model.calls.length, 1);
-    const home = await DurableRunHome.open({
-      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
-      identity,
-    });
-    const records = await home.read();
-    const snapshot = parseRecoverySnapshot(records.at(-1)?.value);
-    assertEquals(snapshot.modelTurns.some((turn) => turn.messageId === "prior-assistant"), false);
-    assertEquals(
-      snapshot.runtimeContinuation?.providerMetadata?.some((entry) =>
-        entry.messageId === "prior-assistant"
-      ),
-      true,
-    );
-  } finally {
-    if (previous === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, previous);
-    await Deno.remove(directory, { recursive: true });
-  }
-});
+      };
+      const model = scriptedModel([{
+        text: "New answer",
+        ...(nativeCurrentResponse
+          ? {
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [[{ type: "text", text: "New answer" }]] },
+            },
+          }
+          : {}),
+      }], {
+        only: "stream",
+        provider: "anthropic",
+      });
+      const runtime = new AgentRuntime("proof-agent", config, {
+        resolveModelRuntime: () => model,
+        persistRecoveryBoundary: writer.persistBoundary,
+      });
+      const result = await runtime.stream([{
+        id: "prior-user",
+        role: "user",
+        parts: [{ type: "text", text: "Prior question" }],
+      }, {
+        id: "prior-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "Prior answer" }],
+      }, { id: "new-user", role: "user", parts: [{ type: "text", text: "New question" }] }]);
+      await new Response(result).text();
+      assertEquals(model.calls.length, 1);
+      const home = await DurableRunHome.open({
+        directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+        identity,
+      });
+      const records = await home.read();
+      const snapshot = parseRecoverySnapshot(records.at(-1)?.value);
+      assertEquals(snapshot.modelTurns.some((turn) => turn.messageId === "prior-assistant"), false);
+      assertEquals(
+        snapshot.runtimeContinuation?.providerMetadata?.some((entry) =>
+          entry.messageId === "prior-assistant"
+        ),
+        true,
+      );
+      if (nativeCurrentResponse) {
+        assertEquals(
+          snapshot.runtimeContinuation?.providerMetadata?.some((entry) =>
+            entry.messageId !== "prior-assistant"
+          ),
+          true,
+        );
+      }
+    } finally {
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+}

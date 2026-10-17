@@ -3160,6 +3160,8 @@ function createRecoveryBoundary(
   const canonicalMessages = mapPrivateArray(messages, (message) => {
     if (message.role === "assistant") {
       const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
+      // Recovery retains native metadata even when the provider emitted only text.
+      state.replayRequired = true;
       const checkpoint = captureProviderReplayCheckpoint(
         state,
         readAttachedProviderMetadata(message),
