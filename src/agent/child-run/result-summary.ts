@@ -25,7 +25,7 @@ const TOOL_TRANSCRIPT_FENCE_TAG_START_PATTERN =
   /^<(?:tool_call|tool_response|function_calls|invoke|function_result)\b/i;
 const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^let me [^.?!]+[.?!]\s*/i,
-  /^i(?:'|’)ll [^.?!]+[.?!]\s*/i,
+  /^i['’]ll [^.?!]+[.?!]\s*/i,
   /^i will [^.?!]+[.?!]\s*/i,
   /^now i have [^.?!]+[.?!]\s*/i,
   /^first,? [^.?!]+[.?!]\s*/i,
@@ -132,6 +132,15 @@ function findToolTranscriptTag(text: string, from: number): ToolTranscriptTag | 
   return undefined;
 }
 
+function skipFenceLineWhitespace(text: string, start: number): number {
+  let index = start;
+  while (text[index] === " " || text[index] === "\t") index += 1;
+  if (text[index] === "\r" && text[index + 1] === "\n") index += 2;
+  else if (text[index] === "\n") index += 1;
+  while (text[index] === " " || text[index] === "\t") index += 1;
+  return index;
+}
+
 function removeToolTranscriptFences(text: string): string {
   let output = "";
   let segmentStart = 0;
@@ -139,21 +148,14 @@ function removeToolTranscriptFences(text: string): string {
   while (cursor < text.length) {
     const start = text.indexOf("```", cursor);
     if (start === -1) break;
-    let index = start + 3;
-    while (text[index] === " " || text[index] === "\t") index += 1;
-    if (text[index] === "\r" && text[index + 1] === "\n") index += 2;
-    else if (text[index] === "\n") index += 1;
-    while (text[index] === " " || text[index] === "\t") index += 1;
+    let index = skipFenceLineWhitespace(text, start + 3);
     const shellStart = index;
     while (/[A-Za-z]/.test(text[index] ?? "")) index += 1;
     if (!TOOL_TRANSCRIPT_SHELL_FENCE_NAMES.has(text.slice(shellStart, index).toLowerCase())) {
       cursor = start + 3;
       continue;
     }
-    while (text[index] === " " || text[index] === "\t") index += 1;
-    if (text[index] === "\r" && text[index + 1] === "\n") index += 2;
-    else if (text[index] === "\n") index += 1;
-    while (text[index] === " " || text[index] === "\t") index += 1;
+    index = skipFenceLineWhitespace(text, index);
     if (text.slice(index, index + 3) !== "```") {
       cursor = start + 3;
       continue;
@@ -513,21 +515,19 @@ function endsInsideSourceLineComment(text: string): boolean {
       index = end;
       continue;
     }
-    if (character === "/" && text[index + 1] === "/") {
-      const newline = text.indexOf("\n", index + 2);
-      if (newline === -1) return true;
-      index = newline + 1;
-      continue;
-    }
-    if (character === "/" && text[index + 1] === "*") {
-      const end = text.indexOf("*/", index + 2);
-      if (end === -1) return false;
-      index = end + 2;
+    const commentEnd = sourceCommentEnd(text, index);
+    if (commentEnd === null) return text[index + 1] === "/";
+    if (commentEnd !== undefined) {
+      index = commentEnd;
       continue;
     }
     index += 1;
   }
   return false;
+}
+
+function isSourceQuote(character: string | undefined): character is '"' | "'" {
+  return character === '"' || character === "'";
 }
 
 function findOuterArrayClosingBracket(text: string): number {
@@ -541,20 +541,16 @@ function findOuterArrayClosingBracket(text: string): number {
       index = commentEnd;
       continue;
     }
-    if (character === '"' || character === "'") {
+    if (isSourceQuote(character)) {
       const end = scanQuotedValueEnd(text, index, character);
       if (end === undefined) return -1;
       index = end;
-    } else if (character === "[") {
-      depth += 1;
-      index += 1;
-    } else if (character === "]") {
-      depth -= 1;
-      if (depth === 0) return index;
-      index += 1;
-    } else {
-      index += 1;
+      continue;
     }
+    if (character === "[") depth += 1;
+    else if (character === "]") depth -= 1;
+    if (depth === 0) return index;
+    index += 1;
   }
   return -1;
 }
@@ -640,6 +636,12 @@ function parseQuotedScalar(
   }
 }
 
+function hasJsonValueBeforeComma(text: string, index: number): boolean {
+  let previous = index - 1;
+  while (previous >= 0 && /\s/.test(text[previous]!)) previous--;
+  return previous >= 0 && !"{[,:".includes(text[previous]!);
+}
+
 function removeTrailingJsonCommas(text: string): string {
   const chunks: string[] = [];
   let segmentStart = 0;
@@ -662,9 +664,7 @@ function removeTrailingJsonCommas(text: string): string {
       index += 1;
       continue;
     }
-    let previous = index - 1;
-    while (previous >= 0 && /\s/.test(text[previous]!)) previous--;
-    if (previous < 0 || "{[,:".includes(text[previous]!)) {
+    if (!hasJsonValueBeforeComma(text, index)) {
       index++;
       continue;
     }
@@ -678,48 +678,64 @@ function removeTrailingJsonCommas(text: string): string {
   return chunks.join("");
 }
 
+function isPseudoJsonProperty(normalized: string, text: string, nextStart: number): boolean {
+  let previous = normalized.length - 1;
+  while (/\s/.test(normalized[previous] ?? "")) previous--;
+  const next = skipWhitespace(text, nextStart);
+  return (normalized[previous] === "{" || normalized[previous] === ",") && text[next] === ":";
+}
+
+function normalizeSingleQuotedValue(
+  text: string,
+  index: number,
+): { end: number; text: string | undefined } | undefined {
+  const end = scanQuotedValueEnd(text, index, "'");
+  if (end === undefined) return undefined;
+  const value = text.slice(index + 1, end - 1);
+  const decoded = decodeSingleQuotedString(value);
+  if (decoded === undefined) return undefined;
+  return { end, text: JSON.stringify(decoded) };
+}
+
 function normalizePseudoJson(text: string): string {
   let normalized = "";
   let index = 0;
-  while (index < text.length) {
+  function consumeToken(): boolean {
     const character = text[index]!;
     const commentEnd = sourceCommentEnd(text, index);
-    if (commentEnd === null) return text;
+    if (commentEnd === null) return false;
     if (commentEnd !== undefined) {
       normalized += " ";
       index = commentEnd;
-      continue;
+      return true;
     }
     if (character === '"') {
       const end = scanQuotedValueEnd(text, index, '"');
-      if (end === undefined) return text;
+      if (end === undefined) return false;
       normalized += text.slice(index, end);
       index = end;
-      continue;
+      return true;
     }
     const identifier = /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(text.slice(index));
     if (identifier) {
-      let previous = normalized.length - 1;
-      while (/\s/.test(normalized[previous] ?? "")) previous--;
-      const next = skipWhitespace(text, index + identifier[0].length);
-      const property = (normalized[previous] === "{" || normalized[previous] === ",") &&
-        text[next] === ":";
+      const property = isPseudoJsonProperty(normalized, text, index + identifier[0].length);
       normalized += property ? JSON.stringify(identifier[0]) : identifier[0];
       index += identifier[0].length;
-      continue;
+      return true;
     }
     if (character !== "'") {
       normalized += character;
       index += 1;
-      continue;
+      return true;
     }
-    const end = scanQuotedValueEnd(text, index, "'");
-    if (end === undefined) return text;
-    const value = text.slice(index + 1, end - 1);
-    const decoded = decodeSingleQuotedString(value);
-    if (decoded === undefined) return text;
-    normalized += JSON.stringify(decoded);
-    index = end;
+    const quoted = normalizeSingleQuotedValue(text, index);
+    if (quoted === undefined) return false;
+    normalized += quoted.text;
+    index = quoted.end;
+    return true;
+  }
+  while (index < text.length) {
+    if (!consumeToken()) return text;
   }
   return removeTrailingJsonCommas(normalized);
 }
@@ -796,6 +812,16 @@ function updateContainerClosings(closings: string[], character: string): boolean
   return true;
 }
 
+function completeNestedValueEnd(
+  fieldBody: string,
+  start: number,
+  index: number,
+  closings: readonly string[],
+): number | null | undefined {
+  if (closings.length > 0) return undefined;
+  return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
+}
+
 function scanNestedArrayOrObjectEnd(
   fieldBody: string,
   start: number,
@@ -821,8 +847,7 @@ function scanNestedArrayOrObjectEnd(
     if (!updateContainerClosings(closings, character!)) return null;
   }
 
-  if (closings.length > 0) return undefined;
-  return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
+  return completeNestedValueEnd(fieldBody, start, index, closings);
 }
 
 function isContractFactScalar(token: string): boolean {
@@ -943,6 +968,15 @@ function isValidIncompleteArrayPrefix(
   let index = skipWhitespace(validationBody, 0);
   if (validationBody[index] !== "[") return false;
   index += 1;
+  return validateIncompleteArrayValues(validationBody, index, fieldBody.length, depth);
+}
+
+function validateIncompleteArrayValues(
+  validationBody: string,
+  index: number,
+  fieldBodyLength: number,
+  depth: number,
+): boolean {
   while (index < validationBody.length) {
     index = skipWhitespace(validationBody, index);
     if (index >= validationBody.length) return true;
@@ -952,7 +986,7 @@ function isValidIncompleteArrayPrefix(
     index = skipWhitespace(validationBody, value.next);
     // Whitespace at the artificial end does not establish a value delimiter.
     if (index >= validationBody.length) return false;
-    if (validationBody[index] === "]") return index >= fieldBody.length;
+    if (validationBody[index] === "]") return index >= fieldBodyLength;
     if (validationBody[index] !== ",") return false;
     index += 1;
   }
@@ -971,11 +1005,14 @@ function scanObjectMember(
   const identifier = keyQuote === '"' || keyQuote === "'"
     ? undefined
     : /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(fieldBody.slice(keyStart));
-  const key: PrefixValueScan = keyQuote === '"' || keyQuote === "'"
-    ? scanQuotedPrefixValue(fieldBody, keyStart, keyQuote, trailingSource)
-    : identifier
-    ? { status: "complete", next: keyStart + identifier[0].length, value: identifier[0] }
-    : { status: "invalid" };
+  let key: PrefixValueScan;
+  if (keyQuote === '"' || keyQuote === "'") {
+    key = scanQuotedPrefixValue(fieldBody, keyStart, keyQuote, trailingSource);
+  } else if (identifier) {
+    key = { status: "complete", next: keyStart + identifier[0].length, value: identifier[0] };
+  } else {
+    key = { status: "invalid" };
+  }
   if (key.status !== "complete") return key;
   if (typeof key.value !== "string") return { status: "invalid" };
 
@@ -1083,7 +1120,6 @@ function addToolIdsFromFieldBody(
     parseJsonArrayFieldBody(normalizePseudoJson(`[${fieldBody}]`).slice(1, -1));
   if (parsedValues) {
     addToolIdsFromParsedArray(target, parsedValues, includeObjectFields);
-    return;
   }
 }
 
@@ -1149,6 +1185,29 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
   }
 }
 
+function addIncompleteToolArrayFieldValues(
+  target: string[],
+  windowBody: string,
+  fieldName: string | undefined,
+  allowIncompleteLeadingObject: boolean,
+  trailingSource: string | undefined,
+): void {
+  if (
+    allowIncompleteLeadingObject &&
+    isValidIncompleteArrayPrefix(`[${windowBody}`, trailingSource)
+  ) {
+    const scanned = scanCompleteLeadingArrayValues(windowBody);
+    addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
+    if (fieldName === "tools") {
+      addToolIdsFromIncompleteLeadingObject(
+        target,
+        windowBody.slice(scanned.nextIndex),
+        trailingSource,
+      );
+    }
+  }
+}
+
 function addToolArrayFieldValues(
   target: string[],
   text: string,
@@ -1176,20 +1235,13 @@ function addToolArrayFieldValues(
       // disjoint ranges, while one unclosed outer array covers the rest of the
       // bounded window. This reaches facts in every long declaration without
       // letting nested opener-like text turn the work quadratic.
-      if (
-        allowIncompleteLeadingObject &&
-        isValidIncompleteArrayPrefix(`[${windowBody}`, trailingSource)
-      ) {
-        const scanned = scanCompleteLeadingArrayValues(windowBody);
-        addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
-        if (fieldName === "tools") {
-          addToolIdsFromIncompleteLeadingObject(
-            target,
-            windowBody.slice(scanned.nextIndex),
-            trailingSource,
-          );
-        }
-      }
+      addIncompleteToolArrayFieldValues(
+        target,
+        windowBody,
+        fieldName,
+        allowIncompleteLeadingObject,
+        trailingSource,
+      );
       coveredUntil = text.length;
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
