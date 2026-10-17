@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import "#veryfront/schemas/_test-setup.ts";
@@ -443,6 +444,165 @@ describe("channels/control-plane", () => {
         crypto.subtle.importKey = importKey;
         TextEncoder.prototype.encode = encode;
         TextDecoder.prototype.decode = decode;
+      }
+    });
+
+    it("decoded signed claims cannot be replaced through the global JSON parser", async () => {
+      const body = "original-body";
+      const changed = "changed-body";
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const changedHash = await sha256Base64url(changed);
+      const parse = JSON.parse;
+      const options = {
+        audience: "demo-project",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+      try {
+        JSON.parse = (text, reviver) => {
+          const value = parse(text, reviver);
+          if (value && typeof value === "object" && "request_hash" in value) {
+            value.request_hash = changedHash;
+          }
+          return value;
+        };
+        await assertRejects(() => verifyControlPlaneJws(jws, changed, options));
+        assertEquals(await verifyControlPlaneJwsRequestSignature(jws, changed, options), false);
+      } finally {
+        JSON.parse = parse;
+      }
+    });
+
+    it("signed body hashing does not use mutable Buffer base64 conversion", async () => {
+      const body = "original-body";
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const hash = await sha256Base64url(body);
+      const original = Buffer.prototype.toString;
+      try {
+        Buffer.prototype.toString = function (encoding, start, end) {
+          return encoding === "base64"
+            ? hash.replaceAll("-", "+").replaceAll("_", "/") + "="
+            : original.call(this, encoding, start, end);
+        };
+        await assertRejects(() =>
+          verifyControlPlaneJws(jws, "changed-body", {
+            audience: "demo-project",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          })
+        );
+      } finally {
+        Buffer.prototype.toString = original;
+      }
+    });
+
+    it("host verification codecs remain available after project codec replacement", async () => {
+      const { jws, publicKeyPem } = await createControlPlaneSignature("body");
+      const options = {
+        audience: "demo-project",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+      const from = Uint8Array.from;
+      const set = Uint8Array.prototype.set;
+      const decode = globalThis.atob;
+      const encode = globalThis.btoa;
+      const split = String.prototype.split;
+      const charCodeAt = String.prototype.charCodeAt;
+      const exec = RegExp.prototype.exec;
+      const originalPath = Object.getOwnPropertyDescriptor(URL.prototype, "pathname")!;
+      const splitHook = Object.getOwnPropertyDescriptor(String.prototype, Symbol.split);
+      const replaceHook = Object.getOwnPropertyDescriptor(String.prototype, Symbol.replace);
+      let valid = false;
+      let proxyValid = false;
+      try {
+        Uint8Array.from = () => {
+          throw new Error("project byte conversion");
+        };
+        Uint8Array.prototype.set = () => {
+          throw new Error("project byte copy");
+        };
+        globalThis.atob = () => {
+          throw new Error("project base64 decode");
+        };
+        globalThis.btoa = () => {
+          throw new Error("project base64 encode");
+        };
+        String.prototype.split = function (separator, limit) {
+          if (this === jws) throw new Error("project JWS split");
+          return split.call(this, separator, limit);
+        };
+        String.prototype.charCodeAt = () => {
+          throw new Error("project byte decode");
+        };
+        RegExp.prototype.exec = function (input) {
+          if (input === "POST") throw new Error("project canonical-method predicate");
+          return exec.call(this, input);
+        };
+        Object.defineProperty(String.prototype, Symbol.split, {
+          configurable: true,
+          value() {
+            throw new Error("project split protocol");
+          },
+        });
+        Object.defineProperty(String.prototype, Symbol.replace, {
+          configurable: true,
+          value() {
+            throw new Error("project replace protocol");
+          },
+        });
+        Object.defineProperty(URL.prototype, "pathname", {
+          configurable: true,
+          get() {
+            return "/project-replaced-path";
+          },
+        });
+        valid = (await verifyControlPlaneJws(jws, "body", options)).project_id === "proj-1";
+        proxyValid = await verifyControlPlaneJwsRequestSignature(jws, "body", options);
+      } finally {
+        Uint8Array.from = from;
+        Uint8Array.prototype.set = set;
+        globalThis.atob = decode;
+        globalThis.btoa = encode;
+        String.prototype.split = split;
+        String.prototype.charCodeAt = charCodeAt;
+        RegExp.prototype.exec = exec;
+        Object.defineProperty(URL.prototype, "pathname", originalPath);
+        if (splitHook) Object.defineProperty(String.prototype, Symbol.split, splitHook);
+        else Reflect.deleteProperty(String.prototype, Symbol.split);
+        if (replaceHook) Object.defineProperty(String.prototype, Symbol.replace, replaceHook);
+        else Reflect.deleteProperty(String.prototype, Symbol.replace);
+      }
+      assertEquals(valid, true);
+      assertEquals(proxyValid, true);
+    });
+
+    it("project clock replacement cannot renew an expired signed request", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const { jws, publicKeyPem } = await createControlPlaneSignature("body", {
+        iat: now - 120,
+        exp: now - 60,
+      });
+      const dateNow = Date.now;
+      const options = {
+        audience: "demo-project",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+      try {
+        Date.now = () => (now - 120) * 1000;
+        await assertRejects(() => verifyControlPlaneJws(jws, "body", options));
+        assertEquals(await verifyControlPlaneJwsRequestSignature(jws, "body", options), false);
+      } finally {
+        Date.now = dateNow;
       }
     });
 
