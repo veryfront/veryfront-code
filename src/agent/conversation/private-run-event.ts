@@ -60,6 +60,44 @@ function isModel(value: unknown): boolean {
         ownDataValue(value, "modelProvider") !== ""));
 }
 
+function isRequestReasoning(reasoning: unknown): boolean {
+  if (reasoning === undefined) return true;
+  if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
+    return false;
+  }
+  const enabled = ownDataValue(reasoning, "enabled");
+  const effort = ownDataValue(reasoning, "effort");
+  const budget = ownDataValue(reasoning, "budgetTokens");
+  if (
+    (enabled !== undefined && typeof enabled !== "boolean") ||
+    (effort !== undefined &&
+      (typeof effort !== "string" ||
+        !somePrivateArray(ReasoningEfforts, (allowed) => allowed === effort))) ||
+    (budget !== undefined &&
+      (!(ReflectApply(NumberIsInteger, Number, [budget]) as boolean) || (budget as number) < 0))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isRequestResponseFormat(responseFormat: unknown): boolean {
+  if (responseFormat === undefined) return true;
+  if (!isRecord(responseFormat)) return false;
+  const responseType = ownDataValue(responseFormat, "type");
+  if (responseType === "text" || responseType === "json") {
+    return hasOnlyKeys(responseFormat, ["type"]);
+  }
+  return responseType === "json_schema" &&
+    hasOnlyKeys(responseFormat, ["type", "name", "schema", "description", "strict"]) &&
+    typeof ownDataValue(responseFormat, "name") === "string" &&
+    ownDataValue(responseFormat, "schema") !== undefined &&
+    (ownDataValue(responseFormat, "description") === undefined ||
+      typeof ownDataValue(responseFormat, "description") === "string") &&
+    (ownDataValue(responseFormat, "strict") === undefined ||
+      typeof ownDataValue(responseFormat, "strict") === "boolean");
+}
+
 function isRequest(value: unknown): boolean {
   if (
     !isRecord(value) || !hasOnlyKeys(value, [
@@ -101,40 +139,8 @@ function isRequest(value: unknown): boolean {
   ) {
     return false;
   }
-  const reasoning = ownDataValue(value, "reasoning");
-  if (reasoning !== undefined) {
-    if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
-      return false;
-    }
-    const enabled = ownDataValue(reasoning, "enabled");
-    const effort = ownDataValue(reasoning, "effort");
-    const budget = ownDataValue(reasoning, "budgetTokens");
-    if (
-      (enabled !== undefined && typeof enabled !== "boolean") ||
-      (effort !== undefined &&
-        (typeof effort !== "string" ||
-          !somePrivateArray(ReasoningEfforts, (allowed) => allowed === effort))) ||
-      (budget !== undefined &&
-        (!(ReflectApply(NumberIsInteger, Number, [budget]) as boolean) || (budget as number) < 0))
-    ) {
-      return false;
-    }
-  }
-  const responseFormat = ownDataValue(value, "responseFormat");
-  if (responseFormat === undefined) return true;
-  if (!isRecord(responseFormat)) return false;
-  const responseType = ownDataValue(responseFormat, "type");
-  if (responseType === "text" || responseType === "json") {
-    return hasOnlyKeys(responseFormat, ["type"]);
-  }
-  return responseType === "json_schema" &&
-    hasOnlyKeys(responseFormat, ["type", "name", "schema", "description", "strict"]) &&
-    typeof ownDataValue(responseFormat, "name") === "string" &&
-    ownDataValue(responseFormat, "schema") !== undefined &&
-    (ownDataValue(responseFormat, "description") === undefined ||
-      typeof ownDataValue(responseFormat, "description") === "string") &&
-    (ownDataValue(responseFormat, "strict") === undefined ||
-      typeof ownDataValue(responseFormat, "strict") === "boolean");
+  if (!isRequestReasoning(ownDataValue(value, "reasoning"))) return false;
+  return isRequestResponseFormat(ownDataValue(value, "responseFormat"));
 }
 
 function isAssistantProviderMetadata(message: Record<string, unknown>): boolean {
@@ -270,6 +276,19 @@ export function hasPrivateConversationRunEventType(
   return getCanonicalPrivateConversationRunEventType(value) !== undefined;
 }
 
+function hasValidPrivateEventTiming(value: Record<string, unknown>): boolean {
+  const elapsedMs = ownDataValue(value, "elapsedMs");
+  if (elapsedMs !== undefined && (!isFiniteNumber(elapsedMs) || elapsedMs < 0)) return false;
+  const emittedAt = ownDataValue(value, "emittedAt");
+  if (
+    emittedAt !== undefined &&
+    (!(ReflectApply(NumberIsInteger, Number, [emittedAt]) as boolean) || (emittedAt as number) < 0)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** Return whether an event belongs to the private durable run-event sequence. */
 export function isPrivateConversationRunEvent(value: unknown): boolean {
   if (!hasPrivateConversationRunEventType(value)) return false;
@@ -302,15 +321,7 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
   if (model !== undefined && !isModel(model)) return false;
   const request = ownDataValue(value, "request");
   if (request !== undefined && !isRequest(request)) return false;
-  const elapsedMs = ownDataValue(value, "elapsedMs");
-  if (elapsedMs !== undefined && (!isFiniteNumber(elapsedMs) || elapsedMs < 0)) return false;
-  const emittedAt = ownDataValue(value, "emittedAt");
-  if (
-    emittedAt !== undefined &&
-    (!(ReflectApply(NumberIsInteger, Number, [emittedAt]) as boolean) || (emittedAt as number) < 0)
-  ) {
-    return false;
-  }
+  if (!hasValidPrivateEventTiming(value)) return false;
   return hasOnlyKeys(value as Record<string, unknown>, [
     "type",
     "modelCallId",
