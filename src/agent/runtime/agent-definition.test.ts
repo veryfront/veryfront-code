@@ -122,20 +122,16 @@ it("runtime agent definitions preserve structured system metadata", () => {
   assertEquals(definition.system, instructions);
 });
 
-it("parseRuntimeAgentMarkdownDefinition rejects disabled tools", () => {
-  assertThrows(
-    () =>
-      parseRuntimeAgentMarkdownDefinition({
-        id: "specialist",
-        content: `---
+it("parseRuntimeAgentMarkdownDefinition preserves explicit no-tools selection", () => {
+  const definition = parseRuntimeAgentMarkdownDefinition({
+    id: "specialist",
+    content: `---
 tools: false
 ---
 Use only the authored instructions.
 `,
-      }),
-    Error,
-    'Agent frontmatter "tools" must be an array of non-empty strings.',
-  );
+  });
+  assertEquals(definition.tools, false);
 });
 
 it("parseRuntimeAgentMarkdownDefinition parses denied tool aliases", () => {

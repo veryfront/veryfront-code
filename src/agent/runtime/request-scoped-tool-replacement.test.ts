@@ -48,6 +48,40 @@ function makeLookupTool(source: string) {
 }
 
 describe("request-scoped tool replacement for generate()", () => {
+  it("does not let request tools override an authored no-tools selector", async () => {
+    const observedToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/no-tools-request",
+      async doGenerate(options: unknown) {
+        observedToolNames.push(toolNamesFromGenerateOptions(options));
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: "no-tools-request",
+      model: "hosted/no-tools-request",
+      system: "Answer directly.",
+      tools: false,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: "Summarize this text.",
+      tools: { injected: makeLookupTool("request") },
+    });
+
+    assertEquals(observedToolNames, [[]]);
+    assertEquals(assistant.config.tools, false);
+  });
+
   it("advertises only the request replacement tools and lets same-name replacements win", async () => {
     toolRegistryInternal.clearAll();
     const controller = new AbortController();

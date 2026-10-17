@@ -647,6 +647,27 @@ describe("tool-helpers", () => {
   });
 
   describe("getAvailableTools", () => {
+    it("does not discover remote tools under an explicit no-tools selector", async () => {
+      let listCalls = 0;
+      const source: RemoteToolSource = {
+        id: "remote-fixture",
+        async listTools() {
+          listCalls++;
+          return [{
+            name: "remote_lookup",
+            description: "Remote lookup",
+            parameters: { type: "object", properties: {} },
+          }];
+        },
+        async executeTool() {
+          throw new Error("Tool execution must remain disabled");
+        },
+      };
+
+      assertEquals(await getAvailableTools(false, { remoteToolSources: [source] }), []);
+      assertEquals(listCalls, 0);
+    });
+
     it("does not insert tool definitions through a patched array push", async () => {
       toolRegistryInternal.clearAll();
       const originalPush = Array.prototype.push;
