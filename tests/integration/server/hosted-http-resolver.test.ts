@@ -95,7 +95,7 @@ function apiFetch(state: ApiState = {}) {
         }),
       );
     }
-    if (url.startsWith(`${API}/projects/project-a/environment-variables?`)) {
+    if (url.startsWith(`${API}/projects/project-a/environments/environment-a/variables?`)) {
       return Promise.resolve(
         state.variables ?? Response.json({
           data: [
@@ -157,7 +157,7 @@ describe("hosted HTTP resolver", () => {
       `Bearer ${authority.sourceToken}`,
       `Bearer ${authority.sourceToken}`,
     ]);
-    assert(api.calls[2]!.url.includes("/environment-variables?environment_id=environment-a"));
+    assert(api.calls[2]!.url.includes("/environments/environment-a/variables?"));
     assertEquals(resolved.session.expectedImage, IMAGE);
     assertEquals(resolved.session.expectedBrokerInstanceId, "broker-pod-uid");
     assertEquals(resolved.session.request.owner, { scopeKind: "project", projectId: PROJECT_ID });
@@ -198,7 +198,7 @@ describe("hosted HTTP resolver", () => {
     const api = apiFetch({ project: new Response("{}", { status: 401 }) });
     const resolve = createHostedHttpResolver(options());
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
-    assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
+    assertEquals(api.calls.some((call) => call.url.includes("/variables?")), false);
   });
 
   it("refuses a project slug that does not belong to the authorized project", async () => {
@@ -207,7 +207,7 @@ describe("hosted HTTP resolver", () => {
     });
     const resolve = createHostedHttpResolver(options());
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
-    assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
+    assertEquals(api.calls.some((call) => call.url.includes("/variables?")), false);
   });
 
   it("refuses a release that is not the environment's active release", async () => {
@@ -222,7 +222,7 @@ describe("hosted HTTP resolver", () => {
     });
     const resolve = createHostedHttpResolver(options());
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
-    assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
+    assertEquals(api.calls.some((call) => call.url.includes("/variables?")), false);
   });
 
   it("refuses an environment identity that does not match the environment name", async () => {
@@ -245,7 +245,7 @@ describe("hosted HTTP resolver", () => {
     }));
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
     assertEquals(lookups, [{ projectId: PROJECT_ID, releaseId: RELEASE_ID }]);
-    assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
+    assertEquals(api.calls.some((call) => call.url.includes("/variables?")), false);
   });
 
   it("fails closed on an API timeout, a server error or a malformed response", async () => {
@@ -281,7 +281,7 @@ describe("hosted HTTP resolver", () => {
       const resolve = createHostedHttpResolver(options());
       await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
       assertEquals(
-        api.calls.some((call) => call.url.includes("environment-variables")),
+        api.calls.some((call) => call.url.includes("/variables?")),
         readsVariables,
         name,
       );

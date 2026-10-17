@@ -55,7 +55,9 @@ const control = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, as
     captured[collector]!.push(await req.json());
     return Response.json({}, { headers: { connection: "close" } });
   }
-  const id = url.searchParams.get("environment_id")?.replace("env-", "");
+  const environmentId = url.searchParams.get("environment_id") ??
+    url.pathname.match(/\/environments\/([^/]+)\/variables$/)?.[1];
+  const id = environmentId?.replace("env-", "");
   if (id !== "a" && id !== "b") return new Response("unknown environment", { status: 404 });
   const project = dedicated ? "project" : `project-${id}`;
   if (url.pathname === "/api/internal/project-environment-variables") {
@@ -63,7 +65,7 @@ const control = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, as
     assertEquals(url.searchParams.get("project_slug"), project);
     secretReads++;
   } else {
-    assertEquals(url.pathname, `/api/projects/${project}/environment-variables`);
+    assertEquals(url.pathname, `/api/projects/${project}/environments/env-${id}/variables`);
     assertEquals(req.headers.get("authorization"), `Bearer token-${project}`);
     managementReads++;
   }
