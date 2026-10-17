@@ -178,10 +178,7 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
   const byShortId = new Map<string, VeryfrontCloudCatalogModel>();
   const byModelId = new Map<string, VeryfrontCloudCatalogModel>();
 
-  for (const model of catalog.models) {
-    const slashIndex = model.modelId.indexOf("/");
-    if (slashIndex <= 0) continue;
-    const segment = model.modelId.slice(0, slashIndex);
+  function indexProviderFacts(model: VeryfrontCloudCatalogModel, segment: string): void {
     if (!providerAliases.has(segment)) providerAliases.set(segment, model.provider);
     if (!providerAliases.has(model.provider)) providerAliases.set(model.provider, model.provider);
     if (model.surface !== undefined && !surfaces.has(model.provider)) {
@@ -191,6 +188,9 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
       operationsKnown.add(model.provider);
       if (model.operations.includes("responses")) servesResponses.add(model.provider);
     }
+  }
+
+  function indexModelIdentifiers(model: VeryfrontCloudCatalogModel): void {
     const key = `${model.provider}/${modelSegment(model.modelId)}`;
     if (!byKey.has(key)) byKey.set(key, model);
     if (!byModelId.has(model.modelId)) byModelId.set(model.modelId, model);
@@ -199,16 +199,25 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
     }
   }
 
+  for (const model of catalog.models) {
+    const slashIndex = model.modelId.indexOf("/");
+    if (slashIndex <= 0) continue;
+    const segment = model.modelId.slice(0, slashIndex);
+    indexProviderFacts(model, segment);
+    indexModelIdentifiers(model);
+  }
+
   const routing = new Map<string, Readonly<VeryfrontCloudProviderRouting>>();
   for (const [provider, surface] of surfaces) {
     // A provider is native to the OpenAI surface when the platform serves the
     // Responses operation for one of its models. An API that serves no
     // operations yet leaves the protocol-named rule in place.
-    const native = surface !== "openai"
-      ? true
-      : operationsKnown.has(provider)
-      ? servesResponses.has(provider)
-      : PROTOCOL_NAMED_PROVIDERS.has(provider);
+    let native = true;
+    if (surface === "openai") {
+      native = operationsKnown.has(provider)
+        ? servesResponses.has(provider)
+        : PROTOCOL_NAMED_PROVIDERS.has(provider);
+    }
     routing.set(provider, Object.freeze({ surface, native }));
   }
 

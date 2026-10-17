@@ -261,6 +261,26 @@ function resolveAutoRuntimeModel(): string {
   return resolveDirectAutoRuntimeModel() ?? normalizeVeryfrontCloudRuntimeModel(cloudModel);
 }
 
+function assertDefaultModelCredentials(
+  model: string | undefined,
+  provider: string,
+  configuredModel: string,
+): void {
+  if (
+    model === undefined && !isVeryfrontCloudEnabled() &&
+    !hasDirectProviderCredentials(provider)
+  ) {
+    const available = listAvailableDirectProviders();
+    if (available.length > 0) {
+      throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
+        detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
+          `Found ${available.join(", ")} instead. ` +
+          `Set model: "${available[0]}/<model>" or model: "auto".`,
+      });
+    }
+  }
+}
+
 /**
  * Resolve the effective runtime model string for agent execution.
  *
@@ -321,19 +341,7 @@ export function resolveRuntimeModel(model?: string): string {
     // that other provider. Say so instead of failing later against the wrong
     // vendor. Resolution stays deterministic — never substitute silently, or
     // the same project resolves differently per machine.
-    if (
-      model === undefined && !isVeryfrontCloudEnabled() &&
-      !hasDirectProviderCredentials(provider)
-    ) {
-      const available = listAvailableDirectProviders();
-      if (available.length > 0) {
-        throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
-          detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
-            `Found ${available.join(", ")} instead. ` +
-            `Set model: "${available[0]}/<model>" or model: "auto".`,
-        });
-      }
-    }
+    assertDefaultModelCredentials(model, provider, configuredModel);
     return toDirectRuntimeModel(provider, modelId);
   }
 

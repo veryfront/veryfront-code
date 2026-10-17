@@ -8,7 +8,6 @@ import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
-import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
@@ -18,6 +17,7 @@ import {
 } from "./model-resolution.ts";
 import {
   isVeryfrontCloudAnthropicSurfaceModel,
+  readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
@@ -286,15 +286,20 @@ export async function resolveAgentModelTransport(
   // Private managed calls carry audited neutral controls. Only adaptive
   // Anthropic thinking needs native call data; legacy native temperature
   // overrides would replace the broker's persisted neutral input.
-  const providerOptions = privatelyResolvedModel
-    ? privateThinking?.enabled && privateReasoning === undefined
-      ? readCatalog(() =>
+  function resolveTransportProviderOptions(): Record<string, unknown> | undefined {
+    if (!privatelyResolvedModel) {
+      return readCatalog(() =>
+        resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions)
+      );
+    }
+    if (privateThinking?.enabled && privateReasoning === undefined) {
+      return readCatalog(() =>
         resolveVeryfrontCloudThinkingProviderOptions(resolvedModelString, privateThinking)
-      )
-      : undefined
-    : readCatalog(() =>
-      resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions)
-    );
+      );
+    }
+    return undefined;
+  }
+  const providerOptions = resolveTransportProviderOptions();
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
   // A Veryfront Cloud model settles its protocol and capabilities on its first
