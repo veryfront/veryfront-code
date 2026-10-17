@@ -524,10 +524,16 @@ describe("inherited execution input and receipt authority", () => {
     );
     assertEquals(hostedInheritedTaskInput(plain, "project-1"), undefined);
     for (
-      const proof of [false, { ...verification, verified: false }, {
-        ...verification,
-        taskInputRootRunId: "foreign-root",
-      }, { ...verification, taskInputSha256: "wrong" }]
+      const proof of [
+        false,
+        { ...verification, verified: false },
+        {
+          ...verification,
+          taskInputRootRunId: "foreign-root",
+        },
+        { ...verification, rootRunId: "foreign-root" },
+        { ...verification, taskInputSha256: "wrong" },
+      ]
     ) {
       await assertRejects(
         () =>

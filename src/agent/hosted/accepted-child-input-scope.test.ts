@@ -48,3 +48,92 @@ it("rejects an accepted-input resolution that finishes after parent revocation",
   pending.resolve();
   await assertRejects(() => resolution!, Error, "no longer active");
 });
+
+it("retains the resolver until a streamed response finishes", async () => {
+  const gate = Promise.withResolvers<void>();
+  let captured: HostedChildTaskInputResolver | undefined;
+  const response = await withHostedChildTaskInputResolver(async () => undefined, async () => {
+    captured = getHostedChildTaskInputResolver();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await gate.promise;
+          try {
+            const resolver = getHostedChildTaskInputResolver();
+            assertEquals(typeof resolver, "function");
+            await resolver!(request);
+            controller.enqueue(new TextEncoder().encode("done"));
+            controller.close();
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+      }),
+    );
+  });
+  assertEquals(getHostedChildTaskInputResolver(), undefined);
+  gate.resolve();
+  assertEquals(await response.text(), "done");
+  await assertRejects(() => captured!(request), Error, "no longer active");
+});
+
+it("revokes streaming resolver authority on cancellation and propagates cancellation", async () => {
+  let captured: HostedChildTaskInputResolver | undefined;
+  let cancelled: unknown;
+  const response = await withHostedChildTaskInputResolver(async () => undefined, async () => {
+    captured = getHostedChildTaskInputResolver();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        cancel(reason) {
+          cancelled = reason;
+        },
+      }),
+      { status: 202, headers: { "X-Stream": "preserved" } },
+    );
+  });
+  assertEquals(response.status, 202);
+  assertEquals(response.headers.get("X-Stream"), "preserved");
+  await captured!(request);
+  await response.body!.cancel("client left");
+  assertEquals(cancelled, "client left");
+  await assertRejects(() => captured!(request), Error, "no longer active");
+});
+
+it("revokes streaming resolver authority when the source fails", async () => {
+  let captured: HostedChildTaskInputResolver | undefined;
+  const gate = Promise.withResolvers<void>();
+  const response = await withHostedChildTaskInputResolver(async () => undefined, async () => {
+    captured = getHostedChildTaskInputResolver();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await gate.promise;
+          controller.error(new Error("source failed"));
+        },
+      }),
+    );
+  });
+  gate.resolve();
+  await assertRejects(() => response.text(), Error, "source failed");
+  await assertRejects(() => captured!(request), Error, "no longer active");
+});
+
+it("revokes resolver authority for bodyless responses and failed operations", async () => {
+  let captured: HostedChildTaskInputResolver | undefined;
+  const response = await withHostedChildTaskInputResolver(async () => undefined, async () => {
+    captured = getHostedChildTaskInputResolver();
+    return new Response(null, { status: 204 });
+  });
+  assertEquals(response.status, 204);
+  await assertRejects(() => captured!(request), Error, "no longer active");
+  await assertRejects(
+    () =>
+      withHostedChildTaskInputResolver(async () => undefined, async () => {
+        captured = getHostedChildTaskInputResolver();
+        throw new Error("operation failed");
+      }),
+    Error,
+    "operation failed",
+  );
+  await assertRejects(() => captured!(request), Error, "no longer active");
+});

@@ -357,6 +357,13 @@ async function withVerifiedRunEventAppendToken(
     );
   }
 
+  if (
+    !trustServerEnvelope &&
+    (verification.taskInputSha256 !== undefined || verification.taskInputRootRunId !== undefined)
+  ) {
+    return Response.json({ errorCode: "INVALID_HOSTED_TASK_INPUT" }, { status: 403 });
+  }
+
   const inferenceAuthToken = bindInferenceTokenHeader
     ? readInferenceTokenHeader(request)
     : undefined;

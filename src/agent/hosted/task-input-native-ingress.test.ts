@@ -88,6 +88,28 @@ describe("planned native task input ingress", () => {
     );
     assertEquals(result instanceof Response && result.status === 403, true);
   });
+  it("rejects task-bound writer claims on general chat ingress", async () => {
+    for (
+      const claims of [
+        { taskInputSha256: "a".repeat(64) },
+        { taskInputRootRunId: "run_root" },
+        { taskInputSha256: "a".repeat(64), taskInputRootRunId: "run_root" },
+      ]
+    ) {
+      const result = await parseHostedChatRequestFromRequest(
+        request({
+          messages: [],
+          context: { projectId, branchId: null },
+          durableRootRun: { runId: "run_child", messageId: invocation.run.messageId },
+        }),
+        {
+          ...principal,
+          verifyRunEventAppendToken: () => Promise.resolve({ verified: true, ...claims }),
+        },
+      );
+      assertEquals(result instanceof Response && result.status, 403);
+    }
+  });
   it("keeps ordinary chat bodies outside the host-owned input channel", async () => {
     const result = await parseHostedChatRequestFromRequest(
       request({ messages: [], context: { projectId, branchId: null }, taskInput }),

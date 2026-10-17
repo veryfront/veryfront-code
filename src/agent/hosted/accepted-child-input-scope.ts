@@ -15,6 +15,8 @@ export type HostedChildTaskInputResolver = (
 ) => Promise<Omit<HostedAcceptedTaskInputEvent, "type" | "version" | "targetAgentId"> | undefined>;
 type Scope = { active: boolean; resolver: HostedChildTaskInputResolver };
 const storage = new AsyncLocalStorage<Scope | undefined>();
+const NativeResponse = Response;
+const NativeReadableStream = ReadableStream;
 /** Application-owned deterministic receipt selection, scoped to one active parent execution. */
 export async function withHostedChildTaskInputResolver<T>(
   resolver: HostedChildTaskInputResolver | undefined,
@@ -22,10 +24,42 @@ export async function withHostedChildTaskInputResolver<T>(
 ): Promise<T> {
   if (!resolver) return storage.run(undefined, operation);
   const scope = { active: true, resolver };
+  let streaming = false;
   try {
-    return await storage.run(scope, operation);
+    const result = await storage.run(scope, operation);
+    if (result instanceof NativeResponse && result.body) {
+      const reader = result.body.getReader();
+      const body = new NativeReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const chunk = await storage.run(scope, () => reader.read());
+            if (chunk.done) {
+              scope.active = false;
+              controller.close();
+            } else {
+              controller.enqueue(chunk.value);
+            }
+          } catch (error) {
+            scope.active = false;
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          scope.active = false;
+          await reader.cancel(reason);
+        },
+      });
+      const response = new NativeResponse(body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers: result.headers,
+      });
+      streaming = true;
+      return response as T;
+    }
+    return result;
   } finally {
-    scope.active = false;
+    if (!streaming) scope.active = false;
   }
 }
 export function getHostedChildTaskInputResolver(): HostedChildTaskInputResolver | undefined {

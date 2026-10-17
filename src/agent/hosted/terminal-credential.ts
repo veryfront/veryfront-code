@@ -1,3 +1,4 @@
+import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { authorizeHostedTaskInput } from "./task-input.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
@@ -505,6 +506,7 @@ export async function acceptInheritedRunAdmission(
     if (
       !taskInput || !verification || typeof verification !== "object" ||
       verification.verified !== true || verification.taskInputRootRunId !== taskInput.rootRunId ||
+      (verification.rootRunId !== undefined && verification.rootRunId !== taskInput.rootRunId) ||
       verification.taskInputSha256 !== await computeHash(encodeHostedTaskInput(taskInput))
     ) throw new Error("Inherited task input signed binding mismatch");
   }
@@ -789,12 +791,12 @@ export function hostedAcceptedChildEvidence(
   const canonical = terminalRoute(authority.token, authority.runId).id;
   const send = transport?.fetch ?? authority.fetch ?? hostFetch,
     token = authority.authToken,
-    base = transport?.apiUrl ?? authority.apiUrl!;
+    resolveApiUrl = createVeryfrontApiRequestUrlResolver(transport?.apiUrl ?? authority.apiUrl!);
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
     : AbortSignal.timeout(15000);
   async function read(path: string): Promise<unknown> {
-    const response = await send(`${base.replace(/\/+$/, "")}${path}`, {
+    const response = await send(resolveApiUrl(path), {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       redirect: "error",
       signal: requestSignal,
