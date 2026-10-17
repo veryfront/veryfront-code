@@ -48,6 +48,8 @@ const SKIPPED_WITH_DEPENDENCY: Record<string, string> = {
 const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
+  "component-contracts",
+  "publish-platform-component",
   "tested-run",
   // Required integration check; it accepts skipped shards on a reused run.
   "tests",
