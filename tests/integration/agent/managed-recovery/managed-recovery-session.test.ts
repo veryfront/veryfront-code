@@ -505,3 +505,30 @@ it("project WeakMap hooks cannot intercept recovery input authority", async () =
     else Deno.env.set(envKey, previous);
   }
 });
+
+it("a verified recovery admission expiring before input binding cannot become an ordinary run", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const value = { ...admission(), expiresAt: Math.floor(Date.now() / 1000) + 2 };
+    const claims = await signed(value);
+    const input = {
+      runId: identity.publicRunId,
+      threadId: "expired-recovery-thread",
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    await waitFor(() => Date.now() >= value.expiresAt * 1000);
+    assertThrows(
+      () => bindManagedRecoveryInput(input, claims),
+      Error,
+      "Managed recovery admission expired",
+    );
+    assertEquals(getManagedRecoveryInputClaims(input), undefined);
+    bindManagedRecoveryInput(input, undefined);
+    assertEquals(getManagedRecoveryInputClaims(input), undefined);
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

@@ -47,7 +47,10 @@ export function getVerifiedControlPlaneRecoveryAdmission(
   claims: VerifiedControlPlaneRequestClaims,
 ): RecoveryAdmission | undefined {
   const grant = verifiedRecoveryGrants.get(claims);
-  return grant && grant.expiresAt > DateNow() / 1000 ? grant : undefined;
+  if (grant && grant.expiresAt <= DateNow() / 1000) {
+    throw new Error("Managed recovery admission expired");
+  }
+  return grant;
 }
 
 /** Read a private exact-body operator grant. Compatibility adapter signatures cannot mint it. */
