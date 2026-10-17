@@ -81,6 +81,10 @@ export interface ConversationRunMirror {
   dispose(): void;
 }
 
+function mirrorHasPendingWork(snapshot: ConversationRunMirrorSnapshot): boolean {
+  return !snapshot.disabled && (snapshot.pendingEventCount !== 0 || snapshot.inFlight);
+}
+
 const DEFAULT_FLUSH_DELAY_MS = 50;
 const DEFAULT_RETRY_BASE_DELAY_MS = 250;
 const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
@@ -347,6 +351,19 @@ export function createConversationRunMirror(input: {
     });
   }
 
+  async function drainActiveFlush(
+    drainSignal: AbortSignal,
+    callerSignal?: AbortSignal,
+  ): Promise<void> {
+    while (inFlightFlush !== null) {
+      await waitForSharedFlush(inFlightFlush, drainSignal);
+      const drained = getSnapshot();
+      if (!drained.disabled && drained.pendingEventCount > 0 && !drained.hasRetryTimer) {
+        startFlushLoop(callerSignal);
+      }
+    }
+  }
+
   return {
     enqueue(events, options) {
       const snapshot = getSnapshot();
@@ -375,9 +392,7 @@ export function createConversationRunMirror(input: {
         clearFlushTimer();
         if (retryDrains === 0) clearRetryTimer();
         const snapshot = getSnapshot();
-        if (
-          disposed || snapshot.disabled || (snapshot.pendingEventCount === 0 && !snapshot.inFlight)
-        ) {
+        if (disposed || !mirrorHasPendingWork(snapshot)) {
           return snapshot;
         }
 
@@ -388,13 +403,7 @@ export function createConversationRunMirror(input: {
         do {
           drainSignal.throwIfAborted();
           startFlushLoop(options?.abortSignal);
-          while (inFlightFlush !== null) {
-            await waitForSharedFlush(inFlightFlush, drainSignal);
-            const drained = getSnapshot();
-            if (!drained.disabled && drained.pendingEventCount > 0 && !drained.hasRetryTimer) {
-              startFlushLoop(options?.abortSignal);
-            }
-          }
+          await drainActiveFlush(drainSignal, options?.abortSignal);
 
           if (escapedFlushError !== null) {
             // Unexpected controller errors must still reject explicit flushes.

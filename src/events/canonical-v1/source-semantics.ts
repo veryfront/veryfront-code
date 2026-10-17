@@ -9,6 +9,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 type MatchRequest = { value: unknown; schema: Schema; documentId: string };
 type Check = Generator<MatchRequest, boolean, boolean>;
 
+function hasContextByteLimit(node: Schema): boolean {
+  const constraints = node["x-runtime-constraints"];
+  return Array.isArray(constraints) && constraints.includes(CONTEXT_BYTES);
+}
+
+function hasSourceAnnotations(node: Schema, id: string): boolean {
+  return id === CONTROL_DOCUMENT && (
+    typeof node.maxLength === "number" || node["x-source-transform"] === "trim" ||
+    hasContextByteLimit(node)
+  );
+}
+
+function acceptsSourceAnnotations(input: unknown, node: Schema, id: string): boolean {
+  if (id !== CONTROL_DOCUMENT) return true;
+  if (typeof input === "string") {
+    if (typeof node.maxLength === "number" && input.length > node.maxLength) return false;
+    if (node["x-source-transform"] === "trim" && input !== input.trim()) return false;
+  }
+  if (!hasContextByteLimit(node) || !isRecord(input)) return true;
+  const serialized = JSON.stringify(input.data);
+  return serialized !== undefined && new TextEncoder().encode(serialized).byteLength <= 16384;
+}
+
+function* inlineChildSchemas(node: Schema): Generator<Schema> {
+  if (isRecord(node.properties)) {
+    for (const child of Object.values(node.properties)) {
+      if (isRecord(child)) yield child;
+    }
+  }
+  if (isRecord(node.items)) yield node.items;
+  for (const keyword of ["allOf", "oneOf", "anyOf"]) {
+    const branches = node[keyword];
+    if (!Array.isArray(branches)) continue;
+    for (const child of branches) {
+      if (isRecord(child)) yield child;
+    }
+  }
+}
+
 /** Check source annotations after structural validation, without changing payload data. */
 export async function validateSourceSemantics(
   value: unknown,
@@ -73,26 +112,11 @@ function* sourceChecks(
     if (cached !== undefined) return cached;
     if (visiting.has(node)) return false;
     visiting.add(node);
-    let found = id === CONTROL_DOCUMENT && (
-      typeof node.maxLength === "number" || node["x-source-transform"] === "trim" ||
-      (Array.isArray(node["x-runtime-constraints"]) &&
-        node["x-runtime-constraints"].includes(CONTEXT_BYTES))
-    );
+    let found = hasSourceAnnotations(node, id);
     const children: { schema: Schema; documentId: string }[] = [];
     if (typeof node.$ref === "string") children.push(resolve(node.$ref, id));
-    if (isRecord(node.properties)) {
-      for (const child of Object.values(node.properties)) {
-        if (isRecord(child)) children.push({ schema: child, documentId: id });
-      }
-    }
-    if (isRecord(node.items)) children.push({ schema: node.items, documentId: id });
-    for (const keyword of ["allOf", "oneOf", "anyOf"]) {
-      const branches = node[keyword];
-      if (Array.isArray(branches)) {
-        for (const child of branches) {
-          if (isRecord(child)) children.push({ schema: child, documentId: id });
-        }
-      }
+    for (const child of inlineChildSchemas(node)) {
+      children.push({ schema: child, documentId: id });
     }
     for (const child of children) {
       found = hasChecks(child.schema, child.documentId, visiting) || found;
@@ -119,58 +143,51 @@ function* sourceChecks(
     }
   }
   function* checkNode(input: unknown, node: Schema, id: string): Check {
-    if (id === CONTROL_DOCUMENT) {
-      if (typeof input === "string") {
-        if (typeof node.maxLength === "number" && input.length > node.maxLength) return false;
-        if (node["x-source-transform"] === "trim" && input !== input.trim()) return false;
-      }
-      if (
-        Array.isArray(node["x-runtime-constraints"]) &&
-        node["x-runtime-constraints"].includes(CONTEXT_BYTES) && isRecord(input)
-      ) {
-        const serialized = JSON.stringify(input.data);
-        if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > 16384) {
-          return false;
-        }
-      }
-    }
+    if (!acceptsSourceAnnotations(input, node, id)) return false;
     if (typeof node.$ref === "string") {
       const target = resolve(node.$ref, id);
       if (!(yield* check(input, target.schema, target.documentId))) return false;
     }
-    if (isRecord(node.properties) && isRecord(input)) {
-      for (const [key, child] of Object.entries(node.properties)) {
-        if (
-          Object.hasOwn(input, key) && isRecord(child) && !(yield* check(input[key], child, id))
-        ) {
-          return false;
-        }
-      }
-    }
-    if (isRecord(node.items) && Array.isArray(input)) {
-      for (const item of input) if (!(yield* check(item, node.items, id))) return false;
-    }
-    if (Array.isArray(node.allOf)) {
-      for (const branch of node.allOf) {
-        if (isRecord(branch) && !(yield* check(input, branch, id))) return false;
-      }
-    }
+    if (!(yield* checkProperties(input, node, id))) return false;
+    if (!(yield* checkItems(input, node, id))) return false;
+    if (!(yield* checkAllOf(input, node, id))) return false;
     for (const keyword of ["oneOf", "anyOf"]) {
-      const branches = node[keyword];
-      if (!Array.isArray(branches)) continue;
-      let accepted = false;
-      for (const branch of branches) {
-        if (
-          isRecord(branch) && (yield { value: input, schema: branch, documentId: id }) &&
-          (yield* check(input, branch, id))
-        ) {
-          accepted = true;
-          break;
-        }
-      }
-      if (!accepted) return false;
+      if (!(yield* checkUnion(input, node[keyword], id))) return false;
     }
     return true;
+  }
+  function* checkProperties(input: unknown, node: Schema, id: string): Check {
+    if (!isRecord(node.properties) || !isRecord(input)) return true;
+    for (const [key, child] of Object.entries(node.properties)) {
+      if (
+        Object.hasOwn(input, key) && isRecord(child) && !(yield* check(input[key], child, id))
+      ) return false;
+    }
+    return true;
+  }
+  function* checkItems(input: unknown, node: Schema, id: string): Check {
+    if (!isRecord(node.items) || !Array.isArray(input)) return true;
+    for (const item of input) {
+      if (!(yield* check(item, node.items, id))) return false;
+    }
+    return true;
+  }
+  function* checkAllOf(input: unknown, node: Schema, id: string): Check {
+    if (!Array.isArray(node.allOf)) return true;
+    for (const branch of node.allOf) {
+      if (isRecord(branch) && !(yield* check(input, branch, id))) return false;
+    }
+    return true;
+  }
+  function* checkUnion(input: unknown, branches: unknown, id: string): Check {
+    if (!Array.isArray(branches)) return true;
+    for (const branch of branches) {
+      if (
+        isRecord(branch) && (yield { value: input, schema: branch, documentId: id }) &&
+        (yield* check(input, branch, id))
+      ) return true;
+    }
+    return false;
   }
   return yield* check(value, schema, documentId);
 }
