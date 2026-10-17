@@ -374,6 +374,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
             !somePrivateArray(
               eligibleRefs,
               (eligible) =>
+                eligible.messageIndex === ref.messageIndex &&
                 eligible.messageId === ref.messageId && eligible.partIndex === ref.partIndex &&
                 eligible.toolCallId === ref.toolCallId,
             ),

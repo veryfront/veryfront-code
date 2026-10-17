@@ -462,6 +462,7 @@ export function hasAmbiguousTrustedSkillLoadResultIds(messages: readonly Message
 }
 
 export type TrustedSkillLoadResultRef = {
+  messageIndex: number;
   messageId: string;
   partIndex: number;
   toolCallId: string;
@@ -482,7 +483,12 @@ export function getTrustedSkillLoadResultRefs(
         isToolResultPart(part) && hasTrustedPlatformPolicyToolResultPart(part) &&
         isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)
       ) {
-        pushPrivateArray(refs, { messageId: message.id, partIndex, toolCallId: part.toolCallId });
+        pushPrivateArray(refs, {
+          messageIndex,
+          messageId: message.id,
+          partIndex,
+          toolCallId: part.toolCallId,
+        });
       }
     }
   }
@@ -506,7 +512,8 @@ export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
       if (
         isToolResultPart(part) && isLoadSkillToolName(part.toolName) &&
         isSkillActivationResult(part.result) && somePrivateArray(refs, (ref) =>
-          ref.messageId === messages[messageIndex]!.id && ref.partIndex === partIndex &&
+          ref.messageIndex === messageIndex && ref.messageId === messages[messageIndex]!.id &&
+          ref.partIndex === partIndex &&
           ref.toolCallId === part.toolCallId)
       ) {
         markTrustedPlatformPolicyToolResultPart(part);

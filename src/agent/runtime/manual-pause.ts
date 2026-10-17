@@ -125,6 +125,7 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
     trustedSkillLoadResultIds: v.array(v.string().min(1)).optional(),
     trustedSkillLoadResultRefs: v.array(
       v.object({
+        messageIndex: v.number().int().nonnegative(),
         messageId: v.string().min(1),
         partIndex: v.number().int().nonnegative(),
         toolCallId: v.string().min(1),
