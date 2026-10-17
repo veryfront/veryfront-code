@@ -44,7 +44,10 @@ import {
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { resolveProviderToolSchemaTarget } from "#veryfront/agent/runtime/model-resolution.ts";
-import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import type {
+  RuntimeAgentMarkdownDefinition,
+  RuntimeAgentThinkingConfig,
+} from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
   getExecutorBindingSchema,
@@ -86,7 +89,6 @@ import type {
   HostedChatRuntimeCreationOptions,
   HostedChatRuntimeProjectSteering,
 } from "#veryfront/agent/hosted/chat-runtime-contract.ts";
-import type { RuntimeAgentThinkingConfig } from "#veryfront/agent/runtime/agent-definition.ts";
 import { resolveRuntimeSkillSelectorForAgent } from "#veryfront/agent/runtime/skill-metadata.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -176,6 +178,42 @@ function privateMapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
   apply(mapSet, map, [key, value]);
 }
 
+function collectUnavailableStudioTools(
+  configuredServers: NonNullable<RuntimeAgentMarkdownDefinition["mcpServers"]>,
+  effective: ExecutorRuntimeGrantData,
+  unavailableNames: ReturnType<typeof createPrivateSet<string>>,
+  unavailablePrefixes: ReturnType<typeof createPrivateSet<string>>,
+): void {
+  for (let index = 0; index < configuredServers.length; index++) {
+    const server = configuredServers[index];
+    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
+    const sourceId = server.id ?? server.kind;
+    if (includes(effective.remoteToolSourceIds, sourceId)) continue;
+    const allowedNames = server.toolPolicy?.allow;
+    if (allowedNames === undefined) {
+      unavailablePrefixes.add("studio_");
+      unavailablePrefixes.add("veryfront__studio_");
+      continue;
+    }
+    unavailableNames.add("studio_open_project");
+    unavailableNames.add("veryfront__studio_open_project");
+    forEachPrivateArray(allowedNames, (toolName) => {
+      unavailableNames.add(toolName);
+      if (apply(stringIndexOf, toolName, ["__"]) === -1) {
+        unavailableNames.add(`veryfront__${toolName}`);
+      }
+    });
+  }
+}
+
+function runtimePreparationFailureCode(error: unknown, signal: AbortSignal) {
+  const knownFailure = executorAgentFailureCode(error, "EXECUTOR_AGENT_SETUP_FAILED");
+  if (signal.aborted) return "ABORTED";
+  if (error instanceof ExecutorRuntimePreparationError) return error.code;
+  if (knownFailure === "EXECUTOR_AGENT_SETUP_FAILED") return "EXECUTOR_RUNTIME_PREPARATION_FAILED";
+  return knownFailure;
+}
+
 async function pruneUnavailableOptionalStudioToolNames(
   names: readonly string[],
   definition: RuntimeAgentMarkdownDefinition,
@@ -198,26 +236,12 @@ async function pruneUnavailableOptionalStudioToolNames(
     }
     return false;
   };
-  for (let index = 0; index < configuredServers.length; index++) {
-    const server = configuredServers[index];
-    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
-    const sourceId = server.id ?? server.kind;
-    if (includes(effective.remoteToolSourceIds, sourceId)) continue;
-    const allowedNames = server.toolPolicy?.allow;
-    if (allowedNames === undefined) {
-      unavailablePrefixes.add("studio_");
-      unavailablePrefixes.add("veryfront__studio_");
-      continue;
-    }
-    unavailableNames.add("studio_open_project");
-    unavailableNames.add("veryfront__studio_open_project");
-    forEachPrivateArray(allowedNames, (toolName) => {
-      unavailableNames.add(toolName);
-      if (apply(stringIndexOf, toolName, ["__"]) === -1) {
-        unavailableNames.add(`veryfront__${toolName}`);
-      }
-    });
-  }
+  collectUnavailableStudioTools(
+    configuredServers,
+    effective,
+    unavailableNames,
+    unavailablePrefixes,
+  );
   if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) {
     return slicePrivateArray(names);
   }
@@ -548,16 +572,16 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     cleanup ??= chain(resolvePrivatePromise(), async () => {
       // Startup can still reserve producer work. Join both before releasing
       // facades, without joining the stream handler that calls this cleanup.
-      if (startup) await chain(startup, () => {}, () => {});
-      if (producerCompletion) await observePrivatePromise(producerCompletion);
+      if (startup !== undefined) await chain(startup, () => {}, () => {});
+      if (producerCompletion !== undefined) await observePrivatePromise(producerCompletion);
       if (resourcesStarted) await observePrivatePromise(facades.cleanup());
     });
     return cleanup;
   };
   function close(): Promise<void> {
-    if (closing) return closing;
+    if (closing !== undefined) return closing;
     closing = chain(resolvePrivatePromise(), async () => {
-      if (preparation) await chain(preparation, () => {}, () => {});
+      if (preparation !== undefined) await chain(preparation, () => {}, () => {});
       let failed = false;
       try {
         await release();
@@ -1120,14 +1144,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       } catch {
         return { ok: false, code: "EXECUTOR_RUNTIME_CLEANUP_FAILED" };
       }
-      const knownFailure = executorAgentFailureCode(error, "EXECUTOR_AGENT_SETUP_FAILED");
-      const code = lifetime.signal.aborted
-        ? "ABORTED"
-        : error instanceof ExecutorRuntimePreparationError
-        ? error.code
-        : knownFailure === "EXECUTOR_AGENT_SETUP_FAILED"
-        ? "EXECUTOR_RUNTIME_PREPARATION_FAILED"
-        : knownFailure;
+      const code = runtimePreparationFailureCode(error, lifetime.signal);
       return { ok: false, code };
     }
   }
@@ -1138,7 +1155,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     async handle(value, context) {
       try {
         assertActive();
-        if (preparation) refuse("EXECUTOR_RUNTIME_ALREADY_PREPARED");
+        if (preparation !== undefined) refuse("EXECUTOR_RUNTIME_ALREADY_PREPARED");
         const request = parseRuntimePreparationData(
           getExecutorRuntimePrepareRequestSchema(),
           value,
