@@ -178,6 +178,31 @@ export function validatePayloadSemantics(value) {
   return violations;
 }
 
+function expandSemanticCaseValue(value) {
+  if (Array.isArray(value)) return value.map(expandSemanticCaseValue);
+  if (!isRecord(value)) return value;
+  if (Object.keys(value).length === 1 && isRecord(value.$repeat)) {
+    const { text, count, prefix = '', suffix = '' } = value.$repeat;
+    if (typeof text !== 'string' || !Number.isSafeInteger(count) || count < 0 || typeof prefix !== 'string' || typeof suffix !== 'string') throw new Error('Invalid deterministic $repeat fixture marker');
+    return prefix + text.repeat(count) + suffix;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, expandSemanticCaseValue(entry)]));
+}
+
+function applySemanticCaseMutation(payload, mutation) {
+  if (!Array.isArray(mutation.path) || mutation.path.length === 0) throw new Error('Semantic case mutation path must name a field');
+  let parent = payload;
+  for (const key of mutation.path.slice(0, -1)) {
+    if (!isRecord(parent) && !Array.isArray(parent)) throw new Error('Semantic case mutation crosses a non-object value');
+    if (!own(parent, key)) parent[key] = {};
+    parent = parent[key];
+  }
+  const key = mutation.path.at(-1);
+  if (mutation.op === 'set') parent[key] = expandSemanticCaseValue(mutation.value);
+  else if (mutation.op === 'delete') delete parent[key];
+  else throw new Error(`Unsupported semantic case mutation: ${mutation.op}`);
+}
+
 /**
  * Materialize the companion deterministic case format from saved control
  * examples. $repeat markers exist only in test-case mutation values, never in
@@ -187,29 +212,10 @@ export function materializePayloadSemanticCase(testCase, fixtures) {
   const corpus = Array.isArray(fixtures) ? fixtures : fixtures.examples;
   const fixture = corpus.find(example => example.id === testCase.baseExampleId);
   if (!fixture) throw new Error(`Missing semantic case base example: ${testCase.baseExampleId}`);
-  const expand = value => {
-    if (Array.isArray(value)) return value.map(expand);
-    if (!isRecord(value)) return value;
-    if (Object.keys(value).length === 1 && isRecord(value.$repeat)) {
-      const { text, count, prefix = '', suffix = '' } = value.$repeat;
-      if (typeof text !== 'string' || !Number.isSafeInteger(count) || count < 0 || typeof prefix !== 'string' || typeof suffix !== 'string') throw new Error('Invalid deterministic $repeat fixture marker');
-      return prefix + text.repeat(count) + suffix;
-    }
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, expand(entry)]));
-  };
+
   let payload = structuredClone(fixture.data);
   for (const mutation of testCase.mutations ?? []) {
-    if (!Array.isArray(mutation.path) || mutation.path.length === 0) throw new Error('Semantic case mutation path must name a field');
-    let parent = payload;
-    for (const key of mutation.path.slice(0, -1)) {
-      if (!isRecord(parent) && !Array.isArray(parent)) throw new Error('Semantic case mutation crosses a non-object value');
-      if (!own(parent, key)) parent[key] = {};
-      parent = parent[key];
-    }
-    const key = mutation.path.at(-1);
-    if (mutation.op === 'set') parent[key] = expand(mutation.value);
-    else if (mutation.op === 'delete') delete parent[key];
-    else throw new Error(`Unsupported semantic case mutation: ${mutation.op}`);
+    applySemanticCaseMutation(payload, mutation);
   }
   if (testCase.wrap === 'cloud-event-data') payload = { specversion: '1.0', type: payload.type, data: payload };
   else if (testCase.wrap === 'typed-row-payload') payload = { event_type: payload.type, payload };

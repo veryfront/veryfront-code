@@ -79,19 +79,10 @@ function targetEnvelopeSchemaForRuntime(): JsonSchema {
   return schema as JsonSchema;
 }
 
-function patchStrictRequiredBranches(
-  value: unknown,
-  availableProperties: Record<string, unknown>,
+function patchRequiredProperties(
+  value: Record<string, unknown>,
+  localProperties: Record<string, unknown>,
 ): void {
-  if (Array.isArray(value)) {
-    for (const item of value) patchStrictRequiredBranches(item, availableProperties);
-    return;
-  }
-  if (!isPlainRecord(value)) return;
-
-  const localProperties = isPlainRecord(value.properties)
-    ? { ...availableProperties, ...value.properties }
-    : availableProperties;
   if (Array.isArray(value.required)) {
     const properties = isPlainRecord(value.properties) ? value.properties : {};
     let patchedProperties: Record<string, unknown> | undefined;
@@ -106,6 +97,22 @@ function patchStrictRequiredBranches(
     }
     if (patchedProperties) value.properties = patchedProperties;
   }
+}
+
+function patchStrictRequiredBranches(
+  value: unknown,
+  availableProperties: Record<string, unknown>,
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) patchStrictRequiredBranches(item, availableProperties);
+    return;
+  }
+  if (!isPlainRecord(value)) return;
+
+  const localProperties = isPlainRecord(value.properties)
+    ? { ...availableProperties, ...value.properties }
+    : availableProperties;
+  patchRequiredProperties(value, localProperties);
 
   for (const child of Object.values(value)) {
     patchStrictRequiredBranches(child, localProperties);
@@ -147,6 +154,43 @@ function jsonPointerSegment(value: string): string {
   return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
+function validateInputTokenSemantics(
+  tokens: Record<string, unknown>,
+  input: unknown,
+  issues: EventParseIssue[],
+): void {
+  if (typeof input === "number") {
+    for (const key of ["cacheRead", "cacheWrite"] as const) {
+      const value = tokens[key];
+      if (typeof value === "number" && value > input) {
+        issues.push(
+          semanticIssue(`${key} must not exceed input tokens`, `/data/tokens/${key}`),
+        );
+      }
+    }
+  }
+}
+
+function validateTokenSemantics(
+  event: Extract<EventRecord, { readonly type: "com.veryfront.model-call.usage.recorded" }>,
+  issues: EventParseIssue[],
+): void {
+  const tokens = event.data.tokens;
+  if (isPlainRecord(tokens)) {
+    const input = tokens.input;
+    const output = tokens.output;
+    validateInputTokenSemantics(tokens, input, issues);
+    if (typeof output === "number") {
+      const reasoning = tokens.reasoning;
+      if (typeof reasoning === "number" && reasoning > output) {
+        issues.push(
+          semanticIssue("reasoning must not exceed output tokens", "/data/tokens/reasoning"),
+        );
+      }
+    }
+  }
+}
+
 function validateEventSemantics(event: EventRecord): readonly EventParseIssue[] {
   const issues: EventParseIssue[] = [];
   for (const [key, value] of Object.entries(event)) {
@@ -164,29 +208,7 @@ function validateEventSemantics(event: EventRecord): readonly EventParseIssue[] 
     issues.push(semanticIssue("tracestate must follow W3C trace context syntax", "/tracestate"));
   }
   if (event.type === "com.veryfront.model-call.usage.recorded") {
-    const tokens = event.data.tokens;
-    if (isPlainRecord(tokens)) {
-      const input = tokens.input;
-      const output = tokens.output;
-      if (typeof input === "number") {
-        for (const key of ["cacheRead", "cacheWrite"] as const) {
-          const value = tokens[key];
-          if (typeof value === "number" && value > input) {
-            issues.push(
-              semanticIssue(`${key} must not exceed input tokens`, `/data/tokens/${key}`),
-            );
-          }
-        }
-      }
-      if (typeof output === "number") {
-        const reasoning = tokens.reasoning;
-        if (typeof reasoning === "number" && reasoning > output) {
-          issues.push(
-            semanticIssue("reasoning must not exceed output tokens", "/data/tokens/reasoning"),
-          );
-        }
-      }
-    }
+    validateTokenSemantics(event, issues);
   }
   return issues;
 }
