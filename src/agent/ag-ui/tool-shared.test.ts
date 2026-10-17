@@ -6,7 +6,11 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import type { Agent } from "../types.ts";
 import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { RunResumeSessionManager } from "../runtime/index.ts";
-import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
+import {
+  type AgUiResumeValue,
+  buildExplicitAgUiSourceTools,
+  buildMergedAgUiTools,
+} from "./tool-shared.ts";
 
 const inputSchema = defineSchema((v) =>
   v.object({
@@ -16,6 +20,17 @@ const inputSchema = defineSchema((v) =>
 );
 
 describe("buildMergedAgUiTools", () => {
+  it("does not re-enable a no-tools agent with client tool metadata", () => {
+    const agent = { config: { tools: false } } as unknown as Agent;
+    const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+
+    assertEquals(buildExplicitAgUiSourceTools(agent), false);
+    assertEquals(
+      buildMergedAgUiTools(agent, "run_1", [{ name: "studio_open_preview" }], sessionManager),
+      false,
+    );
+  });
+
   it("preserves concrete source tools when forwarded metadata uses the same name", async () => {
     const sourceTool: Tool = {
       id: "number-generator",

@@ -180,7 +180,10 @@ function resolveProviderToolsConfiguration(
 ): string[] | undefined {
   const providerTools = config.providerTools;
   const toolSelection = config.tools;
-  if (providerTools === undefined || toolSelection === undefined || toolSelection === true) {
+  if (
+    providerTools === undefined || toolSelection === undefined ||
+    toolSelection === true || toolSelection === false
+  ) {
     return providerTools;
   }
 
@@ -362,6 +365,8 @@ function resolveToolsConfiguration(input: {
   let merged = config.tools;
 
   ensureBuiltinSchemaValidator();
+  if (config.tools === false) return false;
+
   for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
     const registration = SKILL_TOOL_REGISTRATIONS[index]!;
     const canonicalId = `veryfront__${registration.id}` as const;
@@ -446,7 +451,7 @@ function resolveToolsConfiguration(input: {
     if (delegates.length > 0) {
       const delegateTools = buildAgentDelegateTools({ delegates, selfId: id });
       for (const toolName of IntrinsicObjectKeys(delegateTools)) {
-        if (merged?.[toolName] === false) {
+        if (merged && merged[toolName] === false) {
           delete delegateTools[toolName];
         }
       }
@@ -580,8 +585,10 @@ function createAgent<TOutput = never>(
   }
 
   const id = config.id ?? generateAgentId();
-  const delegates = normalizeAgentDelegateIds(id, config.delegates);
-  const skillsConfig = config.skills === false ? [] : config.skills;
+  const delegates = config.tools === false
+    ? undefined
+    : normalizeAgentDelegateIds(id, config.delegates);
+  const skillsConfig = config.tools === false || config.skills === false ? [] : config.skills;
   const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
 
   const resolveSkillSnapshot = () =>
@@ -593,7 +600,20 @@ function createAgent<TOutput = never>(
 
   const publicConfig: ResolvedAgentConfig = {
     ...config,
-    ...(delegates === undefined ? {} : { delegates }),
+    ...(config.tools === false
+      ? {
+        skills: false,
+        knowledge: undefined,
+        delegates: undefined,
+        mcpServers: undefined,
+        bootstrapSkill: undefined,
+        bootstrapTools: undefined,
+        optionalBootstrapTools: undefined,
+        toolResultContext: undefined,
+      }
+      : delegates === undefined
+      ? {}
+      : { delegates }),
     ...(config.providerTools === undefined
       ? {}
       : { providerTools: resolveProviderToolsConfiguration(config) }),
@@ -612,8 +632,8 @@ function createAgent<TOutput = never>(
       );
     }
     ensureBuiltinSchemaValidator();
-    mergedToolsConfig = { ...(config.tools ?? {}) };
-    IntrinsicObjectSetPrototypeOf(mergedToolsConfig, null);
+    mergedToolsConfig = config.tools === false ? false : { ...(config.tools ?? {}) };
+    if (mergedToolsConfig !== false) IntrinsicObjectSetPrototypeOf(mergedToolsConfig, null);
   } else {
     mergedToolsConfig = resolveToolsConfiguration({
       config,
@@ -627,7 +647,10 @@ function createAgent<TOutput = never>(
   // Hosted callers already assembled the catalog under their authorization
   // ceiling. Feature configuration must not re-add a filtered capability.
   const knowledgeEnabled = isKnowledgeEnabled(config.knowledge);
-  if (preserveToolCatalog && knowledgeEnabled && mergedToolsConfig !== true) {
+  if (
+    preserveToolCatalog && knowledgeEnabled && mergedToolsConfig !== true &&
+    mergedToolsConfig !== false
+  ) {
     const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       typeof configuredKnowledgeTool === "object" && configuredKnowledgeTool !== null &&
@@ -640,8 +663,10 @@ function createAgent<TOutput = never>(
       });
     }
   }
-  const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
-  if (knowledgeTool && mergedToolsConfig !== true) {
+  const knowledgeTool = preserveToolCatalog || config.tools === false
+    ? undefined
+    : createAgentKnowledgeTool(config);
+  if (knowledgeTool && mergedToolsConfig !== true && mergedToolsConfig !== false) {
     const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       configuredKnowledgeTool && configuredKnowledgeTool !== true &&

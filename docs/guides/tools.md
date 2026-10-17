@@ -154,6 +154,11 @@ step. `veryfront__form_input` is authorized but deferred until it is needed. Omi
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
 
+Set `tools: false` to deny all Veryfront-callable tools, including framework
+helpers, integration tools, and tools supplied by a run request. This setting
+does not disable explicitly configured `providerTools`, which execute in the
+selected model provider.
+
 ```ts
 // agents/assistant.ts
 import { agent } from "veryfront/agent";

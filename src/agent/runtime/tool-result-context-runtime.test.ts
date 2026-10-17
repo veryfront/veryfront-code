@@ -197,6 +197,25 @@ function historicalToolResultMessages(result: string): Message[] {
 }
 
 describe("agent runtime tool result context integration", () => {
+  it("keeps historical results readable without adding a reader to a no-tools agent", async () => {
+    const model = scriptedModel([
+      (options) => {
+        assertEquals(firstToolOutputValue(options, "list_records"), LARGE_RESULT);
+        assertEquals(toolNamesFromCall(options), []);
+        return { text: "done" };
+      },
+    ], { modelId: "hosted/no-tools-history", only: "generate" });
+    const assistant = agent({
+      model: "hosted/no-tools-history",
+      system: "Answer from the conversation.",
+      tools: false,
+      toolResultContext: { maxInlineBytes: 32, previewBytes: 24 },
+      resolveModelTransport: () => ({ model }),
+    });
+
+    await assistant.generate({ input: historicalToolResultMessages(LARGE_RESULT) });
+  });
+
   it("compacts oversized generate() tool results for the next model call while preserving raw response history", async () => {
     let ref = "";
     const model = scriptedModel([

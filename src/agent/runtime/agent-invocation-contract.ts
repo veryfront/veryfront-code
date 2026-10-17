@@ -729,9 +729,9 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   const normalized = copyOwnDataRecord(value);
   // Validate the authored config (with the deny-all selector expressed as the
   // equivalent empty selector) before any field is discarded. A config that
-  // fails keeps `tools: false`, which the invocation schema always rejects:
-  // the schema strips unknown fields before its size refinement, so leaving
-  // only the invalid fields in place would not reliably fail closed.
+  // fails keeps `tools: false`, which the deny-all invocation schema rejects:
+  // the agent-config schema strips unknown fields before its size refinement,
+  // so relying on that refinement alone would not reliably fail closed.
   const validationAgentConfig = copyOwnDataRecord(agentConfig);
   defineOwnData(validationAgentConfig, "tools", []);
   if (
@@ -874,6 +874,16 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
  */
 const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
   getRuntimeAgentRunInvocationSchema().superRefine((input, ctx) => {
+    // Normalization leaves the authored selector in place when the raw config
+    // fails validation. The Markdown schema also accepts false, so reject it
+    // explicitly here instead of allowing an invalid config through.
+    if (input.agentConfig?.tools === false) {
+      ctx.addIssue({
+        code: "custom",
+        message: "tools: false requires a valid bounded agentConfig",
+        path: ["agentConfig", "tools"],
+      });
+    }
     const runtimeOverrides = input.forwardedProps?.runtimeOverrides;
     // Captured parser: replacing the live schema method after module load
     // cannot approve an invalid generated override.

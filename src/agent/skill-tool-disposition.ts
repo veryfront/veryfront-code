@@ -43,7 +43,7 @@ function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
  * skill infrastructure as passing a concrete one.
  */
 function hasConfiguredSkillTool(tools: AgentConfig["tools"]): boolean {
-  if (tools === undefined || tools === true) return false;
+  if (tools === undefined || typeof tools === "boolean") return false;
   return Object.keys(tools).some((name) =>
     isSkillInfrastructureToolId(name) && tools[name] !== undefined
   );
@@ -68,6 +68,7 @@ export function resolveSkillToolDisposition(
   config: Pick<AgentConfig, "skills" | "tools">,
   agentId: string | undefined,
 ): SkillToolDisposition {
+  if (config.tools === false) return "disable";
   if (isExplicitNoneSkillSelector(config.skills)) return "disable";
   if (config.skills !== undefined) return "inject";
   if (hasConfiguredSkillTool(config.tools)) return "inject";

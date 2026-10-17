@@ -266,6 +266,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
   configuredKnowledge?: RuntimeAgentMarkdownDefinition["knowledge"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
+  if (input.configuredTools === false) return [];
   if (input.configuredTools === true) {
     if (input.configuredDeniedTools?.length) return [];
     return input.requestedTools === undefined
@@ -364,7 +365,8 @@ export function resolveHostedRuntimeRequestConfig(
       configuredProviderTools: input.agentConfig.providerTools,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
-    includeRuntimeEssentialToolsWhenEmpty: !failClosedUnrestrictedToolDenials &&
+    includeRuntimeEssentialToolsWhenEmpty: input.agentConfig.tools !== false &&
+      !failClosedUnrestrictedToolDenials &&
       effectiveRuntimeOverrides?.allowedTools === undefined,
     deniedToolNames: input.agentConfig.deniedTools?.length
       ? [...input.agentConfig.deniedTools]

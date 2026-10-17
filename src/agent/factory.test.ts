@@ -604,6 +604,52 @@ describe("agent factory", () => {
     assertEquals(assistant.config.tools, undefined);
   });
 
+  it("keeps an explicit no-tools selector closed when a skill is visible", async () => {
+    registerSkill("visible-guide", createSkill("visible-guide", "A visible guide"));
+    let remoteListCalls = 0;
+    const remoteSource: RemoteToolSource = {
+      id: "remote-fixture",
+      async listTools() {
+        remoteListCalls++;
+        throw new Error("No-tools agents must not discover remote tools");
+      },
+      async executeTool() {
+        throw new Error("No-tools agents must not execute remote tools");
+      },
+    };
+    const model = scriptedModel([{ text: "done" }], {
+      modelId: "hosted/no-tools-native",
+      only: "generate",
+    });
+    const config: AgentConfig & { __vfRemoteToolSources: RemoteToolSource[] } = {
+      id: "no-tools-native",
+      model: "hosted/no-tools-native",
+      system: "Answer directly.",
+      tools: false,
+      skills: ["visible-guide"],
+      knowledge: true,
+      delegates: ["specialist"],
+      providerTools: ["web_search"],
+      mcpServers: [{ kind: "veryfront-api" }],
+      __vfRemoteToolSources: [remoteSource],
+      resolveModelTransport: async () => ({ model }),
+    };
+    const assistant = agent(config);
+
+    await assistant.generate({ input: "Summarize this text." });
+
+    assertEquals(assistant.config.tools, false);
+    assertEquals(assistant.config.skills, false);
+    assertEquals(assistant.config.knowledge, undefined);
+    assertEquals(assistant.config.delegates, undefined);
+    assertEquals(assistant.config.mcpServers, undefined);
+    assertEquals(assistant.config.providerTools, ["web_search"]);
+    assertEquals(model.toolNames(0), []);
+    assertEquals(remoteListCalls, 0);
+    const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+    assertEquals(prompt.includes("visible-guide"), false);
+  });
+
   it("honours a skill tool configured as `true` rather than dropping it", () => {
     // `load_skill: true` asks for the framework's own tool by name. That is as
     // explicit a request for the skill infrastructure as passing a concrete

@@ -145,6 +145,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isToolSearchDenied(config: AgentConfig): boolean {
+  if (config.tools === false) return true;
   const deniedTools = (config as { deniedTools?: unknown }).deniedTools;
   if (
     ArrayIsArray(deniedTools) &&
