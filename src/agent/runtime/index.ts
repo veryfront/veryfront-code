@@ -5991,6 +5991,14 @@ export class AgentRuntime {
           await persistMessage(assistantToolCallMessage);
         }
 
+        if (this.#persistRecoveryBoundary) {
+          await this.#persistRecoveryBoundary(createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ));
+          throwIfAborted(abortSignal);
+        }
+
         const toolCall: ToolCall = {
           id: resumeToolCall.id,
           name: resumeToolCall.name,
@@ -6131,6 +6139,7 @@ export class AgentRuntime {
             toolCalls,
           );
         }
+        if (this.#persistRecoveryBoundary) await pauseAtBoundary(step);
       }
 
       // Include the parked result delivered to this request, but exclude new same-step results.

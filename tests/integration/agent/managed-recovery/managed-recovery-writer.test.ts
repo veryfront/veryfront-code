@@ -1282,3 +1282,160 @@ it("project Array.some replacement cannot seal an unresolved admitted tool effec
     else Deno.env.set(envKey, previous);
   }
 });
+
+for (const maxSteps of [1]) {
+  it("resumed local tool persists admitted intent before its effect and a restorable result before the provider", async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(new Error("Truncated input admission deadlock")),
+      5000,
+    );
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let cursor = 0;
+      let effects = 0;
+      const order: string[] = [];
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId, checkpoint) => {
+          cursor++;
+          order.push(String(event.type));
+          const eventId = cursor;
+          return {
+            eventId,
+            externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: eventId,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: eventId + 10000,
+                },
+              }
+              : {}),
+            toolAdmissions: event.type === "TOOL_CALL_START"
+              ? [{
+                occurrenceId: occurrenceId!,
+                admissionEventId: String(1000 + cursor),
+                startEventId: String(eventId),
+                toolCallId: String(event.toolCallId),
+                publicToolCallId: String(event.toolCallId),
+                projectId: identity.projectId,
+                runId: identity.canonicalRunId,
+              }]
+              : [],
+          };
+        },
+      });
+      writer.bindSignal(abort.signal);
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      const { runWithToolCallOccurrences } = await import(
+        "#veryfront/runtime/tool-call-occurrence.ts"
+      );
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } =
+        await import(
+          "#veryfront/internal-agents/ag-ui-sse.ts"
+        );
+      const model = scriptedModel([{ text: "Complete" }], { only: "stream" });
+      let intentBeforeEffect = false;
+      const runtime = createEphemeralAgentWithRuntimeOptions({
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps,
+        tools: {
+          inspect: tool({
+            id: "inspect",
+            description: "Synthetic",
+            inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+            execute: async () => {
+              const home = await DurableRunHome.open({
+                directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+                identity,
+              });
+              const { parseRecoverySnapshot } = await import(
+                "#veryfront/internal-agents/recovery-snapshot.ts"
+              );
+              const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+              intentBeforeEffect = snapshot.toolBoundaries.some((boundary) =>
+                boundary.kind === "admitted-intent"
+              );
+              effects++;
+              order.push("ACTUAL_EFFECT");
+              return Promise.resolve({ ok: true });
+            },
+          }),
+        },
+      }, {
+        resolveModelRuntime: () => model,
+        persistRecoveryBoundary: writer.persistBoundary,
+        resumeToolCall: { id: "resumed-call", name: "inspect", input: { query: "resume" } },
+      });
+      const result = await runWithRecoveryToolExecutionPolicy(
+        writer.executeTool,
+        () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+      );
+      const reader = result.toDataStreamResponse().body!.getReader();
+      const decoder = new TextDecoder();
+      const state = createStreamTransformState();
+      let remainder = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const parsed = parseSseJsonEvents(
+          remainder + decoder.decode(chunk.value, { stream: true }),
+        );
+        remainder = parsed.remainder;
+        for (const event of parsed.events) {
+          for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            await writer.appendMappedEvent(
+              mapped,
+              mapped.event === "ToolCallStart" &&
+                typeof event.privateToolCallOccurrenceId === "string"
+                ? event.privateToolCallOccurrenceId
+                : undefined,
+            );
+          }
+        }
+      }
+      reader.releaseLock();
+      assertEquals(abort.signal.aborted, false);
+      assertEquals(effects, 1);
+      assertEquals(intentBeforeEffect, true);
+      assertEquals(model.callCount, 1);
+      assertEquals(order.includes("TOOL_CALL_START"), true);
+      assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("TOOL_CALL_RESULT"), true);
+      const home = await DurableRunHome.open({
+        directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+        identity,
+      });
+      const { parseRecoverySnapshot } = await import(
+        "#veryfront/internal-agents/recovery-snapshot.ts"
+      );
+      const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+      assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+      if (maxSteps === 2) assertEquals(snapshot.runtimeContinuation?.nextStep, 2);
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
