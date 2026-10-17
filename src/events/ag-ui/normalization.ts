@@ -527,17 +527,33 @@ function appendTextChunkStart(
   );
 }
 
+function prepareMessageChunk(
+  event: AgUiEventOf<"TEXT_MESSAGE_CHUNK" | "REASONING_MESSAGE_CHUNK">,
+  kind: "text" | "reasoning",
+  producerOccurrence: AgUiProducerOccurrence,
+  state: AgUiNormalizationState,
+) {
+  const messageId = event.messageId;
+  const lane = laneTag(event);
+  const resolved = resolveLane(state, kind, messageId, lane, producerOccurrence, event.type);
+  if (!resolved.success) return resolved;
+  return {
+    success: true as const,
+    messageId,
+    lane,
+    resolved,
+    open: findPendingByLane(state, resolved.lane),
+  };
+}
+
 function expandTextChunk(
   event: AgUiEventOf<"TEXT_MESSAGE_CHUNK">,
   producerOccurrence: AgUiProducerOccurrence,
   state: AgUiNormalizationState,
 ): ExpansionResult {
-  const messageId = event.messageId;
-  const lane = laneTag(event);
-  const resolved = resolveLane(state, "text", messageId, lane, producerOccurrence, event.type);
-  if (!resolved.success) return { commands: [resolved.command], state };
-
-  const open = findPendingByLane(state, resolved.lane);
+  const prepared = prepareMessageChunk(event, "text", producerOccurrence, state);
+  if (!prepared.success) return { commands: [prepared.command], state };
+  const { messageId, lane, resolved, open } = prepared;
   const commands: AgUiNormalizationCommand[] = [];
   let nextState = state;
   let pending: Extract<AgUiPendingStream, { readonly kind: "text" }>;
@@ -769,12 +785,9 @@ function expandReasoningChunk(
   producerOccurrence: AgUiProducerOccurrence,
   state: AgUiNormalizationState,
 ): ExpansionResult {
-  const messageId = event.messageId;
-  const lane = laneTag(event);
-  const resolved = resolveLane(state, "reasoning", messageId, lane, producerOccurrence, event.type);
-  if (!resolved.success) return { commands: [resolved.command], state };
-
-  const open = findPendingByLane(state, resolved.lane);
+  const prepared = prepareMessageChunk(event, "reasoning", producerOccurrence, state);
+  if (!prepared.success) return { commands: [prepared.command], state };
+  const { messageId, lane, resolved, open } = prepared;
   const commands: AgUiNormalizationCommand[] = [];
   let nextState = state;
   let pending: Extract<AgUiPendingStream, { readonly kind: "reasoning" }>;
