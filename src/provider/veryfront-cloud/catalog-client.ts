@@ -261,17 +261,10 @@ function canonicalCatalogModelId(modelId: string): string {
     : modelId;
 }
 
-/**
- * Read `deployments`, which lists every place a model runs in routing order.
- * Each model takes its first enabled deployment, the one the gateway routes
- * to. When that deployment cannot be read, the model's deprecated row is used
- * while the API still serves one. A model with no enabled deployment, or with
- * neither, is left out, and so is its `is_default`.
- */
-function parseDeployments(
-  deployments: readonly unknown[],
-  legacyModels: unknown,
-): VeryfrontCloudCatalog {
+function indexLegacyModels(legacyModels: unknown): {
+  legacy: Map<string, VeryfrontCloudCatalogModel>;
+  canonicalLegacy: Map<string, VeryfrontCloudCatalogModel>;
+} {
   const legacy = new Map<string, VeryfrontCloudCatalogModel>();
   const canonicalLegacy = new Map<string, VeryfrontCloudCatalogModel>();
   if (Array.isArray(legacyModels)) {
@@ -284,6 +277,21 @@ function parseDeployments(
       }
     }
   }
+  return { legacy, canonicalLegacy };
+}
+
+/**
+ * Read `deployments`, which lists every place a model runs in routing order.
+ * Each model takes its first enabled deployment, the one the gateway routes
+ * to. When that deployment cannot be read, the model's deprecated row is used
+ * while the API still serves one. A model with no enabled deployment, or with
+ * neither, is left out, and so is its `is_default`.
+ */
+function parseDeployments(
+  deployments: readonly unknown[],
+  legacyModels: unknown,
+): VeryfrontCloudCatalog {
+  const { legacy, canonicalLegacy } = indexLegacyModels(legacyModels);
   const models: VeryfrontCloudCatalogModel[] = [];
   const listed = new Set<string>();
   const unreadable: string[] = [];
