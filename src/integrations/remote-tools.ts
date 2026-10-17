@@ -310,7 +310,7 @@ function joinCallToolText(content: unknown[]): string {
     .join("\n");
 }
 
-function parseJsonText(text: string): unknown | undefined {
+function parseJsonText(text: string): unknown {
   try {
     const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
     return snapshot.success ? snapshot.value : undefined;
@@ -649,6 +649,53 @@ function getRemoteIntegrationToolCatalog(
   return result;
 }
 
+function decodeRemoteToolFailure(
+  result: Record<string, unknown>,
+  hasStructuredContent: boolean,
+  text: string,
+): unknown {
+  const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
+      Object.keys(result.structuredContent).length > 0
+    ? result.structuredContent
+    : parseJsonText(text);
+  const condition = isRecord(result._meta) ? result._meta.condition : undefined;
+  return applyRemoteFailureCondition(parsed, text, condition);
+}
+
+function decodeRemoteToolResult(result: BoundedJsonValue): unknown {
+  // If MCP CallToolResult format, extract content.
+  if (isRecord(result) && Array.isArray(result.content)) {
+    const text = joinCallToolText(result.content);
+
+    const hasStructuredContent = Object.hasOwn(result, "structuredContent");
+    if (hasStructuredContent && !isRecord(result.structuredContent)) {
+      throw new TypeError(
+        "Integration tools API returned malformed MCP structured content",
+      );
+    }
+
+    if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
+      throw new TypeError("Integration tools API returned a malformed MCP error marker");
+    }
+    if (result.isError === true) {
+      return decodeRemoteToolFailure(result, hasStructuredContent, text);
+    }
+
+    if (hasStructuredContent) {
+      if (!isRecord(result.structuredContent)) {
+        throw new TypeError(
+          "Integration tools API returned malformed MCP structured content",
+        );
+      }
+      return result.structuredContent;
+    }
+
+    return parseJsonText(text) ?? text;
+  }
+
+  return result;
+}
+
 async function callRemoteTool(
   baseUrl: string,
   token: string,
@@ -661,8 +708,10 @@ async function callRemoteTool(
   try {
     const serializedBody = serializeCallRequest(args, context);
     const projectSlug = resolveRequestProjectSlug(context);
-    const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      `/integration-tools/${encodeURIComponent(`${integration}__${toolId}`)}/run`,
+    const resolveRequestUrl = createVeryfrontApiRequestUrlResolver(baseUrl);
+    const remoteToolName = `${integration}__${toolId}`;
+    const requestUrl = resolveRequestUrl(
+      `/integration-tools/${encodeURIComponent(remoteToolName)}/run`,
     );
     const response = await dispatchIntegrationApiRequest({
       requestUrl,
@@ -696,42 +745,7 @@ async function callRemoteTool(
     }
     const result = resultSnapshot.value;
 
-    // If MCP CallToolResult format, extract content.
-    if (isRecord(result) && Array.isArray(result.content)) {
-      const text = joinCallToolText(result.content);
-
-      const hasStructuredContent = Object.hasOwn(result, "structuredContent");
-      if (hasStructuredContent && !isRecord(result.structuredContent)) {
-        throw new TypeError(
-          "Integration tools API returned malformed MCP structured content",
-        );
-      }
-
-      if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
-        throw new TypeError("Integration tools API returned a malformed MCP error marker");
-      }
-      if (result.isError === true) {
-        const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
-            Object.keys(result.structuredContent).length > 0
-          ? result.structuredContent
-          : parseJsonText(text);
-        const condition = isRecord(result._meta) ? result._meta.condition : undefined;
-        return applyRemoteFailureCondition(parsed, text, condition);
-      }
-
-      if (hasStructuredContent) {
-        if (!isRecord(result.structuredContent)) {
-          throw new TypeError(
-            "Integration tools API returned malformed MCP structured content",
-          );
-        }
-        return result.structuredContent;
-      }
-
-      return parseJsonText(text) ?? text;
-    }
-
-    return result;
+    return decodeRemoteToolResult(result);
   } finally {
     requestScope.dispose();
   }
