@@ -13,7 +13,7 @@ async function* walkJavaScriptFiles(directory: string): AsyncGenerator<string> {
     const path = resolve(directory, entry.name);
     if (entry.isDirectory) {
       yield* walkJavaScriptFiles(path);
-    } else if (entry.isFile && /\.(?:c|m)?js$/.test(entry.name)) {
+    } else if (entry.isFile && /\.[cm]?js$/.test(entry.name)) {
       yield path;
     }
   }
@@ -40,49 +40,65 @@ export async function assertNpmRuntimeHelperContract(
   const packageEscapes: string[] = [];
   const missing: string[] = [];
 
+  const classifyImport = (
+    specifier: string | undefined,
+    sourcePath: string,
+  ): { targetPath: string; packageRelativeTarget: string } | undefined => {
+    if (!specifier?.startsWith("./") && !specifier?.startsWith("../")) {
+      return;
+    }
+
+    const pathSpecifier = specifier.replace(/[?#].*$/s, "");
+    const targetPath = resolve(dirname(sourcePath), pathSpecifier);
+    if (isWithinDirectory(sourceRoot, targetPath)) return;
+
+    const sourceRelativePath = relative(sourceRoot, sourcePath).split(sep)
+      .join("/");
+    if (!isWithinDirectory(packageRoot, targetPath)) {
+      packageEscapes.push(`${sourceRelativePath}: ${specifier}`);
+      return;
+    }
+
+    if (dirname(targetPath) !== packageRoot) return;
+
+    const packageRelativeTarget = relative(packageRoot, targetPath).split(sep)
+      .join("/");
+    if (!expected.has(packageRelativeTarget)) {
+      unsupportedRootImports.push(
+        `${sourceRelativePath}: ${specifier} -> ${packageRelativeTarget}`,
+      );
+      return;
+    }
+
+    importedHelpers.add(packageRelativeTarget);
+    return { targetPath, packageRelativeTarget };
+  };
+
+  const checkImportedHelper = async (
+    targetPath: string,
+    packageRelativeTarget: string,
+  ): Promise<void> => {
+    try {
+      const stat = await Deno.stat(targetPath);
+      if (!stat.isFile) missing.push(packageRelativeTarget);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        missing.push(packageRelativeTarget);
+      } else {
+        throw error;
+      }
+    }
+  };
+
   for await (const sourcePath of walkJavaScriptFiles(sourceRoot)) {
     const source = await Deno.readTextFile(sourcePath);
     const [imports] = parse(source);
 
     for (const entry of imports) {
-      const specifier = entry.n;
-      if (!specifier?.startsWith("./") && !specifier?.startsWith("../")) {
-        continue;
-      }
-
-      const pathSpecifier = specifier.replace(/[?#].*$/s, "");
-      const targetPath = resolve(dirname(sourcePath), pathSpecifier);
-      if (isWithinDirectory(sourceRoot, targetPath)) continue;
-
-      const sourceRelativePath = relative(sourceRoot, sourcePath).split(sep)
-        .join("/");
-      if (!isWithinDirectory(packageRoot, targetPath)) {
-        packageEscapes.push(`${sourceRelativePath}: ${specifier}`);
-        continue;
-      }
-
-      if (dirname(targetPath) !== packageRoot) continue;
-
-      const packageRelativeTarget = relative(packageRoot, targetPath).split(sep)
-        .join("/");
-      if (!expected.has(packageRelativeTarget)) {
-        unsupportedRootImports.push(
-          `${sourceRelativePath}: ${specifier} -> ${packageRelativeTarget}`,
-        );
-        continue;
-      }
-
-      importedHelpers.add(packageRelativeTarget);
-      try {
-        const stat = await Deno.stat(targetPath);
-        if (!stat.isFile) missing.push(packageRelativeTarget);
-      } catch (error) {
-        if (error instanceof Deno.errors.NotFound) {
-          missing.push(packageRelativeTarget);
-        } else {
-          throw error;
-        }
-      }
+      const target = classifyImport(entry.n, sourcePath);
+      if (target === undefined) continue;
+      const { targetPath, packageRelativeTarget } = target;
+      await checkImportedHelper(targetPath, packageRelativeTarget);
     }
   }
 
