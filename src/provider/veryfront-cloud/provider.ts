@@ -507,6 +507,89 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
     );
   }
 
+  function createNativeOpenAIModel(): ModelRuntime {
+    const catalogModelId = `${provider}/${upstreamModelId}`;
+    // One plan decides the transport here and in the durable model-call
+    // context, so what a call records cannot drift from what it sends. An
+    // adaptive plan stays unset, leaving the runtime free to move to the
+    // Responses surface for a request that carries a hosted tool.
+    const transportPlan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
+    const openAITransport = transportPlan.pinned ? transportPlan.transport : undefined;
+    const openAIChatReasoningWithFunctionTools =
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
+    if (transportPlan.pinned && transportPlan.transport === "responses") {
+      if (useFirstPartyTransport) {
+        return wrapVeryfrontCloudModel(
+          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+            apiToken: providerCredential,
+            baseURL,
+            fetch,
+          }),
+          provider,
+        );
+      }
+      const openai = registry?.get("openai");
+      if (openai?.createResponses) {
+        return wrapVeryfrontCloudModel(
+          openai.createResponses(upstreamModelId, {
+            credential: providerCredential,
+            baseURL,
+            name: "veryfront-cloud",
+            providerName: "veryfront-cloud",
+            fetch,
+          }),
+          provider,
+        );
+      }
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+          apiToken: providerCredential,
+          baseURL,
+          fetch,
+        }),
+        provider,
+      );
+    }
+
+    if (useFirstPartyTransport) {
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIModel(upstreamModelId, {
+          apiToken: providerCredential,
+          baseURL,
+          openAIChatReasoningWithFunctionTools,
+          openAITransport,
+          fetch,
+        }),
+        provider,
+      );
+    }
+    const openai = registry?.get("openai");
+    if (openai) {
+      return wrapVeryfrontCloudModel(
+        openai.createModel(upstreamModelId, {
+          credential: providerCredential,
+          baseURL,
+          name: "veryfront-cloud",
+          providerName: "veryfront-cloud",
+          openAIChatReasoningWithFunctionTools,
+          openAITransport,
+          fetch,
+        }),
+        provider,
+      );
+    }
+    return wrapVeryfrontCloudModel(
+      createVeryfrontCloudOpenAIModel(upstreamModelId, {
+        apiToken: providerCredential,
+        baseURL,
+        openAIChatReasoningWithFunctionTools,
+        openAITransport,
+        fetch,
+      }),
+      provider,
+    );
+  }
+
   switch (requireVeryfrontCloudWireSurface(routing.surface)) {
     case "anthropic": {
       const anthropic = registry?.get("anthropic");
@@ -570,86 +653,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
       // also what a provider this package does not list resolves to.
       if (!routing.native) return createOpenAICompatibleModel();
 
-      const catalogModelId = `${provider}/${upstreamModelId}`;
-      // One plan decides the transport here and in the durable model-call
-      // context, so what a call records cannot drift from what it sends. An
-      // adaptive plan stays unset, leaving the runtime free to move to the
-      // Responses surface for a request that carries a hosted tool.
-      const transportPlan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
-      const openAITransport = transportPlan.pinned ? transportPlan.transport : undefined;
-      const openAIChatReasoningWithFunctionTools =
-        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
-      if (transportPlan.pinned && transportPlan.transport === "responses") {
-        if (useFirstPartyTransport) {
-          return wrapVeryfrontCloudModel(
-            createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
-              apiToken: providerCredential,
-              baseURL,
-              fetch,
-            }),
-            provider,
-          );
-        }
-        const openai = registry?.get("openai");
-        if (openai?.createResponses) {
-          return wrapVeryfrontCloudModel(
-            openai.createResponses(upstreamModelId, {
-              credential: providerCredential,
-              baseURL,
-              name: "veryfront-cloud",
-              providerName: "veryfront-cloud",
-              fetch,
-            }),
-            provider,
-          );
-        }
-        return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
-            apiToken: providerCredential,
-            baseURL,
-            fetch,
-          }),
-          provider,
-        );
-      }
-
-      if (useFirstPartyTransport) {
-        return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIModel(upstreamModelId, {
-            apiToken: providerCredential,
-            baseURL,
-            openAIChatReasoningWithFunctionTools,
-            openAITransport,
-            fetch,
-          }),
-          provider,
-        );
-      }
-      const openai = registry?.get("openai");
-      if (openai) {
-        return wrapVeryfrontCloudModel(
-          openai.createModel(upstreamModelId, {
-            credential: providerCredential,
-            baseURL,
-            name: "veryfront-cloud",
-            providerName: "veryfront-cloud",
-            openAIChatReasoningWithFunctionTools,
-            openAITransport,
-            fetch,
-          }),
-          provider,
-        );
-      }
-      return wrapVeryfrontCloudModel(
-        createVeryfrontCloudOpenAIModel(upstreamModelId, {
-          apiToken: providerCredential,
-          baseURL,
-          openAIChatReasoningWithFunctionTools,
-          openAITransport,
-          fetch,
-        }),
-        provider,
-      );
+      return createNativeOpenAIModel();
     }
   }
 
