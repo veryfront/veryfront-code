@@ -321,3 +321,22 @@ describe("internal-agents/session-manager", () => {
     );
   });
 });
+
+describe("cancelled execution finalization", () => {
+  it("retires bounded cancellation tracking after the original producer settles", () => {
+    const manager = new AgentRunSessionManager();
+    try {
+      for (let index = 0; index < 1_101; index++) {
+        const runId = `cancelled-${index}`;
+        const signal = manager.startRun({ runId, threadId: "thread" });
+        manager.cancelRun(runId);
+        manager.failRun(runId, signal);
+        assertEquals(manager.getRunStatus(runId), null);
+      }
+      const signal = manager.startRun({ runId: "after-cancellations", threadId: "thread" });
+      manager.completeRun("after-cancellations", signal);
+    } finally {
+      manager.reset();
+    }
+  });
+});

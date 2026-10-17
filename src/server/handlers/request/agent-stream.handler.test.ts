@@ -1545,6 +1545,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
       projectId: "proj-1",
+      branch: "50000000-5000-4000-8000-500000000001",
       context: [{ type: "text", text: "Current file: app.tsx" }],
       forwardedProps: {
         runtimeOverrides: {

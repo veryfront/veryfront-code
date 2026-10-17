@@ -1039,6 +1039,8 @@ export async function flushConversationRunEventBatches(input: {
   onAppendRequest?: () => void;
   onModelCallCaptureReceipts?: (receipts: AgentRunModelCallCaptureReceipt[]) => void;
   onToolCallAdmissionReceipts?: (receipts: AgentRunToolCallAdmissionReceipt[]) => void;
+  /** Original accepted/replayed row identities; never inferred from the latest cursor. */
+  onAppendAcknowledged?: (receipt: AppendConversationRunEventsResponse) => void;
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<
@@ -1125,6 +1127,7 @@ export async function flushConversationRunEventBatches(input: {
       if (response.toolCallAdmissions && response.toolCallAdmissions.length > 0) {
         input.onToolCallAdmissionReceipts?.(response.toolCallAdmissions);
       }
+      input.onAppendAcknowledged?.(response);
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
       batchStartIndex += batch.length;
@@ -1964,6 +1967,9 @@ export async function appendConversationRunEvents(input: {
         latestExternalEventSequence: responseBody.latest_external_event_sequence ??
           input.expectedPreviousExternalEventSequence,
         appendedCount: responseBody.appended_count,
+        ...(Object.hasOwn(responseBody, "acknowledged_event_ids")
+          ? { acknowledgedEventIds: responseBody.acknowledged_event_ids }
+          : {}),
         ...(hasRawModelCallCaptures
           ? {
             modelCallCaptures: Array.isArray(rawModelCallCaptures)

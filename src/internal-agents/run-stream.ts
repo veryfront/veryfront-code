@@ -1,3 +1,8 @@
+import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { runWithRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
+import { startManagedRecoveryLifetime } from "./managed-recovery-lifetime.ts";
+import { runWithExecutionOwnershipGuard } from "#veryfront/runtime/execution-ownership-guard.ts";
+import { getManagedRecoveryInputClaims } from "./managed-recovery-input.ts";
 import {
   revokePlatformDependencyOwner,
   runWithPlatformDependencyOwner,
@@ -1075,6 +1080,9 @@ function getRemoteToolDiscoveryContext(input: {
     ...(input.deps.projectAgentSandbox?.projectId
       ? { projectId: input.deps.projectAgentSandbox.projectId }
       : {}),
+    ...(input.deps.projectAgentSandbox === undefined
+      ? {}
+      : { branch: input.deps.projectAgentSandbox.branchId }),
     ...(input.runInput.parentRunId ? { parentRunId: input.runInput.parentRunId } : {}),
     ...(input.runInput.state !== undefined ? { state: input.runInput.state } : {}),
     context: input.runInput.context,
@@ -1232,6 +1240,7 @@ function restoreTrustedHostedPolicyForInternalRuntimeMessages(
  */
 function createModelCallContextRelay(
   timing: Parameters<typeof createTimedAgentRunEventSink>[1],
+  persist?: AgentRunEventSink,
 ): {
   sink: AgentRunEventSink;
   attach: (emit: (event: AgentRunEvent) => void) => void;
@@ -1240,8 +1249,18 @@ function createModelCallContextRelay(
   let emit: ((event: AgentRunEvent) => void) | undefined;
   return {
     sink: createTimedAgentRunEventSink((event) => {
-      if (emit) emit(event);
-      else buffered.push(event);
+      const forward = () => {
+        if (emit) emit(event);
+        else buffered.push(event);
+      };
+      if (!persist) {
+        forward();
+        return;
+      }
+      return Promise.resolve(persist(event)).then((receipt) => {
+        forward();
+        return receipt;
+      });
     }, timing),
     attach: (next) => {
       emit = next;
@@ -1366,11 +1385,39 @@ export async function createRuntimeAgentStreamResponse(
     toolCount: input.tools.length,
     contextCount: input.context.length,
   });
-  const abortSignal = deps.sessionManager.startRun({
+  const managedClaims = getManagedRecoveryInputClaims(input);
+  const managedRecovery = managedClaims
+    ? await deps.sessionManager.startManagedRecoveryRun({
+      runId: input.runId,
+      threadId: input.threadId,
+      servingIdentity: deps.servingIdentity,
+      claims: managedClaims,
+    })
+    : undefined;
+  const abortSignal = managedRecovery?.signal ?? deps.sessionManager.startRun({
     runId: input.runId,
     threadId: input.threadId,
     servingIdentity: deps.servingIdentity,
   });
+  let recoveryLifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  try {
+    if (managedRecovery) {
+      if (!managedRecovery.writer) {
+        throw new Error("Managed recovery requires its private acknowledged writer");
+      }
+      if (managedRecovery.snapshot && !managedRecovery.snapshot.runtimeContinuation) {
+        throw new Error("Managed recovery requires acknowledged actual runtime continuation state");
+      }
+      managedRecovery.writer.bindSignal(abortSignal);
+      recoveryLifetime = await startManagedRecoveryLifetime(managedRecovery.owner, () => {
+        deps.sessionManager.cancelRun(input.runId, abortSignal);
+      });
+    }
+  } catch (error) {
+    deps.sessionManager.failRun(input.runId, abortSignal);
+    managedRecovery?.settle();
+    throw error;
+  }
   const manualPause = runtimeManualPauseCapabilities.get(input);
   let settledStop: (outcome?: RunStopSettlement) => void;
   try {
@@ -1386,10 +1433,13 @@ export async function createRuntimeAgentStreamResponse(
     });
   } catch (error) {
     revokePlatformDependencyOwner(input);
-    deps.sessionManager.failRun(input.runId);
+    deps.sessionManager.failRun(input.runId, abortSignal);
+    recoveryLifetime?.stop();
+    managedRecovery?.settle();
     throw error;
   }
   let producerCompletion: Promise<void> | undefined;
+  let runtimeInvocationStarted = false;
 
   let completedResponse: AgentResponse | null = null;
   // Running usage total, updated after every model call. A run that dies mid-stream
@@ -1417,7 +1467,10 @@ export async function createRuntimeAgentStreamResponse(
   let runtimeStream: ReadableStream<Uint8Array>;
   let closeSandbox = createIdempotentAsyncCleanup();
   const timing = createAgentRunEventTimingAnchor();
-  const modelCallContextRelay = createModelCallContextRelay(timing);
+  const modelCallContextRelay = createModelCallContextRelay(
+    timing,
+    managedRecovery?.writer?.persistRunEvent,
+  );
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
   let childRunToolNames = new Set<string>();
@@ -1565,6 +1618,9 @@ export async function createRuntimeAgentStreamResponse(
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
         : {}),
+      ...(deps.projectAgentSandbox === undefined
+        ? {}
+        : { branch: deps.projectAgentSandbox.branchId }),
       ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
       ...(input.state !== undefined ? { state: input.state } : {}),
       context: input.context,
@@ -1593,7 +1649,11 @@ export async function createRuntimeAgentStreamResponse(
       });
     };
     const systemPrompt = await resolveSystemPrompt();
-    const providerReplayCheckpoints = deps.providerReplayCheckpoints ?? [];
+    const providerReplayCheckpoints = managedRecovery?.snapshot
+      ? managedRecovery.snapshot.modelTurns.flatMap((turn) =>
+        turn.providerReplayCheckpoint ? [turn.providerReplayCheckpoint] : []
+      )
+      : deps.providerReplayCheckpoints ?? [];
     if (deps.providerReplayCheckpointEmissionEnabled === true && !input.messageId) {
       throw new Error(
         "Provider replay checkpoint emission requires a runtime message identity",
@@ -1604,7 +1664,10 @@ export async function createRuntimeAgentStreamResponse(
         (deps.providerReplayCheckpointEmissionEnabled === true ||
           providerReplayCheckpoints.some((checkpoint) => checkpoint.messageId === input.messageId)),
     );
-    if (shouldEmitProviderReplayCheckpoints && !deps.persistProviderReplayCheckpoint) {
+    if (
+      shouldEmitProviderReplayCheckpoints && !managedRecovery?.writer &&
+      !deps.persistProviderReplayCheckpoint
+    ) {
       throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
         detail:
           "A trusted run-event append token is required to persist a private provider replay checkpoint",
@@ -1617,6 +1680,9 @@ export async function createRuntimeAgentStreamResponse(
         model: executionModel,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
+        ...(managedRecovery?.snapshot
+          ? { __vfToolExposureCheckpoint: managedRecovery.snapshot.toolExposureCheckpoint }
+          : {}),
         ...(Array.isArray(agent.config.providerTools) ? { providerTools: providerToolNames } : {}),
         ...(allowedRemoteToolNames !== undefined
           ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
@@ -1631,7 +1697,9 @@ export async function createRuntimeAgentStreamResponse(
           ? {
             __vfProviderReplayCheckpointMessageId: input.messageId,
             __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) =>
-              deps.persistProviderReplayCheckpoint!(checkpoint, abortSignal),
+              managedRecovery?.writer
+                ? managedRecovery.writer.persistProviderReplayCheckpoint(checkpoint)
+                : deps.persistProviderReplayCheckpoint!(checkpoint, abortSignal),
             __vfProviderReplayCheckpointPersistenceRequired: true,
           }
           : {}),
@@ -1654,6 +1722,14 @@ export async function createRuntimeAgentStreamResponse(
         kind: "framework" as const,
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
           manualPause,
+          ...(managedRecovery?.writer
+            ? {
+              persistRecoveryBoundary: managedRecovery.writer.persistBoundary,
+              ...(managedRecovery.snapshot?.runtimeContinuation
+                ? { recoveryContinuation: managedRecovery.snapshot.runtimeContinuation }
+                : {}),
+            }
+            : {}),
           onStreamCompletion: (completion) => {
             producerCompletion = completion;
           },
@@ -1670,46 +1746,62 @@ export async function createRuntimeAgentStreamResponse(
             : {}),
         }),
       };
-    const runtimeMessages = restoreTrustedHostedPolicyForInternalRuntimeMessages(
-      compactRuntimeMessagesForStream(
-        normalizeAgUiRuntimeMessages(input.messages),
-        systemPrompt,
-        runtimeToolNames.length,
+    const runtimeMessages = managedRecovery?.snapshot
+      ? managedRecovery.snapshot.messages
+      : restoreTrustedHostedPolicyForInternalRuntimeMessages(
+        compactRuntimeMessagesForStream(
+          normalizeAgUiRuntimeMessages(input.messages),
+          systemPrompt,
+          runtimeToolNames.length,
+          input.serverResolvedTrustedHostedHistoryMessageIds,
+        ),
+        input.messages,
         input.serverResolvedTrustedHostedHistoryMessageIds,
-      ),
-      input.messages,
-      input.serverResolvedTrustedHostedHistoryMessageIds,
-    );
+      );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    const candidateRuntimeStream = await runWithPlatformDependencyOwner(
-      input,
+    if (managedRecovery) await managedRecovery.owner.assertCurrentOwnership();
+    runtimeInvocationStarted = true;
+    const withManagedOccurrences = <T>(operation: () => T): T =>
+      managedRecovery ? runWithToolCallOccurrences(operation) : operation();
+    const candidateRuntimeStream = await runWithExecutionOwnershipGuard(
+      recoveryLifetime?.assertCurrent,
       () =>
-        runWithMandatoryRunEventSink(
-          modelCallContextRelay.sink,
+        runWithRecoveryToolExecutionPolicy(
+          managedRecovery?.writer?.executeTool,
           () =>
-            runtimeDispatch.kind === "override"
-              ? runtimeDispatch.runtime.stream(
-                runtimeMessages,
-                runtimeContext,
-                {
-                  ...runtimeStreamCallbacks,
-                  onStreamCompletion: (completion) => {
-                    producerCompletion = completion;
-                  },
-                },
-                undefined,
-                maxOutputTokens,
-                abortSignal,
+            withManagedOccurrences(() =>
+              runWithPlatformDependencyOwner(
+                input,
+                () =>
+                  runWithMandatoryRunEventSink(
+                    modelCallContextRelay.sink,
+                    () =>
+                      runtimeDispatch.kind === "override"
+                        ? runtimeDispatch.runtime.stream(
+                          runtimeMessages,
+                          runtimeContext,
+                          {
+                            ...runtimeStreamCallbacks,
+                            onStreamCompletion: (completion) => {
+                              producerCompletion = completion;
+                            },
+                          },
+                          undefined,
+                          maxOutputTokens,
+                          abortSignal,
+                        )
+                        : streamWithAgentRuntimeDispatch(
+                          runtimeDispatch.runtime,
+                          runtimeMessages,
+                          runtimeContext,
+                          runtimeStreamCallbacks,
+                          undefined,
+                          maxOutputTokens,
+                          abortSignal,
+                        ),
+                  ),
               )
-              : streamWithAgentRuntimeDispatch(
-                runtimeDispatch.runtime,
-                runtimeMessages,
-                runtimeContext,
-                runtimeStreamCallbacks,
-                undefined,
-                maxOutputTokens,
-                abortSignal,
-              ),
+            ),
         ),
     );
     if (candidateRuntimeStream.locked) {
@@ -1722,12 +1814,24 @@ export async function createRuntimeAgentStreamResponse(
       agentId: agent.id,
     });
   } catch (error) {
+    recoveryLifetime?.stop();
     revokePlatformDependencyOwner(input);
-    deps.sessionManager.failRun(input.runId);
+    deps.sessionManager.failRun(input.runId, abortSignal);
     await closeSandbox().then(() => {
       if (producerCompletion) {
-        void producerCompletion.then(() => settledStop(), () => settledStop());
-      } else settledStop();
+        void producerCompletion.then(() => {
+          settledStop();
+          managedRecovery?.settle();
+        }, () => {
+          settledStop();
+          managedRecovery?.settle();
+        });
+      } else {
+        settledStop();
+        // Before runtime invocation there can be no hidden producer. Once invoked,
+        // a missing completion callback is ambiguous and cannot authorize replacement.
+        if (!runtimeInvocationStarted) managedRecovery?.settle();
+      }
     }).catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
         runId: input.runId,
@@ -1925,7 +2029,7 @@ export async function createRuntimeAgentStreamResponse(
             const emitMappedEvent = async (mappedEvent: {
               event: string;
               payload: Record<string, unknown>;
-            }) => {
+            }, occurrenceId?: string) => {
               if (mappedEvent.event === "StepStarted") {
                 await flushProviderReplayTurn();
                 providerReplayStepOpen = shouldEmitProviderReplayCheckpoints;
@@ -1948,6 +2052,7 @@ export async function createRuntimeAgentStreamResponse(
               }
               prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
               runOutcome.observe(mappedEvent.event, mappedEvent.payload);
+              await managedRecovery?.writer?.appendMappedEvent(mappedEvent, occurrenceId);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             };
             heartbeatTimer = setInterval(
@@ -1987,7 +2092,13 @@ export async function createRuntimeAgentStreamResponse(
 
               for (const event of parsed.events) {
                 for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-                  await emitMappedEvent(mappedEvent);
+                  await emitMappedEvent(
+                    mappedEvent,
+                    mappedEvent.event === "ToolCallStart" &&
+                      typeof event.privateToolCallOccurrenceId === "string"
+                      ? event.privateToolCallOccurrenceId
+                      : undefined,
+                  );
                 }
               }
             }
@@ -1997,7 +2108,13 @@ export async function createRuntimeAgentStreamResponse(
             const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
             for (const event of trailingEvents.events) {
               for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-                await emitMappedEvent(mappedEvent);
+                await emitMappedEvent(
+                  mappedEvent,
+                  mappedEvent.event === "ToolCallStart" &&
+                    typeof event.privateToolCallOccurrenceId === "string"
+                    ? event.privateToolCallOccurrenceId
+                    : undefined,
+                );
               }
             }
 
@@ -2024,9 +2141,9 @@ export async function createRuntimeAgentStreamResponse(
               ? runOutcome.terminalErrorCode() ?? "AgentRunTerminalError"
               : undefined;
             if (state.sawTerminalError) {
-              deps.sessionManager.failRun(input.runId);
+              deps.sessionManager.failRun(input.runId, abortSignal);
             } else {
-              deps.sessionManager.completeRun(input.runId);
+              deps.sessionManager.completeRun(input.runId, abortSignal);
             }
             setSpanAttributes(runSpan, {
               ...buildInternalAgentRunTraceAttributes({
@@ -2110,7 +2227,7 @@ export async function createRuntimeAgentStreamResponse(
                 message: error.message,
               });
             } else {
-              deps.sessionManager.failRun(input.runId);
+              deps.sessionManager.failRun(input.runId, abortSignal);
               const errorMessage = error instanceof Error ? error.message : String(error);
               const runErrorCode = readProviderReplayTurnErrorCode(error) ?? "RUNTIME_ERROR";
               setSpanAttributes(runSpan, {
@@ -2146,6 +2263,7 @@ export async function createRuntimeAgentStreamResponse(
               });
             }
           } finally {
+            recoveryLifetime?.stop();
             revokePlatformDependencyOwner(input);
             stopHeartbeat?.();
             stopHeartbeat = undefined;
@@ -2190,12 +2308,14 @@ export async function createRuntimeAgentStreamResponse(
             if (sandboxClosed && producerCompletion) {
               void producerCompletion.then(async () => {
                 settledStop();
+                managedRecovery?.settle();
                 if (manualPause) {
                   recordHostedAgentPauseFlush(manualPause, readerReachedEof);
                   await settleHostedAgentPause(manualPause);
                 }
               }, (error) => {
                 settledStop();
+                managedRecovery?.settle();
                 if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
               }).catch((error) => {
                 logger.warn("Internal agent pause settlement failed", {
@@ -2266,6 +2386,9 @@ export async function createRuntimeAgentStreamResponse(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      ...(managedRecovery?.writer
+        ? { "X-Veryfront-Run-Event-Persistence": "runtime-owned-v1" }
+        : {}),
       ...(shouldEmitProviderReplayCheckpoints ? { [PROVIDER_REPLAY_PROTOCOL_HEADER]: "1" } : {}),
     },
   });

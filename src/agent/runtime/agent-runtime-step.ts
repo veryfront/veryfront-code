@@ -53,6 +53,7 @@ import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
 const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
 const IntrinsicSet = Set;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetAdd = Set.prototype.add;
@@ -273,9 +274,12 @@ export async function prepareAgentRuntimeStep(
   input: PrepareAgentRuntimeStepInput,
 ): Promise<PreparedAgentRuntimeStep> {
   const trustedAllowedSkillIds = getTrustedAllowedSkillIds(input);
+  const hasTrustedBranch = input.toolContextBase !== undefined &&
+    ObjectHasOwn(input.toolContextBase, "branch");
+  const trustedBranch = input.toolContextBase?.branch;
   const runtimeState = await input.resolveRuntimeState(
     input.messages,
-    input.runtimeContext,
+    hasTrustedBranch ? { ...input.runtimeContext, branch: trustedBranch } : input.runtimeContext,
     input.mode,
     input.step,
     input.systemPrompt,
@@ -283,6 +287,9 @@ export async function prepareAgentRuntimeStep(
       resolveModelProviderOptionKey(input.effectiveModel ?? input.config.model, input.modelRuntime),
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  if (hasTrustedBranch) {
+    toolContext.branch = trustedBranch;
+  }
   if (input.toolContextBase?.abortSignal !== undefined) {
     toolContext.abortSignal = input.toolContextBase.abortSignal;
   }
@@ -476,11 +483,19 @@ export async function prepareAgentRuntimeStep(
     ? flattenSystemInstructions(instructionsWithToolInventory)
     : instructionsWithToolInventory;
 
+  const runtimeContext = hasTrustedBranch || trustedAllowedSkillIds !== undefined
+    ? {
+      ...runtimeState.context,
+      ...(hasTrustedBranch ? { branch: trustedBranch } : {}),
+      ...(trustedAllowedSkillIds === undefined
+        ? {}
+        : { allowedSkillIds: [...trustedAllowedSkillIds] }),
+    }
+    : runtimeState.context;
+
   return {
     integrationToolDiscovery,
-    runtimeContext: trustedAllowedSkillIds === undefined
-      ? runtimeState.context
-      : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },
+    runtimeContext,
     systemPrompt,
     toolContext,
     tools: toolExposurePlan.visible,

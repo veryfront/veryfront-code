@@ -1,3 +1,5 @@
+import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
+import { bindManagedRecoveryInput } from "#veryfront/internal-agents/managed-recovery-input.ts";
 import {
   copyNativeResponse,
   readResponseValue,
@@ -1330,6 +1332,12 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
+      bindManagedRecoveryCredentials(verifiedClaims, {
+        authToken: payload.credentials?.authToken,
+        sourceAuthToken: payload.credentials?.sourceAuthToken,
+        terminalToken: req.headers.get("x-veryfront-run-terminal-token"),
+        writerToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER),
+      });
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
       const runtimeNameHeader = EncodeURIComponent(runtimeIdentity.name);
@@ -1556,6 +1564,7 @@ export class AgentStreamHandler extends BaseHandler {
                           toRuntimeRunAgentInput(payload),
                           runtimeBaseAgent as Agent,
                         );
+                        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
                         if (platformDependencies && platformDependencyScope.projectId) {
                           registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
                             ...platformDependencyScope,

@@ -1,0 +1,442 @@
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-recovery-writer.ts";
+import "#veryfront/schemas/_test-setup.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  createControlPlaneSignature,
+  createCtx,
+} from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
+import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
+import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-session-owner.ts";
+
+const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+const identity = {
+  projectId: "11111111-1111-4111-8111-111111111111",
+  canonicalRunId: "22222222-2222-4222-8222-222222222222",
+  publicRunId: "run-proof",
+  sourceHash: "a".repeat(64),
+};
+function admission(attempt = 0) {
+  return {
+    version: 1,
+    identity,
+    generation: {
+      workerId: `worker-${attempt}`,
+      dispatchNonce: `66666666-6666-4666-8666-${String(attempt).padStart(12, "0")}`,
+      transportRecoveryAttempt: attempt,
+    },
+    acknowledgedExternalSequence: 0,
+    leaseRemainingMs: 10_000,
+    sourceBinding: {
+      projectId: identity.projectId,
+      environmentId: "33333333-3333-4333-8333-333333333333",
+      releaseId: "44444444-4444-4444-8444-444444444444",
+    },
+    eventPersistence: "runtime-owned-v1" as const,
+    expiresAt: Math.floor(Date.now() / 1000) + 30,
+  };
+}
+function receipt(value = admission()) {
+  return {
+    version: 1,
+    identity: {
+      projectId: value.identity.projectId,
+      canonicalRunId: value.identity.canonicalRunId,
+      publicRunId: value.identity.publicRunId,
+    },
+    generation: value.generation,
+    acknowledgedEventId: 1,
+    acknowledgedExternalSequence: value.acknowledgedExternalSequence,
+    leaseRemainingMs: value.leaseRemainingMs,
+  };
+}
+async function signed(value = admission()) {
+  const body = JSON.stringify({
+    managedRecoveryAdmission: value,
+    credentials: { authToken: "NEVER_PERSIST_TEST_CREDENTIAL" },
+  });
+  const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+    projectId: identity.projectId,
+    requestId: identity.publicRunId,
+  });
+  Deno.env.set(envKey, publicKeyPem);
+  const ctx = createCtx(publicKeyPem);
+  ctx.projectId = identity.projectId;
+  return await verifyControlPlaneRequest(
+    new Request(`https://veryfront.test/api/control-plane/runs/${identity.publicRunId}/stream`, {
+      method: "POST",
+      headers: { "x-veryfront-control-plane-jws": jws },
+    }),
+    ctx,
+    body,
+  );
+}
+
+import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+
+it("managed sessions require opt-in and genuine private claims", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const claims = await signed();
+    const manager = new AgentRunSessionManager();
+    await assertRejects(() =>
+      manager.startManagedRecoveryRun({ runId: identity.publicRunId, threadId: "thread", claims })
+    );
+    await assertRejects(() =>
+      manager.startManagedRecoveryRun({
+        runId: identity.publicRunId,
+        threadId: "thread",
+        claims: { ...claims },
+      })
+    );
+    assertEquals(manager.getRunStatus(identity.publicRunId), null);
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("actual session replacement joins predecessor and fences its late finalizer", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await Deno.makeTempDir();
+  let current = admission();
+  const prior = current;
+  let retirements = 0;
+  const manager = new AgentRunSessionManager({
+    maxConcurrentSessions: 1,
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory,
+        validateCurrentOwnership: async () => receipt(current),
+        awaitRetiredPreviousOwner: async (generation) => {
+          retirements++;
+          await awaitRetiredPreviousOwner(generation);
+        },
+      });
+      return {
+        owner,
+        ...(owner.requiresRestoredSnapshot
+          ? {
+            snapshot: {
+              version: 1,
+              binding: {
+                identity,
+                generation: prior.generation,
+                sourceBinding: prior.sourceBinding,
+              },
+              acknowledgedEventId: 1,
+              acknowledgedExternalSequence: 0,
+              messages: [],
+              modelTurns: [],
+              toolBoundaries: [],
+              toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+            },
+          }
+          : {}),
+      };
+    },
+  });
+  try {
+    const firstClaims = await signed(current);
+    const first = await manager.startManagedRecoveryRun({
+      runId: identity.publicRunId,
+      threadId: "thread",
+      claims: firstClaims,
+    });
+    await assertRejects(() =>
+      manager.startManagedRecoveryRun({
+        runId: identity.publicRunId,
+        threadId: "thread",
+        claims: firstClaims,
+      })
+    );
+    assertEquals(first.signal.aborted, false);
+    assertEquals(retirements, 0);
+    current = admission(1);
+    let replaced = false;
+    const replacement = manager.startManagedRecoveryRun({
+      runId: identity.publicRunId,
+      threadId: "thread",
+      claims: await signed(current),
+    }).then((value) => {
+      replaced = true;
+      return value;
+    });
+    // Wait until the real retirement callback aborts generation A, not a guessed timeout.
+    await new Promise<void>((resolve) => {
+      if (first.signal.aborted) resolve();
+      else first.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    assertEquals(replaced, false);
+    assertThrows(() => manager.startRun({ runId: "unrelated", threadId: "thread" }));
+    first.settle();
+    const second = await replacement;
+    assertEquals(retirements, 1);
+    assertEquals(second.signal.aborted, false);
+    manager.failRun(identity.publicRunId, first.signal);
+    assertEquals(manager.getRunStatus(identity.publicRunId), "running");
+    manager.completeRun(identity.publicRunId, second.signal);
+    second.settle();
+    assertEquals(manager.getRunStatus(identity.publicRunId), null);
+  } finally {
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+import {
+  bindManagedRecoveryInput,
+  getManagedRecoveryInputClaims,
+} from "#veryfront/internal-agents/managed-recovery-input.ts";
+import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
+import { agent as createAgent } from "#veryfront/agent";
+
+it("pre-producer setup failure settles and actual next stream restores its private predecessor snapshot", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await Deno.makeTempDir();
+  const firstAdmission = admission();
+  let current = firstAdmission;
+  const manager = new AgentRunSessionManager({
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(current),
+        awaitRetiredPreviousOwner,
+      });
+      return {
+        owner,
+        writer: await createManagedRecoveryWriter({
+          claims,
+          owner,
+          directory,
+          append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+          bindAdmissionWriter: () => {},
+        }),
+        ...(owner.requiresRestoredSnapshot
+          ? {
+            snapshot: {
+              version: 1,
+              binding: {
+                identity,
+                generation: firstAdmission.generation,
+                sourceBinding: firstAdmission.sourceBinding,
+              },
+              acknowledgedEventId: 1,
+              acknowledgedExternalSequence: 0,
+              messages: [{
+                id: "durable-user",
+                role: "user",
+                parts: [{ type: "text", text: "acknowledged durable input" }],
+              }],
+              runtimeContinuation: {
+                version: 1,
+                nextStep: 0,
+                messages: [{
+                  id: "durable-user",
+                  role: "user",
+                  parts: [{ type: "text", text: "acknowledged durable input" }],
+                }],
+                toolCalls: [],
+                usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+                latestAssistantText: "",
+                completed: false,
+                recoveredEmptyResponse: false,
+                recoveredInterruptedLocalToolBatch: false,
+              },
+              modelTurns: [],
+              toolBoundaries: [],
+              toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+            },
+          }
+          : {}),
+      };
+    },
+  });
+  try {
+    const agent = createAgent({
+      id: "recovery-proof",
+      model: "anthropic/test",
+      system: "Synthetic test",
+      skills: false,
+    });
+    for (const attempt of [0, 1]) {
+      current = admission(attempt);
+      const input = {
+        runId: identity.publicRunId,
+        threadId: crypto.randomUUID(),
+        messages: [{ id: "request-user", role: "user" as const, content: "unrestored request" }],
+        tools: [],
+        context: [],
+      };
+      const claims = await signed(current);
+      bindManagedRecoveryInput(input, claims);
+      assertEquals(getManagedRecoveryInputClaims({ ...input }), undefined);
+      let observed: unknown;
+      const responsePromise = createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: manager,
+        createRuntime: () => {
+          if (attempt === 0) throw new Error("synthetic setup failure before producer");
+          return {
+            stream: async (messages, _context, callbacks) => {
+              observed = messages;
+              callbacks?.onStreamCompletion?.(Promise.resolve());
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          };
+        },
+      });
+      if (attempt === 0) {
+        await assertRejects(
+          () => responsePromise,
+          Error,
+          "synthetic setup failure before producer",
+        );
+        continue;
+      }
+      const response = await responsePromise;
+      await response.text();
+      if (attempt === 1) {
+        assertEquals(observed, [{
+          id: "durable-user",
+          role: "user",
+          parts: [{ type: "text", text: "acknowledged durable input" }],
+        }]);
+      }
+    }
+  } finally {
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+import { startManagedRecoveryLifetime } from "#veryfront/internal-agents/managed-recovery-lifetime.ts";
+import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+
+it("blocked renewal cannot extend the last live receipt deadline", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await Deno.makeTempDir();
+  let calls = 0;
+  let unblock = () => {};
+  const blocked = new Promise<unknown>((resolve) => {
+    unblock = () => resolve(receipt());
+  });
+  let lifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  try {
+    const owner = await RecoverySessionOwner.acquire({
+      claims: await signed(),
+      directory,
+      validateCurrentOwnership: async () => {
+        calls++;
+        if (calls > 4) return blocked;
+        return { ...receipt(), leaseRemainingMs: 80 };
+      },
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let aborts = 0;
+    const aborted = new Promise<void>((resolve) => {
+      void startManagedRecoveryLifetime(owner, () => {
+        aborts++;
+        resolve();
+      }).then((value) => {
+        lifetime = value;
+      });
+    });
+    await aborted;
+    assertEquals(aborts, 1);
+    assertEquals(calls > 4, true);
+    await assertRejects(() => lifetime!.assertCurrent());
+  } finally {
+    lifetime?.stop();
+    unblock();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("actual stream denies a callable effect after live generation changes", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await Deno.makeTempDir();
+  const first = admission();
+  let current = first;
+  let effects = 0;
+  const manager = new AgentRunSessionManager({
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(current),
+        awaitRetiredPreviousOwner,
+      });
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+        bindAdmissionWriter: () => {},
+      });
+      return { owner, writer };
+    },
+  });
+  try {
+    const input = {
+      runId: identity.publicRunId,
+      threadId: crypto.randomUUID(),
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    bindManagedRecoveryInput(input, await signed(first));
+    const agent = createAgent({
+      id: "effect-proof",
+      model: "anthropic/test",
+      system: "Synthetic",
+      skills: false,
+    });
+    await assertRejects(() =>
+      createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: manager,
+        createRuntime: () => ({
+          stream: async () => {
+            current = admission(1);
+            await executeConfiguredTool("ledger", {}, {
+              ledger: {
+                id: "ledger",
+                type: "function",
+                description: "synthetic",
+                inputSchemaJson: {},
+                inputSchema: defineSchema((v) => v.object({}))(),
+                execute: () => {
+                  effects++;
+                  return Promise.resolve({});
+                },
+              },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      })
+    );
+    assertEquals(effects, 0);
+  } finally {
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

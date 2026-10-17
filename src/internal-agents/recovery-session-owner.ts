@@ -1,0 +1,157 @@
+import { randomUUID } from "node:crypto";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import {
+  getVerifiedControlPlaneRecoveryAdmission,
+  type VerifiedControlPlaneRequestClaims,
+} from "./control-plane-auth.ts";
+import { DurableRunHome } from "./durable-run-home.ts";
+import {
+  getRecoveryGenerationSchema,
+  getRecoveryOwnershipReceiptSchema,
+  type RecoveryAdmission,
+  type RecoveryOwnershipReceipt,
+} from "./recovery-admission-schema.ts";
+
+import {
+  parseRecoverySnapshot,
+  type RecoverySnapshot,
+  validateRecoverySnapshotForRestore,
+} from "./recovery-snapshot.ts";
+
+const DateNow = Date.now;
+const monotonicNow = performance.now.bind(performance);
+
+const getStoredOwnerSchema = defineSchema((v) =>
+  v.object({
+    kind: v.literal("managed-recovery-owner"),
+    generation: getRecoveryGenerationSchema(),
+    ownerInstance: v.string().uuid(),
+  }).strict()
+);
+const sameGeneration = (
+  first: RecoveryAdmission["generation"],
+  second: RecoveryAdmission["generation"],
+) =>
+  first.workerId === second.workerId && first.dispatchNonce === second.dispatchNonce &&
+  first.transportRecoveryAttempt === second.transportRecoveryAttempt;
+
+/**
+ * Framework-only composition boundary. The validator must perform authenticated API I/O;
+ * signed dispatch and disk state alone never establish live ownership.
+ */
+export class RecoverySessionOwner {
+  private previousGenerations: RecoveryAdmission["generation"][] = [];
+  private constructor(
+    private admission: RecoveryAdmission,
+    private validateCurrentOwnership: () => Promise<unknown>,
+  ) {}
+
+  static async acquire(input: {
+    claims: VerifiedControlPlaneRequestClaims;
+    directory: string;
+    validateCurrentOwnership: () => Promise<unknown>;
+    awaitRetiredPreviousOwner: (
+      previous: RecoveryAdmission["generation"],
+    ) => Promise<void>;
+  }): Promise<RecoverySessionOwner> {
+    const admission = getVerifiedControlPlaneRecoveryAdmission(input.claims);
+    if (!admission) throw new Error("Managed recovery admission is unavailable");
+    const owner = new RecoverySessionOwner(admission, input.validateCurrentOwnership);
+    await owner.assertCurrentOwnership();
+    const home = await DurableRunHome.open({
+      directory: input.directory,
+      identity: admission.identity,
+    });
+    const records = await home.read();
+    const predecessors = records.map((record) => getStoredOwnerSchema().parse(record.value));
+    owner.previousGenerations = predecessors.map((record) => record.generation);
+    const stored = predecessors.at(-1);
+    if (stored) {
+      // API pre-stream redispatch issues a fresh nonce without necessarily increasing
+      // transportRecoveryAttempt. Only its live full-generation receipt permits replacement.
+      if (
+        admission.generation.transportRecoveryAttempt <
+          stored.generation.transportRecoveryAttempt ||
+        sameGeneration(admission.generation, stored.generation)
+      ) throw new Error("Managed recovery generation cannot replace this owner");
+    }
+    // A unique instance makes duplicate concurrent admissions conflict at immutable publication.
+    await home.append({
+      sequence: records.length + 1,
+      value: {
+        kind: "managed-recovery-owner",
+        generation: admission.generation,
+        ownerInstance: randomUUID(),
+      },
+    });
+    await owner.assertCurrentOwnership();
+    // Retirement targets only predecessor generations observed before this exclusive admission.
+    // A concurrent duplicate cannot retire an owner admitted after that observation.
+    // Failed admissions may have left earlier owners unretired. Every targeted join
+    // must be idempotent, and none of those obligations disappears on a crash.
+    for (const predecessor of predecessors) {
+      await input.awaitRetiredPreviousOwner(predecessor.generation);
+      await owner.assertCurrentOwnership();
+    }
+    await owner.assertCurrentOwnership();
+    // Dispatch expiry bounds admission only. Continuing work requires live paired
+    // credentials at the API, whose receipt budget is clipped to their expiry.
+    if (admission.expiresAt <= DateNow() / 1000) {
+      throw new Error("Managed recovery admission expired before acquisition completed");
+    }
+    return owner;
+  }
+
+  assertAdmittedClaims(claims: VerifiedControlPlaneRequestClaims): void {
+    if (getVerifiedControlPlaneRecoveryAdmission(claims) !== this.admission) {
+      throw new Error("Recovery owner belongs to a different verified dispatch");
+    }
+  }
+
+  get requiresRestoredSnapshot(): boolean {
+    return this.previousGenerations.length > 0 ||
+      this.admission.generation.transportRecoveryAttempt > 0;
+  }
+
+  /** Disk snapshots are data; only this privately admitted owner supplies the expected binding. */
+  async validateRestoredSnapshot(value: unknown): Promise<RecoverySnapshot> {
+    const snapshot = parseRecoverySnapshot(value);
+    if (
+      !this.previousGenerations.some((generation) =>
+        sameGeneration(generation, snapshot.binding.generation)
+      )
+    ) throw new Error("Recovery snapshot is not from an admitted predecessor");
+    const receipt = await this.assertCurrentOwnership();
+    if (
+      snapshot.acknowledgedEventId > receipt.acknowledgedEventId ||
+      snapshot.acknowledgedExternalSequence > receipt.acknowledgedExternalSequence ||
+      snapshot.acknowledgedExternalSequence < this.admission.acknowledgedExternalSequence
+    ) {
+      throw new Error("Recovery snapshot cursor is not acknowledged by current ownership");
+    }
+    return validateRecoverySnapshotForRestore(snapshot, {
+      identity: this.admission.identity,
+      sourceBinding: this.admission.sourceBinding,
+      generation: snapshot.binding.generation,
+    });
+  }
+
+  /** Validate immediately before restore or an effect; never cache a JWT as lease authority. */
+  async assertCurrentOwnership(): Promise<RecoveryOwnershipReceipt> {
+    // Network time consumes the lease budget; response arrival cannot restart it.
+    const requestStarted = monotonicNow();
+    const receipt = getRecoveryOwnershipReceiptSchema().parse(
+      await this.validateCurrentOwnership(),
+    );
+    const identity = this.admission.identity;
+    if (
+      receipt.identity.projectId !== identity.projectId ||
+      receipt.identity.canonicalRunId !== identity.canonicalRunId ||
+      receipt.identity.publicRunId !== identity.publicRunId ||
+      !sameGeneration(receipt.generation, this.admission.generation) ||
+      receipt.acknowledgedExternalSequence < this.admission.acknowledgedExternalSequence ||
+      monotonicNow() - requestStarted >= receipt.leaseRemainingMs
+    ) throw new Error("Managed recovery ownership is no longer current");
+    return receipt;
+  }
+}

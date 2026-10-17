@@ -1,3 +1,33 @@
+import type { createManagedRecoveryWriter } from "./managed-recovery-writer.ts";
+import { getBootManagedRecoveryFactory } from "./managed-recovery-runtime-bootstrap.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
+import {
+  getVerifiedControlPlaneRecoveryAdmission,
+  type VerifiedControlPlaneRequestClaims,
+} from "./control-plane-auth.ts";
+import { RecoverySessionOwner } from "./recovery-session-owner.ts";
+import type { RecoveryAdmission } from "./recovery-admission-schema.ts";
+import type { RecoverySnapshot } from "./recovery-snapshot.ts";
+
+export type ManagedRecoveryOwnerFactory = (input: {
+  claims: VerifiedControlPlaneRequestClaims;
+  awaitRetiredPreviousOwner: (generation: RecoveryAdmission["generation"]) => Promise<void>;
+}) => Promise<
+  {
+    owner: RecoverySessionOwner;
+    snapshot?: unknown;
+    writer?: Awaited<ReturnType<typeof createManagedRecoveryWriter>>;
+  }
+>;
+
+interface ManagedRecoverySession {
+  manager: AgentRunSessionManager;
+  generation: RecoveryAdmission["generation"];
+  signal: AbortSignal;
+  retired: Promise<void>;
+  settleRetired: () => void;
+}
+
 import { RunStopRegistry } from "./run-stop-registry.ts";
 import {
   RunAlreadyExistsError,
@@ -89,11 +119,15 @@ export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 
 export class AgentRunSessionManager {
   readonly stopRegistry = new RunStopRegistry();
+  private readonly managedSessions = new Map<string, ManagedRecoverySession>();
+  private readonly acquiringManagedRuns = new Set<string>();
+  private readonly ordinarySignals = new Map<string, AbortSignal>();
   private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
   private readonly servingIdentities = new Map<string, RunServingIdentity>();
 
   constructor(
     private readonly options: {
+      recoveryOwnerFactory?: ManagedRecoveryOwnerFactory;
       waitingForToolTtlMs?: number;
       sessionTtlMs?: number | null;
       maxConcurrentSessions?: number;
@@ -112,11 +146,128 @@ export class AgentRunSessionManager {
     this.sessions = new RunResumeSessionManager(managerOptions);
   }
 
+  async startManagedRecoveryRun(input: {
+    runId: string;
+    threadId: string;
+    servingIdentity?: RunServingIdentity;
+    claims: VerifiedControlPlaneRequestClaims;
+  }): Promise<
+    {
+      signal: AbortSignal;
+      owner: RecoverySessionOwner;
+      writer?: Awaited<ReturnType<typeof createManagedRecoveryWriter>>;
+      snapshot?: RecoverySnapshot;
+      settle: () => void;
+    }
+  > {
+    const factory = this.options.recoveryOwnerFactory;
+    const admission = getVerifiedControlPlaneRecoveryAdmission(input.claims);
+    if (!factory || !admission || admission.identity.publicRunId !== input.runId) {
+      throw new Error("Managed recovery is disabled or lacks verified admission");
+    }
+    if (this.acquiringManagedRuns.has(input.runId) || this.sessions.getRunStatus(input.runId)) {
+      throw new AgentRunAlreadyExistsError(input.runId);
+    }
+    if (!this.managedSessions.has(input.runId)) this.assertCapacity();
+    this.acquiringManagedRuns.add(input.runId);
+    try {
+      const acquired = await factory({
+        claims: input.claims,
+        awaitRetiredPreviousOwner: async (generation) => {
+          const previous = this.managedSessions.get(input.runId);
+          if (
+            !previous || previous.generation.workerId !== generation.workerId ||
+            previous.generation.dispatchNonce !== generation.dispatchNonce ||
+            previous.generation.transportRecoveryAttempt !== generation.transportRecoveryAttempt
+          ) return;
+          previous.manager.cancelRun(input.runId);
+          // This resolves only after the original stream's producer and cleanup settle.
+          await previous.retired;
+          if (this.managedSessions.get(input.runId) === previous) {
+            this.managedSessions.delete(input.runId);
+          }
+        },
+      });
+      const owner = acquired.owner;
+      owner.assertAdmittedClaims(input.claims);
+      const snapshot = acquired.snapshot === undefined
+        ? undefined
+        : await owner.validateRestoredSnapshot(acquired.snapshot);
+      if (owner.requiresRestoredSnapshot && !snapshot) {
+        throw new Error("Managed recovery requires an acknowledged durable snapshot");
+      }
+      await owner.assertCurrentOwnership();
+      if (this.managedSessions.has(input.runId)) throw new AgentRunAlreadyExistsError(input.runId);
+      // Each generation gets its own resume-session namespace. Retiring one generation
+      // never clears cancellation fences or waiters belonging to another generation.
+      const manager = new AgentRunSessionManager({
+        ...this.options,
+        recoveryOwnerFactory: undefined,
+      });
+      const signal = manager.startRun(input);
+      let settleRetired = () => {};
+      const retired = new Promise<void>((resolve) => {
+        settleRetired = resolve;
+      });
+      const session: ManagedRecoverySession = {
+        manager,
+        signal,
+        generation: admission.generation,
+        retired,
+        settleRetired,
+      };
+      this.managedSessions.set(input.runId, session);
+      return {
+        signal,
+        owner,
+        ...(acquired.writer ? { writer: acquired.writer } : {}),
+        ...(snapshot ? { snapshot } : {}),
+        settle: () => {
+          settleRetired();
+          if (
+            this.managedSessions.get(input.runId) === session && !manager.getRunStatus(input.runId)
+          ) {
+            this.managedSessions.delete(input.runId);
+          }
+        },
+      };
+    } finally {
+      this.acquiringManagedRuns.delete(input.runId);
+    }
+  }
+
+  private assertCapacity(): void {
+    const ordinary =
+      [...this.ordinarySignals.keys()].filter((runId) => this.sessions.getRunStatus(runId)).length;
+    // An aborted producer still occupies capacity until its cleanup joins.
+    const managed = this.managedSessions.size;
+    if (
+      ordinary + managed + this.acquiringManagedRuns.size >=
+        (this.options.maxConcurrentSessions ?? 100)
+    ) {
+      throw AGENT_ERROR.create({
+        detail: `Maximum concurrent sessions (${
+          this.options.maxConcurrentSessions ?? 100
+        }) reached`,
+      });
+    }
+  }
+
   startRun(
     input: { runId: string; threadId: string; servingIdentity?: RunServingIdentity },
   ): AbortSignal {
     try {
+      if (this.managedSessions.has(input.runId) || this.acquiringManagedRuns.has(input.runId)) {
+        throw new AgentRunAlreadyExistsError(input.runId);
+      }
+      this.assertCapacity();
       const signal = this.sessions.startRun(input);
+      this.ordinarySignals.set(input.runId, signal);
+      signal.addEventListener("abort", () => {
+        if (this.ordinarySignals.get(input.runId) === signal) {
+          this.ordinarySignals.delete(input.runId);
+        }
+      }, { once: true });
       const identity = input.servingIdentity;
       if (identity) {
         this.servingIdentities.set(input.runId, identity);
@@ -143,6 +294,8 @@ export class AgentRunSessionManager {
     result: unknown;
     isError: boolean;
   }> {
+    const managed = this.managedSessions.get(runId);
+    if (managed) return managed.manager.waitForToolResult(runId, toolCallId);
     try {
       const value = await this.sessions.waitForSignal(runId, toolCallId);
       return { result: value.result, isError: value.isError };
@@ -158,6 +311,8 @@ export class AgentRunSessionManager {
   }
 
   prepareForToolResult(runId: string, toolCallId: string): void {
+    const managed = this.managedSessions.get(runId);
+    if (managed) return managed.manager.prepareForToolResult(runId, toolCallId);
     this.sessions.prepareForSignal(runId, toolCallId);
   }
 
@@ -165,6 +320,8 @@ export class AgentRunSessionManager {
     runId: string,
     input: { toolCallId: string; result: unknown; isError?: boolean },
   ): SubmitToolResultOutcome {
+    const managed = this.managedSessions.get(runId);
+    if (managed) return managed.manager.submitToolResult(runId, input);
     const normalized: SubmittedToolResult = {
       result: input.result,
       isError: Boolean(input.isError),
@@ -192,31 +349,65 @@ export class AgentRunSessionManager {
     runId: string,
     projectId: string | undefined,
   ): RunServingIdentity["spanAttributes"] | undefined {
+    const managed = this.managedSessions.get(runId);
+    if (managed) return managed.manager.getServingSpanAttributes(runId, projectId);
     const identity = this.servingIdentities.get(runId);
     if (!identity || !this.sessions.getRunStatus(runId)) return undefined;
     return identity.projectId === projectId ? identity.spanAttributes : undefined;
   }
 
-  cancelRun(runId: string): boolean {
+  cancelRun(runId: string, signal?: AbortSignal): boolean {
+    const managed = this.managedSessions.get(runId);
+    if (managed) {
+      if (signal && managed.signal !== signal) return false;
+      return managed.manager.cancelRun(runId, signal);
+    }
+    if (signal && this.ordinarySignals.has(runId) && this.ordinarySignals.get(runId) !== signal) {
+      return false;
+    }
     this.servingIdentities.delete(runId);
     return this.sessions.cancelRun(runId);
   }
 
-  completeRun(runId: string): void {
+  completeRun(runId: string, signal?: AbortSignal): void {
+    const managed = this.managedSessions.get(runId);
+    if (managed) {
+      if (signal && managed.signal !== signal) return;
+      managed.manager.completeRun(runId, signal);
+      return;
+    }
+    if (signal && this.ordinarySignals.has(runId) && this.ordinarySignals.get(runId) !== signal) {
+      return;
+    }
+    this.ordinarySignals.delete(runId);
     this.servingIdentities.delete(runId);
-    this.sessions.completeRun(runId);
+    this.sessions.completeRun(runId, signal);
   }
 
-  failRun(runId: string): void {
+  failRun(runId: string, signal?: AbortSignal): void {
+    const managed = this.managedSessions.get(runId);
+    if (managed) {
+      if (signal && managed.signal !== signal) return;
+      managed.manager.failRun(runId, signal);
+      return;
+    }
+    if (signal && this.ordinarySignals.has(runId) && this.ordinarySignals.get(runId) !== signal) {
+      return;
+    }
+    this.ordinarySignals.delete(runId);
     this.servingIdentities.delete(runId);
-    this.sessions.failRun(runId);
+    this.sessions.failRun(runId, signal);
   }
 
   getRunStatus(runId: string): SessionStatus | null {
-    return this.sessions.getRunStatus(runId);
+    const managed = this.managedSessions.get(runId);
+    return managed ? managed.manager.getRunStatus(runId) : this.sessions.getRunStatus(runId);
   }
 
   reset(): void {
+    for (const session of this.managedSessions.values()) session.manager.reset();
+    this.managedSessions.clear();
+    this.ordinarySignals.clear();
     this.servingIdentities.clear();
     this.sessions.reset();
   }
@@ -234,6 +425,7 @@ function getGlobalAgentRunSessionManager(): AgentRunSessionManager {
   }
 
   const sessionManager = new AgentRunSessionManager({
+    recoveryOwnerFactory: getBootManagedRecoveryFactory(),
     sessionTtlMs: DEFAULT_SESSION_TTL_MS,
   });
   runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY] = sessionManager;

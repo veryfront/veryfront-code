@@ -1,3 +1,7 @@
+import {
+  readRecoveryAppendAcknowledgement,
+  type RecoveryAppendAcknowledgement,
+} from "./recovery-append-acknowledgement.ts";
 import { instrumentConversationRunFetch } from "#veryfront/agent/conversation/durable.ts";
 import {
   assertNativeRequestProcessing,
@@ -227,11 +231,18 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   runId: string;
   runEventAppendToken: string | null | undefined;
   timeoutMs?: number;
+  /** Private managed host only; requires the actual canonical UUID and durable external cursor. */
+  onAcknowledged?: (
+    checkpoint: ProviderReplayCheckpoint,
+    acknowledgement: RecoveryAppendAcknowledgement,
+  ) => Promise<void>;
   /** Explicit host-owned transport for tests; it joins the active trace like the default. */
   fetch?: Fetch;
 }): ProviderReplayCheckpointPersister | undefined {
   if (!isValidRunEventAppendToken(input.runEventAppendToken)) return undefined;
 
+  const onAcknowledged = input.onAcknowledged;
+  const canonicalRunId = input.runId;
   const token = input.runEventAppendToken;
   const timeoutMs = input.timeoutMs ?? DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS;
   // Checkpoint appends are the only durable writes the shared runtime makes
@@ -291,7 +302,13 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
           `Provider replay checkpoint append failed with status ${response.status}`,
         );
       }
-      await response.body?.cancel().catch(() => undefined);
+      if (onAcknowledged) {
+        const acknowledgement = await readRecoveryAppendAcknowledgement(response, canonicalRunId);
+        if (abortSignal?.aborted) throw getAbortReason(abortSignal);
+        await onAcknowledged(checkpoint, acknowledgement);
+      } else {
+        await response.body?.cancel().catch(() => undefined);
+      }
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);
     } catch (error) {
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);

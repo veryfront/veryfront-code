@@ -15,6 +15,8 @@ import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
 
+import { getRecoveryAdmissionSchema, type RecoveryAdmission } from "./recovery-admission-schema.ts";
+
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
 const CONTROL_PLANE_SIGNING_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
@@ -37,6 +39,16 @@ const verifiedPlatformGrants = createPrivateWeakStore<
     }
   >
 >();
+
+const verifiedRecoveryGrants = createPrivateWeakStore<object, RecoveryAdmission>();
+
+/** Only an exact-body signature from the operator boot key can carry recovery authority. */
+export function getVerifiedControlPlaneRecoveryAdmission(
+  claims: VerifiedControlPlaneRequestClaims,
+): RecoveryAdmission | undefined {
+  const grant = verifiedRecoveryGrants.get(claims);
+  return grant && grant.expiresAt > DateNow() / 1000 ? grant : undefined;
+}
 
 /** Read a private exact-body operator grant. Compatibility adapter signatures cannot mint it. */
 export function getVerifiedControlPlanePlatformDependencies(
@@ -184,6 +196,25 @@ export async function verifyControlPlaneRequest(
     } catch {
       // A valid signature can cover a plain cancel or malformed resume body.
       // The handler owns payload validation; no dependency grant is minted.
+    }
+    if (body && ObjectHasOwn(body, "managedRecoveryAdmission") && pinnedKey) {
+      // Adapter compatibility keys are not operator recovery authority.
+      await verifyControlPlaneJws(controlPlaneJws, rawBody, {
+        ...verificationOptions,
+        publicKeyPem: pinnedKey,
+      });
+      const admission = getRecoveryAdmissionSchema().parse(
+        readOwnDataProperty(body, "managedRecoveryAdmission", "Managed recovery admission"),
+      );
+      if (
+        admission.identity.publicRunId !== claims.sub ||
+        admission.sourceBinding.projectId !== claims.project_id ||
+        admission.expiresAt > claims.exp || admission.expiresAt <= DateNow() / 1000
+      ) throw new Error("Managed recovery admission scope is invalid");
+      ObjectFreeze(admission.identity);
+      ObjectFreeze(admission.generation);
+      ObjectFreeze(admission.sourceBinding);
+      verifiedRecoveryGrants.set(verifiedClaims, ObjectFreeze(admission));
     }
     if (body && ObjectHasOwn(body, "platformToolDependencies")) {
       const dependencies = readPlatformToolDependencies(
