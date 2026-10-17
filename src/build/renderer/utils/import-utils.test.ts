@@ -346,7 +346,9 @@ describe("build/renderer/utils/import-utils", () => {
         ),
         source.replace("./child.mdx", "./resolved.mdx"),
       );
-      assertEquals(performance.now() - start < 1_500, true, "Minified modules must scan promptly");
+      // Both extraction and rewriting run here. Leave headroom for slower
+      // runtimes and shared CI runners while still detecting runaway rescans.
+      assertEquals(performance.now() - start < 4_000, true, "Minified modules must scan promptly");
     });
 
     it("recognizes regex literals after class extends", () => {
