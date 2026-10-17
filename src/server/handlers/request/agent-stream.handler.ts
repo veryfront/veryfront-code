@@ -2,6 +2,8 @@ import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/manag
 import {
   assertManagedRecoveryExecutionBinding,
   bindManagedRecoveryInput,
+  bindManagedRecoveryRunSession,
+  type ManagedRecoveryRunSession,
 } from "#veryfront/internal-agents/managed-recovery-input.ts";
 import {
   copyNativeResponse,
@@ -89,6 +91,7 @@ import {
 } from "#veryfront/internal-agents/runtime-owner.ts";
 import {
   ControlPlaneRequestError,
+  getVerifiedControlPlaneRecoveryAdmission,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
@@ -1317,6 +1320,7 @@ export class AgentStreamHandler extends BaseHandler {
       return this.respond(buildRuntimeShuttingDownResponse(this.createResponseBuilder(ctx)));
     }
 
+    let pendingRecovery: { runId: string; session: ManagedRecoveryRunSession } | undefined;
     const builder = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req);
@@ -1533,6 +1537,24 @@ export class AgentStreamHandler extends BaseHandler {
                     return await runWithExactSourceIntegrationPolicy(
                       sourceIntegrationPolicy,
                       async () => {
+                        // Reserve durable ownership before discovery can evaluate tenant modules.
+                        const reservedRecovery = verifiedClaims &&
+                            getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
+                          ? await this.deps.sessionManager.startManagedRecoveryRun({
+                            runId: payload.runId,
+                            threadId: payload.threadId,
+                            servingIdentity: ctx.projectId
+                              ? {
+                                projectId: ctx.projectId,
+                                spanAttributes: buildServingSpanAttributes(ctx),
+                              }
+                              : undefined,
+                            claims: verifiedClaims,
+                          })
+                          : undefined;
+                        if (reservedRecovery) {
+                          pendingRecovery = { runId: payload.runId, session: reservedRecovery };
+                        }
                         await this.deps.ensureProjectDiscovery(projectScopedContext);
                         if (requestSourceFingerprint !== undefined) {
                           const discoverySourceFingerprint =
@@ -1569,6 +1591,9 @@ export class AgentStreamHandler extends BaseHandler {
                           runtimeBaseAgent as Agent,
                         );
                         bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+                        if (reservedRecovery) {
+                          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery);
+                        }
                         if (platformDependencies && platformDependencyScope.projectId) {
                           registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
                             ...platformDependencyScope,
@@ -1658,8 +1683,9 @@ export class AgentStreamHandler extends BaseHandler {
                             }),
                           );
                         }
-                        const runAgentStream = () =>
-                          createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+                        const runAgentStream = () => {
+                          pendingRecovery = undefined;
+                          return createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                             ...this.deps,
                             localTools,
                             providerReplayCheckpoints,
@@ -1680,6 +1706,7 @@ export class AgentStreamHandler extends BaseHandler {
                                 projectScopedContext.projectId ?? null,
                             },
                           });
+                        };
                         const shouldIsolateEnv = apiAuthToken.length > 0;
                         const agentEnv = buildAgentStreamEnv({
                           envVars: envVarsForAgent,
@@ -1695,7 +1722,8 @@ export class AgentStreamHandler extends BaseHandler {
                               executionProject.runtimeTargetEnvironmentId ?? undefined,
                           }
                           : projectScopedContext.projectId ||
-                              projectScopedContext.projectSlug || projectScopedContext.environmentId
+                              projectScopedContext.projectSlug ||
+                              projectScopedContext.environmentId
                           ? {
                             projectId: projectScopedContext.projectId,
                             projectSlug: projectScopedContext.projectSlug,
@@ -1884,6 +1912,13 @@ export class AgentStreamHandler extends BaseHandler {
         });
       }
       return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
+    } finally {
+      if (pendingRecovery) {
+        const { runId, session } = pendingRecovery;
+        this.deps.sessionManager.cancelRun(runId, session.signal);
+        this.deps.sessionManager.settleCancelledRun(runId, session.signal);
+        session.settle();
+      }
     }
   }
 }

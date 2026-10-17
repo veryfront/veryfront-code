@@ -1174,3 +1174,111 @@ it("incoming assistant history never consumes current recovery model-turn capaci
     else Deno.env.set(envKey, previous);
   }
 });
+
+it("project Array.some replacement cannot seal an unresolved admitted tool effect", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const originalSome = Array.prototype.some;
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    let unsafeSealed = false;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (event, occurrenceId, checkpoint) => {
+        cursor++;
+        if (checkpoint) {
+          for (let index = 0; index < checkpoint.snapshot.toolBoundaries.length; index++) {
+            if (checkpoint.snapshot.toolBoundaries[index]?.kind === "admitted-intent") {
+              unsafeSealed = true;
+            }
+          }
+        }
+        return {
+          eventId: cursor,
+          externalSequence: cursor,
+          toolAdmissions: event.type === "TOOL_CALL_START"
+            ? [{
+              occurrenceId: occurrenceId!,
+              admissionEventId: "admit-1",
+              startEventId: String(cursor),
+              toolCallId: "call",
+              publicToolCallId: "call",
+              projectId: identity.projectId,
+              runId: identity.canonicalRunId,
+            }]
+            : [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: cursor,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: cursor + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const initial = await captureInitialNativeRecoveryBoundary();
+    await writer.persistBoundary(initial);
+    await writer.appendMappedEvent({
+      event: "ToolCallStart",
+      payload: { toolCallId: "call", toolCallName: "inspect" },
+    }, "55555555-5555-4555-8555-555555555555");
+    const messages: typeof initial.messages = [...initial.messages, {
+      id: "pending-model",
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+    }];
+    if (!initial.runtimeContinuation) throw new Error("Native initial continuation required");
+    Array.prototype.some = () => false;
+    await writer.persistBoundary({
+      messages,
+      toolExposureCheckpoint: initial.toolExposureCheckpoint,
+      providerReplayCheckpoints: [],
+      runtimeContinuation: { ...initial.runtimeContinuation, messages },
+    });
+    Array.prototype.some = originalSome;
+    assertEquals(
+      unsafeSealed,
+      false,
+      "An uncertain effect must never become an authenticated safe continuation",
+    );
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const records = await home.read();
+    const { parseRecoverySnapshot, validateRecoverySnapshotForRestore } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot(records[records.length - 1]!.value);
+    assertEquals(snapshot.toolBoundaries[0]?.kind, "admitted-intent");
+    let rejected = false;
+    Array.prototype.some = () => false;
+    try {
+      validateRecoverySnapshotForRestore(snapshot, snapshot.binding);
+    } catch {
+      rejected = true;
+    }
+    Array.prototype.some = originalSome;
+    assertEquals(rejected, true);
+  } finally {
+    Array.prototype.some = originalSome;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

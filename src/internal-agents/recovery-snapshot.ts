@@ -1,3 +1,13 @@
+import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  filterPrivateArray,
+  flatMapPrivateArray,
+  forEachPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
@@ -75,6 +85,8 @@ export const getRecoverySnapshotSchema = defineSchema((v) =>
   v.object({
     version: v.literal(1),
     runtimeContinuation: getRecoveryContinuationSchema().optional(),
+    initialHistoryProviderReplayCheckpoints: v.array(getExecutorProviderReplayCheckpointSchema())
+      .max(100).optional(),
     initialHistoryMessageIds: v.array(v.string().min(1).max(256)).max(1000).optional(),
     initialHistoryMessageDigests: v.array(v.string().regex(/^[0-9a-f]{64}$/)).max(1000).optional(),
     binding: getSnapshotBindingSchema(),
@@ -96,7 +108,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   const snapshot = getRecoverySnapshotSchema().parse(snapshotDurableValue(value));
   const { identity } = snapshot.binding;
   if (
-    new Set(snapshot.toolExposureCheckpoint.loadedToolNames).size !==
+    createPrivateSet(snapshot.toolExposureCheckpoint.loadedToolNames).size !==
       snapshot.toolExposureCheckpoint.loadedToolNames.length
   ) throw invalid();
   if (
@@ -106,32 +118,52 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
       snapshot.toolExposureCheckpoint,
     )
   ) throw invalid();
-  const messages = new Map(snapshot.messages.map((message) => [message.id, message]));
+  const messages = createPrivateMap<string, RecoverySnapshot["messages"][number]>();
+  forEachPrivateArray(snapshot.messages, (message) => messages.set(message.id, message));
   if (messages.size !== snapshot.messages.length) throw invalid();
-  const historyIds = new Set(snapshot.initialHistoryMessageIds ?? []);
+  const historyIds = createPrivateSet(snapshot.initialHistoryMessageIds ?? []);
   if (
     historyIds.size !== (snapshot.initialHistoryMessageIds?.length ?? 0) ||
     (snapshot.initialHistoryMessageDigests?.length ?? 0) !== historyIds.size ||
-    (snapshot.initialHistoryMessageIds ?? []).some((id, index) =>
-      snapshot.messages[index]?.id !== id ||
-      recoveryHistoryMessageDigest(snapshot.messages[index]!) !==
-        snapshot.initialHistoryMessageDigests?.[index]
+    somePrivateArray(
+      snapshot.initialHistoryMessageIds ?? [],
+      (id, index) =>
+        snapshot.messages[index]?.id !== id ||
+        recoveryHistoryMessageDigest(snapshot.messages[index]!) !==
+          snapshot.initialHistoryMessageDigests?.[index],
     )
   ) throw invalid();
   if (
     snapshot.runtimeContinuation &&
     !isDeepStrictEqual(
-      snapshot.runtimeContinuation.messages.map(({ id, role, parts }) => ({ id, role, parts })),
-      snapshot.messages.map(({ id, role, parts }) => ({ id, role, parts })),
+      mapPrivateArray(
+        snapshot.runtimeContinuation.messages,
+        ({ id, role, parts }) => ({ id, role, parts }),
+      ),
+      mapPrivateArray(snapshot.messages, ({ id, role, parts }) => ({ id, role, parts })),
     )
   ) throw invalid();
-  const turnIds = new Set<string>();
-  const turnSequences = new Map<string, number>();
-  const replay = [];
-  let priorSequence = 0;
-  for (const turn of snapshot.modelTurns) {
+  const historicalReplay = parseServerResolvedProviderReplayCheckpoints(
+    snapshot.initialHistoryProviderReplayCheckpoints ?? [],
+  );
+  for (let index = 0; index < historicalReplay.length; index++) {
+    const checkpoint = historicalReplay[index]!;
     if (
-      turnIds.has(turn.messageId) || messages.get(turn.messageId)?.role !== "assistant" ||
+      !historyIds.has(checkpoint.messageId) ||
+      messages.get(checkpoint.messageId)?.role !== "assistant"
+    ) throw invalid();
+  }
+  // Replay metadata is accepted only when its provider blocks match the anchored historical transcript.
+  applyProviderReplayCheckpointsToMessages(snapshot.messages, historicalReplay);
+  const turnIds = createPrivateSet<string>();
+  const turnSequences = createPrivateMap<string, number>();
+  const replay: ReturnType<typeof parseServerResolvedProviderReplayCheckpoints> = [];
+  let priorSequence = 0;
+  for (let turnIndex = 0; turnIndex < snapshot.modelTurns.length; turnIndex++) {
+    const turn = snapshot.modelTurns[turnIndex]!;
+    if (
+      turnIds.has(turn.messageId) || historyIds.has(turn.messageId) ||
+      messages.get(turn.messageId)?.role !== "assistant" ||
       turn.acknowledgedExternalSequence > snapshot.acknowledgedExternalSequence ||
       turn.acknowledgedExternalSequence < priorSequence ||
       turn.providerReplayCheckpoint && turn.providerReplayCheckpoint.messageId !== turn.messageId
@@ -139,13 +171,14 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     turnIds.add(turn.messageId);
     turnSequences.set(turn.messageId, turn.acknowledgedExternalSequence);
     priorSequence = turn.acknowledgedExternalSequence;
-    if (turn.providerReplayCheckpoint) replay.push(turn.providerReplayCheckpoint);
+    if (turn.providerReplayCheckpoint) pushPrivateArray(replay, turn.providerReplayCheckpoint);
   }
   const parsedReplay = parseServerResolvedProviderReplayCheckpoints(replay);
   if (snapshot.runtimeContinuation?.providerMetadata?.length) {
     applyProviderReplayCheckpointsToMessages(snapshot.messages, parsedReplay);
-    const metadataIds = new Set<string>();
-    for (const entry of snapshot.runtimeContinuation.providerMetadata) {
+    const metadataIds = createPrivateSet<string>();
+    for (let index = 0; index < snapshot.runtimeContinuation.providerMetadata.length; index++) {
+      const entry = snapshot.runtimeContinuation.providerMetadata[index]!;
       const message = messages.get(entry.messageId);
       const expected = message && readAttachedProviderMetadata(message);
       if (
@@ -156,21 +189,28 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     }
   }
   if (
-    snapshot.messages.some((message) =>
-      message.role === "assistant" && !historyIds.has(message.id) && !turnIds.has(message.id)
+    somePrivateArray(
+      snapshot.messages,
+      (message) =>
+        message.role === "assistant" && !historyIds.has(message.id) && !turnIds.has(message.id),
     )
   ) throw invalid();
-  const calls = new Map<string, {
+  const calls = createPrivateMap<string, {
     messageId: string;
     toolName: string;
     input: unknown;
     inputText: unknown;
   }>();
-  const results = new Map<string, InferSchema<ReturnType<typeof getToolResultPartSchema>>>();
-  const providerCalls = new Set<string>();
-  const providerResults = new Map<string, string>();
-  for (const message of snapshot.messages) {
-    for (const part of message.parts) {
+  const results = createPrivateMap<
+    string,
+    InferSchema<ReturnType<typeof getToolResultPartSchema>>
+  >();
+  const providerCalls = createPrivateSet<string>();
+  const providerResults = createPrivateMap<string, string>();
+  for (let messageIndex = 0; messageIndex < snapshot.messages.length; messageIndex++) {
+    const message = snapshot.messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      const part = message.parts[partIndex]!;
       if (!("toolCallId" in part) || !("toolName" in part)) continue;
       if (part.type === "tool-result") {
         if (
@@ -185,8 +225,9 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         if ("providerExecuted" in part && part.providerExecuted === true) {
           if (
             !historyIds.has(message.id) &&
-            !snapshot.modelTurns.some((turn) =>
-              turn.messageId === message.id && turn.providerReplayCheckpoint
+            !somePrivateArray(
+              snapshot.modelTurns,
+              (turn) => turn.messageId === message.id && turn.providerReplayCheckpoint,
             )
           ) throw invalid();
           providerCalls.add(part.toolCallId);
@@ -203,18 +244,20 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   // Keep the original full transcript facts. History and provider-owned calls
   // are excluded from local effect admission below, but may still be present
   // in native response bookkeeping.
-  const transcriptCalls = new Map(calls);
-  const transcriptResults = new Map(results);
+  const transcriptCalls = copyPrivateMap(calls);
+  const transcriptResults = copyPrivateMap(results);
   for (const [id, call] of calls) {
     if (!historyIds.has(call.messageId)) continue;
-    const resultMessage = snapshot.messages.find((message) =>
+    const resultMessage = filterPrivateArray(snapshot.messages, (message) =>
       historyIds.has(message.id) &&
       (message.role === "tool" || message.role === "assistant") &&
-      message.parts.some((part) =>
-        part.type === "tool-result" && part.toolCallId === id && part.toolName === call.toolName
-      )
-    );
-    if (!resultMessage || !results.has(id)) throw invalid();
+      somePrivateArray(message.parts, (part) =>
+        part.type === "tool-result" && part.toolCallId === id && part.toolName === call.toolName))[
+        0
+      ];
+    if (!resultMessage || !results.has(id)) {
+      throw invalid();
+    }
     calls.delete(id);
     results.delete(id);
     providerCalls.delete(id);
@@ -236,11 +279,12 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     }
     if (providerResults.size) throw invalid();
   }
-  const coveredCalls = new Set<string>();
-  const occurrences = new Set<string>();
-  const acknowledgedEventIds = new Set<string>();
-  const publicToolCallIds = new Set<string>();
-  for (const boundary of snapshot.toolBoundaries) {
+  const coveredCalls = createPrivateSet<string>();
+  const occurrences = createPrivateSet<string>();
+  const acknowledgedEventIds = createPrivateSet<string>();
+  const publicToolCallIds = createPrivateSet<string>();
+  for (let boundaryIndex = 0; boundaryIndex < snapshot.toolBoundaries.length; boundaryIndex++) {
+    const boundary = snapshot.toolBoundaries[boundaryIndex]!;
     const receipt = boundary.admissionReceipt;
     if (
       occurrences.has(receipt.occurrenceId) || receipt.projectId !== identity.projectId ||
@@ -285,40 +329,47 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     // resumed tool messages can also follow the last presented model output.
     // Require source-backed text without assuming every assistant is a model
     // step or deriving independent step/budget state from transcript length.
-    const assistantTexts = snapshot.messages.filter((message) =>
-      message.role === "assistant" && !historyIds.has(message.id)
-    ).map((message) => getTextFromMemoryParts(message.parts));
-    const presentations = new Set(["", ...assistantTexts]);
+    const assistantTexts = mapPrivateArray(
+      filterPrivateArray(
+        snapshot.messages,
+        (message) => message.role === "assistant" && !historyIds.has(message.id),
+      ),
+      (message) => getTextFromMemoryParts(message.parts),
+    );
+    const presentations = createPrivateSet(assistantTexts);
+    presentations.add("");
     const recoveryText = continuation.interruptedLocalToolBatchRecoveryText;
     if (recoveryText !== undefined) {
       if (
         !continuation.recoveredInterruptedLocalToolBatch ||
-        !assistantTexts.includes(recoveryText)
+        !somePrivateArray(assistantTexts, (text) => text === recoveryText)
       ) throw invalid();
-      presentations.add(recoveryText + (assistantTexts.at(-1) ?? ""));
+      presentations.add(recoveryText + (assistantTexts[assistantTexts.length - 1] ?? ""));
     }
     if (!presentations.has(continuation.latestAssistantText)) throw invalid();
     const trustedIds = continuation.trustedSkillLoadResultIds ?? [];
-    if (new Set(trustedIds).size !== trustedIds.length) throw invalid();
+    if (createPrivateSet(trustedIds).size !== trustedIds.length) throw invalid();
     if (trustedIds.length) {
       // Reuse the runtime's own eligibility checks for unique successful skill
       // activation results instead of inventing a second result-shape policy.
       restoreTrustedSkillLoadResultsFromPauseCheckpoint(snapshot.messages, trustedIds);
-      const eligibleIds = new Set(getTrustedSkillLoadResultIds(snapshot.messages));
-      if (trustedIds.some((id) => !eligibleIds.has(id))) throw invalid();
+      const eligibleIds = createPrivateSet(getTrustedSkillLoadResultIds(snapshot.messages));
+      if (somePrivateArray(trustedIds, (id) => !eligibleIds.has(id))) throw invalid();
     }
-    const trustedIdSet = new Set(trustedIds);
-    const overridesAtResult = new Map<string, SkillDelegationOverrides | undefined>();
+    const trustedIdSet = createPrivateSet(trustedIds);
+    const overridesAtResult = createPrivateMap<string, SkillDelegationOverrides | undefined>();
     let activeOverrides: SkillDelegationOverrides | undefined;
     let reachedCurrentRun = false;
-    for (const message of snapshot.messages) {
+    for (let messageIndex = 0; messageIndex < snapshot.messages.length; messageIndex++) {
+      const message = snapshot.messages[messageIndex]!;
       if (!historyIds.has(message.id) && !reachedCurrentRun) {
         // Native hydration restores history capabilities, never its delegation
         // policy. Only activations executed during this run may set that policy.
         activeOverrides = undefined;
         reachedCurrentRun = true;
       }
-      for (const part of message.parts) {
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        const part = message.parts[partIndex]!;
         if (part.type !== "tool-result" || !("toolCallId" in part) || !("result" in part)) continue;
         overridesAtResult.set(part.toolCallId, activeOverrides);
         if (trustedIdSet.has(part.toolCallId)) {
@@ -332,8 +383,9 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         reachedCurrentRun ? activeOverrides : undefined,
       )
     ) throw invalid();
-    const responseCallIds = new Set<string>();
-    for (const entry of continuation.toolCalls) {
+    const responseCallIds = createPrivateSet<string>();
+    for (let entryIndex = 0; entryIndex < continuation.toolCalls.length; entryIndex++) {
+      const entry = continuation.toolCalls[entryIndex]!;
       const call = transcriptCalls.get(entry.id);
       const result = transcriptResults.get(entry.id);
       if (
@@ -375,8 +427,8 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     }
     const generatedIds = continuation.runtimeGeneratedMessageIds ?? [];
     if (
-      new Set(generatedIds).size !== generatedIds.length ||
-      generatedIds.some((id) => messages.get(id)?.role !== "user")
+      createPrivateSet(generatedIds).size !== generatedIds.length ||
+      somePrivateArray(generatedIds, (id) => messages.get(id)?.role !== "user")
     ) throw invalid();
   }
   return snapshot;
@@ -390,11 +442,20 @@ export function validateRecoverySnapshotForRestore(
   const snapshot = parseRecoverySnapshot(value);
   const expected = getSnapshotBindingSchema().parse(expectedBinding);
   if (!isDeepStrictEqual(snapshot.binding, expected)) throw invalid();
-  if (snapshot.toolBoundaries.some((boundary) => boundary.kind === "admitted-intent")) {
+  if (
+    somePrivateArray(snapshot.toolBoundaries, (boundary) => boundary.kind === "admitted-intent")
+  ) {
     throw invalid();
   }
-  const replay = snapshot.modelTurns.flatMap((turn) =>
-    turn.providerReplayCheckpoint ? [turn.providerReplayCheckpoint] : []
+  const replay = flatMapPrivateArray(
+    snapshot.modelTurns,
+    (turn) => turn.providerReplayCheckpoint ? [turn.providerReplayCheckpoint] : [],
+  );
+  applyProviderReplayCheckpointsToMessages(
+    snapshot.messages,
+    parseServerResolvedProviderReplayCheckpoints(
+      snapshot.initialHistoryProviderReplayCheckpoints ?? [],
+    ),
   );
   // Existing runtime checks reconstructibility and exact transcript/provider continuity.
   applyProviderReplayCheckpointsToMessages(

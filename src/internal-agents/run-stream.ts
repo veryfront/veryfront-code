@@ -2,7 +2,10 @@ import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurre
 import { runWithRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
 import { startManagedRecoveryLifetime } from "./managed-recovery-lifetime.ts";
 import { runWithExecutionOwnershipGuard } from "#veryfront/runtime/execution-ownership-guard.ts";
-import { getManagedRecoveryInputClaims } from "./managed-recovery-input.ts";
+import {
+  getManagedRecoveryInputClaims,
+  takeManagedRecoveryRunSession,
+} from "./managed-recovery-input.ts";
 import {
   revokePlatformDependencyOwner,
   runWithPlatformDependencyOwner,
@@ -1387,7 +1390,7 @@ export async function createRuntimeAgentStreamResponse(
   });
   const managedClaims = getManagedRecoveryInputClaims(input);
   const managedRecovery = managedClaims
-    ? await deps.sessionManager.startManagedRecoveryRun({
+    ? takeManagedRecoveryRunSession(input) ?? await deps.sessionManager.startManagedRecoveryRun({
       runId: input.runId,
       threadId: input.threadId,
       servingIdentity: deps.servingIdentity,
@@ -1650,9 +1653,12 @@ export async function createRuntimeAgentStreamResponse(
     };
     const systemPrompt = await resolveSystemPrompt();
     const providerReplayCheckpoints = managedRecovery?.snapshot
-      ? managedRecovery.snapshot.modelTurns.flatMap((turn) =>
-        turn.providerReplayCheckpoint ? [turn.providerReplayCheckpoint] : []
-      )
+      ? [
+        ...(managedRecovery.snapshot.initialHistoryProviderReplayCheckpoints ?? []),
+        ...managedRecovery.snapshot.modelTurns.flatMap((turn) =>
+          turn.providerReplayCheckpoint ? [turn.providerReplayCheckpoint] : []
+        ),
+      ]
       : deps.providerReplayCheckpoints ?? [];
     if (deps.providerReplayCheckpointEmissionEnabled === true && !input.messageId) {
       throw new Error(

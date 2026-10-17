@@ -3,6 +3,7 @@ import {
   getVerifiedControlPlaneRecoveryAdmission,
   type VerifiedControlPlaneRequestClaims,
 } from "./control-plane-auth.ts";
+import type { AgentRunSessionManager } from "./session-manager.ts";
 import type { InternalAgentStreamRequest, RuntimeRunAgentInput } from "./schema.ts";
 
 // Object identity connects the exact signed request to the sanitized runtime input.
@@ -64,4 +65,33 @@ export function getManagedRecoveryInputClaims(
     throw new Error("Managed recovery input admission expired");
   }
   return claims;
+}
+
+export type ManagedRecoveryRunSession = Awaited<
+  ReturnType<AgentRunSessionManager["startManagedRecoveryRun"]>
+>;
+const sessionsByInput = createPrivateWeakStore<
+  RuntimeRunAgentInput,
+  { session: ManagedRecoveryRunSession; consumed: boolean }
+>();
+
+/** Transfer only the authenticated handler's already acquired owner into this exact input. */
+export function bindManagedRecoveryRunSession(
+  input: RuntimeRunAgentInput,
+  session: ManagedRecoveryRunSession,
+): void {
+  const claims = getManagedRecoveryInputClaims(input);
+  if (!claims || sessionsByInput.get(input)) throw new Error("Invalid recovery session transfer");
+  session.owner.assertAdmittedClaims(claims);
+  sessionsByInput.set(input, { session, consumed: false });
+}
+
+export function takeManagedRecoveryRunSession(
+  input: RuntimeRunAgentInput,
+): ManagedRecoveryRunSession | undefined {
+  const reservation = sessionsByInput.get(input);
+  if (!reservation) return undefined;
+  if (reservation.consumed) throw new Error("Recovery session already consumed");
+  reservation.consumed = true;
+  return reservation.session;
 }

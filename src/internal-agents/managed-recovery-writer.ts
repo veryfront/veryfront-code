@@ -1,3 +1,14 @@
+import { readAttachedProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  everyPrivateArray,
+  filterPrivateArray,
+  flatMapPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import {
   getRecoveryCheckpointSidecarSchema,
   MAX_RECOVERY_CHECKPOINT_BYTES,
@@ -12,6 +23,8 @@ import { join } from "node:path";
 import type { AgentRuntimeRecoveryBoundary } from "#veryfront/agent/runtime/index.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import {
+  captureProviderReplayCheckpoint,
+  createProviderReplayCheckpointEmissionState,
   createProviderReplayCheckpointEvent,
   type ProviderReplayCheckpoint,
 } from "#veryfront/agent/runtime/provider-replay.ts";
@@ -61,7 +74,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 function recoveryMessages(messages: AgentRuntimeRecoveryBoundary["messages"]) {
-  return messages.map(({ metadata: _metadata, ...message }) => message);
+  return mapPrivateArray(messages, ({ metadata: _metadata, ...message }) => message);
 }
 
 /** Private host materialization; API event acknowledgement never proves external effect commit. */
@@ -89,16 +102,24 @@ export async function createManagedRecoveryWriter(input: {
   let lastRuntimeContinuation = input.restoredSnapshot?.runtimeContinuation;
   let initialHistoryMessageIds = input.restoredSnapshot?.initialHistoryMessageIds;
   let initialHistoryMessageDigests = input.restoredSnapshot?.initialHistoryMessageDigests;
-  const historicalToolCallIds = new Set<string>();
-  for (const message of input.restoredSnapshot?.messages ?? []) {
-    if (!initialHistoryMessageIds?.includes(message.id)) continue;
-    for (const part of message.parts) {
+  let initialHistoryProviderReplayCheckpoints = input.restoredSnapshot
+    ?.initialHistoryProviderReplayCheckpoints;
+  const historicalToolCallIds = createPrivateSet<string>();
+  const restoredMessages = input.restoredSnapshot?.messages ?? [];
+  for (let messageIndex = 0; messageIndex < restoredMessages.length; messageIndex++) {
+    const message = restoredMessages[messageIndex]!;
+    if (!somePrivateArray(initialHistoryMessageIds ?? [], (id) => id === message.id)) continue;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      const part = message.parts[partIndex]!;
       if ("toolCallId" in part) historicalToolCallIds.add(part.toolCallId);
     }
   }
   let signal: AbortSignal | undefined;
-  const admissions = new Map<string, Deferred<AgentRunToolCallAdmissionReceipt>>();
-  const results = new Map<string, Deferred<{ eventId: number; externalSequence: number }>>();
+  const admissions = createPrivateMap<string, Deferred<AgentRunToolCallAdmissionReceipt>>();
+  const results = createPrivateMap<
+    string,
+    Deferred<{ eventId: number; externalSequence: number }>
+  >();
   const fail = (error: unknown) => {
     failure ??= { error };
     for (const pending of admissions.values()) pending.reject(failure.error);
@@ -107,14 +128,19 @@ export async function createManagedRecoveryWriter(input: {
   const assertNotFailed = () => {
     if (failure) throw failure.error;
   };
-  const modelTurns = new Map<string, unknown>(
-    (input.restoredSnapshot?.modelTurns ?? []).map((turn) => [turn.messageId, turn]),
-  );
-  const restoredBoundaries = new Map(
-    (input.restoredSnapshot?.toolBoundaries ?? []).map((
-      boundary,
-    ) => [boundary.admissionReceipt.toolCallId, boundary]),
-  );
+  const modelTurns = createPrivateMap<string, unknown>();
+  const restoredTurns = input.restoredSnapshot?.modelTurns ?? [];
+  for (let index = 0; index < restoredTurns.length; index++) {
+    const turn = restoredTurns[index]!;
+    modelTurns.set(turn.messageId, turn);
+  }
+  const restoredBoundaries = createPrivateMap<string, RecoverySnapshot["toolBoundaries"][number]>();
+  const priorBoundaries = input.restoredSnapshot?.toolBoundaries ?? [];
+  for (let index = 0; index < priorBoundaries.length; index++) {
+    const boundary = priorBoundaries[index]!;
+    restoredBoundaries.set(boundary.admissionReceipt.toolCallId, boundary);
+  }
+
   const admissionFor = (id: string) => {
     let value = admissions.get(id);
     if (!value) {
@@ -245,9 +271,8 @@ export async function createManagedRecoveryWriter(input: {
       try {
         const receipt = await append(event);
         if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
-        const capture = receipt.modelCaptures?.find((value) =>
-          value.modelCallId === event.modelCallId
-        );
+        const capture = filterPrivateArray(receipt.modelCaptures ?? [], (value) =>
+          value.modelCallId === event.modelCallId)[0];
         if (
           !capture || capture.projectId !== admission.identity.projectId ||
           capture.runId !== admission.identity.canonicalRunId ||
@@ -269,8 +294,9 @@ export async function createManagedRecoveryWriter(input: {
       try {
         const event = coerceWireEvent(mapped.event, mapped.payload);
         if (
-          ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"].includes(
-            String(event.type),
+          somePrivateArray(
+            ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"],
+            (type) => type === String(event.type),
           )
         ) return;
         if (
@@ -316,15 +342,29 @@ export async function createManagedRecoveryWriter(input: {
         await active();
         const messages = recoveryMessages(boundary.messages);
         if (!initialHistoryMessageIds) {
-          initialHistoryMessageIds = messages.map((message) => message.id);
-          initialHistoryMessageDigests = messages.map(recoveryHistoryMessageDigest);
-          for (const message of messages) {
-            for (const part of message.parts) {
+          initialHistoryMessageIds = mapPrivateArray(messages, (message) => message.id);
+          initialHistoryMessageDigests = mapPrivateArray(messages, recoveryHistoryMessageDigest);
+          initialHistoryProviderReplayCheckpoints = [];
+          for (let index = 0; index < boundary.messages.length; index++) {
+            const message = boundary.messages[index]!;
+            if (message.role !== "assistant") continue;
+            const metadata = readAttachedProviderMetadata(message);
+            if (metadata === undefined) continue;
+            const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
+            // Historical native metadata must survive even when it contains no thinking blocks.
+            state.replayRequired = true;
+            const checkpoint = captureProviderReplayCheckpoint(state, metadata);
+            if (checkpoint) pushPrivateArray(initialHistoryProviderReplayCheckpoints, checkpoint);
+          }
+          for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+            const message = messages[messageIndex]!;
+            for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+              const part = message.parts[partIndex]!;
               if ("toolCallId" in part) historicalToolCallIds.add(part.toolCallId);
             }
           }
         }
-        const history = new Set(initialHistoryMessageIds);
+        const history = createPrivateSet(initialHistoryMessageIds);
         if (boundary.runtimeContinuation) {
           lastRuntimeContinuation = getRecoveryContinuationSchema().parse(
             snapshotDurableValue({
@@ -334,16 +374,20 @@ export async function createManagedRecoveryWriter(input: {
           );
         }
         const matchingContinuation = lastRuntimeContinuation?.messages.length === messages.length &&
-            lastRuntimeContinuation.messages.every((message, index) =>
-              recoveryHistoryMessageDigest(message) ===
-                recoveryHistoryMessageDigest(messages[index]!)
+            everyPrivateArray(
+              lastRuntimeContinuation.messages,
+              (message, index) =>
+                recoveryHistoryMessageDigest(message) ===
+                  recoveryHistoryMessageDigest(messages[index]!),
             )
           ? lastRuntimeContinuation
           : undefined;
         const toolBoundaries: unknown[] = [];
-        for (const message of messages) {
+        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+          const message = messages[messageIndex]!;
           if (message.role !== "assistant" || history.has(message.id)) continue;
-          for (const part of message.parts) {
+          for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+            const part = message.parts[partIndex]!;
             if (
               !("toolCallId" in part) || !("toolName" in part) ||
               !("args" in part || "input" in part) ||
@@ -351,7 +395,7 @@ export async function createManagedRecoveryWriter(input: {
             ) continue;
             const prior = restoredBoundaries.get(part.toolCallId);
             if (prior) {
-              toolBoundaries.push(prior);
+              pushPrivateArray(toolBoundaries, prior);
               continue;
             }
             const receipt = await wait(admissionFor(part.toolCallId).promise);
@@ -361,12 +405,14 @@ export async function createManagedRecoveryWriter(input: {
               admissionReceipt: receipt,
               input: "args" in part ? part.args : part.input,
             };
-            const result = messages.flatMap((candidate) => candidate.parts).find((candidate) =>
-              candidate.type === "tool-result" && candidate.toolCallId === part.toolCallId
-            );
+            const result = filterPrivateArray(
+              flatMapPrivateArray(messages, (candidate) => candidate.parts),
+              (candidate) =>
+                candidate.type === "tool-result" && candidate.toolCallId === part.toolCallId,
+            )[0];
             if (result?.type === "tool-result") {
               const acknowledged = await wait(resultFor(part.toolCallId).promise);
-              toolBoundaries.push({
+              pushPrivateArray(toolBoundaries, {
                 ...base,
                 kind: "acknowledged-receipt",
                 result,
@@ -374,7 +420,7 @@ export async function createManagedRecoveryWriter(input: {
                 acknowledgedExternalSequence: acknowledged.externalSequence,
               });
             } else {
-              toolBoundaries.push({ ...base, kind: "admitted-intent" });
+              pushPrivateArray(toolBoundaries, { ...base, kind: "admitted-intent" });
             }
           }
         }
@@ -382,23 +428,26 @@ export async function createManagedRecoveryWriter(input: {
         const boundaryModelTurns: unknown[] = [
           ...modelTurns.values(),
         ];
-        for (const message of messages) {
+        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+          const message = messages[messageIndex]!;
           if (
             message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
           ) continue;
-          pendingModelTurnMessageIds.push(message.id);
-          const providerReplayCheckpoint = boundary.providerReplayCheckpoints.find((value) =>
-            value.messageId === message.id
-          );
-          boundaryModelTurns.push({
+          pushPrivateArray(pendingModelTurnMessageIds, message.id);
+          const providerReplayCheckpoint =
+            filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
+              value.messageId === message.id)[0];
+          pushPrivateArray(boundaryModelTurns, {
             messageId: message.id,
             ...(providerReplayCheckpoint ? { providerReplayCheckpoint } : {}),
           });
         }
         const safeBoundary = matchingContinuation &&
-          !toolBoundaries.some((value) =>
-            typeof value === "object" && value !== null && "kind" in value &&
-            value.kind === "admitted-intent"
+          !somePrivateArray(
+            toolBoundaries,
+            (value) =>
+              typeof value === "object" && value !== null && "kind" in value &&
+              value.kind === "admitted-intent",
           );
         const checkpoint = safeBoundary
           ? getRecoveryCheckpointSidecarSchema().parse({
@@ -414,6 +463,7 @@ export async function createManagedRecoveryWriter(input: {
               runtimeContinuation: matchingContinuation,
               initialHistoryMessageIds,
               initialHistoryMessageDigests,
+              initialHistoryProviderReplayCheckpoints,
               messages,
               modelTurns: boundaryModelTurns,
               toolExposureCheckpoint: boundary.toolExposureCheckpoint,
@@ -428,7 +478,12 @@ export async function createManagedRecoveryWriter(input: {
           throw new Error("Initial recovery publication lacks a native continuation");
         }
         const appendObservations = async () => {
-          for (const checkpoint of boundary.providerReplayCheckpoints) {
+          for (
+            let checkpointIndex = 0;
+            checkpointIndex < boundary.providerReplayCheckpoints.length;
+            checkpointIndex++
+          ) {
+            const checkpoint = boundary.providerReplayCheckpoints[checkpointIndex]!;
             if (!history.has(checkpoint.messageId) && !modelTurns.has(checkpoint.messageId)) {
               await append(createProviderReplayCheckpointEvent(checkpoint));
             }
@@ -442,13 +497,14 @@ export async function createManagedRecoveryWriter(input: {
           checkpoint,
         );
         if (initialPublication) await appendObservations();
-        for (const message of messages) {
+        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+          const message = messages[messageIndex]!;
           if (
             message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
           ) continue;
-          const providerReplayCheckpoint = boundary.providerReplayCheckpoints.find((value) =>
-            value.messageId === message.id
-          );
+          const providerReplayCheckpoint =
+            filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
+              value.messageId === message.id)[0];
           modelTurns.set(message.id, {
             messageId: message.id,
             acknowledgedExternalSequence: transcriptReceipt.externalSequence,
@@ -468,6 +524,7 @@ export async function createManagedRecoveryWriter(input: {
             ...(matchingContinuation ? { runtimeContinuation: matchingContinuation } : {}),
             initialHistoryMessageIds,
             initialHistoryMessageDigests,
+            initialHistoryProviderReplayCheckpoints,
             messages,
             modelTurns: [...modelTurns.values()],
             toolExposureCheckpoint: boundary.toolExposureCheckpoint,

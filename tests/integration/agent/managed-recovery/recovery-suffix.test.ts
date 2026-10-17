@@ -166,6 +166,26 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
       { ...response.events[0]!, payloadHash: "0".repeat(64) },
     ]
   ) await assertRejects(() => read({ ...response, events: [event] }));
+  const originalSome = Array.prototype.some;
+  let foreignRejected = false;
+  try {
+    Array.prototype.some = () => false;
+    try {
+      await read({
+        ...response,
+        events: [{ ...response.events[0]!, appendGeneration: base.generation }],
+      });
+    } catch {
+      foreignRejected = true;
+    }
+  } finally {
+    Array.prototype.some = originalSome;
+  }
+  assertEquals(
+    foreignRejected,
+    true,
+    "Project array hooks cannot waive suffix generation provenance",
+  );
   for (
     const raw of [
       { ...response, events: [] },

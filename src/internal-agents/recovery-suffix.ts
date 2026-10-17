@@ -1,3 +1,4 @@
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   getVerifiedControlPlaneRecoveryAdmission,
   type VerifiedControlPlaneRequestClaims,
@@ -211,7 +212,8 @@ export async function readAuthenticatedRecoverySuffix(input: {
       ) throw invalidSuffix();
     }
     let lastEventId = afterEventId;
-    for (const event of page.events) {
+    for (let eventIndex = 0; eventIndex < page.events.length; eventIndex++) {
+      const event = page.events[eventIndex]!;
       if (
         event.eventId <= lastEventId || event.eventId > target.acknowledgedEventId ||
         event.dispatchFactEventId >= event.eventId ||
@@ -221,14 +223,19 @@ export async function readAuthenticatedRecoverySuffix(input: {
       if (event.externalSequence !== null && event.externalSequence !== ++externalSequence) {
         throw invalidSuffix();
       }
-      events.push(event);
+      pushPrivateArray(events, event);
     }
     let lastCheckpointId = afterEventId;
-    for (const continuation of page.continuations) {
+    for (
+      let continuationIndex = 0;
+      continuationIndex < page.continuations.length;
+      continuationIndex++
+    ) {
+      const continuation = page.continuations[continuationIndex]!;
       if (!snapshot) throw invalidSuffix();
       const fact = continuation.fact;
       const restored = parseRecoverySnapshot(fact.snapshot);
-      const previous = continuations.at(-1)?.fact;
+      const previous = continuations[continuations.length - 1]?.fact;
       if (
         continuation.checkpointEventId <= lastCheckpointId ||
         continuation.checkpointEventId > target.acknowledgedEventId ||
@@ -249,10 +256,10 @@ export async function readAuthenticatedRecoverySuffix(input: {
         restored.acknowledgedEventId !== fact.snapshotEventId ||
         restored.acknowledgedExternalSequence !== fact.snapshotExternalSequence ||
         !restored.runtimeContinuation ||
-        restored.toolBoundaries.some((boundary) => boundary.kind === "admitted-intent")
+        somePrivateArray(restored.toolBoundaries, (boundary) => boundary.kind === "admitted-intent")
       ) throw invalidSuffix();
       lastCheckpointId = continuation.checkpointEventId;
-      continuations.push(continuation);
+      pushPrivateArray(continuations, continuation);
     }
     if (page.nextAfterEventId === null) {
       if (!snapshot || externalSequence !== target.acknowledgedExternalSequence) {
@@ -265,28 +272,28 @@ export async function readAuthenticatedRecoverySuffix(input: {
         final.acknowledgedEventId !== target.acknowledgedEventId ||
         final.acknowledgedExternalSequence !== target.acknowledgedExternalSequence
       ) throw invalidSuffix();
-      const latest = continuations.at(-1);
+      const latest = continuations[continuations.length - 1];
       const selected = latest ? parseRecoverySnapshot(latest.fact.snapshot) : snapshot;
       const anchorGeneration = input.snapshot?.binding.generation;
       // Discarding an earlier complete prefix does not waive its provenance:
       // every generation must be the supplied local anchor or have its own
       // authenticated sealed continuation and exact dispatch fact.
       if (
-        events.some((event) =>
-          !(anchorGeneration && same(event.appendGeneration, anchorGeneration)) &&
-          !continuations.some(({ fact }) =>
-            same(event.appendGeneration, fact.generation) &&
-            event.dispatchFactEventId === fact.dispatchFactEventId
-          )
+        somePrivateArray(
+          events,
+          (event) =>
+            !(anchorGeneration && same(event.appendGeneration, anchorGeneration)) &&
+            !somePrivateArray(continuations, ({ fact }) =>
+              same(event.appendGeneration, fact.generation) &&
+              event.dispatchFactEventId === fact.dispatchFactEventId),
         )
       ) throw invalidSuffix();
       const generation = selected.binding.generation;
       const selectedEventId = selected.acknowledgedEventId;
       if (
-        events.some((event) =>
+        somePrivateArray(events, (event) =>
           event.eventId > selectedEventId &&
-          !same(event.appendGeneration, generation)
-        )
+          !same(event.appendGeneration, generation))
       ) throw invalidSuffix();
       if (bootstrap) {
         if (!latest) throw invalidSuffix();
@@ -325,10 +332,11 @@ export function materializeAuthenticatedRecoverySuffix(input: {
     !proof || proof.snapshot !== privateJsonStringify(snapshot) ||
     proof.suffix !== privateJsonStringify(input.suffix)
   ) throw invalidSuffix();
-  const latest = input.suffix.continuations.at(-1);
+  const latest = input.suffix.continuations[input.suffix.continuations.length - 1];
   if (latest) snapshot = parseRecoverySnapshot(latest.fact.snapshot);
   if (!snapshot.runtimeContinuation) throw invalidSuffix();
-  for (const event of input.suffix.events) {
+  for (let eventIndex = 0; eventIndex < input.suffix.events.length; eventIndex++) {
+    const event = input.suffix.events[eventIndex]!;
     if (event.eventId <= snapshot.acknowledgedEventId) continue;
     if (event.eventType === "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED") {
       const expected = { type: event.eventType, ...snapshot.toolExposureCheckpoint };

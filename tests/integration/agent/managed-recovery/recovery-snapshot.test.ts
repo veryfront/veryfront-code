@@ -129,6 +129,23 @@ it("admission proof is distinct from an acknowledged effect and ambiguous intent
   const parsed = parseRecoverySnapshot(pending);
   assertEquals(parsed.toolBoundaries[0]?.kind, "admitted-intent");
   assertThrows(() => validateRecoverySnapshotForRestore(pending, parsed.binding));
+  const originalSome = Array.prototype.some;
+  let rejected = false;
+  try {
+    Array.prototype.some = () => false;
+    try {
+      validateRecoverySnapshotForRestore(pending, parsed.binding);
+    } catch {
+      rejected = true;
+    }
+  } finally {
+    Array.prototype.some = originalSome;
+  }
+  assertEquals(
+    rejected,
+    true,
+    "Project array hooks cannot turn an uncertain effect into a restore point",
+  );
 });
 
 it("agent, conversation, source release and full generation must match the expected snapshot binding", () => {

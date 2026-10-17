@@ -1,3 +1,5 @@
+import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-session-owner.ts";
+import { getVerifiedControlPlaneRecoveryAdmission } from "#veryfront/internal-agents/control-plane-auth.ts";
 import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -6839,6 +6841,8 @@ describe("agent stream handler application-error reporting", () => {
 it("sealed ingress preserves terminal authority for managed recovery admission", async () => {
   const projectId = "11111111-1111-4111-8111-111111111111";
   let discoveryCalls = 0;
+  let ownershipSuperseded = false;
+  const recoveryDirectory = await Deno.makeTempDir();
   const handler = createTestAgentStreamHandler({
     ensureProjectDiscovery: async () => {
       discoveryCalls++;
@@ -6846,7 +6850,34 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
     },
     getAgent: () => undefined,
     getAllAgentIds: () => [],
-    sessionManager: new AgentRunSessionManager(),
+    sessionManager: new AgentRunSessionManager({
+      recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+        const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
+        if (!admission) throw new Error("Expected verified recovery admission");
+        const owner = await RecoverySessionOwner.acquire({
+          claims,
+          directory: recoveryDirectory,
+          awaitRetiredPreviousOwner,
+          validateCurrentOwnership: async () => ({
+            version: 1,
+            identity: {
+              projectId: admission.identity.projectId,
+              canonicalRunId: admission.identity.canonicalRunId,
+              publicRunId: admission.identity.publicRunId,
+              agentId: admission.identity.agentId,
+              threadId: admission.identity.threadId,
+            },
+            generation: ownershipSuperseded
+              ? { ...admission.generation, dispatchNonce: "77777777-7777-4777-8777-777777777777" }
+              : admission.generation,
+            acknowledgedEventId: 0,
+            acknowledgedExternalSequence: 0,
+            leaseRemainingMs: 10_000,
+          }),
+        });
+        return { owner };
+      },
+    }),
   });
   const body = createAgentStreamRequestBody({
     project: { projectId, sourceTargetEnvironmentId: "33333333-3333-4333-8333-333333333333" },
@@ -6904,6 +6935,28 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
     assertEquals(result.response.status, 404);
     assertEquals(await result.response.json(), { error: "Agent not found" });
     assertEquals(discoveryCalls, 1);
+    // Even validly signed duplicate/stale dispatches must fail before tenant discovery.
+    for (const superseded of [false, true]) {
+      ownershipSuperseded = superseded;
+      const rejected = await handler.handle(
+        sealIngressCredentials(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+              [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+            },
+            body,
+          }),
+        ),
+        ctx,
+      );
+      assertExists(rejected.response);
+      await rejected.response.body?.cancel();
+      assertEquals(rejected.response.status >= 400, true);
+      assertEquals(discoveryCalls, 1);
+    }
     for (
       const foreignBody of [
         JSON.stringify({
@@ -6959,6 +7012,7 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
       assertEquals(discoveryCalls, 1);
     }
   } finally {
+    await Deno.remove(recoveryDirectory, { recursive: true });
     if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
     else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
   }

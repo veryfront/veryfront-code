@@ -2951,8 +2951,8 @@ async function executeStartupSkill(input: {
   );
   pushPrivateArray(input.messages, resultMessage);
   await input.persistMessage(resultMessage);
-  if (input.recoveryResult) await input.recoveryResult(toolCall);
   input.skillState.applySuccessfulResult(result);
+  if (input.recoveryResult) await input.recoveryResult(toolCall);
 }
 
 async function traceConfiguredToolExecution(input: {
@@ -5862,15 +5862,18 @@ export class AgentRuntime {
                     ? { type: "tool-output-available", toolCallId: call.id, output: call.result }
                     : { type: "tool-output-error", toolCallId: call.id, errorText: call.error },
                 );
-                await this.#persistRecoveryBoundary!(
-                  createRecoveryBoundary(
+                if (call.status === "completed") startupSkillLoaded = true;
+                const runtimeContinuation = captureRecoveryContinuation(step);
+                await this.#persistRecoveryBoundary!({
+                  ...createRecoveryBoundary(
                     currentMessages,
                     createToolExposureCheckpoint(
                       effectiveToolExposurePlan.authorized,
                       toolExposureState,
                     ),
                   ),
-                );
+                  runtimeContinuation,
+                });
               },
             }
             : {}),
@@ -7373,15 +7376,6 @@ export class AgentRuntime {
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
       }
-      if (this.#persistRecoveryBoundary) {
-        await this.#persistRecoveryBoundary(
-          createRecoveryBoundary(
-            currentMessages,
-            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
-          ),
-        );
-      }
-
       if (state.suppressedToolCalls.length > 0) {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
@@ -7400,6 +7394,17 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+      }
+
+      if (this.#persistRecoveryBoundary) {
+        const runtimeContinuation = captureRecoveryContinuation(step + 1);
+        await this.#persistRecoveryBoundary({
+          ...createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ),
+          runtimeContinuation,
+        });
       }
 
       throwIfAborted(abortSignal);
