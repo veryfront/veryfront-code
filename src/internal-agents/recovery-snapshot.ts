@@ -106,7 +106,10 @@ const invalid = () => new Error("Recovery snapshot is inconsistent or unsafe to 
 
 /** Data validation only. Disk records, admission receipts and annotations cannot authorize effects. */
 export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
-  const snapshot = getRecoverySnapshotSchema().parse(snapshotDurableValue(value));
+  const dataOnlySnapshot = getRecoverySnapshotSchema().parse(snapshotDurableValue(value));
+  // Provider correlation uses private message metadata while validating. Keep
+  // those temporary message identities separate from the public parser result.
+  const snapshot = getRecoverySnapshotSchema().parse(snapshotDurableValue(dataOnlySnapshot));
   const { identity } = snapshot.binding;
   if (
     createPrivateSet(snapshot.toolExposureCheckpoint.loadedToolNames).size !==
@@ -501,7 +504,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
       somePrivateArray(generatedIds, (id) => messages.get(id)?.role !== "user")
     ) throw invalid();
   }
-  return snapshot;
+  return dataOnlySnapshot;
 }
 
 /** Fail closed until an unresolved intent has a separately verified durable effect receipt. */

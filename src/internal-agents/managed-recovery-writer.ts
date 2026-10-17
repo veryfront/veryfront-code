@@ -1,3 +1,8 @@
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { readAttachedProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
@@ -64,14 +69,9 @@ export type RecoveryEventAppend = (
 }>;
 type Deferred<T> = { promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void };
 function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((accept, deny) => {
-    resolve = accept;
-    reject = deny;
-  });
-  void promise.catch(() => {});
-  return { promise, resolve, reject };
+  const completion = createPrivateDeferred<T>();
+  void chainPrivatePromise(completion.promise, () => {}, () => {});
+  return completion;
 }
 
 function recoveryMessages(messages: AgentRuntimeRecoveryBoundary["messages"]) {
@@ -97,8 +97,8 @@ export async function createManagedRecoveryWriter(input: {
   let diskSequence = (await home.read()).length;
   let initialBoundary = true;
   let externalSequence = admission.acknowledgedExternalSequence;
-  let appendTail = Promise.resolve();
-  let boundaryTail = Promise.resolve();
+  let appendTail = resolvePrivatePromise();
+  let boundaryTail = resolvePrivatePromise();
   let failure: { error: unknown } | undefined;
   let lastRuntimeContinuation = input.restoredSnapshot?.runtimeContinuation;
   let initialHistoryMessageIds = input.restoredSnapshot?.initialHistoryMessageIds;
@@ -180,7 +180,7 @@ export async function createManagedRecoveryWriter(input: {
     occurrenceId?: string,
     recoveryCheckpoint?: RecoveryCheckpointSidecar,
   ) => {
-    const operation = appendTail.then(async () => {
+    const operation = chainPrivatePromise(appendTail, async () => {
       await active();
       if (
         recoveryCheckpoint &&
@@ -210,22 +210,31 @@ export async function createManagedRecoveryWriter(input: {
       externalSequence = receipt.externalSequence;
       return receipt;
     });
-    appendTail = operation.then(() => {}, (error) => {
+    appendTail = chainPrivatePromise(operation, () => {}, (error) => {
       fail(error);
       throw error;
     });
-    void appendTail.catch(() => {});
+    void chainPrivatePromise(appendTail, () => {}, () => {});
     return operation;
   };
   const wait = async <T>(value: Promise<T>): Promise<T> => {
     assertNotFailed();
     if (!signal) throw new Error("Recovery writer lifetime is not bound");
     signal.throwIfAborted();
-    return await new Promise<T>((resolve, reject) => {
+    const completion = createPrivateDeferred<T>();
+    const { resolve, reject } = completion;
+    {
       const abort = () => reject(signal!.reason);
       signal!.addEventListener("abort", abort, { once: true });
-      value.then(resolve, reject).finally(() => signal!.removeEventListener("abort", abort));
-    });
+      void chainPrivatePromise(value, (result) => {
+        signal!.removeEventListener("abort", abort);
+        resolve(result);
+      }, (error) => {
+        signal!.removeEventListener("abort", abort);
+        reject(error);
+      });
+    }
+    return await completion.promise;
   };
   const admitToolCall: AdmitExecutorToolCall = async (call, callSignal) => {
     callSignal.throwIfAborted();
@@ -348,7 +357,7 @@ export async function createManagedRecoveryWriter(input: {
       }
     },
     persistBoundary(boundary: AgentRuntimeRecoveryBoundary) {
-      const operation = boundaryTail.then(async () => {
+      const operation = chainPrivatePromise(boundaryTail, async () => {
         await active();
         const messages = recoveryMessages(boundary.messages);
         if (!initialHistoryMessageIds) {
@@ -501,6 +510,23 @@ export async function createManagedRecoveryWriter(input: {
         if (initialPublication && !checkpoint) {
           throw new Error("Initial recovery publication lacks a native continuation");
         }
+        if (initialPublication && checkpoint) {
+          // These cursor placeholders validate transcript semantics before the
+          // first durable publication. The API assigns the actual cursor.
+          const restoredSequence = input.restoredSnapshot?.acknowledgedExternalSequence ?? 0;
+          const validationSequence = (restoredSequence > externalSequence
+            ? restoredSequence
+            : externalSequence) + 1;
+          parseRecoverySnapshot({
+            ...checkpoint.snapshot,
+            acknowledgedEventId: 1,
+            acknowledgedExternalSequence: validationSequence,
+            modelTurns: mapPrivateArray(checkpoint.snapshot.modelTurns, (turn) => ({
+              ...turn,
+              acknowledgedExternalSequence: turn.acknowledgedExternalSequence ?? validationSequence,
+            })),
+          });
+        }
         const appendObservations = async () => {
           for (
             let checkpointIndex = 0;
@@ -582,11 +608,11 @@ export async function createManagedRecoveryWriter(input: {
           }
         }
       });
-      boundaryTail = operation.catch((error) => {
+      boundaryTail = chainPrivatePromise(operation, () => {}, (error) => {
         fail(error);
         throw error;
       });
-      void boundaryTail.catch(() => {});
+      void chainPrivatePromise(boundaryTail, () => {}, () => {});
       return operation;
     },
   });

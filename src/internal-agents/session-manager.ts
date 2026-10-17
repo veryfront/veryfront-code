@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { startManagedRecoveryLifetime } from "./managed-recovery-lifetime.ts";
 import type { createManagedRecoveryWriter } from "./managed-recovery-writer.ts";
 import { getBootManagedRecoveryFactory } from "./managed-recovery-runtime-bootstrap.ts";
@@ -121,13 +122,13 @@ export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 
 export class AgentRunSessionManager {
   readonly stopRegistry = new RunStopRegistry();
-  private readonly managedSessions = new Map<string, ManagedRecoverySession>();
-  private readonly acquiringManagedRuns = new Map<string, AbortController>();
-  private readonly ordinarySignals = new Map<string, AbortSignal>();
+  private readonly managedSessions = createPrivateMap<string, ManagedRecoverySession>();
+  private readonly acquiringManagedRuns = createPrivateMap<string, AbortController>();
+  private readonly ordinarySignals = createPrivateMap<string, AbortSignal>();
   // Cancellation stops work; only the matching producer finalizer releases capacity.
-  private readonly allocatedOrdinarySignals = new Map<AbortSignal, string>();
+  private readonly allocatedOrdinarySignals = createPrivateMap<AbortSignal, string>();
   private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
-  private readonly servingIdentities = new Map<string, RunServingIdentity>();
+  private readonly servingIdentities = createPrivateMap<string, RunServingIdentity>();
 
   constructor(
     private readonly options: {

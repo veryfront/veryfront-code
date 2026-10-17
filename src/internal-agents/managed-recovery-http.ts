@@ -1,3 +1,4 @@
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import {
   bindHostedToolCallAdmissionWriter,
   createHostedRunEventWriterCapability,
@@ -115,7 +116,7 @@ const getManifestSchema = defineSchema((v) =>
 async function readBoundedJson(response: Response, maximum: number): Promise<unknown> {
   const body: ReadableStream<Uint8Array> | null = apply(responseBody, response, []);
   if (!apply(responseOk, response, []) || !body) {
-    if (body) await cancelPrivateStream(body).catch(() => {});
+    if (body) await chainPrivatePromise(cancelPrivateStream(body), () => {}, () => {});
     throw new Error("Managed recovery authority request failed");
   }
   const reader = getPrivateStreamReader(body);
@@ -138,7 +139,7 @@ async function readBoundedJson(response: Response, maximum: number): Promise<unk
     }
     return parseJson(createPrivateTextDecoder("utf-8", { fatal: true }).decode(bytes));
   } finally {
-    await reader.cancel().catch(() => {});
+    await chainPrivatePromise(reader.cancel(), () => {}, () => {});
     reader.releaseLock();
   }
 }
