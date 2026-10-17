@@ -20,7 +20,7 @@ const RuntimeNumberIsFinite = Number.isFinite;
 const RuntimeError = Error;
 
 const FRONTMATTER_KEY = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-const JSON_NUMBER = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/;
+const JSON_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const UNSUPPORTED_SCALAR_PREFIX = /^[&*!{[|>?@-]/;
 
 function codeUnit(value: string, index: number): number {
@@ -63,13 +63,15 @@ function unsupportedFrontmatter(message: string): Error {
   );
 }
 
+function openingDelimiterLength(source: string): number {
+  if (startsWith(source, "---\n")) return 4;
+  if (startsWith(source, "---\r\n")) return 5;
+  return 0;
+}
+
 function readEnvelope(source: string): { frontMatter: string; body: string } {
   const envelopeSource = startsWith(source, "\uFEFF") ? slice(source, 1) : source;
-  const openingLength = startsWith(envelopeSource, "---\n")
-    ? 4
-    : startsWith(envelopeSource, "---\r\n")
-    ? 5
-    : 0;
+  const openingLength = openingDelimiterLength(envelopeSource);
   if (openingLength === 0) {
     throw unsupportedFrontmatter("missing leading delimiter");
   }
@@ -155,6 +157,34 @@ function parseScalar(value: string): unknown {
   return value;
 }
 
+function parseMetadataLine(metadata: Record<string, unknown>, rawLine: string, line: string): void {
+  if (codeUnit(rawLine, 0) === 32 || codeUnit(rawLine, 0) === 9) {
+    throw unsupportedFrontmatter("nested YAML is not supported");
+  }
+  const separator = indexOf(line, ":");
+  if (separator <= 0) {
+    throw unsupportedFrontmatter("expected key-value mapping");
+  }
+  const key = trim(slice(line, 0, separator));
+  const rawValue = trim(slice(line, separator + 1));
+  if (!test(FRONTMATTER_KEY, key)) {
+    throw unsupportedFrontmatter("invalid metadata key");
+  }
+  if (key === "__proto__" || key === "prototype" || key === "constructor") {
+    throw unsupportedFrontmatter("reserved metadata key");
+  }
+  if (
+    RuntimeReflectApply(RuntimeObjectGetOwnPropertyDescriptor, Object, [
+      metadata,
+      key,
+    ]) !==
+      undefined
+  ) {
+    throw unsupportedFrontmatter("duplicate metadata key");
+  }
+  defineMetadata(metadata, key, parseScalar(rawValue));
+}
+
 function parseFlatMetadata(frontMatter: string): Record<string, unknown> {
   const metadata: Record<string, unknown> = RuntimeObjectCreate(null);
   let lineStart = 0;
@@ -170,31 +200,7 @@ function parseFlatMetadata(frontMatter: string): Record<string, unknown> {
     const line = trim(rawLine);
     if (line !== "" && codeUnit(line, 0) !== 35) {
       sawLine = true;
-      if (codeUnit(rawLine, 0) === 32 || codeUnit(rawLine, 0) === 9) {
-        throw unsupportedFrontmatter("nested YAML is not supported");
-      }
-      const separator = indexOf(line, ":");
-      if (separator <= 0) {
-        throw unsupportedFrontmatter("expected key-value mapping");
-      }
-      const key = trim(slice(line, 0, separator));
-      const rawValue = trim(slice(line, separator + 1));
-      if (!test(FRONTMATTER_KEY, key)) {
-        throw unsupportedFrontmatter("invalid metadata key");
-      }
-      if (key === "__proto__" || key === "prototype" || key === "constructor") {
-        throw unsupportedFrontmatter("reserved metadata key");
-      }
-      if (
-        RuntimeReflectApply(RuntimeObjectGetOwnPropertyDescriptor, Object, [
-          metadata,
-          key,
-        ]) !==
-          undefined
-      ) {
-        throw unsupportedFrontmatter("duplicate metadata key");
-      }
-      defineMetadata(metadata, key, parseScalar(rawValue));
+      parseMetadataLine(metadata, rawLine, line);
     }
     if (lineEnd === frontMatter.length) break;
     lineStart = lineEnd + 1;

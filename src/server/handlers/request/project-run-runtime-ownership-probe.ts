@@ -524,6 +524,30 @@ function readEventsArray(value: unknown): unknown[] | undefined {
   return RuntimeArrayIsArray(data) ? data : undefined;
 }
 
+function containsRuntimeOwnershipEvent(events: unknown[], eventKind: string): boolean {
+  let containsProbeEvent = false;
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index];
+    if (
+      event !== null && typeof event === "object" &&
+      ((event as { event_type?: unknown }).event_type === "RUNTIME_EVENT_RECORDED" ||
+        (event as { payload?: { type?: unknown } }).payload?.type ===
+          "RUNTIME_EVENT_RECORDED") &&
+      (event as { payload?: { kind?: unknown } }).payload?.kind === eventKind
+    ) {
+      containsProbeEvent = true;
+    }
+  }
+  return containsProbeEvent;
+}
+
+function nextRunEventsCursor(response: unknown): string | null {
+  const pageInfo = response !== null && typeof response === "object"
+    ? (response as { page_info?: { next?: unknown } }).page_info
+    : undefined;
+  return pageInfo !== undefined && typeof pageInfo.next === "string" ? pageInfo.next : null;
+}
+
 async function readRunEventsSnapshot(
   client: RuntimeOwnershipProbeApiClient,
   runId: string,
@@ -540,25 +564,9 @@ async function readRunEventsSnapshot(
       const response = await client.get<unknown>(runEventsPath(runId), params, { signal });
       const events = readEventsArray(response);
       if (events === undefined) return { status: "error", errorType: "InvalidRunEventsReadback" };
-      for (let index = 0; index < events.length; index++) {
-        const event = events[index];
-        if (
-          event !== null && typeof event === "object" &&
-          ((event as { event_type?: unknown }).event_type === "RUNTIME_EVENT_RECORDED" ||
-            (event as { payload?: { type?: unknown } }).payload?.type ===
-              "RUNTIME_EVENT_RECORDED") &&
-          (event as { payload?: { kind?: unknown } }).payload?.kind === eventKind
-        ) {
-          containsProbeEvent = true;
-        }
-      }
+      if (containsRuntimeOwnershipEvent(events, eventKind)) containsProbeEvent = true;
       pageHashes += await safeHash(response) + "\n";
-      const pageInfo = response !== null && typeof response === "object"
-        ? (response as { page_info?: { next?: unknown } }).page_info
-        : undefined;
-      const next = pageInfo !== undefined && typeof pageInfo.next === "string"
-        ? pageInfo.next
-        : null;
+      const next = nextRunEventsCursor(response);
       if (next === null) {
         return { status: "ok", hash: await computeHash(pageHashes), containsProbeEvent };
       }
@@ -676,6 +684,52 @@ async function readCanonicalSnapshot(
   }
 }
 
+function phaseAuthoritySkipReason(
+  input: RuntimeOwnershipProbeSessionInput,
+  activation: RuntimeOwnershipProbeActivation,
+  admittedRunId: string,
+): string | undefined {
+  if (!input.retainedEventToken || input.eventAuthorityCanonicalRunId === undefined) {
+    return "missing-event-writer-authority";
+  }
+  if (input.eventAuthorityCanonicalRunId.toLowerCase() !== admittedRunId.toLowerCase()) {
+    return "event-writer-authority-mismatch";
+  }
+  if (input.readNowMs?.() !== undefined && input.readNowMs() >= activation.expiresAtMs) {
+    return "activation-expired";
+  }
+  return undefined;
+}
+
+function isStaleOwnershipPhase(phase: RuntimeOwnershipProbePhase): boolean {
+  return phase === "stale-after-cancel" || phase === "stale-after-pause" ||
+    phase === "stale-after-replacement";
+}
+
+function canonicalProbeContentPrefix(
+  indexProbe: RuntimeOwnershipProbeSessionInput["indexProbe"],
+): string {
+  return indexProbe ? "---\ntype: concept\ntitle: Runtime ownership proof\n---\n" : "";
+}
+
+function phaseNeedsChildProof(stale: boolean, phase: RuntimeOwnershipProbePhase): boolean {
+  return !stale || phase === "stale-after-cancel";
+}
+
+function canonicalReadbackContentHash(snapshot: CanonicalReadSnapshot): string | undefined {
+  return snapshot.status === "ok" ? snapshot.contentHash : undefined;
+}
+
+function deniedReadbackReason(status: CanonicalReadSnapshot["status"]): string {
+  return status === "absent"
+    ? "stale-write-denied-readback-absent"
+    : "stale-write-denied-readback-failed";
+}
+
+function deniedReadbackErrorType(snapshot: CanonicalReadSnapshot, error: unknown): string {
+  return snapshot.status === "error" ? snapshot.errorType : classifyError(error);
+}
+
 export function createProjectRunRuntimeOwnershipProbe(
   activation: RuntimeOwnershipProbeActivation,
   sink: RuntimeOwnershipProbeReceiptSink = defaultReceiptSink,
@@ -715,8 +769,7 @@ export function createProjectRunRuntimeOwnershipProbe(
         input.indexProbe !== undefined,
       );
       const runPhase = async (phase: RuntimeOwnershipProbePhase): Promise<void> => {
-        const stale = phase === "stale-after-cancel" || phase === "stale-after-pause" ||
-          phase === "stale-after-replacement";
+        const stale = isStaleOwnershipPhase(phase);
         if (!stale) currentPhaseSucceeded = false;
         const baseReceipt = {
           probe: "project-run-runtime-ownership" as const,
@@ -727,16 +780,9 @@ export function createProjectRunRuntimeOwnershipProbe(
           environmentId: activation.environmentId,
           sourcePath,
         };
-        if (!input.retainedEventToken || input.eventAuthorityCanonicalRunId === undefined) {
-          sink({ ...baseReceipt, status: "skipped", reason: "missing-event-writer-authority" });
-          return;
-        }
-        if (input.eventAuthorityCanonicalRunId.toLowerCase() !== admittedRunId.toLowerCase()) {
-          sink({ ...baseReceipt, status: "skipped", reason: "event-writer-authority-mismatch" });
-          return;
-        }
-        if (input.readNowMs?.() !== undefined && input.readNowMs() >= activation.expiresAtMs) {
-          sink({ ...baseReceipt, status: "skipped", reason: "activation-expired" });
+        const skipReason = phaseAuthoritySkipReason(input, activation, admittedRunId);
+        if (skipReason !== undefined) {
+          sink({ ...baseReceipt, status: "skipped", reason: skipReason });
           return;
         }
 
@@ -757,8 +803,7 @@ export function createProjectRunRuntimeOwnershipProbe(
           const apiPath = `/projects/${RuntimeEncodeURIComponent(activation.projectId)}/files/${
             RuntimeEncodeURIComponent(sourcePath)
           }`;
-          const content =
-            (input.indexProbe ? "---\ntype: concept\ntitle: Runtime ownership proof\n---\n" : "") +
+          const content = canonicalProbeContentPrefix(input.indexProbe) +
             "project-run-runtime-ownership" + "\n" + activation.probeId + "\n" +
             eventIdentity +
             "\n" +
@@ -787,6 +832,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
             return;
           }
+          const beforeHash = canonicalReadbackContentHash(before);
           const eventBefore = await readRunEventsSnapshot(
             readbackClient,
             admittedRunId,
@@ -798,7 +844,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               ...baseReceipt,
               status: "error",
               sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
+              beforeHash,
               reason: "event-readback-before-failed",
               errorType: eventBefore.errorType,
             });
@@ -810,7 +856,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               ...baseReceipt,
               status: "error",
               sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
+              beforeHash,
               eventBeforeHash: eventBefore.hash,
               reason: "run-readback-before-failed",
               errorType: runBefore.errorType,
@@ -818,176 +864,184 @@ export function createProjectRunRuntimeOwnershipProbe(
             return;
           }
 
-          const body = RuntimeObjectCreate(null) as { content?: string };
-          body.content = content;
-          let canonicalResponse: unknown;
-          try {
-            canonicalResponse = await canonicalClient.put<unknown>(apiPath, body, {
-              signal,
-              params: canonicalParams,
-            });
-          } catch (error) {
-            if (!stale) throw error;
-            if (!isAuthorizationOrConflictRejection(error, "canonical-source")) {
-              sink({
-                ...baseReceipt,
-                status: "error",
-                sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
-                eventBeforeHash: eventBefore.hash,
-                runBeforeHash: runBefore.hash,
-                reason: "stale-write-failed-without-authorization-rejection",
-                errorType: classifyError(error),
+          const writeCanonical = async (): Promise<{ response: unknown } | undefined> => {
+            const body = RuntimeObjectCreate(null) as { content?: string };
+            body.content = content;
+            let canonicalResponse: unknown;
+            try {
+              canonicalResponse = await canonicalClient.put<unknown>(apiPath, body, {
+                signal,
+                params: canonicalParams,
               });
-              return;
+            } catch (error) {
+              if (!stale) throw error;
+              if (!isAuthorizationOrConflictRejection(error, "canonical-source")) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-failed-without-authorization-rejection",
+                  errorType: classifyError(error),
+                });
+                return;
+              }
+              const afterDenied = await readCanonicalSnapshot(
+                readbackClient,
+                apiPath,
+                signal,
+                canonicalParams,
+              );
+              if (afterDenied.status !== "ok") {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: deniedReadbackReason(afterDenied.status),
+                  errorType: deniedReadbackErrorType(afterDenied, error),
+                });
+                return;
+              }
+              if (
+                currentContentHash === undefined || afterDenied.contentHash !== currentContentHash
+              ) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: afterDenied.contentHash,
+                  versionHash: afterDenied.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-denied-readback-mismatch",
+                  errorType: classifyError(error),
+                });
+                return;
+              }
+              if (
+                currentVersionHash === undefined || afterDenied.versionHash !== currentVersionHash
+              ) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: afterDenied.contentHash,
+                  versionHash: afterDenied.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-denied-readback-version-mismatch",
+                  errorType: classifyError(error),
+                });
+                return;
+              }
+              canonicalResponse = undefined;
             }
-            const afterDenied = await readCanonicalSnapshot(
+            return { response: canonicalResponse };
+          };
+          const canonicalWrite = await writeCanonical();
+          if (canonicalWrite === undefined) return;
+          const canonicalResponse = canonicalWrite.response;
+          const verifyCanonicalReadback = async (): Promise<CanonicalSnapshot | undefined> => {
+            const after = await readCanonicalSnapshot(
               readbackClient,
               apiPath,
               signal,
               canonicalParams,
             );
-            if (afterDenied.status !== "ok") {
+            if (after.status !== "ok") {
               sink({
                 ...baseReceipt,
                 status: "error",
                 sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
+                beforeHash,
                 eventBeforeHash: eventBefore.hash,
                 runBeforeHash: runBefore.hash,
-                reason: afterDenied.status === "absent"
-                  ? "stale-write-denied-readback-absent"
-                  : "stale-write-denied-readback-failed",
-                errorType: afterDenied.status === "error"
-                  ? afterDenied.errorType
-                  : classifyError(error),
-              });
-              return;
-            }
-            if (
-              currentContentHash === undefined || afterDenied.contentHash !== currentContentHash
-            ) {
-              sink({
-                ...baseReceipt,
-                status: "error",
-                sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
-                afterHash: afterDenied.contentHash,
-                versionHash: afterDenied.versionHash,
-                eventBeforeHash: eventBefore.hash,
-                runBeforeHash: runBefore.hash,
-                reason: "stale-write-denied-readback-mismatch",
-                errorType: classifyError(error),
-              });
-              return;
-            }
-            if (
-              currentVersionHash === undefined || afterDenied.versionHash !== currentVersionHash
-            ) {
-              sink({
-                ...baseReceipt,
-                status: "error",
-                sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
-                afterHash: afterDenied.contentHash,
-                versionHash: afterDenied.versionHash,
-                eventBeforeHash: eventBefore.hash,
-                runBeforeHash: runBefore.hash,
-                reason: "stale-write-denied-readback-version-mismatch",
-                errorType: classifyError(error),
-              });
-              return;
-            }
-            canonicalResponse = undefined;
-          }
-          const after = await readCanonicalSnapshot(
-            readbackClient,
-            apiPath,
-            signal,
-            canonicalParams,
-          );
-          if (after.status !== "ok") {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              eventBeforeHash: eventBefore.hash,
-              runBeforeHash: runBefore.hash,
-              reason: after.status === "absent"
-                ? "canonical-readback-after-absent"
-                : "canonical-readback-after-failed",
-              errorType: after.status === "error" ? after.errorType : undefined,
-              responseHash: await safeHash(canonicalResponse),
-            });
-            return;
-          }
-          if (!stale && after.contentHash !== sourceHash) {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              runBeforeHash: runBefore.hash,
-              reason: "canonical-readback-content-mismatch",
-              responseHash: await safeHash(canonicalResponse),
-            });
-            return;
-          }
-          if (stale) {
-            if (after.contentHash === sourceHash) {
-              sink({
-                ...baseReceipt,
-                status: "error",
-                sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
-                afterHash: after.contentHash,
-                versionHash: after.versionHash,
-                eventBeforeHash: eventBefore.hash,
-                runBeforeHash: runBefore.hash,
-                reason: "stale-write-accepted-after-cancel",
+                reason: after.status === "absent"
+                  ? "canonical-readback-after-absent"
+                  : "canonical-readback-after-failed",
+                errorType: after.status === "error" ? after.errorType : undefined,
                 responseHash: await safeHash(canonicalResponse),
               });
               return;
             }
-            if (
-              currentContentHash === undefined || after.contentHash !== currentContentHash
-            ) {
+            if (!stale && after.contentHash !== sourceHash) {
               sink({
                 ...baseReceipt,
                 status: "error",
                 sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
+                beforeHash,
                 afterHash: after.contentHash,
                 versionHash: after.versionHash,
                 eventBeforeHash: eventBefore.hash,
                 runBeforeHash: runBefore.hash,
-                reason: "stale-write-readback-mismatch",
+                reason: "canonical-readback-content-mismatch",
                 responseHash: await safeHash(canonicalResponse),
               });
               return;
             }
-            if (currentVersionHash === undefined || after.versionHash !== currentVersionHash) {
-              sink({
-                ...baseReceipt,
-                status: "error",
-                sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
-                afterHash: after.contentHash,
-                versionHash: after.versionHash,
-                eventBeforeHash: eventBefore.hash,
-                runBeforeHash: runBefore.hash,
-                reason: "stale-write-readback-version-mismatch",
-                responseHash: await safeHash(canonicalResponse),
-              });
-              return;
+            if (stale) {
+              if (after.contentHash === sourceHash) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-accepted-after-cancel",
+                  responseHash: await safeHash(canonicalResponse),
+                });
+                return;
+              }
+              if (
+                currentContentHash === undefined || after.contentHash !== currentContentHash
+              ) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-readback-mismatch",
+                  responseHash: await safeHash(canonicalResponse),
+                });
+                return;
+              }
+              if (currentVersionHash === undefined || after.versionHash !== currentVersionHash) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: "stale-write-readback-version-mismatch",
+                  responseHash: await safeHash(canonicalResponse),
+                });
+                return;
+              }
             }
-          }
 
-          const childProof = !stale || phase === "stale-after-cancel"
+            return after;
+          };
+          const after = await verifyCanonicalReadback();
+          if (after === undefined) return;
+
+          const childProof = phaseNeedsChildProof(stale, phase)
             ? await input.childProbe?.({ sourcePath, staleAfterCancel: stale, signal })
             : undefined;
           const indexProof = await input.indexProbe?.({
@@ -997,190 +1051,214 @@ export function createProjectRunRuntimeOwnershipProbe(
             signal,
           });
 
-          if (eventAppendClient.post === undefined) {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              runBeforeHash: runBefore.hash,
-              reason: "event-append-client-unavailable",
-            });
-            return;
-          }
-          let eventResponse: unknown;
-          try {
-            eventResponse = await eventAppendClient.post<unknown>(
-              runEventsPath(admittedRunId),
-              eventAppendBodyForPhase(
-                activation,
-                eventIdentity,
-                phase,
-                admittedRunId,
-                attemptLabel,
-              ),
-              { signal },
-            );
-          } catch (error) {
-            if (!stale || !isAuthorizationOrConflictRejection(error, "run-events")) {
+          const appendAndVerifyEvent = async (): Promise<
+            {
+              eventResponse: unknown;
+              eventAfter: RunEventListSnapshot;
+            } | undefined
+          > => {
+            if (eventAppendClient.post === undefined) {
               sink({
                 ...baseReceipt,
                 status: "error",
                 sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
+                beforeHash,
                 afterHash: after.contentHash,
                 versionHash: after.versionHash,
                 eventBeforeHash: eventBefore.hash,
                 runBeforeHash: runBefore.hash,
-                reason: stale
-                  ? "stale-event-append-failed-without-expected-rejection"
-                  : "event-append-failed",
-                errorType: classifyError(error),
+                reason: "event-append-client-unavailable",
               });
               return;
             }
-          }
-          const eventAfter = await readRunEventsSnapshot(
-            readbackClient,
-            admittedRunId,
-            signal,
-            eventKind,
-          );
-          if (eventAfter.status !== "ok") {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              runBeforeHash: runBefore.hash,
-              reason: "event-readback-after-failed",
-              errorType: eventAfter.errorType,
-            });
-            return;
-          }
-          if (!stale && !eventAfter.containsProbeEvent) {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              eventAfterHash: eventAfter.hash,
-              runBeforeHash: runBefore.hash,
-              eventResponseHash: await safeHash(eventResponse),
-              reason: "event-readback-missing-current-append",
-            });
-            return;
-          }
-          if (stale) {
-            if (eventAfter.containsProbeEvent || eventAfter.hash !== eventBefore.hash) {
+            let eventResponse: unknown;
+            try {
+              eventResponse = await eventAppendClient.post<unknown>(
+                runEventsPath(admittedRunId),
+                eventAppendBodyForPhase(
+                  activation,
+                  eventIdentity,
+                  phase,
+                  admittedRunId,
+                  attemptLabel,
+                ),
+                { signal },
+              );
+            } catch (error) {
+              if (!stale || !isAuthorizationOrConflictRejection(error, "run-events")) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  runBeforeHash: runBefore.hash,
+                  reason: stale
+                    ? "stale-event-append-failed-without-expected-rejection"
+                    : "event-append-failed",
+                  errorType: classifyError(error),
+                });
+                return;
+              }
+            }
+            const eventAfter = await readRunEventsSnapshot(
+              readbackClient,
+              admittedRunId,
+              signal,
+              eventKind,
+            );
+            if (eventAfter.status !== "ok") {
               sink({
                 ...baseReceipt,
                 status: "error",
                 sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
+                beforeHash,
+                afterHash: after.contentHash,
+                versionHash: after.versionHash,
+                eventBeforeHash: eventBefore.hash,
+                runBeforeHash: runBefore.hash,
+                reason: "event-readback-after-failed",
+                errorType: eventAfter.errorType,
+              });
+              return;
+            }
+            if (!stale && !eventAfter.containsProbeEvent) {
+              sink({
+                ...baseReceipt,
+                status: "error",
+                sourceHash,
+                beforeHash,
                 afterHash: after.contentHash,
                 versionHash: after.versionHash,
                 eventBeforeHash: eventBefore.hash,
                 eventAfterHash: eventAfter.hash,
                 runBeforeHash: runBefore.hash,
                 eventResponseHash: await safeHash(eventResponse),
-                reason: "stale-event-append-mutated-events",
+                reason: "event-readback-missing-current-append",
               });
               return;
             }
-          }
+            if (stale) {
+              if (eventAfter.containsProbeEvent || eventAfter.hash !== eventBefore.hash) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  eventAfterHash: eventAfter.hash,
+                  runBeforeHash: runBefore.hash,
+                  eventResponseHash: await safeHash(eventResponse),
+                  reason: "stale-event-append-mutated-events",
+                });
+                return;
+              }
+            }
 
-          if (heartbeatClient.post === undefined) {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              eventAfterHash: eventAfter.hash,
-              eventResponseHash: await safeHash(eventResponse),
-              runBeforeHash: runBefore.hash,
-              reason: "heartbeat-client-unavailable",
-            });
-            return;
-          }
-          let heartbeatResponse: unknown;
-          try {
-            heartbeatResponse = await heartbeatClient.post<unknown>(
-              runHeartbeatsPath(admittedRunId),
-              heartbeatBody(),
-              { signal },
-            );
-          } catch (error) {
-            if (!stale || !isAuthorizationOrConflictRejection(error, "run-heartbeat")) {
+            return { eventResponse, eventAfter };
+          };
+          const appendedEvent = await appendAndVerifyEvent();
+          if (appendedEvent === undefined) return;
+          const { eventResponse, eventAfter } = appendedEvent;
+
+          const heartbeatAndVerifyRun = async (): Promise<
+            {
+              heartbeatResponse: unknown;
+              runAfter: RunSnapshot;
+            } | undefined
+          > => {
+            if (heartbeatClient.post === undefined) {
               sink({
                 ...baseReceipt,
                 status: "error",
                 sourceHash,
-                beforeHash: before.status === "ok" ? before.contentHash : undefined,
+                beforeHash,
                 afterHash: after.contentHash,
                 versionHash: after.versionHash,
                 eventBeforeHash: eventBefore.hash,
                 eventAfterHash: eventAfter.hash,
                 eventResponseHash: await safeHash(eventResponse),
                 runBeforeHash: runBefore.hash,
-                reason: stale
-                  ? "stale-heartbeat-failed-without-expected-rejection"
-                  : "heartbeat-failed",
-                errorType: classifyError(error),
+                reason: "heartbeat-client-unavailable",
               });
               return;
             }
-          }
-          const runAfter = await readRunSnapshot(readbackClient, admittedRunId, signal);
-          if (runAfter.status !== "ok") {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              eventAfterHash: eventAfter.hash,
-              eventResponseHash: await safeHash(eventResponse),
-              runBeforeHash: runBefore.hash,
-              heartbeatResponseHash: await safeHash(heartbeatResponse),
-              indexProof,
-              reason: "run-readback-after-failed",
-              errorType: runAfter.errorType,
-            });
-            return;
-          }
-          if (stale && runAfter.hash !== runBefore.hash) {
-            sink({
-              ...baseReceipt,
-              status: "error",
-              sourceHash,
-              beforeHash: before.status === "ok" ? before.contentHash : undefined,
-              afterHash: after.contentHash,
-              versionHash: after.versionHash,
-              eventBeforeHash: eventBefore.hash,
-              eventAfterHash: eventAfter.hash,
-              eventResponseHash: await safeHash(eventResponse),
-              runBeforeHash: runBefore.hash,
-              runAfterHash: runAfter.hash,
-              heartbeatResponseHash: await safeHash(heartbeatResponse),
-              reason: "stale-heartbeat-mutated-run",
-            });
-            return;
-          }
+            let heartbeatResponse: unknown;
+            try {
+              heartbeatResponse = await heartbeatClient.post<unknown>(
+                runHeartbeatsPath(admittedRunId),
+                heartbeatBody(),
+                { signal },
+              );
+            } catch (error) {
+              if (!stale || !isAuthorizationOrConflictRejection(error, "run-heartbeat")) {
+                sink({
+                  ...baseReceipt,
+                  status: "error",
+                  sourceHash,
+                  beforeHash,
+                  afterHash: after.contentHash,
+                  versionHash: after.versionHash,
+                  eventBeforeHash: eventBefore.hash,
+                  eventAfterHash: eventAfter.hash,
+                  eventResponseHash: await safeHash(eventResponse),
+                  runBeforeHash: runBefore.hash,
+                  reason: stale
+                    ? "stale-heartbeat-failed-without-expected-rejection"
+                    : "heartbeat-failed",
+                  errorType: classifyError(error),
+                });
+                return;
+              }
+            }
+            const runAfter = await readRunSnapshot(readbackClient, admittedRunId, signal);
+            if (runAfter.status !== "ok") {
+              sink({
+                ...baseReceipt,
+                status: "error",
+                sourceHash,
+                beforeHash,
+                afterHash: after.contentHash,
+                versionHash: after.versionHash,
+                eventBeforeHash: eventBefore.hash,
+                eventAfterHash: eventAfter.hash,
+                eventResponseHash: await safeHash(eventResponse),
+                runBeforeHash: runBefore.hash,
+                heartbeatResponseHash: await safeHash(heartbeatResponse),
+                indexProof,
+                reason: "run-readback-after-failed",
+                errorType: runAfter.errorType,
+              });
+              return;
+            }
+            if (stale && runAfter.hash !== runBefore.hash) {
+              sink({
+                ...baseReceipt,
+                status: "error",
+                sourceHash,
+                beforeHash,
+                afterHash: after.contentHash,
+                versionHash: after.versionHash,
+                eventBeforeHash: eventBefore.hash,
+                eventAfterHash: eventAfter.hash,
+                eventResponseHash: await safeHash(eventResponse),
+                runBeforeHash: runBefore.hash,
+                runAfterHash: runAfter.hash,
+                heartbeatResponseHash: await safeHash(heartbeatResponse),
+                reason: "stale-heartbeat-mutated-run",
+              });
+              return;
+            }
+
+            return { heartbeatResponse, runAfter };
+          };
+          const heartbeat = await heartbeatAndVerifyRun();
+          if (heartbeat === undefined) return;
+          const { heartbeatResponse, runAfter } = heartbeat;
 
           if (!stale) {
             currentPhaseSucceeded = true;
@@ -1191,7 +1269,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             ...baseReceipt,
             status: "ok",
             sourceHash,
-            beforeHash: before.status === "ok" ? before.contentHash : undefined,
+            beforeHash,
             afterHash: after.contentHash,
             versionHash: after.versionHash ?? currentVersionHash,
             responseHash: await safeHash(canonicalResponse),
