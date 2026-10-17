@@ -443,15 +443,7 @@ export async function executeTerminalRunTool(
   // The contract takes the outcome in `input`; the flat top-level fields are the
   // deprecated shape. Either is accepted, and the contract shape is always sent.
   const envelope = Object.hasOwn(input, "input");
-  if (envelope) {
-    if (Object.keys(input).some((key) => key !== "input" && key !== "idempotency_key")) {
-      throw new Error(`${action} accepts only input and idempotency_key, without a run ID`);
-    }
-    const value = input.input;
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error(`${action} requires an input object`);
-    }
-  }
+  if (envelope) validateTerminalEnvelope(action, input);
   const request = (envelope ? input.input : input) as Record<string, unknown>;
   if (envelope || action !== "finalize") validateIdempotencyKey(action, input.idempotency_key);
   if (action === "succeed_run" || action === "fail_run") {
@@ -472,6 +464,16 @@ export async function executeTerminalRunTool(
     });
   }
   return control.fail(request, context, () => execute(terminalArguments(input, request)));
+}
+
+function validateTerminalEnvelope(action: string, input: Record<string, unknown>): void {
+  if (Object.keys(input).some((key) => key !== "input" && key !== "idempotency_key")) {
+    throw new Error(`${action} accepts only input and idempotency_key, without a run ID`);
+  }
+  const value = input.input;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${action} requires an input object`);
+  }
 }
 
 function validateIdempotencyKey(action: string, key: unknown): void {

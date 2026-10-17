@@ -101,6 +101,22 @@ const normalizedDefinitions = Object.fromEntries(
 let validatorVersion = -1;
 const compiledValidators = new Map<string, JsonSchemaValidationFunction<unknown>>();
 const sourceValidators = new Map<Record<string, unknown>, JsonSchemaValidationFunction<unknown>>();
+function definitionsForRead(definition: string, documentId: string): typeof normalizedDefinitions {
+  if (definition !== "page" || documentId !== descendants.$id) return normalizedDefinitions;
+  const definitions = structuredClone(normalizedDefinitions);
+  // Members are validated individually; continuation identity enforces nonempty pages.
+  const resource = definitions[`resource${keys.indexOf(descendants.$id)}`];
+  if (!resource || typeof resource !== "object" || !("$defs" in resource)) return definitions;
+  const resourceDefinitions = resource.$defs;
+  if (
+    !resourceDefinitions || typeof resourceDefinitions !== "object" ||
+    !("page" in resourceDefinitions)
+  ) return definitions;
+  const page = resourceDefinitions.page;
+  if (page && typeof page === "object" && "allOf" in page) delete page.allOf;
+  return definitions;
+}
+
 async function decode<T>(input: unknown, definition: string, documentId = reads.$id): Promise<T> {
   const adapter = assertEventSchemaValidator();
   const version = getEventSchemaValidatorVersion();
@@ -116,24 +132,7 @@ async function decode<T>(input: unknown, definition: string, documentId = reads.
   if (!validate) {
     const compiler = adapter.compileJsonSchema;
     if (!compiler) throw new TypeError("canonical-v1 needs compileJsonSchema support");
-    const definitions = definition === "page" && documentId === descendants.$id
-      ? structuredClone(normalizedDefinitions)
-      : normalizedDefinitions;
-    if (definition === "page" && documentId === descendants.$id) {
-      // Member bodies are validated individually; continuation identity below enforces
-      // the normative nonempty-page condition against the actual member array.
-      const pageResource = definitions[`resource${keys.indexOf(descendants.$id)}`];
-      if (pageResource && typeof pageResource === "object" && "$defs" in pageResource) {
-        const resourceDefinitions = pageResource.$defs;
-        if (
-          resourceDefinitions && typeof resourceDefinitions === "object" &&
-          "page" in resourceDefinitions
-        ) {
-          const page = resourceDefinitions.page;
-          if (page && typeof page === "object" && "allOf" in page) delete page.allOf;
-        }
-      }
-    }
+    const definitions = definitionsForRead(definition, documentId);
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $ref: `#/$defs/resource${keys.indexOf(documentId)}/$defs/${definition}`,
