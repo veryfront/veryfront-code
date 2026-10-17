@@ -1,3 +1,4 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 import { flatMapPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
@@ -644,11 +645,10 @@ function normalizeInlineFileContent(content: string | undefined): InlineFileCont
 }
 
 function escapeXmlAttr(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")
-    .replaceAll(
-      ">",
-      "&gt;",
-    );
+  let escaped = replacePrivateRegExp(/&/g, value, "&amp;");
+  escaped = replacePrivateRegExp(/"/g, escaped, "&quot;");
+  escaped = replacePrivateRegExp(/</g, escaped, "&lt;");
+  return replacePrivateRegExp(/>/g, escaped, "&gt;");
 }
 
 function buildInlineFileContentText(
