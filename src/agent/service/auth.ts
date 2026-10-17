@@ -220,7 +220,6 @@ export function isHostedServiceAuthError(
 
 export const AgentServiceAuthError = HostedServiceAuthError;
 export type AgentServiceAuthError = HostedServiceAuthError;
-export type AgentServiceAuthErrorCode = HostedServiceAuthErrorCode;
 
 /** Request payload for hosted service authenticated. */
 export type HostedServiceAuthenticatedRequest = {
@@ -454,17 +453,20 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceProjectAccessResult>;
 };
 
-export type AgentServiceAuthenticatedRequest = HostedServiceAuthenticatedRequest;
-export type AgentServiceJwtError = HostedServiceJwtError;
-export type AgentServiceJwtResult = HostedServiceJwtResult;
-export type AgentServiceProjectAccessError = HostedServiceProjectAccessError;
-export type AgentServiceProjectAccessResult = HostedServiceProjectAccessResult;
-export type AgentServiceAuthConfig = HostedServiceAuthConfig;
-export type AgentServiceAuthLogger = HostedServiceAuthLogger;
-export type AgentServiceAuthTrace = HostedServiceAuthTrace;
-export type AgentServiceAuthFetch = HostedServiceAuthFetch;
-export type AgentServiceAuthOptions = HostedServiceAuthOptions;
-export type AgentServiceAuth = HostedServiceAuth;
+export type {
+  HostedServiceAuth as AgentServiceAuth,
+  HostedServiceAuthConfig as AgentServiceAuthConfig,
+  HostedServiceAuthenticatedRequest as AgentServiceAuthenticatedRequest,
+  HostedServiceAuthErrorCode as AgentServiceAuthErrorCode,
+  HostedServiceAuthFetch as AgentServiceAuthFetch,
+  HostedServiceAuthLogger as AgentServiceAuthLogger,
+  HostedServiceAuthOptions as AgentServiceAuthOptions,
+  HostedServiceAuthTrace as AgentServiceAuthTrace,
+  HostedServiceJwtError as AgentServiceJwtError,
+  HostedServiceJwtResult as AgentServiceJwtResult,
+  HostedServiceProjectAccessError as AgentServiceProjectAccessError,
+  HostedServiceProjectAccessResult as AgentServiceProjectAccessResult,
+};
 
 function defaultTrace<TResult>(
   _operationName: string,
@@ -673,6 +675,58 @@ function hasValidRunEventWriterIdentity(
     payload.projectId === input.projectId &&
     payload.runId === input.runId &&
     hasExactRunEventWriterScopes(payload);
+}
+
+function readWriterReplayDigests(payload: TokenPayload) {
+  const resumeToolCallSha256 = readOwnDataProperty(
+    payload,
+    "resumeToolCallSha256",
+    "Writer claims",
+    false,
+  );
+  if (!isValidWriterDigest(resumeToolCallSha256)) {
+    return undefined;
+  }
+  const toolExposureCheckpointSha256 = readOwnDataProperty(
+    payload,
+    "toolExposureCheckpointSha256",
+    "Writer claims",
+    false,
+  );
+  if (!isValidWriterDigest(toolExposureCheckpointSha256)) {
+    return undefined;
+  }
+  return { resumeToolCallSha256, toolExposureCheckpointSha256 };
+}
+
+function readWriterTaskInputClaims(payload: TokenPayload) {
+  const rootRunId = readOwnDataProperty(payload, "rootRunId", "Writer claims", false);
+  if (
+    rootRunId !== undefined &&
+    (typeof rootRunId !== "string" ||
+      ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) === null)
+  ) return undefined;
+  const taskInputSha256 = readOwnDataProperty(
+    payload,
+    "taskInputSha256",
+    "Writer claims",
+    false,
+  );
+  const taskInputRootRunId = readOwnDataProperty(
+    payload,
+    "taskInputRootRunId",
+    "Writer claims",
+    false,
+  );
+  if (taskInputSha256 !== undefined || taskInputRootRunId !== undefined) {
+    if (
+      typeof taskInputSha256 !== "string" ||
+      ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [taskInputSha256]) === null ||
+      typeof taskInputRootRunId !== "string" ||
+      ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [taskInputRootRunId]) === null
+    ) return undefined;
+  }
+  return { rootRunId, taskInputSha256, taskInputRootRunId };
 }
 
 function hasValidWriterDependencyScope(
@@ -1032,50 +1086,12 @@ export function createHostedServiceAuth(
           return { verified: false };
         }
 
-        const resumeToolCallSha256 = readOwnDataProperty(
-          payload,
-          "resumeToolCallSha256",
-          "Writer claims",
-          false,
-        );
-        if (!isValidWriterDigest(resumeToolCallSha256)) {
-          return { verified: false };
-        }
-        const toolExposureCheckpointSha256 = readOwnDataProperty(
-          payload,
-          "toolExposureCheckpointSha256",
-          "Writer claims",
-          false,
-        );
-        if (!isValidWriterDigest(toolExposureCheckpointSha256)) {
-          return { verified: false };
-        }
-        const rootRunId = readOwnDataProperty(payload, "rootRunId", "Writer claims", false);
-        if (
-          rootRunId !== undefined &&
-          (typeof rootRunId !== "string" ||
-            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) === null)
-        ) return { verified: false };
-        const taskInputSha256 = readOwnDataProperty(
-          payload,
-          "taskInputSha256",
-          "Writer claims",
-          false,
-        );
-        const taskInputRootRunId = readOwnDataProperty(
-          payload,
-          "taskInputRootRunId",
-          "Writer claims",
-          false,
-        );
-        if (taskInputSha256 !== undefined || taskInputRootRunId !== undefined) {
-          if (
-            typeof taskInputSha256 !== "string" ||
-            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [taskInputSha256]) === null ||
-            typeof taskInputRootRunId !== "string" ||
-            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [taskInputRootRunId]) === null
-          ) return { verified: false };
-        }
+        const replayDigests = readWriterReplayDigests(payload);
+        if (replayDigests === undefined) return { verified: false };
+        const { resumeToolCallSha256, toolExposureCheckpointSha256 } = replayDigests;
+        const taskInputClaims = readWriterTaskInputClaims(payload);
+        if (taskInputClaims === undefined) return { verified: false };
+        const { rootRunId, taskInputSha256, taskInputRootRunId } = taskInputClaims;
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         const dependenciesClaim = readOwnDataProperty(
           payload,
