@@ -851,6 +851,7 @@ done
       const target of [
         "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
         "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+        "tests/integration/agent/managed-recovery",
       ]
     ) assertStringIncludes(command, target);
     assertStringIncludes(

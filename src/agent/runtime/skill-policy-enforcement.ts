@@ -3,7 +3,12 @@ import type { ProviderObservedSkillBody } from "#veryfront/tool/provider-observe
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { pushPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  pushPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import {
   JSON_VALUE_MAX_STRING_BYTES,
   snapshotBoundedJsonValue,
@@ -451,13 +456,54 @@ export function getTrustedSkillLoadResultIds(messages: readonly Message[]): stri
   return toolCallIds;
 }
 
-/** Re-mark unique successful skill load results recorded by a runtime-written pause checkpoint. */
-export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+/** Raw IDs are safe only when unique across trusted and untrusted transcript results. */
+export function hasAmbiguousTrustedSkillLoadResultIds(messages: readonly Message[]): boolean {
+  const counts = countHistoryToolResultIds(messages, messages.length, () => true);
+  return somePrivateArray(getTrustedSkillLoadResultIds(messages), (id) => counts.get(id) !== 1);
+}
+
+export type TrustedSkillLoadResultRef = {
+  messageIndex: number;
+  messageId: string;
+  partIndex: number;
+  toolCallId: string;
+};
+
+/** Address exact runtime-trusted results even when a provider reuses its call ID. */
+export function getTrustedSkillLoadResultRefs(
+  messages: readonly Message[],
+): TrustedSkillLoadResultRef[] {
+  const refs: TrustedSkillLoadResultRef[] = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
+      if (
+        isToolResultPart(part) && hasTrustedPlatformPolicyToolResultPart(part) &&
+        isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)
+      ) {
+        pushPrivateArray(refs, {
+          messageIndex,
+          messageId: message.id,
+          partIndex,
+          toolCallId: part.toolCallId,
+        });
+      }
+    }
+  }
+  return refs;
+}
+
+/** Select eligible checkpoint references without granting runtime provenance. */
+export function getEligiblePauseCheckpointSkillLoadResultRefs(
   messages: readonly Message[],
   toolCallIds: readonly string[] | undefined,
-): void {
-  if (toolCallIds === undefined || toolCallIds.length === 0) return;
-  const trustedToolCallIds = createPrivateSet(toolCallIds);
+  refs: readonly TrustedSkillLoadResultRef[] = [],
+): TrustedSkillLoadResultRef[] {
+  const eligible: TrustedSkillLoadResultRef[] = [];
+  const trustedToolCallIds = createPrivateSet(toolCallIds ?? []);
   const resultCounts = countHistoryToolResultIds(messages, messages.length, () => true);
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     if (!objectHasOwn(messages, messageIndex)) continue;
@@ -466,14 +512,42 @@ export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) && trustedToolCallIds.has(part.toolCallId) &&
-        resultCounts.get(part.toolCallId) === 1 && isLoadSkillToolName(part.toolName) &&
-        isSkillActivationResult(part.result)
+        isToolResultPart(part) && isLoadSkillToolName(part.toolName) &&
+        isSkillActivationResult(part.result) && (
+          somePrivateArray(
+            refs,
+            (ref) =>
+              ref.messageIndex === messageIndex && ref.messageId === messages[messageIndex]!.id &&
+              ref.partIndex === partIndex && ref.toolCallId === part.toolCallId,
+          ) ||
+          (trustedToolCallIds.has(part.toolCallId) && resultCounts.get(part.toolCallId) === 1)
+        )
       ) {
-        markTrustedPlatformPolicyToolResultPart(part);
+        pushPrivateArray(eligible, {
+          messageIndex,
+          messageId: messages[messageIndex]!.id,
+          partIndex,
+          toolCallId: part.toolCallId,
+        });
       }
     }
   }
+  return eligible;
+}
+
+/** Re-mark eligible results only from a runtime-written, authenticated checkpoint. */
+export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+  messages: readonly Message[],
+  toolCallIds: readonly string[] | undefined,
+  refs: readonly TrustedSkillLoadResultRef[] = [],
+): void {
+  forEachPrivateArray(
+    getEligiblePauseCheckpointSkillLoadResultRefs(messages, toolCallIds, refs),
+    (ref) => {
+      const part = messages[ref.messageIndex]!.parts[ref.partIndex]!;
+      if (isToolResultPart(part)) markTrustedPlatformPolicyToolResultPart(part);
+    },
+  );
 }
 
 /** Snapshot successful skill bodies from trusted results already in provider history. */

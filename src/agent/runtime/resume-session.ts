@@ -259,7 +259,7 @@ export class RunResumeSessionManager<T> {
       // Every tracked cancellation is still executing, so evicting one would
       // recreate the stale-callback race. Keep this cancelled session in the
       // bounded session map instead: its run id cannot be reused until its
-      // execution settles and completeRun/failRun removes it.
+      // execution settles and its matching finalizer removes it.
       return;
     }
     this.sessions.delete(session.runId);
@@ -556,6 +556,16 @@ export class RunResumeSessionManager<T> {
     waitingState?.reject(new RunCancelledError());
     this.finalizeSession(session, "cancelled");
     return true;
+  }
+
+  /** Retire cancelled producer bookkeeping without changing its terminal outcome. */
+  settleCancelledRun(runId: string, signal: AbortSignal): void {
+    if (!signal.aborted) return;
+    this.forgetSettledCancellation(runId, signal);
+    const session = this.getOwnedSession(runId, signal);
+    // Full cancellation tracking retains overflow in the session map instead.
+    // Cleanup retires that exact cancelled producer without rewriting its outcome.
+    if (session?.status === "cancelled") this.sessions.delete(runId);
   }
 
   /**

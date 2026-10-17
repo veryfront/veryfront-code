@@ -9639,6 +9639,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       );
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(result.response);
+      assertEquals(result.response.status, 200, await result.response.clone().text());
       return await result.response.json();
     }
 
