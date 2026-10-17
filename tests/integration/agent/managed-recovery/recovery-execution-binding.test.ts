@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-session-owner.ts";
 import {
@@ -88,7 +89,7 @@ it("signed recovery execution binds immutable source, agent and conversation bef
     assertManagedRecoveryExecutionBinding(overriddenInput, undefined);
     assertThrows(() => assertManagedRecoveryExecutionBinding(overriddenInput, claims));
     assertManagedRecoveryExecutionBinding(input, claims);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     try {
       const owner = await RecoverySessionOwner.acquire({
         claims,

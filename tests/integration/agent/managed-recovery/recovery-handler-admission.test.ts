@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
@@ -32,7 +33,7 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
   const projectId = "11111111-1111-4111-8111-111111111111";
   let discoveryCalls = 0;
   let ownershipSuperseded = false;
-  const recoveryDirectory = await Deno.makeTempDir();
+  const recoveryDirectory = await makeTempDir();
   const handler = createTestAgentStreamHandler({
     ensureProjectDiscovery: async () => {
       discoveryCalls++;
@@ -239,7 +240,7 @@ for (const expireBeforeHandoff of [false, true]) {
         return super.settleCancelledRun(...args);
       }
     }
-    const recoveryDirectory = await Deno.makeTempDir();
+    const recoveryDirectory = await makeTempDir();
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls++;
@@ -369,7 +370,7 @@ for (const preparation of ["environment", "config"]) {
       enteredPreparation();
       await released;
     };
-    const recoveryDirectory = await Deno.makeTempDir();
+    const recoveryDirectory = await makeTempDir();
     const sessionManager = new AgentRunSessionManager({
       recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
         const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
