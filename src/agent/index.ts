@@ -1945,3 +1945,10 @@ export {
   isHostedServiceAuthError,
   isHostedServiceAuthError as isAgentServiceAuthError,
 } from "./service/auth.ts";
+
+export {
+  type HostedChildTaskInputResolver,
+  withHostedChildTaskInputResolver,
+} from "./hosted/accepted-child-input-scope.ts";
+
+export { getVerifiedHostedTaskInput } from "./hosted/task-input.ts";

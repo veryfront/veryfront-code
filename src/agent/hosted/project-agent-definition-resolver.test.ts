@@ -194,6 +194,24 @@ describe("project agent definition lookup", () => {
     ]);
   });
 
+  it("preserves the configured API base path for saved-agent lookup", async () => {
+    for (const apiUrl of ["https://api.example.com/v1", "https://api.example.com/v1/"]) {
+      const urls: string[] = [];
+      const definition = await fetchHostedProjectAgentDefinition({
+        apiUrl,
+        authToken: "token-1",
+        projectId: "project-1",
+        agentId: DOCS.tools_false_markdown.id,
+        branchId: BRANCH_ID,
+        fetch: stubFetch(Response.json(DOCS.tools_false_markdown), urls),
+      });
+      assertEquals(definition.tools, []);
+      assertEquals(urls, [
+        `https://api.example.com/v1/projects/project-1/agents/${DOCS.tools_false_markdown.id}?source_target_kind=preview_branch&target_branch_id=${BRANCH_ID}`,
+      ]);
+    }
+  });
+
   it("returns the definition for a real API document", async () => {
     const definition = await fetchHostedProjectAgentDefinition({
       apiUrl: "https://api.example.com",

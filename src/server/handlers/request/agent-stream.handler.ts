@@ -128,6 +128,7 @@ import {
   isSourceSnapshotChangedError,
 } from "#veryfront/errors/source-snapshot-change.ts";
 import { BaseHandler } from "../response/base.ts";
+import type { ResponseBuilder } from "#veryfront/security";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -149,7 +150,10 @@ import {
   runWithProjectEnv,
   unwrapReplayedProjectEnvironmentFailure,
 } from "../../project-env/index.ts";
-import { runWithTrustedProjectEnv } from "../../project-env/storage.ts";
+import {
+  runWithTrustedProjectEnv,
+  type TrustedProjectEnvIdentity,
+} from "../../project-env/storage.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
 import {
   capturePlatformDependencySource,
@@ -618,6 +622,38 @@ function readRunTerminalToken(req: Request): string | null {
   }
 }
 
+function requestedProgrammaticPlatformNames(
+  input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
+): string[] {
+  const platformServerEnabled = input.agent.config.mcpServers === undefined ||
+    input.agent.config.mcpServers.some((server) => server.kind === "veryfront-api");
+  return platformServerEnabled && input.programmaticPlatformRunId &&
+      input.captureProgrammaticPlatformSource
+    ? [...new Set(input.programmaticPlatformToolNames ?? [])]
+    : [];
+}
+
+function includeRequestedPlatformAliases(
+  platformToolDefinitions: ToolDefinition[],
+  requestedToolNames: string[],
+  input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
+): void {
+  for (const { name: wireName } of platformToolDefinitions) {
+    const legacyName = platformMcpLegacyName(wireName);
+    const canonicalName = `veryfront__${legacyName}`;
+    if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
+      continue;
+    }
+    if (!requestedToolNames.includes(canonicalName)) requestedToolNames.push(canonicalName);
+    if (
+      !resolveVisibleRegistryTool(legacyName, input.agent.id) &&
+      !requestedToolNames.includes(legacyName)
+    ) {
+      requestedToolNames.push(legacyName);
+    }
+  }
+}
+
 export async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -641,12 +677,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const requestedToolNames = implicitlyRequestedToolNames.concat(
     veryfrontApiMcpPolicy.requestedToolNames,
   );
-  const platformServerEnabled = input.agent.config.mcpServers === undefined ||
-    input.agent.config.mcpServers.some((server) => server.kind === "veryfront-api");
-  const programmaticNames = platformServerEnabled && input.programmaticPlatformRunId &&
-      input.captureProgrammaticPlatformSource
-    ? [...new Set(input.programmaticPlatformToolNames ?? [])]
-    : [];
+  const programmaticNames = requestedProgrammaticPlatformNames(input);
   if (
     (!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0 &&
       programmaticNames.length === 0) ||
@@ -690,20 +721,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
     platformToolDefinitions,
   );
   platformToolDefinitions = platformCatalog.definitions;
-  for (const { name: wireName } of platformToolDefinitions) {
-    const legacyName = platformMcpLegacyName(wireName);
-    const canonicalName = `veryfront__${legacyName}`;
-    if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
-      continue;
-    }
-    if (!requestedToolNames.includes(canonicalName)) requestedToolNames.push(canonicalName);
-    if (
-      !resolveVisibleRegistryTool(legacyName, input.agent.id) &&
-      !requestedToolNames.includes(legacyName)
-    ) {
-      requestedToolNames.push(legacyName);
-    }
-  }
+  includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);
 
   const platformToolNames = new Set(platformToolDefinitions.map((tool) => tool.name));
   const requestedPlatformToolNames =
@@ -852,6 +870,41 @@ function withoutOptionalStudioMcpServers(agent: Agent): Agent {
   };
 }
 
+type ResolvedStudioSource = {
+  policy: ReturnType<typeof createMcpToolPolicyGate>;
+  remoteConfig: NonNullable<ReturnType<typeof createAgentServiceRemoteMcpConfig>>;
+  source: RemoteToolSource;
+};
+
+function collectAllowedStudioToolNames(
+  resolvedStudioSources: ResolvedStudioSource[],
+  definitionsBySource: ToolDefinition[][],
+  broadStudioToolNames: Set<string>,
+): void {
+  for (let index = 0; index < resolvedStudioSources.length; index++) {
+    const policy = resolvedStudioSources[index]!.policy;
+    const definitions = definitionsBySource[index]!;
+    for (const definition of definitions) {
+      if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
+    }
+  }
+}
+
+function appendMissingStudioSources(
+  resolvedStudioSources: ResolvedStudioSource[],
+  remoteTools: RemoteToolSource[],
+  studioRemoteToolSources: RemoteToolSource[],
+): void {
+  for (const { remoteConfig, source } of resolvedStudioSources) {
+    if (
+      !remoteTools.some((source) => source.id === remoteConfig.id) &&
+      !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
+    ) {
+      studioRemoteToolSources.push(source);
+    }
+  }
+}
+
 async function withExplicitVeryfrontStudioRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -899,11 +952,7 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources: RemoteToolSource[] = [];
   const broadStudioToolNames = new Set<string>();
-  const resolvedStudioSources: Array<{
-    policy: ReturnType<typeof createMcpToolPolicyGate>;
-    remoteConfig: NonNullable<ReturnType<typeof createAgentServiceRemoteMcpConfig>>;
-    source: RemoteToolSource;
-  }> = [];
+  const resolvedStudioSources: ResolvedStudioSource[] = [];
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -939,23 +988,10 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
       }
     });
     const definitionsBySource = await Promise.all(discoveries);
-    for (let index = 0; index < resolvedStudioSources.length; index++) {
-      const policy = resolvedStudioSources[index]!.policy;
-      const definitions = definitionsBySource[index]!;
-      for (const definition of definitions) {
-        if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
-      }
-    }
+    collectAllowedStudioToolNames(resolvedStudioSources, definitionsBySource, broadStudioToolNames);
   }
 
-  for (const { remoteConfig, source } of resolvedStudioSources) {
-    if (
-      !remoteTools.some((source) => source.id === remoteConfig.id) &&
-      !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
-    ) {
-      studioRemoteToolSources.push(source);
-    }
-  }
+  appendMissingStudioSources(resolvedStudioSources, remoteTools, studioRemoteToolSources);
   if (input.agent.config.tools === true) {
     requestedStudioToolNames = [...broadStudioToolNames].sort(compareStrings);
   }
@@ -978,6 +1014,128 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
       __vfRemoteToolSources: [...remoteTools, ...studioRemoteToolSources],
     } as Agent["config"],
   };
+}
+
+function assertSharedAgentSourceProject(
+  ctx: HandlerContext,
+  payload: InternalAgentStreamRequest,
+): void {
+  if (
+    payload.sourceProject && (
+      payload.sourceProject.projectId !== ctx.projectId ||
+      payload.sourceProject.projectSlug !== ctx.projectSlug
+    )
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Shared agent source does not match the authenticated runtime project",
+    });
+  }
+}
+
+function knownAgentStreamFailureResponse(
+  error: unknown,
+  builder: ResponseBuilder,
+): Response | null {
+  if (error instanceof InternalAgentRequestBodyTooLargeError) {
+    return builder.json({ error: error.message }, error.status);
+  }
+
+  if (error instanceof ControlPlaneRequestError) {
+    return builder.json({ error: error.message }, error.status);
+  }
+
+  if (error instanceof SyntaxError) {
+    return builder.json({ error: "Invalid internal agent stream request" }, 400);
+  }
+
+  if (error instanceof AgentRunAlreadyExistsError) {
+    return builder.json({ error: error.message }, 409);
+  }
+
+  if (error instanceof Error && error.name === "ZodError") {
+    return builder.json({ error: "Invalid internal agent stream request" }, 400);
+  }
+
+  return null;
+}
+
+function registerAgentStreamRuntimeCredentials(
+  runtimeInput: RuntimeRunAgentInput,
+  payload: InternalAgentStreamRequest,
+  verifiedClaims: Awaited<ReturnType<typeof verifyControlPlaneRequest>>,
+  pauseToken: string | null,
+): void {
+  const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
+  if (verifiedClaims && inferenceAuthToken) {
+    registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+  }
+  if (pauseToken) {
+    registerRuntimeManualPause(
+      runtimeInput,
+      createHostOwnedAgentManualPause({
+        runId: payload.runId,
+        token: pauseToken,
+        // The runtime binds its own lifetime when execution starts.
+        signal: undefined,
+      }),
+    );
+  }
+}
+
+function assertDiscoveredSourceFingerprint(expected: string, actual: string): void {
+  if (actual !== expected) {
+    throw createSourceSnapshotChangedError(
+      "The branch source changed while project agents were discovered",
+    );
+  }
+}
+
+function resolveRuntimeBaseAgent(
+  payload: InternalAgentStreamRequest,
+  agent: NonNullable<ReturnType<AgentStreamHandlerDeps["getAgent"]>>,
+) {
+  return payload.agentConfig
+    ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
+    : agent;
+}
+
+function isSuccessfulAgentEventStream(response: Response): boolean {
+  return !!(
+    readResponseValue<number>(response, ResponseStatusGet) === 200 &&
+    readResponseValue<ReadableStream<Uint8Array> | null>(
+      response,
+      ResponseBodyGet,
+    ) &&
+    IntrinsicReflectApply(RegExpExec, SseContentType, [
+        IntrinsicReflectApply(
+          HeadersGet,
+          readResponseValue<Headers>(response, ResponseHeadersGet),
+          ["content-type"],
+        ) ?? "",
+      ]) !== null
+  );
+}
+
+function resolveTrustedAgentStreamIdentity(
+  executionProject: InternalAgentStreamRequest["executionProject"],
+  context: HandlerContext,
+): TrustedProjectEnvIdentity | undefined {
+  if (executionProject) {
+    return {
+      projectId: executionProject.projectId,
+      projectSlug: executionProject.projectSlug,
+      environmentId: executionProject.executionEnvironmentId ??
+        executionProject.runtimeTargetEnvironmentId ?? undefined,
+    };
+  }
+  if (context.projectId || context.projectSlug || context.environmentId) {
+    return {
+      projectId: context.projectId,
+      projectSlug: context.projectSlug,
+      environmentId: context.environmentId,
+    };
+  }
+  return undefined;
 }
 
 function buildAgentStreamEnv(input: {
@@ -1373,16 +1531,7 @@ export class AgentStreamHandler extends BaseHandler {
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
-      if (
-        payload.sourceProject && (
-          payload.sourceProject.projectId !== ctx.projectId ||
-          payload.sourceProject.projectSlug !== ctx.projectSlug
-        )
-      ) {
-        throw PERMISSION_DENIED.create({
-          detail: "Shared agent source does not match the authenticated runtime project",
-        });
-      }
+      assertSharedAgentSourceProject(ctx, payload);
       assertAgentSourceMatchesHostedTarget(ctx, payload);
       const apiAuthToken = payload.sourceProject
         ? payload.credentials?.authToken || ""
@@ -1430,6 +1579,209 @@ export class AgentStreamHandler extends BaseHandler {
         agentSourceType: payload.agentSource.type,
         hasAgentConfig: Boolean(payload.agentConfig),
       });
+
+      const createDiscoveredAgentExecution = (
+        projectScopedContext: HandlerContext,
+        envVarsForAgent: Record<string, string>,
+        requestSourceFingerprint: string | undefined,
+        sourceFingerprintOptions: SourceSnapshotFingerprintOptions,
+      ) =>
+      async () => {
+        // Reserve durable ownership before discovery can evaluate tenant modules.
+        const reservedRecovery = verifiedClaims &&
+            getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
+          ? await this.deps.sessionManager.startManagedRecoveryRun({
+            runId: payload.runId,
+            threadId: payload.threadId,
+            servingIdentity: ctx.projectId
+              ? {
+                projectId: ctx.projectId,
+                spanAttributes: buildServingSpanAttributes(ctx),
+              }
+              : undefined,
+            claims: verifiedClaims,
+          })
+          : undefined;
+        if (reservedRecovery) {
+          pendingRecovery = { runId: payload.runId, session: reservedRecovery };
+        }
+        await this.deps.ensureProjectDiscovery(projectScopedContext);
+        if (requestSourceFingerprint !== undefined) {
+          const discoverySourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+            projectScopedContext,
+            "agent-source-discovery-identity",
+            sourceFingerprintOptions,
+          );
+          assertDiscoveredSourceFingerprint(requestSourceFingerprint, discoverySourceFingerprint);
+        }
+
+        const agent = this.deps.getAgent(payload.agentId);
+        if (!agent) {
+          logger.warn("Internal agent stream request referenced unknown agent", {
+            runId: payload.runId,
+            agentId: payload.agentId,
+            projectId: projectScopedContext.projectId,
+            projectSlug: projectScopedContext.projectSlug,
+          });
+          return this.respond(builder.json({ error: "Agent not found" }, 404));
+        }
+
+        // veryfront-api is the trusted control-plane caller; it resolves
+        // authorization before attaching request-scoped project-agent config.
+        const runtimeBaseAgent = resolveRuntimeBaseAgent(payload, agent);
+        const runtimeInput = sanitizeRuntimeRunAgentInput(
+          toRuntimeRunAgentInput(payload),
+          runtimeBaseAgent as Agent,
+        );
+        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+        if (reservedRecovery) {
+          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
+            pendingRecovery = undefined;
+          });
+        }
+        if (platformDependencies && platformDependencyScope.projectId) {
+          registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
+            ...platformDependencyScope,
+            projectId: platformDependencyScope.projectId,
+          });
+        }
+        const providerReplayCheckpoints = getServerResolvedProviderReplayCheckpoints({
+          forwardedProps: runtimeInput.forwardedProps,
+          ...(runtimeInput.serverResolvedProviderReplayCheckpoints !== undefined
+            ? {
+              serverResolvedProviderReplayCheckpoints:
+                runtimeInput.serverResolvedProviderReplayCheckpoints,
+            }
+            : {}),
+          serverEnvelopeVerified: true,
+        });
+        const veryfrontApiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
+        const persistProviderReplayCheckpoint = this.deps
+          .createRunScopedProviderReplayCheckpointPersister?.({
+            apiUrl: veryfrontApiUrl,
+            runId: runtimeInput.runId,
+            runEventAppendToken,
+          });
+        const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
+        const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+          agent: runtimeBaseAgent as Agent,
+          token: apiAuthToken || null,
+          projectId: executionProject?.projectId ??
+            projectScopedContext.projectId ?? null,
+          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+          programmaticPlatformToolNames: platformDependencies?.flatMap(
+            (entry) => [...entry.platformTools],
+          ),
+          programmaticPlatformRunId: runtimeInput.runId,
+          captureProgrammaticPlatformSource: platformDependencies
+            ? (source) => capturePlatformDependencySource(runtimeInput, source)
+            : undefined,
+          // The API binds the terminal token to the signed run-bound credential,
+          // never to the host proxy token this source would otherwise fall back to.
+          fileWriterToken: payload.credentials?.authToken ? runEventAppendToken : null,
+          terminalAuthority: terminalToken && payload.credentials?.authToken
+            ? { token: terminalToken, runId: payload.runId }
+            : null,
+        });
+        const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
+          agent: platformRuntimeAgent,
+          token: projectRuntimeToken || null,
+          projectId: executionProject?.projectId ??
+            projectScopedContext.projectId ?? null,
+          forwardedProps: runtimeInput.forwardedProps,
+          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+          conversationId: runtimeInput.threadId,
+        });
+        // The remote-tool wrappers clone the agent; keep its
+        // markdown definition so fail-closed selectors survive.
+        inheritRuntimeAgentMarkdownDefinition(
+          runtimeBaseAgent as Agent,
+          runtimeAgent,
+        );
+
+        // Source-defined MCP tool headers resolve these via
+        // _getProjectEnv(); they are the same variables the source
+        // config was evaluated against.
+        logger.debug("Agent stream env vars loaded", {
+          runId: payload.runId,
+          projectSlug: projectScopedContext.projectSlug,
+          count: Object.keys(envVarsForAgent).length,
+        });
+
+        // verifyControlPlaneRequest above authenticates the raw envelope before
+        // this verified credential can be bound to the runtime input.
+        registerAgentStreamRuntimeCredentials(runtimeInput, payload, verifiedClaims, pauseToken);
+        const runAgentStream = () =>
+          createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+            ...this.deps,
+            localTools,
+            providerReplayCheckpoints,
+            persistProviderReplayCheckpoint,
+            servingIdentity: ctx.projectId
+              ? {
+                projectId: ctx.projectId,
+                spanAttributes: buildServingSpanAttributes(ctx),
+              }
+              : undefined,
+            projectAgentSandbox: {
+              apiUrl: veryfrontApiUrl,
+              authToken: projectRuntimeToken || undefined,
+              branchId: executionProject
+                ? executionProject.runtimeTargetBranchId
+                : payload.runtimeTargetBranchId,
+              projectId: executionProject?.projectId ??
+                projectScopedContext.projectId ?? null,
+            },
+          });
+        const shouldIsolateEnv = apiAuthToken.length > 0;
+        const agentEnv = buildAgentStreamEnv({
+          envVars: envVarsForAgent,
+          proxyToken: projectRuntimeToken,
+          projectSlug: executionProject?.projectSlug ??
+            projectScopedContext.projectSlug,
+        });
+        const trustedIdentity = resolveTrustedAgentStreamIdentity(
+          executionProject,
+          projectScopedContext,
+        );
+        const executeStream = async () => {
+          if (!shouldIsolateEnv) return await runAgentStream();
+          if (trustedIdentity) {
+            return await runWithTrustedProjectEnv(
+              agentEnv,
+              trustedIdentity,
+              runAgentStream,
+            );
+          }
+          return await runWithProjectEnv(agentEnv, runAgentStream);
+        };
+        let response = await executeStream();
+        if (isSuccessfulAgentEventStream(response)) {
+          response = setResponseHeaders(response, [
+            [RUNTIME_ID_HEADER, runtimeIdentity.id],
+            [RUNTIME_NAME_HEADER, runtimeNameHeader],
+            [RUNTIME_MODE_HEADER, runtimeIdentity.mode],
+          ]);
+        }
+        logger.info("Internal agent stream response created", {
+          runId: payload.runId,
+          threadId: payload.threadId,
+          agentId: payload.agentId,
+          projectId: projectScopedContext.projectId,
+          projectSlug: projectScopedContext.projectSlug,
+        });
+        const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
+          null;
+        const responseWithOwner = runtimeOwnerInvokeUrl
+          ? setResponseHeaders(response, [[
+            RUNTIME_OWNER_INVOKE_URL_HEADER,
+            runtimeOwnerInvokeUrl,
+          ]])
+          : response;
+        return this.respond(
+          applyBuilderHeaders(responseWithOwner, builder.headers),
+        );
+      };
 
       let sharedRegistryScope: string | null = null;
       const runWithAgentSourceContext = () =>
@@ -1512,282 +1864,39 @@ export class AgentStreamHandler extends BaseHandler {
                   }
                   : sourceScopedContext.requestContext,
               };
+              const executeInAgentSourceContext = async () => {
+                if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
+                const sourceIntegrationPolicy = (
+                  this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
+                )(sourceConfig.integrations);
+                if (requestSourceFingerprint !== undefined) {
+                  const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+                    projectScopedContext,
+                    "agent-source-credential-handoff",
+                    sourceFingerprintOptions,
+                  );
+                  if (runtimeSourceFingerprint !== requestSourceFingerprint) {
+                    throw createSourceSnapshotChangedError(
+                      "The branch source changed while credentials were isolated for agent execution",
+                    );
+                  }
+                }
+
+                return await runWithExactSourceIntegrationPolicy(
+                  sourceIntegrationPolicy,
+                  createDiscoveredAgentExecution(
+                    projectScopedContext,
+                    envVarsForAgent,
+                    requestSourceFingerprint,
+                    sourceFingerprintOptions,
+                  ),
+                );
+              };
               return await withoutVerifiedCacheApiCredential(() =>
                 this.withAgentSourceContext(
                   projectScopedContext,
                   payload.agentSource,
-                  async () => {
-                    if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
-                    const sourceIntegrationPolicy = (
-                      this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
-                    )(sourceConfig.integrations);
-                    if (requestSourceFingerprint !== undefined) {
-                      const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
-                        projectScopedContext,
-                        "agent-source-credential-handoff",
-                        sourceFingerprintOptions,
-                      );
-                      if (runtimeSourceFingerprint !== requestSourceFingerprint) {
-                        throw createSourceSnapshotChangedError(
-                          "The branch source changed while credentials were isolated for agent execution",
-                        );
-                      }
-                    }
-
-                    return await runWithExactSourceIntegrationPolicy(
-                      sourceIntegrationPolicy,
-                      async () => {
-                        // Reserve durable ownership before discovery can evaluate tenant modules.
-                        const reservedRecovery = verifiedClaims &&
-                            getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
-                          ? await this.deps.sessionManager.startManagedRecoveryRun({
-                            runId: payload.runId,
-                            threadId: payload.threadId,
-                            servingIdentity: ctx.projectId
-                              ? {
-                                projectId: ctx.projectId,
-                                spanAttributes: buildServingSpanAttributes(ctx),
-                              }
-                              : undefined,
-                            claims: verifiedClaims,
-                          })
-                          : undefined;
-                        if (reservedRecovery) {
-                          pendingRecovery = { runId: payload.runId, session: reservedRecovery };
-                        }
-                        await this.deps.ensureProjectDiscovery(projectScopedContext);
-                        if (requestSourceFingerprint !== undefined) {
-                          const discoverySourceFingerprint =
-                            await requireAgentSourceSnapshotFingerprint(
-                              projectScopedContext,
-                              "agent-source-discovery-identity",
-                              sourceFingerprintOptions,
-                            );
-                          if (discoverySourceFingerprint !== requestSourceFingerprint) {
-                            throw createSourceSnapshotChangedError(
-                              "The branch source changed while project agents were discovered",
-                            );
-                          }
-                        }
-
-                        const agent = this.deps.getAgent(payload.agentId);
-                        if (!agent) {
-                          logger.warn("Internal agent stream request referenced unknown agent", {
-                            runId: payload.runId,
-                            agentId: payload.agentId,
-                            projectId: projectScopedContext.projectId,
-                            projectSlug: projectScopedContext.projectSlug,
-                          });
-                          return this.respond(builder.json({ error: "Agent not found" }, 404));
-                        }
-
-                        // veryfront-api is the trusted control-plane caller; it resolves
-                        // authorization before attaching request-scoped project-agent config.
-                        const runtimeBaseAgent = payload.agentConfig
-                          ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
-                          : agent;
-                        const runtimeInput = sanitizeRuntimeRunAgentInput(
-                          toRuntimeRunAgentInput(payload),
-                          runtimeBaseAgent as Agent,
-                        );
-                        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
-                        if (reservedRecovery) {
-                          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
-                            pendingRecovery = undefined;
-                          });
-                        }
-                        if (platformDependencies && platformDependencyScope.projectId) {
-                          registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
-                            ...platformDependencyScope,
-                            projectId: platformDependencyScope.projectId,
-                          });
-                        }
-                        const providerReplayCheckpoints =
-                          getServerResolvedProviderReplayCheckpoints({
-                            forwardedProps: runtimeInput.forwardedProps,
-                            ...(runtimeInput.serverResolvedProviderReplayCheckpoints !== undefined
-                              ? {
-                                serverResolvedProviderReplayCheckpoints:
-                                  runtimeInput.serverResolvedProviderReplayCheckpoints,
-                              }
-                              : {}),
-                            serverEnvelopeVerified: true,
-                          });
-                        const veryfrontApiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-                        const persistProviderReplayCheckpoint = this.deps
-                          .createRunScopedProviderReplayCheckpointPersister?.({
-                            apiUrl: veryfrontApiUrl,
-                            runId: runtimeInput.runId,
-                            runEventAppendToken,
-                          });
-                        const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
-                        const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-                          agent: runtimeBaseAgent as Agent,
-                          token: apiAuthToken || null,
-                          projectId: executionProject?.projectId ??
-                            projectScopedContext.projectId ?? null,
-                          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                          programmaticPlatformToolNames: platformDependencies?.flatMap(
-                            (entry) => [...entry.platformTools],
-                          ),
-                          programmaticPlatformRunId: runtimeInput.runId,
-                          captureProgrammaticPlatformSource: platformDependencies
-                            ? (source) => capturePlatformDependencySource(runtimeInput, source)
-                            : undefined,
-                          // The API binds the terminal token to the signed run-bound credential,
-                          // never to the host proxy token this source would otherwise fall back to.
-                          fileWriterToken: payload.credentials?.authToken
-                            ? runEventAppendToken
-                            : null,
-                          terminalAuthority: terminalToken && payload.credentials?.authToken
-                            ? { token: terminalToken, runId: payload.runId }
-                            : null,
-                        });
-                        const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
-                          agent: platformRuntimeAgent,
-                          token: projectRuntimeToken || null,
-                          projectId: executionProject?.projectId ??
-                            projectScopedContext.projectId ?? null,
-                          forwardedProps: runtimeInput.forwardedProps,
-                          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                          conversationId: runtimeInput.threadId,
-                        });
-                        // The remote-tool wrappers clone the agent; keep its
-                        // markdown definition so fail-closed selectors survive.
-                        inheritRuntimeAgentMarkdownDefinition(
-                          runtimeBaseAgent as Agent,
-                          runtimeAgent,
-                        );
-
-                        // Source-defined MCP tool headers resolve these via
-                        // _getProjectEnv(); they are the same variables the source
-                        // config was evaluated against.
-                        logger.debug("Agent stream env vars loaded", {
-                          runId: payload.runId,
-                          projectSlug: projectScopedContext.projectSlug,
-                          count: Object.keys(envVarsForAgent).length,
-                        });
-
-                        // verifyControlPlaneRequest above authenticates the raw envelope before
-                        // this verified credential can be bound to the runtime input.
-                        const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
-                        if (verifiedClaims && inferenceAuthToken) {
-                          registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
-                        }
-                        if (pauseToken) {
-                          registerRuntimeManualPause(
-                            runtimeInput,
-                            createHostOwnedAgentManualPause({
-                              runId: payload.runId,
-                              token: pauseToken,
-                              // The runtime binds its own lifetime when execution starts.
-                              signal: undefined,
-                            }),
-                          );
-                        }
-                        const runAgentStream = () => {
-                          return createRuntimeAgentStreamResponse(
-                            runtimeInput,
-                            runtimeAgent,
-                            {
-                              ...this.deps,
-                              localTools,
-                              providerReplayCheckpoints,
-                              persistProviderReplayCheckpoint,
-                              servingIdentity: ctx.projectId
-                                ? {
-                                  projectId: ctx.projectId,
-                                  spanAttributes: buildServingSpanAttributes(ctx),
-                                }
-                                : undefined,
-                              projectAgentSandbox: {
-                                apiUrl: veryfrontApiUrl,
-                                authToken: projectRuntimeToken || undefined,
-                                branchId: executionProject
-                                  ? executionProject.runtimeTargetBranchId
-                                  : payload.runtimeTargetBranchId,
-                                projectId: executionProject?.projectId ??
-                                  projectScopedContext.projectId ?? null,
-                              },
-                            },
-                          );
-                        };
-                        const shouldIsolateEnv = apiAuthToken.length > 0;
-                        const agentEnv = buildAgentStreamEnv({
-                          envVars: envVarsForAgent,
-                          proxyToken: projectRuntimeToken,
-                          projectSlug: executionProject?.projectSlug ??
-                            projectScopedContext.projectSlug,
-                        });
-                        const trustedIdentity = executionProject
-                          ? {
-                            projectId: executionProject.projectId,
-                            projectSlug: executionProject.projectSlug,
-                            environmentId: executionProject.executionEnvironmentId ??
-                              executionProject.runtimeTargetEnvironmentId ?? undefined,
-                          }
-                          : projectScopedContext.projectId ||
-                              projectScopedContext.projectSlug ||
-                              projectScopedContext.environmentId
-                          ? {
-                            projectId: projectScopedContext.projectId,
-                            projectSlug: projectScopedContext.projectSlug,
-                            environmentId: projectScopedContext.environmentId,
-                          }
-                          : undefined;
-                        const executeStream = async () =>
-                          shouldIsolateEnv
-                            ? trustedIdentity
-                              ? await runWithTrustedProjectEnv(
-                                agentEnv,
-                                trustedIdentity,
-                                runAgentStream,
-                              )
-                              : await runWithProjectEnv(agentEnv, runAgentStream)
-                            : await runAgentStream();
-                        let response = await executeStream();
-                        if (
-                          readResponseValue<number>(response, ResponseStatusGet) === 200 &&
-                          readResponseValue<ReadableStream<Uint8Array> | null>(
-                            response,
-                            ResponseBodyGet,
-                          ) &&
-                          IntrinsicReflectApply(RegExpExec, SseContentType, [
-                              IntrinsicReflectApply(
-                                HeadersGet,
-                                readResponseValue<Headers>(response, ResponseHeadersGet),
-                                ["content-type"],
-                              ) ?? "",
-                            ]) !== null
-                        ) {
-                          response = setResponseHeaders(response, [
-                            [RUNTIME_ID_HEADER, runtimeIdentity.id],
-                            [RUNTIME_NAME_HEADER, runtimeNameHeader],
-                            [RUNTIME_MODE_HEADER, runtimeIdentity.mode],
-                          ]);
-                        }
-                        logger.info("Internal agent stream response created", {
-                          runId: payload.runId,
-                          threadId: payload.threadId,
-                          agentId: payload.agentId,
-                          projectId: projectScopedContext.projectId,
-                          projectSlug: projectScopedContext.projectSlug,
-                        });
-                        const runtimeOwnerInvokeUrl =
-                          await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
-                            null;
-                        const responseWithOwner = runtimeOwnerInvokeUrl
-                          ? setResponseHeaders(response, [[
-                            RUNTIME_OWNER_INVOKE_URL_HEADER,
-                            runtimeOwnerInvokeUrl,
-                          ]])
-                          : response;
-                        return this.respond(
-                          applyBuilderHeaders(responseWithOwner, builder.headers),
-                        );
-                      },
-                    );
-                  },
+                  executeInAgentSourceContext,
                 )
               )();
             }),
@@ -1831,92 +1940,8 @@ export class AgentStreamHandler extends BaseHandler {
               }
             })),
       );
-    } catch (caught) {
-      // The first negative-cache failure owns diagnostics. Replays retain the
-      // original error for response construction but must not repeat reports.
-      const { error, replayed } = unwrapReplayedProjectEnvironmentFailure(caught);
-      if (error instanceof InternalAgentRequestBodyTooLargeError) {
-        return this.respond(builder.json({ error: error.message }, error.status));
-      }
-
-      if (error instanceof ControlPlaneRequestError) {
-        return this.respond(builder.json({ error: error.message }, error.status));
-      }
-
-      if (error instanceof SyntaxError) {
-        return this.respond(
-          builder.json({ error: "Invalid internal agent stream request" }, 400),
-        );
-      }
-
-      if (error instanceof AgentRunAlreadyExistsError) {
-        return this.respond(builder.json({ error: error.message }, 409));
-      }
-
-      if (error instanceof Error && error.name === "ZodError") {
-        return this.respond(
-          builder.json({ error: "Invalid internal agent stream request" }, 400),
-        );
-      }
-
-      if (isVeryfrontError(error)) {
-        const response = errorToResponse(error, new URL(req.url).pathname);
-        // errorToResponse strips `detail` from 5xx bodies, so the log and the
-        // reported event are the only places it survives.
-        if (readResponseValue<number>(response, ResponseStatusGet) >= 500 && !replayed) {
-          const cause = describeErrorCause(error.cause);
-          // A branch edit landing mid-request is retried by the control plane
-          // on the next generation; only other 5xx failures are errors here.
-          const log = isSourceSnapshotChangedError(error) ? logger.warn : logger.error;
-          log.call(logger, "Internal agent stream request failed", {
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            status: readResponseValue<number>(response, ResponseStatusGet),
-            slug: error.slug,
-            category: error.category,
-            detail: error.detail,
-            error: error.message,
-            cause,
-          });
-          reportHandlerFailure(error, {
-            boundary: "agent.stream.request",
-            method: req.method,
-            status: readResponseValue<number>(response, ResponseStatusGet),
-            runId: safeRunId(req),
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            slug: error.slug,
-            category: error.category,
-            detail: error.detail,
-            cause,
-          });
-        }
-        return this.respond(applyBuilderHeaders(response, builder.headers));
-      }
-
-      if (!replayed) {
-        this.logWarn("Internal agent stream request failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-        });
-        logger.error("Internal agent stream handler failed", {
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        // Unexpected failures have no slug or detail, so the captured stack is
-        // the only real diagnostic.
-        reportHandlerFailure(error, {
-          boundary: "agent.stream.handler",
-          method: req.method,
-          status: HTTP_INTERNAL_SERVER_ERROR,
-          runId: safeRunId(req),
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-        });
-      }
-      return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
+    } catch (error_) {
+      return this.respondToStreamFailure(error_, req, ctx, builder);
     } finally {
       if (pendingRecovery) {
         const { runId, session } = pendingRecovery;
@@ -1925,5 +1950,77 @@ export class AgentStreamHandler extends BaseHandler {
         session.settle();
       }
     }
+  }
+
+  private respondToStreamFailure(
+    error_: unknown,
+    req: Request,
+    ctx: HandlerContext,
+    builder: ResponseBuilder,
+  ): HandlerResult {
+    // The first negative-cache failure owns diagnostics. Replays retain the
+    // original error for response construction but must not repeat reports.
+    const { error, replayed } = unwrapReplayedProjectEnvironmentFailure(error_);
+    const knownResponse = knownAgentStreamFailureResponse(error, builder);
+    if (knownResponse) return this.respond(knownResponse);
+
+    if (isVeryfrontError(error)) {
+      const response = errorToResponse(error, new URL(req.url).pathname);
+      // errorToResponse strips `detail` from 5xx bodies, so the log and the
+      // reported event are the only places it survives.
+      if (readResponseValue<number>(response, ResponseStatusGet) >= 500 && !replayed) {
+        const cause = describeErrorCause(error.cause);
+        // A branch edit landing mid-request is retried by the control plane
+        // on the next generation; only other 5xx failures are errors here.
+        const log = isSourceSnapshotChangedError(error) ? logger.warn : logger.error;
+        log.call(logger, "Internal agent stream request failed", {
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          status: readResponseValue<number>(response, ResponseStatusGet),
+          slug: error.slug,
+          category: error.category,
+          detail: error.detail,
+          error: error.message,
+          cause,
+        });
+        reportHandlerFailure(error, {
+          boundary: "agent.stream.request",
+          method: req.method,
+          status: readResponseValue<number>(response, ResponseStatusGet),
+          runId: safeRunId(req),
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          slug: error.slug,
+          category: error.category,
+          detail: error.detail,
+          cause,
+        });
+      }
+      return this.respond(applyBuilderHeaders(response, builder.headers));
+    }
+
+    if (!replayed) {
+      this.logWarn("Internal agent stream request failed", {
+        error: error instanceof Error ? error.message : String(error),
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
+      });
+      logger.error("Internal agent stream handler failed", {
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Unexpected failures have no slug or detail, so the captured stack is
+      // the only real diagnostic.
+      reportHandlerFailure(error, {
+        boundary: "agent.stream.handler",
+        method: req.method,
+        status: HTTP_INTERNAL_SERVER_ERROR,
+        runId: safeRunId(req),
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
+      });
+    }
+    return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
   }
 }

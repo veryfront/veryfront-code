@@ -250,6 +250,9 @@ export type HostedServiceRunEventAppendTokenResult = {
   resumeToolCallSha256?: string;
   /** SHA-256 of the run's latest tool exposure checkpoint, carried by the signed token. */
   toolExposureCheckpointSha256?: string;
+  rootRunId?: string;
+  taskInputSha256?: string;
+  taskInputRootRunId?: string;
 };
 
 /**
@@ -375,11 +378,7 @@ const RUN_RESUME_SCOPES = [
 ] as const;
 
 function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(scopes) &&
-    scopes.length === expected.length &&
-    scopes.every((value): value is string => typeof value === "string") &&
-    new Set(scopes).size === scopes.length &&
-    expected.every((requiredScope) => scopes.includes(requiredScope));
+  return hasExactCancellationScopes(scopes, expected, "Token scopes");
 }
 
 function hasExactCancellationScopes(
@@ -427,6 +426,10 @@ export type HostedServiceAuthOptions = {
 
 /** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
+  /** Verify exact-run terminal identity without granting event append authority. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
   verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
   /** Verify the API's signed exact-run resume bearer; ordinary user tokens are insufficient. */
@@ -649,6 +652,65 @@ function decodeHostedServiceJwtWithoutVerify(
       success: false,
       error: makeUnauthenticatedError("Invalid token"),
     };
+  }
+}
+
+function isValidWriterDigest(value: unknown): value is string | undefined {
+  return value === undefined ||
+    (typeof value === "string" && ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [value]) !== null);
+}
+
+function hasValidRunEventWriterIdentity(
+  payload: TokenPayload,
+  config: HostedServiceAuthConfig,
+  input: HostedServiceRunEventAppendTokenInput,
+): boolean {
+  return payload.actorType === "service_account" &&
+    payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
+    typeof payload.serviceAccountId === "string" &&
+    payload.userId === payload.serviceAccountId &&
+    payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
+    payload.projectId === input.projectId &&
+    payload.runId === input.runId &&
+    hasExactRunEventWriterScopes(payload);
+}
+
+function hasValidWriterDependencyScope(
+  dependencies: VerifiedPlatformToolDependencies | undefined,
+  input: HostedServiceRunEventAppendTokenInput,
+  payload: TokenPayload,
+): boolean {
+  return dependencies === undefined ||
+    (!!input.agentId && payload.agentId === input.agentId &&
+      readOwnDataProperty(payload, "runEventWriterTokenPurpose", "Writer claims", false) ===
+        undefined);
+}
+
+function recordVerifiedWriterGrants(
+  result: HostedServiceRunEventAppendTokenResult,
+  input: HostedServiceRunEventAppendTokenInput,
+  operatorWriter: Awaited<ReturnType<typeof readOperatorWriterDependencies>>,
+): void {
+  if (operatorWriter) {
+    verifiedHostedWriterScopes.set(
+      result,
+      ObjectFreeze({
+        projectId: input.projectId,
+        runId: input.runId,
+        ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
+      }),
+    );
+  }
+  if (operatorWriter?.dependencies !== undefined && input.agentId) {
+    verifiedPlatformDependencies.set(
+      result,
+      ObjectFreeze({
+        projectId: input.projectId,
+        runId: input.runId,
+        agentId: input.agentId,
+        dependencies: operatorWriter.dependencies,
+      }),
+    );
   }
 }
 
@@ -888,6 +950,61 @@ export function createHostedServiceAuth(
     }
   }
 
+  async function verifyRunTerminalToken(
+    input: { token: string; projectId: string; runId: string },
+  ): Promise<boolean> {
+    try {
+      if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
+      const config = options.getConfig();
+      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
+      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      const serverId = readOwnDataProperty(
+        config,
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+        "Service config",
+        false,
+      );
+      if (
+        typeof publicKey !== "string" || !publicKey || typeof serverId !== "string" || !serverId
+      ) return false;
+      const token = readOwnDataProperty(input, "token", "Terminal request");
+      const projectId = readOwnDataProperty(input, "projectId", "Terminal request");
+      const runId = readOwnDataProperty(input, "runId", "Terminal request");
+      if (
+        typeof token !== "string" || !token || typeof projectId !== "string" || !projectId ||
+        typeof runId !== "string" || !runId
+      ) return false;
+      const provider = await getAuthProvider(options);
+      if (!provider || !isSafeHostedJwtVerificationEnvironment(provider)) return false;
+      const claims = await provider.verifyWithPublicKey(token, publicKey, {
+        algorithms: ["RS256"],
+      });
+      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
+      const read = (key: string) => readOwnDataProperty(claims, key, "Terminal claims", false);
+      const scopes = read("scopes");
+      const exp = read("exp");
+      const canonicalRunId = read("canonicalRunId");
+      const dispatchNonce = read("dispatchNonce");
+      return read("actorType") === "service_account" &&
+        read("tokenUse") === RUN_EVENT_WRITER_TOKEN_USE &&
+        read("writerPurpose") === "current_run_terminal" && read("serviceAccountId") === serverId &&
+        read("userId") === serverId && read("projectId") === projectId &&
+        read("runId") === runId &&
+        typeof canonicalRunId === "string" &&
+        ReflectApply(
+            RegExpExec,
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            [canonicalRunId],
+          ) !== null &&
+        typeof dispatchNonce === "string" && !!dispatchNonce &&
+        typeof exp === "number" && NumberIsFinite(exp) && exp * 1000 > DateNow() &&
+        read("scope") === undefined && (hasExactScopes(scopes, ["agent-runs:terminal:complete"]) ||
+          hasExactScopes(scopes, ["agent-runs:terminal:complete", "agent-runs:terminal:cancel"]));
+    } catch {
+      return false;
+    }
+  }
+
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
   ): Promise<HostedServiceRunEventAppendTokenResult> {
@@ -909,14 +1026,7 @@ export function createHostedServiceAuth(
           { algorithms: ["RS256"] },
         ) as TokenPayload;
 
-        const verified = payload.actorType === "service_account" &&
-          payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
-          typeof payload.serviceAccountId === "string" &&
-          payload.userId === payload.serviceAccountId &&
-          payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
-          payload.projectId === input.projectId &&
-          payload.runId === input.runId &&
-          hasExactRunEventWriterScopes(payload);
+        const verified = hasValidRunEventWriterIdentity(payload, config, input);
 
         if (!verified) {
           return { verified: false };
@@ -928,11 +1038,7 @@ export function createHostedServiceAuth(
           "Writer claims",
           false,
         );
-        if (
-          resumeToolCallSha256 !== undefined &&
-          (typeof resumeToolCallSha256 !== "string" ||
-            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [resumeToolCallSha256]) === null)
-        ) {
+        if (!isValidWriterDigest(resumeToolCallSha256)) {
           return { verified: false };
         }
         const toolExposureCheckpointSha256 = readOwnDataProperty(
@@ -941,12 +1047,34 @@ export function createHostedServiceAuth(
           "Writer claims",
           false,
         );
-        if (
-          toolExposureCheckpointSha256 !== undefined &&
-          (typeof toolExposureCheckpointSha256 !== "string" ||
-            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [toolExposureCheckpointSha256]) === null)
-        ) {
+        if (!isValidWriterDigest(toolExposureCheckpointSha256)) {
           return { verified: false };
+        }
+        const rootRunId = readOwnDataProperty(payload, "rootRunId", "Writer claims", false);
+        if (
+          rootRunId !== undefined &&
+          (typeof rootRunId !== "string" ||
+            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) === null)
+        ) return { verified: false };
+        const taskInputSha256 = readOwnDataProperty(
+          payload,
+          "taskInputSha256",
+          "Writer claims",
+          false,
+        );
+        const taskInputRootRunId = readOwnDataProperty(
+          payload,
+          "taskInputRootRunId",
+          "Writer claims",
+          false,
+        );
+        if (taskInputSha256 !== undefined || taskInputRootRunId !== undefined) {
+          if (
+            typeof taskInputSha256 !== "string" ||
+            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [taskInputSha256]) === null ||
+            typeof taskInputRootRunId !== "string" ||
+            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [taskInputRootRunId]) === null
+          ) return { verified: false };
         }
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         const dependenciesClaim = readOwnDataProperty(
@@ -958,40 +1086,19 @@ export function createHostedServiceAuth(
         const dependencies = dependenciesClaim === undefined
           ? undefined
           : readPlatformToolDependencies(dependenciesClaim);
-        if (
-          dependencies !== undefined &&
-          (!input.agentId || payload.agentId !== input.agentId ||
-            readOwnDataProperty(payload, "runEventWriterTokenPurpose", "Writer claims", false) !==
-              undefined)
-        ) return { verified: false };
+        if (!hasValidWriterDependencyScope(dependencies, input, payload)) {
+          return { verified: false };
+        }
         const result: HostedServiceRunEventAppendTokenResult = {
           verified: true,
+          ...(rootRunId !== undefined ? { rootRunId } : {}),
+          ...(taskInputSha256 !== undefined ? { taskInputSha256, taskInputRootRunId } : {}),
           ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         };
         const operatorWriter = await readOperatorWriterDependencies(input);
-        if (operatorWriter) {
-          verifiedHostedWriterScopes.set(
-            result,
-            ObjectFreeze({
-              projectId: input.projectId,
-              runId: input.runId,
-              ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
-            }),
-          );
-        }
-        if (operatorWriter?.dependencies !== undefined && input.agentId) {
-          verifiedPlatformDependencies.set(
-            result,
-            ObjectFreeze({
-              projectId: input.projectId,
-              runId: input.runId,
-              agentId: input.agentId,
-              dependencies: operatorWriter.dependencies,
-            }),
-          );
-        }
+        recordVerifiedWriterGrants(result, input, operatorWriter);
         return result;
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
@@ -1083,6 +1190,7 @@ export function createHostedServiceAuth(
   }
 
   return {
+    verifyRunTerminalToken,
     verifyRunCancellationToken,
     verifyRunResumeToken,
     authenticateRequest,

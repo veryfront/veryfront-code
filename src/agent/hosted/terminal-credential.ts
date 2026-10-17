@@ -1,3 +1,21 @@
+import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
+import { authorizeHostedTaskInput } from "./task-input.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import type { HostedAcceptedChildEvidence } from "./accepted-child-evidence.ts";
+import {
+  encodeHostedTaskInput,
+  type HostedTaskInput,
+  resolveHostedTaskInput,
+} from "./task-input.ts";
+import type { ParseHostedChatRequestOptions } from "./chat-request-parser.ts";
+import {
+  type HostedAcceptedTaskInputReceipt,
+  hostedAcceptedTaskInputReference,
+} from "./child-run-event-writer-token.ts";
 import {
   type HostedPlatformDependencyOwner,
   registerHostedChildPlatformDependencies,
@@ -39,6 +57,17 @@ import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts"
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
+const evidenceDecode = atob;
+const evidenceSplit = String.prototype.split;
+const evidenceReplaceAll = String.prototype.replaceAll;
+const evidenceResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const evidenceResponseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const evidenceResponseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const evidenceFreeze = Object.freeze;
+const evidenceIsArray = Array.isArray;
+const evidenceSafeInteger = Number.isSafeInteger;
+const evidenceEncodeURIComponent = encodeURIComponent;
+const evidenceRegExpExec = RegExp.prototype.exec;
 const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
@@ -51,12 +80,17 @@ const credentials = createPrivateWeakStore<
   object,
   {
     token: string;
+    verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
+    taskInput?: HostedTaskInput;
+    rootRunId?: string;
     renewalToken?: string;
     eventToken?: string;
     inferenceToken?: string;
     leaseExpiresAt?: number;
     projectId: string;
     runId: string;
+    agentId?: string;
     authToken?: string;
     apiUrl?: string;
     fetch?: typeof globalThis.fetch;
@@ -82,13 +116,18 @@ export function registerHostedTerminalCredential(
   request: ParsedHostedChatRequest,
   token: string | undefined,
   eventToken?: string,
+  verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+  verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"],
 ): void {
   if (!token || token.length > 16384 || !request.projectId || !request.durableRootRun?.runId) {
     return;
   }
   credentials.set(request, {
+    verifyRunEventAppendToken,
+    verifyRunTerminalToken,
     token,
     projectId: request.projectId,
+    agentId: request.agentId,
     runId: request.durableRootRun.runId,
     authToken: request.authToken,
     ...(eventToken ? { eventToken } : {}),
@@ -248,6 +287,7 @@ export function hostedTerminalToolSourceFactory(
 type HostedInheritedRunAdmitter<Result> = (toolCallId: string, prompt: string) => (
   input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
     conversationId?: string;
+    acceptedTaskInputReceipt?: HostedAcceptedTaskInputReceipt;
   },
 ) => Promise<Result>;
 type InheritedAdmissionTransport = { apiUrl: string; fetch?: typeof globalThis.fetch };
@@ -276,6 +316,11 @@ export function hostedInheritedRunAdmitter(
     if (input.parentRunId !== parent.runId) {
       throw new Error("Inherited child parent binding mismatch");
     }
+    const acceptedReference = hostedAcceptedTaskInputReference(
+      input.acceptedTaskInputReceipt,
+      parent.runId,
+      input.agentId,
+    );
     const childProjectId = input.projectId ?? parent.projectId;
     const response = await send(`${transport.apiUrl}/runs`, {
       method: "POST",
@@ -293,7 +338,7 @@ export function hostedInheritedRunAdmitter(
         parent_run_id: parentId,
         tool_call_id: toolCallId,
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
-        input: { prompt },
+        input: { prompt, ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}) },
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -307,11 +352,15 @@ export function hostedInheritedRunAdmitter(
       agentId: input.agentId,
       apiUrl: transport.apiUrl,
       fetch: send,
+      verifyRunEventAppendToken: parent.verifyRunEventAppendToken,
+      verifyRunTerminalToken: parent.verifyRunTerminalToken,
     }, request);
   };
 }
 
 /** Private execution transport does not grant ordinary child resource reads. */
+const admittedInputs = createPrivateWeakStore<Response, HostedTaskInput>();
+
 async function normalizeInheritedExecutionResponse(
   response: Response,
   binding: { projectId: string; parentRunId?: string; agentId?: string; conversationId?: string },
@@ -351,7 +400,7 @@ async function normalizeInheritedExecutionResponse(
   headers.set("Content-Type", "application/json");
   headers.delete("Content-Length");
   headers.delete("Content-Encoding");
-  return new Response(
+  const normalized = new Response(
     JSON.stringify({
       id: value.canonicalRunId,
       parent_run_id: value.parentRunId,
@@ -364,9 +413,53 @@ async function normalizeInheritedExecutionResponse(
     }),
     { status: response.status, headers },
   );
+  if (value.taskInput !== undefined) {
+    const taskInput = resolveHostedTaskInput(value.taskInput, {
+      projectId: binding.projectId,
+      runId: terminalRoutingRunId(response.headers.get(RUN_TERMINAL_TOKEN_HEADER) ?? ""),
+      rootRunId: value.taskInput?.rootRunId,
+    });
+    if (!taskInput) throw mismatch();
+    admittedInputs.set(normalized, taskInput);
+  }
+  return normalized;
 }
 
 export type InheritedRunResult = { readonly terminalReceipt: InheritedTerminalReceipt };
+
+async function verifyInheritedTaskInputBinding(
+  response: Response,
+  binding: {
+    projectId: string;
+    agentId?: string;
+    verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+  },
+  eventToken: string | null,
+  runId: string,
+) {
+  const taskInput = admittedInputs.get(response);
+  const verification = eventToken
+    ? await binding.verifyRunEventAppendToken?.({
+      token: eventToken,
+      projectId: binding.projectId,
+      runId,
+      ...(binding.agentId ? { agentId: binding.agentId } : {}),
+    })
+    : undefined;
+  if (
+    taskInput ||
+    (verification && typeof verification === "object" &&
+      (verification.taskInputSha256 !== undefined || verification.taskInputRootRunId !== undefined))
+  ) {
+    if (
+      !taskInput || !verification || typeof verification !== "object" ||
+      verification.verified !== true || verification.taskInputRootRunId !== taskInput.rootRunId ||
+      (verification.rootRunId !== undefined && verification.rootRunId !== taskInput.rootRunId) ||
+      verification.taskInputSha256 !== await computeHash(encodeHostedTaskInput(taskInput))
+    ) throw new Error("Inherited task input signed binding mismatch");
+  }
+  return verification;
+}
 
 /** Read a terminal workflow child without restoring an earlier execution capability. */
 export async function acceptWorkflowInheritedRunAdmission(
@@ -377,6 +470,8 @@ export async function acceptWorkflowInheritedRunAdmission(
     agentId: string;
     apiUrl: string;
     fetch: typeof globalThis.fetch;
+    verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
   },
   dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection | InheritedRunResult> {
@@ -397,6 +492,16 @@ export async function acceptWorkflowInheritedRunAdmission(
     (row.error !== undefined &&
       (typeof row.error?.code !== "string" || typeof row.error?.message !== "string"))
   ) throw new Error("Inherited child resource binding mismatch");
+  const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
+  const terminalToken = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
+  const taskInput = admittedInputs.get(response);
+  if (taskInput && !terminalToken) throw new Error("Inherited task input signed binding mismatch");
+  await verifyInheritedTaskInputBinding(
+    response,
+    binding,
+    eventToken,
+    terminalToken ? terminalRoutingRunId(terminalToken) : row.id,
+  );
   return {
     terminalReceipt: {
       status: row.status,
@@ -416,6 +521,8 @@ export async function acceptInheritedRunAdmission(
     agentId?: string;
     apiUrl: string;
     fetch: typeof globalThis.fetch;
+    verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
   },
   dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection> {
@@ -450,6 +557,9 @@ export async function acceptInheritedRunAdmission(
     !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
     !Number.isSafeInteger(externalCursor) || externalCursor < 0
   ) throw new Error("Inherited child resource binding mismatch");
+  const taskInput = admittedInputs.get(response);
+  const verification = await verifyInheritedTaskInputBinding(response, binding, eventToken, runId);
+  if (taskInput) authorizeHostedTaskInput(taskInput);
   const run = {
     runId,
     canonicalRunId: row.id as string,
@@ -473,6 +583,14 @@ export async function acceptInheritedRunAdmission(
   }
   credentials.set(run, {
     token,
+    agentId: binding.agentId,
+    verifyRunEventAppendToken: binding.verifyRunEventAppendToken,
+    verifyRunTerminalToken: binding.verifyRunTerminalToken,
+    ...(verification && typeof verification === "object" && verification.verified === true &&
+        typeof verification.rootRunId === "string"
+      ? { rootRunId: verification.rootRunId }
+      : {}),
+    ...(taskInput ? { taskInput } : {}),
     authToken,
     renewalToken,
     eventToken,
@@ -665,14 +783,182 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
   if (!authority?.eventToken || !authority.apiUrl) return undefined;
   return createHostedRunEventWriterCapability({
     inheritedExecution: true,
+    projectId: authority.projectId,
     apiUrl: authority.apiUrl,
     runId: authority.runId,
     canonicalRunId: terminalRoute(authority.token, authority.runId).id,
     runEventAppendToken: authority.eventToken,
     fetch: authority.fetch,
+    acceptedChildEvidence: (projectId, signal) =>
+      hostedAcceptedChildEvidence(descriptor, projectId, signal),
     inheritedAdmitter: hostedInheritedRunAdmitter(descriptor, {
       apiUrl: authority.apiUrl,
       fetch: authority.fetch,
     }),
+  });
+}
+
+/** Restore child input only from verified private native admission, never caller context. */
+export function hostedInheritedTaskInput(
+  descriptor: HostedTerminalDescriptor,
+  projectId: string,
+): HostedTaskInput | undefined {
+  const authority = credentials.get(descriptor);
+  if (!authority) return undefined;
+  if (authority.projectId !== projectId) {
+    throw new Error("Inherited task input project mismatch");
+  }
+  return authority.taskInput
+    ? resolveHostedTaskInput(authority.taskInput, {
+      projectId,
+      runId: authority.runId,
+      rootRunId: authority.taskInput.rootRunId,
+    })
+    : undefined;
+}
+
+/** Canonical root from the child writer verifier, retained outside caller context. */
+export function hostedInheritedRootRunId(
+  descriptor: HostedTerminalDescriptor,
+  projectId: string,
+): string | undefined {
+  const authority = credentials.get(descriptor);
+  if (!authority) return undefined;
+  if (authority.projectId !== projectId) throw new Error("Inherited root project mismatch");
+  return authority.rootRunId;
+}
+
+/** Read authenticated API evidence using the verified writer parent and its project. */
+export function hostedAcceptedChildEvidence(
+  descriptor: HostedTerminalDescriptor | ParsedHostedChatRequest,
+  projectId: string,
+  signal?: AbortSignal,
+  transport?: { apiUrl: string; fetch?: typeof globalThis.fetch },
+): HostedAcceptedChildEvidence {
+  const authority = credentials.get(descriptor);
+  if (
+    !authority?.authToken || !(transport?.apiUrl ?? authority.apiUrl) ||
+    !(transport?.fetch ?? authority.fetch ?? hostFetch) || authority.projectId !== projectId
+  ) throw new Error("Accepted receipt readers require exact parent authority");
+  async function verifiedParentId(): Promise<string> {
+    const writer = authority!.eventToken;
+    const verification = writer && await authority!.verifyRunEventAppendToken?.({
+      token: writer,
+      projectId,
+      runId: authority!.runId,
+      ...(authority!.agentId ? { agentId: authority!.agentId } : {}),
+    });
+    if (
+      !writer || !(verification === true ||
+        (verification && typeof verification === "object" && verification.verified === true))
+    ) {
+      throw new Error("Accepted receipt readers require verified parent authority");
+    }
+    // Decode only the unchanged writer that the host just authenticated. Terminal
+    // payloads are routing hints and cannot authorize reads with the parent bearer.
+    const encoded = apply(evidenceSplit, writer, ["."])[1];
+    const claims = snapshotOwnDataRecords(privateJsonParse(
+      evidenceDecode(
+        apply(evidenceReplaceAll, apply(evidenceReplaceAll, encoded, ["-", "+"]), ["_", "/"]),
+      ),
+    )) as {
+      projectId?: unknown;
+      runId?: unknown;
+      workerGeneration?: { projectId?: unknown; runId?: unknown; canonicalRunId?: unknown };
+      projectExecutionAttempt?: { canonicalRunId?: unknown };
+    };
+    const worker = claims.workerGeneration;
+    let canonical = worker?.canonicalRunId ?? claims.projectExecutionAttempt?.canonicalRunId;
+    if (
+      canonical === undefined && await authority!.verifyRunTerminalToken?.({
+          token: authority!.token,
+          projectId,
+          runId: authority!.runId,
+        }) === true
+    ) {
+      canonical = terminalRoute(authority!.token, authority!.runId).id;
+    }
+    if (
+      claims.projectId !== projectId || claims.runId !== authority!.runId ||
+      (worker && (worker.projectId !== projectId || worker.runId !== authority!.runId)) ||
+      typeof canonical !== "string" ||
+      !apply(
+        evidenceRegExpExec,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        [canonical],
+      )
+    ) {
+      throw new Error("Accepted receipt readers require verified parent identity");
+    }
+    return canonical;
+  }
+  const send = transport?.fetch ?? authority.fetch ?? hostFetch,
+    token = authority.authToken,
+    resolveApiUrl = createVeryfrontApiRequestUrlResolver(transport?.apiUrl ?? authority.apiUrl!);
+  const requestSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+    : AbortSignal.timeout(15000);
+  async function read(path: string): Promise<unknown> {
+    const response = await send(resolveApiUrl(path), {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      redirect: "error",
+      signal: requestSignal,
+    });
+    if (!apply(evidenceResponseOk, response, [])) {
+      throw new Error(
+        `Accepted receipt read failed (${apply(evidenceResponseStatus, response, [])})`,
+      );
+    }
+    const stream = apply(evidenceResponseBody, response, []) as ReadableStream<Uint8Array> | null;
+    const body = await readResponseTextPrefix(
+      {
+        body: stream ? { getReader: () => getPrivateStreamReader(stream) } : null,
+      },
+      3_000_000,
+      requestSignal,
+    );
+    if (body.truncated) throw new Error("Accepted receipt read exceeds byte budget");
+    return privateJsonParse(body.text);
+  }
+  return evidenceFreeze({
+    async readParentToolResults() {
+      const canonical = await verifiedParentId();
+      const page = await read(
+        `/runs/${
+          evidenceEncodeURIComponent(canonical)
+        }/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+      ) as { data?: unknown; page_info?: { next?: unknown } };
+      if (!evidenceIsArray(page.data) || page.data.length > 100 || page.page_info?.next !== null) {
+        throw new Error("Parent receipt evidence is incomplete");
+      }
+      forEachPrivateArray(page.data, (row) => {
+        if (
+          !row || typeof row !== "object" || row.run_id !== canonical ||
+          row.event_type !== "TOOL_CALL_RESULT" || !evidenceSafeInteger(row.event_id) ||
+          row.event_id <= 0
+        ) throw new Error("Parent receipt evidence has wrong scope");
+      });
+      return evidenceFreeze(mapPrivateArray(page.data, (row) => evidenceFreeze(row)));
+    },
+    async readCommittedVersion(path: string, versionId: string) {
+      await verifiedParentId();
+      if (
+        typeof path !== "string" || !path || path.length > 512 || typeof versionId !== "string" ||
+        !apply(
+          evidenceRegExpExec,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+          [versionId],
+        )
+      ) throw new Error("Invalid accepted artifact reference");
+      const value = await read(
+        `/projects/${evidenceEncodeURIComponent(projectId)}/files/${
+          evidenceEncodeURIComponent(path)
+        }/versions/${evidenceEncodeURIComponent(versionId)}`,
+      ) as { path?: unknown; id?: unknown; content?: unknown };
+      if (value.path !== path || value.id !== versionId || typeof value.content !== "string") {
+        throw new Error("Historical artifact identity mismatch");
+      }
+      return { path, versionId, content: value.content };
+    },
   });
 }

@@ -1338,6 +1338,22 @@ export interface components {
             /** @enum {string} */
             type: "AGENT_RUN_RUNTIME_OWNER_BOUND";
         };
+        AgentRunTaskInputAcceptedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TASK_INPUT_ACCEPTED";
+        };
+        AgentRunTaskInputAcceptedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TASK_INPUT_ACCEPTED";
+        };
+        AgentRunTaskInputAdmittedPayload: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TASK_INPUT_ADMITTED";
+        };
+        AgentRunTaskInputAdmittedPayloadRedacted: {
+            /** @enum {string} */
+            type: "AGENT_RUN_TASK_INPUT_ADMITTED";
+        };
         AgentRunToolExposureCheckpointedPayload: {
             /** @enum {string} */
             type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED";
@@ -4600,6 +4616,66 @@ export interface components {
             event_class: "fact" | "delta";
             /** Format: int64 */
             event_id: number;
+            /** @enum {string} */
+            event_type: "AGENT_RUN_TASK_INPUT_ACCEPTED";
+            is_error: boolean;
+            /** @description The origin custom name associated with this record. */
+            origin_custom_name: string | null;
+            /** @description The origin event type associated with this record. */
+            origin_event_type: string;
+            /** @description The parent span id associated with this record. */
+            parent_span_id: string | null;
+            payload: components["schemas"]["AgentRunTaskInputAcceptedPayload"] | components["schemas"]["AgentRunTaskInputAcceptedPayloadRedacted"];
+            /**
+             * Format: uuid
+             * @description Run identifier associated with the record.
+             */
+            run_id: string;
+            /** @description The span id associated with this record. */
+            span_id: string;
+            /** @description The turn id associated with this record. */
+            turn_id: string | null;
+            /** @description List of unrecoverable fields associated with this record. */
+            unrecoverable_fields: string[];
+        } | {
+            created_at: string;
+            /**
+             * @description The event class associated with this record.
+             * @enum {string}
+             */
+            event_class: "fact" | "delta";
+            /** Format: int64 */
+            event_id: number;
+            /** @enum {string} */
+            event_type: "AGENT_RUN_TASK_INPUT_ADMITTED";
+            is_error: boolean;
+            /** @description The origin custom name associated with this record. */
+            origin_custom_name: string | null;
+            /** @description The origin event type associated with this record. */
+            origin_event_type: string;
+            /** @description The parent span id associated with this record. */
+            parent_span_id: string | null;
+            payload: components["schemas"]["AgentRunTaskInputAdmittedPayload"] | components["schemas"]["AgentRunTaskInputAdmittedPayloadRedacted"];
+            /**
+             * Format: uuid
+             * @description Run identifier associated with the record.
+             */
+            run_id: string;
+            /** @description The span id associated with this record. */
+            span_id: string;
+            /** @description The turn id associated with this record. */
+            turn_id: string | null;
+            /** @description List of unrecoverable fields associated with this record. */
+            unrecoverable_fields: string[];
+        } | {
+            created_at: string;
+            /**
+             * @description The event class associated with this record.
+             * @enum {string}
+             */
+            event_class: "fact" | "delta";
+            /** Format: int64 */
+            event_id: number;
             event_type: string;
             is_error: boolean;
             /** @description The origin custom name associated with this record. */
@@ -6590,6 +6666,66 @@ export interface components {
             /** @description The parent span id associated with this record. */
             parent_span_id: string | null;
             payload: components["schemas"]["AgentRunModelCallContextPayload"] | components["schemas"]["AgentRunModelCallContextPayloadRedacted"];
+            /**
+             * Format: uuid
+             * @description Run identifier associated with the record.
+             */
+            run_id: string;
+            /** @description The span id associated with this record. */
+            span_id: string;
+            /** @description The turn id associated with this record. */
+            turn_id: string | null;
+            /** @description List of unrecoverable fields associated with this record. */
+            unrecoverable_fields: string[];
+        } | {
+            /** Format: date-time */
+            created_at: string | null;
+            /**
+             * @description The event class associated with this record.
+             * @enum {string}
+             */
+            event_class: "fact" | "delta";
+            event_id: number | null;
+            /** @enum {string} */
+            event_type: "AGENT_RUN_TASK_INPUT_ACCEPTED";
+            is_error: boolean;
+            /** @description The origin custom name associated with this record. */
+            origin_custom_name: string | null;
+            /** @description The origin event type associated with this record. */
+            origin_event_type: string;
+            /** @description The parent span id associated with this record. */
+            parent_span_id: string | null;
+            payload: components["schemas"]["AgentRunTaskInputAcceptedPayload"] | components["schemas"]["AgentRunTaskInputAcceptedPayloadRedacted"];
+            /**
+             * Format: uuid
+             * @description Run identifier associated with the record.
+             */
+            run_id: string;
+            /** @description The span id associated with this record. */
+            span_id: string;
+            /** @description The turn id associated with this record. */
+            turn_id: string | null;
+            /** @description List of unrecoverable fields associated with this record. */
+            unrecoverable_fields: string[];
+        } | {
+            /** Format: date-time */
+            created_at: string | null;
+            /**
+             * @description The event class associated with this record.
+             * @enum {string}
+             */
+            event_class: "fact" | "delta";
+            event_id: number | null;
+            /** @enum {string} */
+            event_type: "AGENT_RUN_TASK_INPUT_ADMITTED";
+            is_error: boolean;
+            /** @description The origin custom name associated with this record. */
+            origin_custom_name: string | null;
+            /** @description The origin event type associated with this record. */
+            origin_event_type: string;
+            /** @description The parent span id associated with this record. */
+            parent_span_id: string | null;
+            payload: components["schemas"]["AgentRunTaskInputAdmittedPayload"] | components["schemas"]["AgentRunTaskInputAdmittedPayloadRedacted"];
             /**
              * Format: uuid
              * @description Run identifier associated with the record.

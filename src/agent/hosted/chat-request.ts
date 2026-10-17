@@ -512,6 +512,7 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
     model: v.string().optional(),
     allowDelegation: v.boolean().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional(),
+    taskInput: v.unknown().optional(),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
     serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
@@ -537,6 +538,7 @@ export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatReque
  * replayed messages and at most 1,000 parts in each message.
  */
 export type HostedChatRequestInput = {
+  taskInput?: unknown;
   messages: RuntimeAgentRunInvocation["messages"];
   context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
   model?: string;
@@ -652,6 +654,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
 
   return {
     messages: normalizeHostedRuntimeInvocationMessages(input.messages),
+    ...(input.taskInput !== undefined ? { taskInput: input.taskInput } : {}),
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     context: {
       conversationId: input.run.conversationId,

@@ -51,15 +51,22 @@ export function processCssImports(css: string, _fromPath: string): string {
 
 export function extractCssVariables(css: string): Record<string, string> {
   const variables: Record<string, string> = {};
-  const varRegex = /--([a-zA-Z0-9-]+):\s*([^\s;][^;]*);/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = varRegex.exec(css)) !== null) {
-    const key = match[1];
-    const val = match[2];
-
-    if (!key || !val) continue;
-    variables[key] = val.trim();
+  // A declaration must end at a semicolon. Scan each segment once, and start
+  // names only at the beginning of a run so failed hyphen suffixes are not retried.
+  const segments = css.split(";");
+  for (let index = 0; index < segments.length - 1; index++) {
+    const segment = segments[index]!;
+    for (
+      const match of segment.matchAll(/(?<![a-zA-Z0-9-])([a-zA-Z0-9-]+):/g)
+    ) {
+      const run = match[1]!;
+      const marker = run.indexOf("--");
+      if (marker !== 0 || run.length === 2) continue;
+      const value = segment.slice(match.index + match[0].length).trim();
+      if (!value) continue;
+      variables[run.slice(marker + 2)] = value;
+      break;
+    }
   }
 
   return variables;

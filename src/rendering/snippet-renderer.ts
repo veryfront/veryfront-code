@@ -169,7 +169,7 @@ let distributedCacheInitPromise: Promise<CacheBackend> | null = null;
 
 async function getDistributedSnippetCache(): Promise<CacheBackend> {
   if (distributedSnippetCache) return distributedSnippetCache;
-  if (distributedCacheInitPromise) return distributedCacheInitPromise;
+  if (distributedCacheInitPromise !== null) return distributedCacheInitPromise;
 
   distributedCacheInitPromise = (async () => {
     try {
@@ -297,10 +297,18 @@ function getServerPort(moduleServerUrl?: string): number | undefined {
   try {
     const url = new URL(moduleServerUrl);
     return url.port ? Number.parseInt(url.port, 10) : undefined;
-  } catch (_) {
+  } catch {
     /* expected: invalid URL string */
     return undefined;
   }
+}
+
+function resolveSnippetReactPeers(
+  options: SnippetRenderOptions,
+  prepared: ReturnType<typeof getRuntimeModuleLoader>,
+): LocalReactPeerSnapshot | undefined {
+  if (prepared) return undefined;
+  return options.reactPeers ?? ((isNode || isBun) ? captureLocalReactPeers() : undefined);
 }
 
 export function renderSnippet(
@@ -356,9 +364,7 @@ export function renderSnippet(
             releaseId,
           );
         const projectId = dependencySource.projectId ?? options.projectId ?? options.projectDir;
-        const reactPeers = prepared
-          ? undefined
-          : options.reactPeers ?? ((isNode || isBun) ? captureLocalReactPeers() : undefined);
+        const reactPeers = resolveSnippetReactPeers(options, prepared);
         const reactVersion = await resolveProjectReactVersion({
           adapter,
           reactPeers,

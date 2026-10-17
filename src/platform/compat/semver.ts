@@ -1,11 +1,13 @@
 /** Shared version and npm range evaluation extracted from discovery and registry validation. */
-const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
+const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
-const SEMVER_PRERELEASE = `${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*`;
-const SEMVER_BUILD_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
+const SEMVER_PRERELEASE = String
+  .raw`${SEMVER_PRERELEASE_IDENTIFIER}(?:\.${SEMVER_PRERELEASE_IDENTIFIER})*`;
+const SEMVER_BUILD_IDENTIFIER = String.raw`[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*`;
 const EXACT_SEMVER_RE = new RegExp(
-  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE})?(?:\\+${SEMVER_BUILD_IDENTIFIER})?$`,
+  String
+    .raw`^v?${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE})?(?:\+${SEMVER_BUILD_IDENTIFIER})?$`,
 );
 
 export function isExactSemver(s: string): boolean {
@@ -193,6 +195,19 @@ export function prereleaseOf(version: string): string[] | null {
   return dash < 0 ? null : withoutBuild.slice(dash + 1).split(".");
 }
 
+function comparePrereleaseIdentifiers(a: string | undefined, b: string | undefined): number {
+  if (a === undefined) return -1;
+  if (b === undefined) return 1;
+  if (a === b) return 0;
+  const aNumeric = /^\d+$/.test(a);
+  const bNumeric = /^\d+$/.test(b);
+  // Compared by digits, not by Number: a numeric identifier has no length
+  // limit under semver, and two beyond 2^53 can collapse to the same value.
+  if (aNumeric && bNumeric) return compareDigits(a, b);
+  if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+  return a < b ? -1 : 1;
+}
+
 /** Semver pre-release precedence: a release outranks any of its pre-releases. */
 function comparePrereleases(left: string[] | null, right: string[] | null): number {
   if (left === null || right === null) {
@@ -200,24 +215,8 @@ function comparePrereleases(left: string[] | null, right: string[] | null): numb
     return left === null ? 1 : -1;
   }
   for (let index = 0; index < Math.max(left.length, right.length); index++) {
-    const a = left[index];
-    const b = right[index];
-    if (a === undefined) return -1;
-    if (b === undefined) return 1;
-    if (a === b) continue;
-    const aNumeric = /^\d+$/.test(a);
-    const bNumeric = /^\d+$/.test(b);
-    // Compared by digits, not by Number: a numeric identifier has no length
-    // limit under semver, and two beyond 2^53 can collapse to the same value.
-    if (aNumeric && bNumeric) {
-      const left = a.replace(/^0+(?=\d)/, "");
-      const right = b.replace(/^0+(?=\d)/, "");
-      if (left.length !== right.length) return left.length < right.length ? -1 : 1;
-      if (left === right) continue;
-      return left < right ? -1 : 1;
-    }
-    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
-    return a < b ? -1 : 1;
+    const order = comparePrereleaseIdentifiers(left[index], right[index]);
+    if (order !== 0) return order;
   }
   return 0;
 }

@@ -71,7 +71,10 @@ describe("audit-chat-composability", () => {
       `,
     }]);
 
-    assertEquals(compounds.get("Chat"), new Set(["Root", "Message", "ErrorBanner"]));
+    assertEquals(
+      compounds.get("Chat"),
+      new Set(["Root", "Message", "ErrorBanner"]),
+    );
   });
 
   // Only the compound's OWN properties are its anatomy. A key one level deeper
@@ -92,7 +95,10 @@ describe("audit-chat-composability", () => {
     assertEquals(compounds.get("Chat"), new Set(["Root", "config"]));
     assertEquals(
       findCompositionLies(
-        [{ path: "chat.stories.tsx", content: "const compositionTree = `<Chat.Message />`;" }],
+        [{
+          path: "chat.stories.tsx",
+          content: "const compositionTree = `<Chat.Message />`;",
+        }],
         compounds,
       ),
       [{ path: "chat.stories.tsx", token: "Chat.Message" }],
@@ -107,4 +113,15 @@ describe("audit-chat-composability", () => {
     }];
     assertEquals(findCompositionLies(stories, compounds).length, 0);
   });
+});
+
+it("keeps typed compound declarations with long trailing type whitespace", () => {
+  const source = `export const Compound: ComponentType${
+    " ".repeat(10000)
+  }= Object.assign(Base, { Part: Child });`;
+  assertEquals([
+    ...collectCompoundParts([{ path: "fixture.ts", content: source }]).get(
+      "Compound",
+    )!,
+  ], ["Part"]);
 });

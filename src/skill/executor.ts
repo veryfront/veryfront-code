@@ -39,7 +39,7 @@ const MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS = 55;
 const TIMEOUT_EXIT_CODE = 124;
 // Matches the local subprocess output-limit termination code.
 const OUTPUT_LIMIT_EXIT_CODE = 125;
-const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_KEY_REGEX = /^[A-Za-z_]\w*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
@@ -94,15 +94,40 @@ function assertScriptSnapshotPath(path: string): void {
   }
 }
 
-function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnapshot | undefined {
-  if (isProxyWithoutHooks(input)) {
-    throw new TypeError("Skill script executor input must not be a proxy");
+function captureScriptSnapshotFile(rawFiles: unknown[], index: number): SkillScriptSnapshotFile {
+  const rawFile = readOwnDataProperty(
+    rawFiles,
+    index,
+    `Skill script snapshot file ${index}`,
+  );
+  if (
+    typeof rawFile !== "object" || rawFile === null ||
+    isProxyWithoutHooks(rawFile)
+  ) {
+    throw new TypeError(`Skill script snapshot file ${index} must be an object`);
   }
-  const descriptor = getOwnPropertyDescriptor(input, "scriptSnapshot");
-  if (descriptor === undefined) return undefined;
-  if (!(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)) {
-    throw new TypeError("Skill script snapshot must be an own data property");
+  const path = readOwnDataProperty(
+    rawFile,
+    "path",
+    `Skill script snapshot file ${index} path`,
+  );
+  const content = readOwnDataProperty(
+    rawFile,
+    "content",
+    `Skill script snapshot file ${index} content`,
+  );
+  if (typeof path !== "string" || typeof content !== "string") {
+    throw new TypeError(`Skill script snapshot file ${index} must contain string data`);
   }
+  assertScriptSnapshotPath(path);
+  return { path, content };
+}
+
+function readScriptSnapshotManifest(descriptor: PropertyDescriptor): {
+  entryPath: string;
+  rawFiles: unknown[];
+  length: number;
+} {
   const rawSnapshot = descriptor.value;
   if (
     typeof rawSnapshot !== "object" || rawSnapshot === null ||
@@ -134,36 +159,38 @@ function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnap
     );
   }
 
+  return { entryPath, rawFiles, length: length as number };
+}
+
+function assertScriptSnapshotEntry(
+  input: SkillScriptExecutorInput,
+  entryContent: string | undefined,
+): void {
+  if (entryContent === undefined) {
+    throw new TypeError("Skill script snapshot does not contain its entryPath");
+  }
+  if (input.scriptContent !== undefined && input.scriptContent !== entryContent) {
+    throw new TypeError("Skill script snapshot entry does not match scriptContent");
+  }
+}
+
+function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnapshot | undefined {
+  if (isProxyWithoutHooks(input)) {
+    throw new TypeError("Skill script executor input must not be a proxy");
+  }
+  const descriptor = getOwnPropertyDescriptor(input, "scriptSnapshot");
+  if (descriptor === undefined) return undefined;
+  if (!(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)) {
+    throw new TypeError("Skill script snapshot must be an own data property");
+  }
+  const { entryPath, rawFiles, length } = readScriptSnapshotManifest(descriptor);
+
   const files: SkillScriptSnapshotFile[] = [];
   const seen = new Set<string>();
   let entryContent: string | undefined;
   let totalBytes = 0;
-  for (let index = 0; index < (length as number); index += 1) {
-    const rawFile = readOwnDataProperty(
-      rawFiles,
-      index,
-      `Skill script snapshot file ${index}`,
-    );
-    if (
-      typeof rawFile !== "object" || rawFile === null ||
-      isProxyWithoutHooks(rawFile)
-    ) {
-      throw new TypeError(`Skill script snapshot file ${index} must be an object`);
-    }
-    const path = readOwnDataProperty(
-      rawFile,
-      "path",
-      `Skill script snapshot file ${index} path`,
-    );
-    const content = readOwnDataProperty(
-      rawFile,
-      "content",
-      `Skill script snapshot file ${index} content`,
-    );
-    if (typeof path !== "string" || typeof content !== "string") {
-      throw new TypeError(`Skill script snapshot file ${index} must contain string data`);
-    }
-    assertScriptSnapshotPath(path);
+  for (let index = 0; index < length; index += 1) {
+    const { path, content } = captureScriptSnapshotFile(rawFiles, index);
     if (reflectApply(setHas, seen, [path]) as boolean) {
       throw new TypeError(`Skill script snapshot contains duplicate path: ${path}`);
     }
@@ -184,12 +211,7 @@ function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnap
     appendOwnArrayElement(files, capturedFile);
     if (path === entryPath) entryContent = content;
   }
-  if (entryContent === undefined) {
-    throw new TypeError("Skill script snapshot does not contain its entryPath");
-  }
-  if (input.scriptContent !== undefined && input.scriptContent !== entryContent) {
-    throw new TypeError("Skill script snapshot entry does not match scriptContent");
-  }
+  assertScriptSnapshotEntry(input, entryContent);
   return freeze({ entryPath, files: freeze(files) });
 }
 

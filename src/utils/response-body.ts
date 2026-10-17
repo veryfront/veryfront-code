@@ -4,6 +4,7 @@ export interface ResponseTextPrefix {
   truncated: boolean;
 }
 
+const numberIsSafeInteger = Number.isSafeInteger;
 const NativeUint8Array = Uint8Array;
 const NativeTextDecoder = TextDecoder;
 const ReflectApply = Reflect.apply;
@@ -49,7 +50,7 @@ function requireTypedArrayGetter(
 
 function byteLengthOf(bytes: Uint8Array): number {
   const byteLength = ReflectApply(typedArrayByteLengthGetter, bytes, []);
-  if (!Number.isSafeInteger(byteLength) || (byteLength as number) < 0) {
+  if (!numberIsSafeInteger(byteLength) || (byteLength as number) < 0) {
     throw new InvalidResponseBodyChunkError("Response body chunk has an invalid byte length");
   }
   return byteLength as number;
@@ -58,8 +59,8 @@ function byteLengthOf(bytes: Uint8Array): number {
 function viewBytes(bytes: Uint8Array, start: number, length: number): Uint8Array {
   const byteLength = byteLengthOf(bytes);
   if (
-    !Number.isSafeInteger(start) || start < 0 ||
-    !Number.isSafeInteger(length) || length < 0 ||
+    !numberIsSafeInteger(start) || start < 0 ||
+    !numberIsSafeInteger(length) || length < 0 ||
     start > byteLength - length
   ) {
     throw new InvalidResponseBodyChunkError(
@@ -913,7 +914,7 @@ class TopLevelJsonStringReader {
 }
 
 function validateJsonStringReadLimit(value: number, label: string, allowZero: boolean): number {
-  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) {
+  if (!numberIsSafeInteger(value) || value < (allowZero ? 0 : 1)) {
     throw new RangeError(
       `${label} must be ${allowZero ? "a non-negative" : "a positive"} safe integer`,
     );
@@ -1024,7 +1025,7 @@ async function readResponseJsonStringEncodedWithinLimit(
       );
     }
     const contentLength = Number(contentLengthHeader);
-    if (!Number.isSafeInteger(contentLength)) {
+    if (!numberIsSafeInteger(contentLength)) {
       cancelResponseBody(response, "invalid content-length");
       throw new InvalidResponseBodyMetadataError(
         "Response body has an invalid Content-Length",
@@ -1130,7 +1131,7 @@ export async function readResponseTextPrefix(
   abortSignal?: AbortSignal,
   options: { fatalUtf8?: boolean } = {},
 ): Promise<ResponseTextPrefix> {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+  if (!numberIsSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("maxBytes must be a non-negative safe integer");
   }
   abortSignal?.throwIfAborted();

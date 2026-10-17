@@ -1,3 +1,8 @@
+import {
+  getHostedChildTaskInputResolver,
+  type HostedChildTaskInputResolver,
+  withHostedChildTaskInputResolver,
+} from "../hosted/accepted-child-input-scope.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -1205,4 +1210,69 @@ describe("agent/ag-ui-detached-start", () => {
       "Detached AG-UI start requires either an agent or startDetachedExecution handler.",
     );
   });
+});
+
+it("keeps detached input resolution live after the acknowledgement and revokes it at execution completion", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let scheduled: Promise<void> | undefined;
+  let retained: HostedChildTaskInputResolver | undefined;
+  let resolved = false;
+  const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+  const response = await withHostedChildTaskInputResolver(async () => {
+    resolved = true;
+    return undefined;
+  }, () =>
+    executeAgUiDetachedStart({
+      sessionManager,
+      startDetachedExecution: async () => {
+        await gate;
+        retained = getHostedChildTaskInputResolver();
+        await retained?.({
+          projectId: "project",
+          parentRunId: "parent",
+          targetAgentId: "child",
+          toolCallId: "call",
+          evidence: {
+            readParentToolResults: async () => [],
+            readCommittedVersion: async (path, versionId) => ({ path, versionId, content: "" }),
+          },
+        });
+      },
+    }, {
+      request: AgUiDetachedStartRequestSchema.parse({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] }],
+      }),
+      rawRequest: createDetachedRequest(),
+      requestOrCtx: {
+        waitUntil(task: Promise<void>) {
+          scheduled = task;
+        },
+      },
+    }));
+  await response.text();
+  release();
+  await scheduled;
+  assertEquals(resolved, true);
+  assertExists(retained);
+  let revoked = false;
+  try {
+    await retained({
+      projectId: "project",
+      parentRunId: "parent",
+      targetAgentId: "child",
+      toolCallId: "call",
+      evidence: {
+        readParentToolResults: async () => [],
+        readCommittedVersion: async (path, versionId) => ({ path, versionId, content: "" }),
+      },
+    });
+  } catch {
+    revoked = true;
+  }
+  assertEquals(revoked, true);
 });
