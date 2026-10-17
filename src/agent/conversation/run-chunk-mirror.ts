@@ -39,6 +39,17 @@ import {
   createConversationRunEventQueueController,
 } from "./durable.ts";
 
+function acknowledgeMirroredResults(
+  mirror: ConversationRunChunkMirror,
+  events: ConversationRunEvent[],
+): void {
+  for (const event of events) {
+    if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
+      acknowledgeMirroredToolResult(mirror, event.toolCallId);
+    }
+  }
+}
+
 const DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT = 24;
 const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;
 const DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE = 24;
@@ -328,11 +339,7 @@ export function createConversationRunChunkMirror(
       } else {
         mirror.enqueue(events);
       }
-      for (const event of events) {
-        if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
-          acknowledgeMirroredToolResult(result, event.toolCallId);
-        }
-      }
+      acknowledgeMirroredResults(result, events);
     },
     async appendEvents(events) {
       if (mirror.getSnapshot().disabled || events.length === 0) {
