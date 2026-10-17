@@ -43,6 +43,18 @@ function fixture(
           ? reviews
           : endpoint === github.rest.issues.listComments
           ? comments
+          : endpoint === github.rest.repos.listCommitStatusesForRef
+          ? statuses.filter((status) =>
+            status.sha === (_params as { ref: string }).ref
+          )
+            .toReversed().map((status) => ({
+              ...status,
+              creator: {
+                login: "github-actions[bot]",
+                id: 41898282,
+                type: "Bot",
+              },
+            }))
           : reactions,
       ),
     graphql: () =>
@@ -80,6 +92,7 @@ function fixture(
         getRef: () => Promise.resolve({ data: { object: { sha: GROUP } } }),
       },
       repos: {
+        listCommitStatusesForRef: () => {},
         createCommitStatus: (status: Record<string, unknown>) => {
           statuses.push(status);
           return Promise.resolve({});
@@ -413,5 +426,38 @@ describe("automated review completion", () => {
       })
     );
     assertEquals(statuses, []);
+  });
+  it("publishes only state changes for an unchanged PR head", async () => {
+    const reviews: Record<string, unknown>[] = [];
+    const { github, statuses } = fixture(reviews);
+    const options = { github, owner: "owner", repo: "repo", pullNumber: 42 };
+    await publishReviewStatus(options);
+    await publishReviewStatus(options);
+    assertEquals(statuses.map((status) => status.state), ["pending"]);
+    reviews.push(review());
+    await publishReviewStatus(options);
+    await publishReviewStatus(options);
+    assertEquals(statuses.map((status) => status.state), [
+      "pending",
+      "success",
+    ]);
+  });
+
+  it("deduplicates queue statuses independently from the source PR status", async () => {
+    const { github, statuses } = fixture([review()]);
+    const options = {
+      github,
+      context: {
+        repo: { owner: "owner", repo: "repo" },
+        eventName: "pull_request_target",
+        payload: { pull_request: { number: 42 } },
+      },
+    };
+    await reconcileReviewEvent(options);
+    await reconcileReviewEvent(options);
+    assertEquals(statuses.map((status) => [status.sha, status.state]), [[
+      HEAD,
+      "success",
+    ], [GROUP, "success"]]);
   });
 });

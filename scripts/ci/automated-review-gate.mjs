@@ -139,7 +139,7 @@ export async function publishReviewStatus(
   if (mergeGroup) {
     await verifyMergeGroup(github, common, pullNumber, headSha, mergeGroup);
   }
-  await github.rest.repos.createCommitStatus({
+  const status = {
     ...common,
     sha: mergeGroup?.head_sha ?? headSha,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
@@ -148,7 +148,24 @@ export async function publishReviewStatus(
       ? "Codex reviewed the current pull request head"
       : "Waiting for Codex to review the current pull request head",
     target_url: pull.html_url,
-  });
+  };
+  const history = await github.paginate(
+    github.rest.repos.listCommitStatusesForRef,
+    {
+      ...common,
+      ref: status.sha,
+      per_page: 100,
+    },
+  );
+  const latest = history.find((candidate) =>
+    candidate.context === status.context
+  );
+  if (
+    latest?.state === status.state &&
+    latest?.description === status.description &&
+    latest?.target_url === status.target_url
+  ) return;
+  await github.rest.repos.createCommitStatus(status);
 }
 
 export async function reconcileReviewEvent({ github, context }) {
