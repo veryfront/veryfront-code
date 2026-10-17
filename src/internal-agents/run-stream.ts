@@ -1,3 +1,6 @@
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { runWithRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
 import { startManagedRecoveryLifetime } from "./managed-recovery-lifetime.ts";
@@ -1292,6 +1295,7 @@ function createProviderReplayCheckpointRelay(): {
     invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
   ) => Promise<void>;
   fail: (failure?: ProviderReplayTurnFailure) => Promise<void>;
+  endInput: () => void;
   takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
   hasCompletedTurn: () => boolean;
 } {
@@ -1301,6 +1305,7 @@ function createProviderReplayCheckpointRelay(): {
     | undefined;
   let rejectPending: ((error: Error) => void) | undefined;
   let terminalError: ProviderReplayTurnError | undefined;
+  let inputEnded = false;
 
   const takeReadyTurn = (): ProviderReplayPrivateFrame[] | undefined => {
     for (let index = 0; index < buffered.length; index++) {
@@ -1355,10 +1360,24 @@ function createProviderReplayCheckpointRelay(): {
       rejectPending = undefined;
       reject?.(terminalError);
     },
+    endInput: () => {
+      inputEnded = true;
+      if (rejectPending) {
+        const reject = rejectPending;
+        resolvePending = undefined;
+        rejectPending = undefined;
+        reject(new Error("Runtime stream ended before its provider replay boundary"));
+      }
+    },
     takeCompletedTurn: () => {
       if (terminalError) return Promise.reject(terminalError);
       const frames = takeReadyTurn();
       if (frames) return Promise.resolve(frames);
+      if (inputEnded) {
+        return Promise.reject(
+          new Error("Runtime stream ended before its provider replay boundary"),
+        );
+      }
       if (resolvePending) {
         return Promise.reject(new Error("Provider replay turn boundary already has a waiter"));
       }
@@ -1931,7 +1950,13 @@ export async function createRuntimeAgentStreamResponse(
             deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
           };
 
+          let presentationTail = Promise.resolve();
+          let presentationFailure: { error: unknown } | undefined;
+          let presentationStopped = false;
+          let pendingPresentationEvents = 0;
+          let pendingPresentationBytes = 0;
           const throwIfAborted = () => {
+            if (presentationFailure) throw presentationFailure.error;
             if (aborted || abortSignal.aborted) {
               throw new AgentRunCancelledError();
             }
@@ -2035,13 +2060,11 @@ export async function createRuntimeAgentStreamResponse(
               }
               providerReplayStepOpen = false;
             };
-            const emitMappedEvent = async (
+            const presentMappedEvent = async (
               mappedEvent: {
                 event: string;
                 payload: Record<string, unknown>;
               },
-              occurrenceId?: string,
-              observedToolResult = false,
             ) => {
               if (mappedEvent.event === "StepStarted") {
                 await flushProviderReplayTurn();
@@ -2065,12 +2088,59 @@ export async function createRuntimeAgentStreamResponse(
               }
               prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
               runOutcome.observe(mappedEvent.event, mappedEvent.payload);
+              enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+            };
+            const emitMappedEvent = async (
+              mappedEvent: { event: string; payload: Record<string, unknown> },
+              occurrenceId?: string,
+              observedToolResult = false,
+            ) => {
+              // Native recovery waits for every local admission before executing
+              // a prefix skill. Replay completion can itself depend on that skill.
+              // Persist while the ordered client presenter waits for replay so
+              // reading the remaining admissions cannot form a circular wait.
+              if (mappedEvent.event === "RunError") {
+                await providerReplayCheckpointRelay.fail();
+              }
               await managedRecovery?.writer?.appendMappedEvent(
                 mappedEvent,
                 occurrenceId,
                 observedToolResult,
               );
-              enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+              if (!managedRecovery?.writer || !shouldEmitProviderReplayCheckpoints) {
+                await presentMappedEvent(mappedEvent);
+                return;
+              }
+              throwIfAborted();
+              const bytes = privateByteLength(encodePrivateText(privateJsonStringify(
+                mappedEvent,
+                null,
+                undefined,
+                MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+              )));
+              // Bound both pending promise nodes and retained payloads. Normal
+              // reading remains backpressured by each authenticated append.
+              if (
+                pendingPresentationEvents >= 4096 ||
+                pendingPresentationBytes + bytes > MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
+              ) {
+                throw new Error("Managed recovery client presentation exceeds its bound");
+              }
+              pendingPresentationEvents++;
+              pendingPresentationBytes += bytes;
+              const operation = presentationTail.then(async () => {
+                if (!presentationStopped) await presentMappedEvent(mappedEvent);
+              }).finally(() => {
+                pendingPresentationEvents--;
+                pendingPresentationBytes -= bytes;
+              });
+              presentationTail = operation.catch((error) => {
+                presentationFailure ??= { error };
+                presentationStopped = true;
+                void providerReplayCheckpointRelay.fail();
+                deps.sessionManager.cancelRun(input.runId, abortSignal);
+                void cancelReaderOnce(error);
+              });
             };
             heartbeatTimer = setInterval(
               enqueueHeartbeatIfAttached,
@@ -2138,6 +2208,8 @@ export async function createRuntimeAgentStreamResponse(
               }
             }
 
+            providerReplayCheckpointRelay.endInput();
+            await presentationTail;
             throwIfAborted();
             await flushProviderReplayTurn();
             while (providerReplayCheckpointRelay.hasCompletedTurn()) {
@@ -2213,7 +2285,8 @@ export async function createRuntimeAgentStreamResponse(
             } else {
               logger.info("Internal agent runtime stream finalized", finalizedLogContext);
             }
-          } catch (error) {
+          } catch (caughtError) {
+            const error = presentationFailure ? presentationFailure.error : caughtError;
             if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
             readerExitReason = error;
             if (error instanceof AgentRunCancelledError) {
@@ -2283,6 +2356,9 @@ export async function createRuntimeAgentStreamResponse(
               });
             }
           } finally {
+            presentationStopped = true;
+            await providerReplayCheckpointRelay.fail();
+            await presentationTail;
             recoveryLifetime?.stop();
             revokePlatformDependencyOwner(input);
             stopHeartbeat?.();
