@@ -1,3 +1,8 @@
+import {
+  type HostedAcceptedTaskInputEvent,
+  snapshotHostedAcceptedTaskInputEvent,
+} from "#veryfront/agent/hosted/accepted-task-input.ts";
+import { assertThrows } from "#veryfront/testing/assert.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
@@ -43,11 +48,13 @@ it("pins both credentialed evidence readers when tenant code replaces string met
   });
   const original = String.prototype.replace;
   try {
-    String.prototype.replace = function (...args: Parameters<typeof original>) {
-      return String(this) === "https://api.example/v1///"
-        ? "https://attacker.invalid"
-        : Reflect.apply(original, this, args);
-    };
+    Object.defineProperty(String.prototype, "replace", {
+      value: function (this: unknown, ...args: unknown[]): string {
+        return String(this) === "https://api.example/v1///"
+          ? "https://attacker.invalid"
+          : Reflect.apply(original, this, args);
+      },
+    });
     await evidence.readParentToolResults();
     await evidence.readCommittedVersion("note.txt", version);
   } finally {
@@ -64,4 +71,91 @@ it("pins both credentialed evidence readers when tenant code replaces string met
       authorization: "Bearer synthetic-parent-token",
     },
   ]);
+});
+
+const receipt = (): HostedAcceptedTaskInputEvent => ({
+  type: "AGENT_RUN_TASK_INPUT_ACCEPTED",
+  version: 1,
+  targetAgentId: "child",
+  sourceEventIds: [1, 2],
+  artifactVersions: [{
+    path: "note",
+    version_id: "11111111-1111-4111-8111-111111111111",
+    sha256: "a".repeat(64),
+    size_bytes: 1,
+  }],
+  payload: { value: "accepted" },
+});
+
+it("validates accepted receipts despite throwing tenant replacements", () => {
+  const input = receipt();
+  const patches: [object, string, unknown][] = [
+    [Object, "keys", () => {
+      throw new Error("poisoned keys");
+    }],
+    [Array.prototype, "sort", () => {
+      throw new Error("poisoned sort");
+    }],
+    [Array.prototype, "some", () => {
+      throw new Error("poisoned some");
+    }],
+    [String.prototype, "localeCompare", () => {
+      throw new Error("poisoned comparison");
+    }],
+    [RegExp.prototype, "test", () => {
+      throw new Error("poisoned test");
+    }],
+    [Number, "isSafeInteger", () => {
+      throw new Error("poisoned integer");
+    }],
+  ];
+  const descriptors = patches.map(([target, name]) =>
+    Object.getOwnPropertyDescriptor(target, name)!
+  );
+  let accepted: HostedAcceptedTaskInputEvent | undefined;
+  try {
+    for (const [target, name, replacement] of patches) {
+      Object.defineProperty(target, name, { value: replacement });
+    }
+    accepted = snapshotHostedAcceptedTaskInputEvent(input);
+  } finally {
+    patches.forEach(([target, name], index) =>
+      Object.defineProperty(target, name, descriptors[index]!)
+    );
+  }
+  assertEquals(accepted, input);
+});
+
+it("rejects malformed receipts despite permissive tenant replacements", () => {
+  const input = receipt();
+  const invalid = {
+    ...input,
+    sourceEventIds: [1.5],
+    artifactVersions: [{
+      ...input.artifactVersions[0]!,
+      version_id: "mutable-alias",
+      sha256: "invalid",
+      size_bytes: 1,
+    }],
+  };
+  const originalSome = Array.prototype.some,
+    originalTest = RegExp.prototype.test,
+    originalInteger = Number.isSafeInteger;
+  let rejected = false;
+  try {
+    Array.prototype.some = () => false;
+    RegExp.prototype.test = () => true;
+    Number.isSafeInteger = () => true;
+    try {
+      snapshotHostedAcceptedTaskInputEvent(invalid);
+    } catch {
+      rejected = true;
+    }
+  } finally {
+    Array.prototype.some = originalSome;
+    RegExp.prototype.test = originalTest;
+    Number.isSafeInteger = originalInteger;
+  }
+  assertEquals(rejected, true);
+  assertThrows(() => snapshotHostedAcceptedTaskInputEvent(invalid));
 });

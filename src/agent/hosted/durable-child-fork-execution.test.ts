@@ -2018,6 +2018,7 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
     let reads = 0, writes = 0, resolutions = 0, admissions = 0;
     let unavailable = false;
     const receipts: unknown[] = [];
+    let cancelDuringAppend: AbortController | undefined;
     const capability = createHostedRunEventWriterCapability({
       apiUrl: API_URL,
       projectId: PROJECT_ID,
@@ -2039,11 +2040,30 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
           if (replayMode === "ambiguous receipt") {
             return Promise.reject(new Error("Receipt append outcome unknown"));
           }
-          return Promise.resolve(Response.json({
+          const response = Response.json({
             run_id: PARENT_CONVERSATION_ID,
             appended_count: 1,
             latest_event_id: writes,
-          }));
+          });
+          if (cancelDuringAppend) {
+            const body = response.body!, controller = cancelDuringAppend;
+            Object.defineProperty(response, "body", {
+              value: {
+                getReader() {
+                  const reader = body.getReader();
+                  return {
+                    read: () => reader.read(),
+                    cancel: () => reader.cancel(),
+                    releaseLock() {
+                      reader.releaseLock();
+                      controller.abort();
+                    },
+                  };
+                },
+              },
+            });
+          }
+          return Promise.resolve(response);
         }
         return Promise.resolve(Response.json({
           token: CHILD_RUN_EVENT_TOKEN,
@@ -2190,6 +2210,15 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
         assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 0]);
         return;
       }
+      cancelDuringAppend = new AbortController();
+      await assertRejects(() =>
+        executeHostedDurableChildFork({
+          ...input,
+          executionOptions: { ...input.executionOptions, abortSignal: cancelDuringAppend!.signal },
+        })
+      );
+      assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 0]);
+      cancelDuringAppend = undefined;
       const [first, concurrent] = await Promise.all([
         executeHostedDurableChildFork(input),
         executeHostedDurableChildFork(input),

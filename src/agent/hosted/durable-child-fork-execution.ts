@@ -1090,6 +1090,7 @@ async function executeHostedDurableChildForkWithCapability<
     `${input.parentRunId}:${input.executionOptions.toolCallId}`,
     resolver,
   );
+  throwIfChildRunAborted(input.executionOptions.abortSignal);
   let identifiers: HostedChildRunIdentifiers;
 
   try {
