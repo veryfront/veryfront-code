@@ -158,7 +158,7 @@ describe("schedule command", () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
-        schedules: [{
+        data: [{
           id: scheduleId,
           name: "Process job submissions",
           status: "active",

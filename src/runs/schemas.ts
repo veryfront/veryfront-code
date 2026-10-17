@@ -162,22 +162,9 @@ const getScheduleReferenceSchema = defineSchema((v) =>
   })
 );
 
-/**
- * Schedule list response. The canonical list key is `data`. `schedules` is the
- * legacy key, accepted while API deployments that predate `data` are in use.
- */
+/** Schedule list response, read from the canonical `data` list key. */
 export const getScheduleReferenceListSchema = defineSchema((v) =>
-  v.object({
-    data: v.array(getScheduleReferenceSchema()).optional(),
-    schedules: v.array(getScheduleReferenceSchema()).optional(),
-  }).superRefine(({ data, schedules }, context) => {
-    if (data === undefined && schedules === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "Schedule list response must include data.",
-      });
-    }
-  })
+  v.object({ data: v.array(getScheduleReferenceSchema()) })
 );
 
 export const getCancelRunResponseSchema = defineSchema((v) =>
