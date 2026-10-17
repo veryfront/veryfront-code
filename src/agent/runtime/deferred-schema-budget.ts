@@ -1,3 +1,4 @@
+import { compareStrings } from "#veryfront/utils/compare.ts";
 import type { Message } from "../types.ts";
 import { isProviderNativeToolExposureDefinition } from "./provider-native-tool-inventory.ts";
 import {
@@ -22,6 +23,48 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   // Each parallel search is tracked on its own: one readable result says
   // nothing about what an unreadable sibling loaded.
   let unknownSearchCalls = new Set<string>();
+  function recordToolResult(
+    part: { toolCallId: string; toolName: string; result?: unknown },
+  ): void {
+    pending.delete(part.toolCallId);
+    if (!("result" in part) || part.toolName !== TOOL_SEARCH_TOOL_NAME) return;
+    const result = part.result;
+    if (
+      !result || typeof result !== "object" || !("matches" in result) ||
+      !Array.isArray(result.matches)
+    ) return;
+    if (modelStepSinceSearch) awaitingFirstUse.clear();
+    modelStepSinceSearch = false;
+    unknownSearchCalls.delete(part.toolCallId);
+    for (const match of result.matches) {
+      if (
+        match && typeof match === "object" && match.status === "loaded" &&
+        typeof match.name === "string"
+      ) awaitingFirstUse.add(match.name);
+    }
+  }
+  function recordMessageTools(message: Message): void {
+    const names = new Set<string>();
+    let searchCalls: Set<string> | undefined;
+    for (const part of message.parts) {
+      if (part.type === "tool-result") {
+        recordToolResult(part);
+      } else if (part.type.startsWith("tool-") && "toolCallId" in part) {
+        pending.set(part.toolCallId, part.toolName);
+        names.add(part.toolName);
+        awaitingFirstUse.delete(part.toolName);
+        if (part.toolName === TOOL_SEARCH_TOOL_NAME) {
+          searchCalls ??= new Set();
+          searchCalls.add(part.toolCallId);
+        }
+      }
+    }
+    if (searchCalls) unknownSearchCalls = searchCalls;
+    if (names.size > 0) {
+      latestCallNames = names;
+      modelStepSinceSearch = true;
+    }
+  }
   for (const message of messages) {
     if (message.role === "user") {
       // A newer user turn ends the previous tool opportunity, so its
@@ -32,42 +75,7 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
       awaitingFirstUse.clear();
       modelStepSinceSearch = false;
     }
-    const names = new Set<string>();
-    let searchCalls: Set<string> | undefined;
-    for (const part of message.parts) {
-      if (part.type === "tool-result") {
-        pending.delete(part.toolCallId);
-        if ("result" in part && part.toolName === TOOL_SEARCH_TOOL_NAME) {
-          const result = part.result;
-          if (
-            result && typeof result === "object" && "matches" in result &&
-            Array.isArray(result.matches)
-          ) {
-            if (modelStepSinceSearch) awaitingFirstUse.clear();
-            modelStepSinceSearch = false;
-            unknownSearchCalls.delete(part.toolCallId);
-            for (const match of result.matches) {
-              if (
-                match && typeof match === "object" && match.status === "loaded" &&
-                typeof match.name === "string"
-              ) awaitingFirstUse.add(match.name);
-            }
-          }
-        }
-      } else if (part.type.startsWith("tool-") && "toolCallId" in part) {
-        pending.set(part.toolCallId, part.toolName);
-        names.add(part.toolName);
-        awaitingFirstUse.delete(part.toolName);
-        if (part.toolName === TOOL_SEARCH_TOOL_NAME) {
-          (searchCalls ??= new Set()).add(part.toolCallId);
-        }
-      }
-    }
-    if (searchCalls) unknownSearchCalls = searchCalls;
-    if (names.size > 0) {
-      latestCallNames = names;
-      modelStepSinceSearch = true;
-    }
+    recordMessageTools(message);
   }
   const protectedNames = new Set([...latestCallNames, ...pending.values(), ...awaitingFirstUse]);
   // A schema returned by tool_search has not yet had a chance to be called.
@@ -75,7 +83,7 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   // newest loaded schema; known results, even empty ones, name what loaded.
   if (latestCallNames.has(TOOL_SEARCH_TOOL_NAME) && unknownSearchCalls.size > 0) {
     const loaded = [...plan.loadedToolNames];
-    const newest = loaded[loaded.length - 1];
+    const newest = loaded.at(-1);
     if (newest !== undefined) protectedNames.add(newest);
   }
   return protectedNames;
@@ -108,9 +116,9 @@ export function fitDeferredToolSchemasToBudget(input: {
     if (!visible.some((entry) => entry.name === TOOL_SEARCH_TOOL_NAME)) {
       visible.push(createToolSearchDefinition());
     }
-    visible.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    visible.sort((left, right) => compareStrings(left.name, right.name));
     const deferred = [...plan.deferred, tool];
-    deferred.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    deferred.sort((left, right) => compareStrings(left.name, right.name));
     const candidate: ToolExposurePlan = { ...plan, loadedToolNames, visible, deferred };
     const nextBudget = input.inspect(candidate);
     if (nextBudget.outputExceeded || nextBudget.estimatedInputTokens === null) continue;
