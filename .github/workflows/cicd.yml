@@ -2709,6 +2709,66 @@ jobs:
   # CD: Update Homebrew (stable releases only)
   # ============================================
 
+  component-contracts:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Component publication contracts
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test read-only release witness
+        run: python3 -m unittest discover -s scripts/ci -p 'test_publish_component.py'
+
+  publish-platform-component:
+    name: Publish platform component
+    needs: [component-contracts, quality-gate-release, sonar-quality-gate, quality-gate-registry, version-check, prerelease, release]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          inputs.maintenance_release_number == '' &&
+          needs.component-contracts.result == 'success' &&
+          needs.quality-gate-release.result == 'success' && needs.sonar-quality-gate.result == 'success' &&
+          needs.version-check.result == 'success' &&
+          ((needs.version-check.outputs.is_stable == 'true' &&
+            needs.version-check.outputs.stable_release_requested == 'false') ||
+           needs.quality-gate-registry.result == 'success') }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Resolve already-published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          STABLE_VERSION: ${{ needs.version-check.outputs.version }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          test -n "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Witness immutable npm and compiled release materials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 -I scripts/ci/publish-component.py "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: platform-component-${{ github.run_id }}-${{ github.run_attempt }}
+          path: platform-component.json
+          if-no-files-found: error
+          retention-days: 7
+
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, publish-public-release, version-check]
