@@ -1352,10 +1352,12 @@ function segmentTokens(pattern: string): SegmentToken[] {
     if (previous?.kind === "star") previous.consecutive = true;
     else tokens.push({ kind: "star" });
   }
-  for (let index = 0; index < pattern.length; index++) {
+  let index = 0;
+  while (index < pattern.length) {
     const char = pattern[index]!;
     if (char === "\\" && index + 1 < pattern.length) {
       tokens.push({ kind: "char", char: pattern[++index]! });
+      index++;
       continue;
     }
     // Read before `*` and `?` stand for themselves: in `*(app|web)` the mark
@@ -1363,24 +1365,27 @@ function segmentTokens(pattern: string): SegmentToken[] {
     // behind as literal text.
     const extglobEnd = appendExtglob(char, index);
     if (extglobEnd !== undefined) {
-      index = extglobEnd;
+      index = extglobEnd + 1;
       continue;
     }
     if (char === "*") {
       appendStar();
+      index++;
       continue;
     }
     if (char === "?") {
       tokens.push({ kind: "any" });
+      index++;
       continue;
     }
     const close = char === "[" ? closingBracket(pattern, index) : -1;
     if (close < 0) {
       tokens.push({ kind: "char", char });
+      index++;
       continue;
     }
     tokens.push(characterClass(pattern.slice(index + 1, close)));
-    index = close;
+    index = close + 1;
   }
   return tokens;
 }
@@ -1428,16 +1433,17 @@ function closingBracket(pattern: string, open: number): number {
   let index = open + 1;
   if (pattern[index] === "!" || pattern[index] === "^") index++;
   if (pattern[index] === "]") index++;
-  for (; index < pattern.length; index++) {
+  while (index < pattern.length) {
     // A POSIX class carries a `]` of its own, which does not end the class --
     // but only a NAMED one: minimatch reads `[[:bogus:]]` as the ordinary
     // members `[:bogus` and a literal `]` after them.
     const posix = pattern.startsWith("[:", index) ? pattern.indexOf(":]", index + 2) : -1;
     if (posix >= 0 && POSIX_CLASSES.has(pattern.slice(index + 2, posix))) {
-      index = posix + 1;
+      index = posix + 2;
       continue;
     }
     if (pattern[index] === "]") return index;
+    index++;
   }
   return -1;
 }
@@ -1473,12 +1479,13 @@ function characterClass(body: string): SegmentToken {
   const negated = body.startsWith("!") || body.startsWith("^");
   const members = negated ? body.slice(1) : body;
   const tests: ((char: string) => boolean)[] = [];
-  for (let index = 0; index < members.length; index++) {
+  let index = 0;
+  while (index < members.length) {
     const posix = members.startsWith("[:", index) ? members.indexOf(":]", index + 2) : -1;
     const named = posix < 0 ? undefined : POSIX_CLASSES.get(members.slice(index + 2, posix));
     if (named !== undefined) {
       tests.push(named);
-      index = posix + 1;
+      index = posix + 2;
       continue;
     }
     const from = members[index]!;
@@ -1489,6 +1496,7 @@ function characterClass(body: string): SegmentToken {
     const to = dashed ? members[index + 2]! : from;
     if (dashed) index += 2;
     tests.push((char) => char >= from && char <= to);
+    index++;
   }
   const listed = (char: string) => tests.some((test) => test(char));
   return {
