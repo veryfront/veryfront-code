@@ -119,40 +119,18 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("reads the legacy variable list when the API has no environment variable route", async () => {
+  it("denies a 404 from the environment variable route without another request", async () => {
     const requests: string[] = [];
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
       requests.push(`${url.pathname}${url.search}`);
-      assertEquals(req.headers.get("authorization"), "Bearer test-token");
-      if (url.pathname === "/projects/my-project/environments/env-123/variables") {
-        return Response.json({ code: "not_found" }, { status: 404 });
-      }
-      return Response.json({ data: [{ key: "API_KEY", value: "sk-123" }] });
-    });
-
-    try {
-      assertEquals(await fetchFromMockApi(port), { API_KEY: "sk-123" });
-      assertEquals(requests, [
-        "/projects/my-project/environments/env-123/variables?limit=100",
-        "/projects/my-project/environment-variables?environment_id=env-123&limit=100",
-      ]);
-    } finally {
-      await server.shutdown();
-    }
-  });
-
-  it("denies an environment that neither variable route finds", async () => {
-    let requestCount = 0;
-    const { server, port } = createMockServer(() => {
-      requestCount++;
       return Response.json({ code: "not_found" }, { status: 404 });
     });
 
     try {
       const error = await assertRejects(() => fetchFromMockApi(port));
       assertEquals((error as { slug?: string }).slug, "permission-denied");
-      assertEquals(requestCount, 2);
+      assertEquals(requests, ["/projects/my-project/environments/env-123/variables?limit=100"]);
     } finally {
       await server.shutdown();
     }

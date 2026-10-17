@@ -225,15 +225,9 @@ export async function fetchProjectEnvVars(
   // The value is normalized with captured intrinsics, and it is part of the
   // host API snapshot, so project code cannot steer it after startup.
   const origin = getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL") ?? apiBaseUrl;
-  const projectPath = `${origin}/projects/${encodeURIComponent(projectSlug)}`;
-  const managementUrl = `${projectPath}/environments/${
+  const managementUrl = `${origin}/projects/${encodeURIComponent(projectSlug)}/environments/${
     encodeURIComponent(environmentId)
   }/variables?limit=${ENV_VARS_FETCH_LIMIT}`;
-  // The query-parameter list is the deprecated name of the same operation. It is
-  // read only when the API answers 404 because it predates the environment route.
-  const legacyManagementUrl = `${projectPath}/environment-variables?environment_id=${
-    encodeURIComponent(environmentId)
-  }&limit=${ENV_VARS_FETCH_LIMIT}`;
   const internalUrl = `${origin}/internal/project-environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&project_slug=${encodeURIComponent(projectSlug)}`;
@@ -245,16 +239,6 @@ export async function fetchProjectEnvVars(
     environmentId,
     signal,
   );
-  if (response.status === 404) {
-    discardResponseBody(response);
-    response = await fetchEnvironmentVariables(
-      legacyManagementUrl,
-      `Bearer ${token}`,
-      projectSlug,
-      environmentId,
-      signal,
-    );
-  }
 
   if (!response.ok) {
     discardResponseBody(response);
