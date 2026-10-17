@@ -1,3 +1,7 @@
+import {
+  createHostedRunEventWriterCapability,
+  persistHostedAcceptedTaskInput,
+} from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
 import { parseRuntimeAgentRunInvocationHostedChatRequestFromRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -757,3 +761,65 @@ it("reads a verified project attempt without terminal hints", async () => {
   });
   assertEquals(await evidence.readParentToolResults(), []);
 });
+
+for (const hook of ["ok", "status", "body", "getReader"] as const) {
+  it(`consumes accepted receipts without mutable ${hook} hooks`, async () => {
+    const parentRunId = "parent-routing-id";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const event: HostedAcceptedTaskInputEvent = {
+      type: "AGENT_RUN_TASK_INPUT_ACCEPTED",
+      version: 1,
+      targetAgentId: "child-agent",
+      sourceEventIds: [1],
+      artifactVersions: [{
+        path: "intake.json",
+        version_id: canonicalRunId,
+        sha256: "a".repeat(64),
+        size_bytes: 12,
+      }],
+      payload: { intakeId: "intake-1" },
+    };
+    const result = () =>
+      Response.json({
+        run_id: canonicalRunId,
+        appended_count: 1,
+        latest_event_id: 2,
+      });
+    const response = hook === "status" ? new Response(null, { status: 403 }) : result();
+    const target = hook === "getReader" ? ReadableStream.prototype : Response.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(target, hook)!;
+    let intercepted = 0;
+    const poison = () => {
+      intercepted++;
+      throw new Error("Tenant hook invoked");
+    };
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example/v1/",
+      runId: parentRunId,
+      canonicalRunId,
+      runEventAppendToken: "synthetic-parent-token",
+      fetch: () => {
+        Object.defineProperty(
+          target,
+          hook,
+          hook === "getReader" ? { ...descriptor, value: poison } : { ...descriptor, get: poison },
+        );
+        return Promise.resolve(response);
+      },
+    });
+    try {
+      const operation = () =>
+        persistHostedAcceptedTaskInput({
+          capability: writer,
+          parentRunId,
+          toolCallId: "call-1",
+          event,
+        });
+      if (hook === "status") await assertRejects(operation, Error, "(403)");
+      else await operation();
+    } finally {
+      Object.defineProperty(target, hook, descriptor);
+    }
+    assertEquals(intercepted, 0);
+  });
+}

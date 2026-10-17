@@ -197,38 +197,3 @@ it("recovers the original keyed receipt after response loss with a fresh capabil
   await assertRejects(() => persist("call-1", { ...event, payload: { intakeId: "changed" } }));
   assertEquals(writes, 2);
 });
-
-for (const hook of ["ok", "status", "body", "getReader"] as const) {
-  it(`consumes accepted receipts without mutable ${hook} hooks`, async () => {
-    const response = hook === "status" ? new Response(null, { status: 403 }) : result();
-    const target = hook === "getReader" ? ReadableStream.prototype : Response.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(target, hook)!;
-    let intercepted = 0;
-    const poison = () => {
-      intercepted++;
-      throw new Error("Tenant hook invoked");
-    };
-    const writer = capability(() => {
-      Object.defineProperty(
-        target,
-        hook,
-        hook === "getReader" ? { ...descriptor, value: poison } : { ...descriptor, get: poison },
-      );
-      return Promise.resolve(response);
-    });
-    try {
-      const operation = () =>
-        persistHostedAcceptedTaskInput({
-          capability: writer,
-          parentRunId,
-          toolCallId: "call-1",
-          event,
-        });
-      if (hook === "status") await assertRejects(operation, Error, "(403)");
-      else await operation();
-    } finally {
-      Object.defineProperty(target, hook, descriptor);
-    }
-    assertEquals(intercepted, 0);
-  });
-}
