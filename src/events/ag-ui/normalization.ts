@@ -556,7 +556,7 @@ function expandTextChunk(
   if (!prepared.success) return { commands: [prepared.command], state };
   const { messageId, lane, resolved, open, commands } = prepared;
   let nextState = state;
-  let pending = open;
+  let pending: NonNullable<typeof open>;
 
   if (open?.kind === "text" && (messageId === undefined || messageId === open.messageId)) {
     const conflict = validateOpenTextChunk(event, open, producerOccurrence, state);
@@ -789,7 +789,7 @@ function expandReasoningChunk(
   if (!prepared.success) return { commands: [prepared.command], state };
   const { messageId, lane, resolved, open, commands } = prepared;
   let nextState = state;
-  let pending = open;
+  let pending: NonNullable<typeof open>;
   if (open?.kind === "reasoning" && (messageId === undefined || messageId === open.messageId)) {
     pending = open;
   } else {
