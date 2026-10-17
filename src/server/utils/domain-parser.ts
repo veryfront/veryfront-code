@@ -1,5 +1,7 @@
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 
+const stringRaw = String.raw;
+
 export interface ParsedDomain {
   slug: string | null;
   branch: string | null;
@@ -161,7 +163,7 @@ function createParsedDomain(
 }
 
 function matchDomain(domain: string, pattern: string): RegExpMatchArray | null {
-  const match = domain.match(new RegExp(pattern));
+  const match = new RegExp(pattern).exec(domain);
   return match?.[0] === domain ? match : null;
 }
 
@@ -173,8 +175,8 @@ export function parseConfiguredProjectDomain(
     const suffix = `.${root}`;
     if (!domain.toLowerCase().endsWith(suffix)) continue;
     const prefix = domain.slice(0, -suffix.length);
-    const match = /^([A-Za-z0-9-]+)\.(preview|staging|production)$/i.exec(prefix);
-    if (!match || match[0] !== prefix) continue;
+    const match = /^([a-z0-9-]+)\.(preview|staging|production)$/i.exec(prefix);
+    if (match?.[0] !== prefix) continue;
     const environment = match[2]!.toLowerCase() as HostedEnvironmentName;
     if (environment === "preview") {
       const { slug, branch } = parseSlugAndBranch(match[1]!);
@@ -182,6 +184,67 @@ export function parseConfiguredProjectDomain(
     }
     return createParsedDomain(match[1]!, null, environment, true, false);
   }
+  return null;
+}
+
+function parseLocalProjectDomain(domain: string): ParsedDomain | null {
+  // Local development preview: {slug}.preview.localhost
+  const localPreviewMatch = matchDomain(
+    domain,
+    stringRaw`^([A-Za-z0-9-]+)\.preview\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localPreviewMatch?.[1]) {
+    const { slug, branch } = parseSlugAndBranch(localPreviewMatch[1]);
+    return createParsedDomain(slug, branch, "preview", true, true);
+  }
+
+  // Local production testing: {custom-domain}.prod.localhost
+  // Treated as custom domain for JIT production rendering
+  const localProdMatch = matchDomain(
+    domain,
+    stringRaw`^([A-Za-z0-9.-]+)\.prod\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localProdMatch?.[1]) {
+    return createParsedDomain(null, null, "production", false, false);
+  }
+
+  // Local development explicit production: {slug}.production.localhost
+  const localProductionMatch = matchDomain(
+    domain,
+    stringRaw`^([A-Za-z0-9-]+)\.production\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localProductionMatch?.[1]) {
+    return createParsedDomain(localProductionMatch[1], null, "production", true, false);
+  }
+
+  // Local development explicit staging: {slug}.staging.localhost
+  const localStagingMatch = matchDomain(
+    domain,
+    stringRaw`^([A-Za-z0-9-]+)\.staging\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localStagingMatch?.[1]) {
+    return createParsedDomain(localStagingMatch[1], null, "staging", true, false);
+  }
+
+  // Local environment root domains (no slug): preview|staging|production.localhost
+  const localEnvRootMatch = matchDomain(
+    domain,
+    stringRaw`^(${HOSTED_ENVIRONMENTS})\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localEnvRootMatch?.[1]) {
+    const env = localEnvRootMatch[1] as Environment;
+    return createParsedDomain(null, null, env, true, env === "preview");
+  }
+
+  // Local development base: {slug}.localhost
+  // Mirrors production behavior: serves released content (isDraft: false)
+  // Use {slug}.preview.localhost for draft content
+  const localBaseMatch = matchDomain(domain, stringRaw`^([A-Za-z0-9-]+)\.(${LOCAL_DEV_DOMAINS})$`);
+  if (localBaseMatch?.[1]) {
+    const { slug, branch } = parseSlugAndBranch(localBaseMatch[1]);
+    return createParsedDomain(slug, branch, "production", true, false);
+  }
+
   return null;
 }
 
@@ -206,69 +269,18 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, "development", false, true, true);
   }
 
-  // Local development preview: {slug}.preview.localhost
-  const localPreviewMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.preview\\.(${LOCAL_DEV_DOMAINS})$`,
-  );
-  if (localPreviewMatch?.[1]) {
-    const { slug, branch } = parseSlugAndBranch(localPreviewMatch[1]);
-    return createParsedDomain(slug, branch, "preview", true, true);
-  }
-
-  // Local production testing: {custom-domain}.prod.localhost
-  // Treated as custom domain for JIT production rendering
-  const localProdMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9.-]+)\\.prod\\.(${LOCAL_DEV_DOMAINS})$`,
-  );
-  if (localProdMatch?.[1]) {
-    return createParsedDomain(null, null, "production", false, false);
-  }
-
-  // Local development explicit production: {slug}.production.localhost
-  const localProductionMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.production\\.(${LOCAL_DEV_DOMAINS})$`,
-  );
-  if (localProductionMatch?.[1]) {
-    return createParsedDomain(localProductionMatch[1], null, "production", true, false);
-  }
-
-  // Local development explicit staging: {slug}.staging.localhost
-  const localStagingMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.staging\\.(${LOCAL_DEV_DOMAINS})$`,
-  );
-  if (localStagingMatch?.[1]) {
-    return createParsedDomain(localStagingMatch[1], null, "staging", true, false);
-  }
-
-  // Local environment root domains (no slug): preview|staging|production.localhost
-  const localEnvRootMatch = matchDomain(
-    domain,
-    `^(${HOSTED_ENVIRONMENTS})\\.(${LOCAL_DEV_DOMAINS})$`,
-  );
-  if (localEnvRootMatch?.[1]) {
-    const env = localEnvRootMatch[1] as Environment;
-    return createParsedDomain(null, null, env, true, env === "preview");
-  }
-
-  // Local development base: {slug}.localhost
-  // Mirrors production behavior: serves released content (isDraft: false)
-  // Use {slug}.preview.localhost for draft content
-  const localBaseMatch = matchDomain(domain, `^([A-Za-z0-9-]+)\\.(${LOCAL_DEV_DOMAINS})$`);
-  if (localBaseMatch?.[1]) {
-    const { slug, branch } = parseSlugAndBranch(localBaseMatch[1]);
-    return createParsedDomain(slug, branch, "production", true, false);
-  }
+  const local = parseLocalProjectDomain(domain);
+  if (local) return local;
 
   // Match the literal hosted root at a label boundary before parsing its prefix.
   // Keep hosted root spelling case-sensitive here, as in the existing routing contract.
   const root = PROD_DOMAINS.find((root) => domain.endsWith(`.${root}`));
   const prefix = root ? domain.slice(0, -(root.length + 1)) : null;
   if (prefix !== null) {
-    const projectMatch = matchDomain(prefix, `^([A-Za-z0-9-]+)\\.(${HOSTED_ENVIRONMENTS})$`);
+    const projectMatch = matchDomain(
+      prefix,
+      stringRaw`^([A-Za-z0-9-]+)\.(${HOSTED_ENVIRONMENTS})$`,
+    );
     if (projectMatch?.[1] && projectMatch[2]) {
       const environment = projectMatch[2] as HostedEnvironmentName;
       if (environment === "preview") {
@@ -300,7 +312,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
  */
 export function isHostedVeryfrontDomain(host: string): boolean {
   const domain = stripPort(host).toLowerCase();
-  if (!matchDomain(domain, "^[a-z0-9-]+(?:\\.[a-z0-9-]+)*$")) return false;
+  if (!matchDomain(domain, stringRaw`^[a-z0-9-]+(?:\.[a-z0-9-]+)*$`)) return false;
   return PROD_DOMAINS.some((root) => domain === root || domain.endsWith(`.${root}`));
 }
 
@@ -317,7 +329,7 @@ export function isVeryfrontDomain(host: string): boolean {
   return [LOCAL_DEV_DOMAINS, ...PROD_DOMAINS].some((root) => {
     if (!domain.endsWith(`.${root}`)) return false;
     const prefix = domain.slice(0, -(root.length + 1));
-    return matchDomain(prefix, "^[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)*$") !== null;
+    return matchDomain(prefix, stringRaw`^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$`) !== null;
   });
 }
 
