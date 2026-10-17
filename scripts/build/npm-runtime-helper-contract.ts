@@ -74,20 +74,13 @@ export async function assertNpmRuntimeHelperContract(
     return { targetPath, packageRelativeTarget };
   };
 
-  const checkImportedHelper = async (
-    targetPath: string,
+  const recordHelperStatFailure = (
+    error: unknown,
     packageRelativeTarget: string,
-  ): Promise<void> => {
-    try {
-      const stat = await Deno.stat(targetPath);
-      if (!stat.isFile) missing.push(packageRelativeTarget);
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) {
-        missing.push(packageRelativeTarget);
-      } else {
-        throw error;
-      }
-    }
+  ): void => {
+    if (error instanceof Deno.errors.NotFound) {
+      missing.push(packageRelativeTarget);
+    } else throw error;
   };
 
   for await (const sourcePath of walkJavaScriptFiles(sourceRoot)) {
@@ -98,7 +91,12 @@ export async function assertNpmRuntimeHelperContract(
       const target = classifyImport(entry.n, sourcePath);
       if (target === undefined) continue;
       const { targetPath, packageRelativeTarget } = target;
-      await checkImportedHelper(targetPath, packageRelativeTarget);
+      try {
+        const stat = await Deno.stat(targetPath);
+        if (!stat.isFile) missing.push(packageRelativeTarget);
+      } catch (error) {
+        recordHelperStatFailure(error, packageRelativeTarget);
+      }
     }
   }
 
