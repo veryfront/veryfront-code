@@ -4201,11 +4201,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
           );
         }
 
-        if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+        if (
+          String(url).includes(
+            "/projects/support-agent-fork/environments/10000000-1000-4000-8000-100000000097/variables?",
+          )
+        ) {
           assertEquals(authorization, "Bearer request-scoped-user-token");
           assertEquals(
             String(url).includes(
-              "environment_id=10000000-1000-4000-8000-100000000097",
+              "/environments/10000000-1000-4000-8000-100000000097/variables?",
             ),
             true,
           );
@@ -4317,7 +4321,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
       `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments`,
-      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000097&limit=100`,
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments/10000000-1000-4000-8000-100000000097/variables?limit=100`,
       `${TEST_PUBLIC_API_ORIGIN}/mcp`,
     ]);
   });
@@ -4350,7 +4354,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
         assertEquals(
           urlString,
-          `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+          `https://api.veryfront.org/projects/demo-project/environments/${targetEnvironmentId}/variables?limit=100`,
         );
         return Promise.resolve(
           new Response(
@@ -4438,7 +4442,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedProjectEnv ?? "", "target=staging-value");
     assertEquals(fetchUrls, [
       "https://api.veryfront.org/projects/demo-project/environments",
-      `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+      `https://api.veryfront.org/projects/demo-project/environments/${targetEnvironmentId}/variables?limit=100`,
     ]);
   });
 
@@ -4567,11 +4571,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
 
         if (
-          String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+          String(url).includes(
+            `${apiBaseUrl}/projects/base-url-agent-fork/environments/10000000-1000-4000-8000-100000000096/variables?`,
+          )
         ) {
           assertEquals(
             String(url).includes(
-              "environment_id=10000000-1000-4000-8000-100000000096",
+              "/environments/10000000-1000-4000-8000-100000000096/variables?",
             ),
             true,
           );
@@ -4621,7 +4627,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
       `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000096&limit=100`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environments/10000000-1000-4000-8000-100000000096/variables?limit=100`,
       `${canonicalApiOrigin}/mcp`,
     ]);
   });
@@ -5933,7 +5939,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             }],
           }));
         }
-        if (url.includes("/environment-variables?")) {
+        if (url.includes("variables?")) {
           environmentVariableCalls += 1;
         }
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -6039,7 +6045,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         calls.push(String(url));
         if (
           String(url).includes(
-            "/projects/preview-env-regression/environment-variables?environment_id=10000000-1000-4000-8000-100000000071&",
+            "/projects/preview-env-regression/environments/10000000-1000-4000-8000-100000000071/variables?",
           )
         ) {
           return Promise.resolve(Response.json({
