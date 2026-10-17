@@ -81,6 +81,7 @@ export async function createManagedRecoveryWriter(input: {
     identity: admission.identity,
   });
   let diskSequence = (await home.read()).length;
+  let initialBoundary = true;
   let externalSequence = admission.acknowledgedExternalSequence;
   let appendTail = Promise.resolve();
   let boundaryTail = Promise.resolve();
@@ -369,18 +370,14 @@ export async function createManagedRecoveryWriter(input: {
             }
           }
         }
-        for (const checkpoint of boundary.providerReplayCheckpoints) {
-          if (!modelTurns.has(checkpoint.messageId)) {
-            await append(createProviderReplayCheckpointEvent(checkpoint));
-          }
-        }
-        await append(createToolExposureCheckpointEvent(boundary.toolExposureCheckpoint));
         const pendingModelTurnMessageIds: string[] = [];
         const boundaryModelTurns: unknown[] = [
           ...modelTurns.values(),
         ];
         for (const message of messages) {
-          if (message.role !== "assistant" || modelTurns.has(message.id)) continue;
+          if (
+            message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
+          ) continue;
           pendingModelTurnMessageIds.push(message.id);
           const providerReplayCheckpoint = boundary.providerReplayCheckpoints.find((value) =>
             value.messageId === message.id
@@ -416,13 +413,31 @@ export async function createManagedRecoveryWriter(input: {
             },
           })
           : undefined;
+        // The first cursor must be committed with its native continuation. A
+        // process may disappear after the API commit and before the local journal.
+        const initialPublication = initialBoundary;
+        if (initialPublication && !checkpoint) {
+          throw new Error("Initial recovery publication lacks a native continuation");
+        }
+        const appendObservations = async () => {
+          for (const checkpoint of boundary.providerReplayCheckpoints) {
+            if (!history.has(checkpoint.messageId) && !modelTurns.has(checkpoint.messageId)) {
+              await append(createProviderReplayCheckpointEvent(checkpoint));
+            }
+          }
+          await append(createToolExposureCheckpointEvent(boundary.toolExposureCheckpoint));
+        };
+        if (!initialPublication) await appendObservations();
         const transcriptReceipt = await append(
           { type: "MESSAGES_SNAPSHOT", messages },
           undefined,
           checkpoint,
         );
+        if (initialPublication) await appendObservations();
         for (const message of messages) {
-          if (message.role !== "assistant" || modelTurns.has(message.id)) continue;
+          if (
+            message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
+          ) continue;
           const providerReplayCheckpoint = boundary.providerReplayCheckpoints.find((value) =>
             value.messageId === message.id
           );
@@ -452,9 +467,31 @@ export async function createManagedRecoveryWriter(input: {
           }),
         );
         await active();
-        await home.append({ sequence: diskSequence + 1, value: snapshot });
-        await active();
-        diskSequence++;
+        // A retired predecessor can finish an already-started immutable append
+        // after this owner read the journal. Only an admitted predecessor record
+        // may occupy that slot; same-generation conflicts remain fatal.
+        for (let retry = 0;; retry++) {
+          await active();
+          try {
+            await home.append({ sequence: diskSequence + 1, value: snapshot });
+            await active();
+            diskSequence++;
+            initialBoundary = false;
+            break;
+          } catch (error) {
+            await active();
+            const records = await home.read();
+            const occupied = records[diskSequence];
+            if (!occupied || retry >= 255) throw error;
+            const predecessor = await input.owner.validatePredecessorSnapshot(occupied.value);
+            if (
+              privateJsonStringify(predecessor.binding.generation) ===
+                privateJsonStringify(admission.generation)
+            ) throw error;
+            await active();
+            diskSequence++;
+          }
+        }
       });
       boundaryTail = operation.catch((error) => {
         fail(error);

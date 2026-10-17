@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   getVerifiedControlPlaneRecoveryAdmission,
@@ -117,8 +118,8 @@ export class RecoverySessionOwner {
     return this.executionRequired;
   }
 
-  /** Disk snapshots are data; only this privately admitted owner supplies the expected binding. */
-  async validateRestoredSnapshot(value: unknown): Promise<RecoverySnapshot> {
+  /** Validate a journal occupant without treating its older cursor as a restore point. */
+  async validatePredecessorSnapshot(value: unknown): Promise<RecoverySnapshot> {
     const snapshot = parseRecoverySnapshot(value);
     if (
       !this.previousGenerations.some((generation) =>
@@ -128,9 +129,23 @@ export class RecoverySessionOwner {
     const receipt = await this.assertCurrentOwnership();
     if (
       snapshot.acknowledgedEventId > receipt.acknowledgedEventId ||
-      snapshot.acknowledgedExternalSequence > receipt.acknowledgedExternalSequence ||
-      snapshot.acknowledgedExternalSequence < this.admission.acknowledgedExternalSequence
+      snapshot.acknowledgedExternalSequence > receipt.acknowledgedExternalSequence
     ) {
+      throw new Error("Recovery snapshot cursor is not acknowledged by current ownership");
+    }
+    if (
+      !isDeepStrictEqual(snapshot.binding.identity, this.admission.identity) ||
+      !isDeepStrictEqual(snapshot.binding.sourceBinding, this.admission.sourceBinding)
+    ) {
+      throw new Error("Recovery predecessor journal binding is foreign");
+    }
+    return snapshot;
+  }
+
+  /** Disk snapshots are data; only this privately admitted owner supplies the expected binding. */
+  async validateRestoredSnapshot(value: unknown): Promise<RecoverySnapshot> {
+    const snapshot = await this.validatePredecessorSnapshot(value);
+    if (snapshot.acknowledgedExternalSequence < this.admission.acknowledgedExternalSequence) {
       throw new Error("Recovery snapshot cursor is not acknowledged by current ownership");
     }
     return validateRecoverySnapshotForRestore(snapshot, {

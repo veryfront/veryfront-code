@@ -630,6 +630,25 @@ it("safe snapshot publication rejects an API that ignores the atomic checkpoint 
   }
 });
 
+async function captureInitialNativeRecoveryBoundary() {
+  const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+  let initial: import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary | undefined;
+  const runtime = new AgentRuntime("initial-boundary-fixture", {
+    model: "veryfront-cloud/openai/gpt-5.4",
+    system: "Synthetic",
+    maxSteps: 1,
+    skills: false,
+  }, {
+    resolveModelRuntime: () => scriptedModel([{ text: "Synthetic complete" }], { only: "stream" }),
+    persistRecoveryBoundary: async (boundary) => {
+      initial ??= boundary;
+    },
+  });
+  await new Response(await runtime.stream([])).text();
+  if (!initial) throw new Error("Expected actual native initial boundary");
+  return initial;
+}
+
 it("provider-executed current calls persist replay without waiting for local admission", async () => {
   const previous = Deno.env.get(envKey);
   const directory = await makeTempDir();
@@ -648,7 +667,20 @@ it("provider-executed current calls persist replay without waiting for local adm
       owner,
       directory,
       bindAdmissionWriter: () => {},
-      append: async () => ({ eventId: ++sequence, externalSequence: sequence, toolAdmissions: [] }),
+      append: async (_event, _id, checkpoint) => ({
+        eventId: ++sequence,
+        externalSequence: sequence,
+        toolAdmissions: [],
+        ...(checkpoint
+          ? {
+            recoveryCheckpoint: {
+              snapshot_event_id: sequence,
+              snapshot_external_sequence: sequence,
+              checkpoint_event_id: sequence + 10000,
+            },
+          }
+          : {}),
+      }),
     });
     const controller = new AbortController();
     writer.bindSignal(controller.signal);
@@ -658,11 +690,8 @@ it("provider-executed current calls persist replay without waiting for local adm
     } satisfies import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary[
       "toolExposureCheckpoint"
     ];
-    await writer.persistBoundary({
-      messages: [],
-      toolExposureCheckpoint: exposure,
-      providerReplayCheckpoints: [],
-    });
+    const initialBoundary = await captureInitialNativeRecoveryBoundary();
+    await writer.persistBoundary(initialBoundary);
     const call = {
       type: "tool-call",
       toolCallId: "provider-search",
@@ -683,7 +712,7 @@ it("provider-executed current calls persist replay without waiting for local adm
     );
     try {
       await writer.persistBoundary({
-        messages: [{
+        messages: [...initialBoundary.messages, {
           id: "provider-turn",
           role: "assistant",
           parts: [call, { ...result, result: [] }],
@@ -765,13 +794,22 @@ for (
         owner,
         directory,
         bindAdmissionWriter: () => {},
-        append: async (event, occurrenceId) => {
+        append: async (event, occurrenceId, checkpoint) => {
           if (
             fail && failureKind !== "malformed-admission" && failureKind !== "foreign-admission"
           ) throw outage;
           return {
             eventId: ++cursor,
             externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: cursor,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: cursor + 10000,
+                },
+              }
+              : {}),
             toolAdmissions:
               event.type === "TOOL_CALL_START" && (!fail || failureKind === "foreign-admission")
                 ? [{
@@ -803,17 +841,14 @@ for (
       const { defineSchema } = await import("#veryfront/schemas/index.ts");
       let occurrenceId = "";
       if (failureKind === "result") {
-        await writer.persistBoundary({
-          messages: [],
-          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
-          providerReplayCheckpoints: [],
-        });
+        const initialBoundary = await captureInitialNativeRecoveryBoundary();
+        await writer.persistBoundary(initialBoundary);
         await writer.appendMappedEvent({
           event: "ToolCallStart",
           payload: { toolCallId: "call", toolCallName: "inspect" },
         }, "occurrence");
         pending = writer.persistBoundary({
-          messages: [{
+          messages: [...initialBoundary.messages, {
             id: "model",
             role: "assistant",
             parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
@@ -1048,3 +1083,94 @@ for (const maxSteps of [1, 2]) {
     }
   });
 }
+
+it("incoming assistant history never consumes current recovery model-turn capacity", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const pendingIds: string[] = [];
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _id, checkpoint) => {
+        if (checkpoint) pendingIds.push(...checkpoint.pending_model_turn_message_ids);
+        return {
+          eventId: ++sequence,
+          externalSequence: sequence,
+          toolAdmissions: [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: sequence,
+                snapshot_external_sequence: sequence,
+                checkpoint_event_id: sequence + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+    const model = scriptedModel([{ text: "Current response" }], { only: "stream" });
+    const runtime = new AgentRuntime("history-capacity-proof", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 1,
+      skills: false,
+    }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+    const messages:
+      import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary["messages"] = Array
+        .from({ length: 101 }, (_, index) => ({
+          id: `historical-assistant-${index}`,
+          role: "assistant",
+          parts: [{ type: "text", text: `Synthetic historical response ${index}` }],
+        }));
+    messages.push({
+      id: "current-user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    });
+    const output = await new Response(
+      await runtime.stream(messages, { runId: identity.publicRunId }),
+    ).text();
+    assertEquals(model.callCount, 1);
+    assertEquals(output.includes("Current response"), true);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const records = await home.read();
+    const snapshot = parseRecoverySnapshot(records.at(-1)!.value);
+    assertEquals(snapshot.initialHistoryMessageIds?.length, 102);
+    assertEquals(
+      snapshot.messages.filter((message) => message.id.startsWith("historical-assistant-")).length,
+      101,
+    );
+    assertEquals(snapshot.modelTurns.length, 1);
+    assertEquals(
+      snapshot.modelTurns.some((turn) => turn.messageId.startsWith("historical-assistant-")),
+      false,
+    );
+    assertEquals(pendingIds.some((id) => id.startsWith("historical-assistant-")), false);
+    assertEquals(snapshot.runtimeContinuation?.nextStep, 1);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

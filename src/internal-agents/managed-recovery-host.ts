@@ -77,15 +77,15 @@ export function createManagedRecoveryHostFactory(input: {
       awaitRetiredPreviousOwner,
     });
     let snapshot = await loadSnapshot(admission.identity);
-    if (snapshot !== undefined && readSuffixPage) {
-      const parsed = parseRecoverySnapshot(snapshot);
+    if (readSuffixPage && (snapshot !== undefined || owner.requiresRestoredSnapshot)) {
+      const parsed = snapshot === undefined ? undefined : parseRecoverySnapshot(snapshot);
       const suffix = await readAuthenticatedRecoverySuffix({
         snapshot: parsed,
         claims,
         readPage: (request) => readSuffixPage(claims, request),
         assertCurrentOwnership: () => owner.assertCurrentOwnership(),
       });
-      snapshot = materializeAuthenticatedRecoverySuffix({ snapshot: parsed, suffix });
+      snapshot = materializeAuthenticatedRecoverySuffix({ snapshot: suffix.snapshot, suffix });
     }
     const restoredSnapshot = snapshot === undefined
       ? undefined

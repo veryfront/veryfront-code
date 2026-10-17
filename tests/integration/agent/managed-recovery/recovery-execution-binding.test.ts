@@ -71,6 +71,20 @@ it("signed recovery execution binds immutable source, agent and conversation bef
       ctx,
       body,
     );
+    const overriddenInput = getInternalAgentStreamRequestSchema().parse({
+      ...input,
+      agentConfig: {
+        id: input.agentId,
+        name: "Request override",
+        description: "Synthetic request-scoped override",
+        instructions: "Execute a different recovery policy.",
+        tools: ["veryfront__search_knowledge"],
+      },
+    });
+    // Ordinary execution still supports per-request definitions. Recovery may
+    // execute only the immutable definition covered by its admitted source hash.
+    assertManagedRecoveryExecutionBinding(overriddenInput, undefined);
+    assertThrows(() => assertManagedRecoveryExecutionBinding(overriddenInput, claims));
     assertManagedRecoveryExecutionBinding(input, claims);
     bindManagedRecoveryInput(toRuntimeRunAgentInput(input), claims);
     // Shared-source execution resolves its source environment independently of

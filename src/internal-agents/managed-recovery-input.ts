@@ -20,6 +20,11 @@ export function assertManagedRecoveryExecutionBinding(
   if (!claims) return;
   const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
   if (!admission) return;
+  // Admission binds the immutable source definition, not a request-scoped
+  // replacement's prompt, model or tools. Never restore against an override.
+  if (input.agentConfig !== undefined) {
+    throw new Error("Managed recovery does not support request-scoped agent configuration");
+  }
   const sourceEnvironmentId = input.sourceProject
     ? input.sourceProject.sourceTargetEnvironmentId ??
       input.sourceProject.runtimeTargetEnvironmentId
