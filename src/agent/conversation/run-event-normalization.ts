@@ -485,72 +485,62 @@ function truncateUtf8String(value: string, maxBytes: number, suffix: string): st
   return `${prefix}${suffix}`;
 }
 
-function summarizeValue(
-  value: unknown,
-  depth = 0,
-  seen = createPrivateWeakStore<object, true>(),
-): unknown {
-  if (typeof value === "string") {
-    return truncateUtf8String(value, MAX_SUMMARY_STRING_BYTES, "… [truncated]");
+function validateSummaryArrayProperties(value: unknown[]): void {
+  const keys = ReflectOwnKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    if (!ObjectHasOwn(keys, index)) continue;
+    const key = keys[index];
+    if (typeof key !== "string" || key === "length") continue;
+    const property = ObjectGetOwnPropertyDescriptor(value, key);
+    if (property?.enumerable === true && !ObjectHasOwn(property, "value")) {
+      throw new NativeTypeError("Private JSON requires data properties");
+    }
   }
+}
 
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  if (seen.get(value) === true) {
-    return "[circular]";
-  }
-
-  if (depth >= MAX_SUMMARY_DEPTH) {
-    return "[truncated nested data]";
-  }
-
-  seen.set(value, true);
-
-  if (ArrayIsArray(value)) {
-    const lengthDescriptor = ObjectGetOwnPropertyDescriptor(value, "length");
-    const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
-    const keys = ReflectOwnKeys(value);
-    for (let index = 0; index < keys.length; index++) {
-      if (!ObjectHasOwn(keys, index)) continue;
-      const key = keys[index];
-      if (typeof key !== "string" || key === "length") continue;
-      const property = ObjectGetOwnPropertyDescriptor(value, key);
-      if (property?.enumerable === true && !ObjectHasOwn(property, "value")) {
+function summarizeArray(
+  value: unknown[],
+  depth: number,
+  seen: ReturnType<typeof createPrivateWeakStore<object, true>>,
+): unknown[] {
+  const lengthDescriptor = ObjectGetOwnPropertyDescriptor(value, "length");
+  const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
+  validateSummaryArrayProperties(value);
+  const itemCount = MathMin(length, MAX_SUMMARY_ARRAY_ITEMS);
+  const items: unknown[] = [];
+  defineOwnDataProperty(items, "length", itemCount, {
+    enumerable: false,
+    writable: true,
+    configurable: false,
+  });
+  for (let index = 0; index < itemCount; index++) {
+    const property = ObjectGetOwnPropertyDescriptor(value, `${index}`);
+    if (property?.enumerable === true) {
+      if (!ObjectHasOwn(property, "value")) {
         throw new NativeTypeError("Private JSON requires data properties");
       }
+      defineOwnDataProperty(items, `${index}`, summarizeValue(property.value, depth + 1, seen), {
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
-    const itemCount = MathMin(length, MAX_SUMMARY_ARRAY_ITEMS);
-    const items: unknown[] = [];
-    defineOwnDataProperty(items, "length", itemCount, {
-      enumerable: false,
-      writable: true,
-      configurable: false,
-    });
-    for (let index = 0; index < itemCount; index++) {
-      const property = ObjectGetOwnPropertyDescriptor(value, `${index}`);
-      if (property?.enumerable === true) {
-        if (!ObjectHasOwn(property, "value")) {
-          throw new NativeTypeError("Private JSON requires data properties");
-        }
-        defineOwnDataProperty(items, `${index}`, summarizeValue(property.value, depth + 1, seen), {
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
-    }
-    if (length > MAX_SUMMARY_ARRAY_ITEMS) {
-      primordialArrayPush(
-        items,
-        `[truncated ${length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
-      );
-    }
-    return items;
   }
+  if (length > MAX_SUMMARY_ARRAY_ITEMS) {
+    primordialArrayPush(
+      items,
+      `[truncated ${length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
+    );
+  }
+  return items;
+}
 
-  const keys = ReflectOwnKeys(value);
+function summarizeObject(
+  value: unknown,
+  keys: readonly PropertyKey[],
+  depth: number,
+  seen: ReturnType<typeof createPrivateWeakStore<object, true>>,
+): Record<string, unknown> {
   const summarizedObject = ObjectCreate(null) as Record<string, unknown>;
   let entryCount = 0;
   for (let index = 0; index < keys.length; index++) {
@@ -591,6 +581,34 @@ function summarizeValue(
   }
 
   return summarizedObject;
+}
+
+function summarizeValue(
+  value: unknown,
+  depth = 0,
+  seen = createPrivateWeakStore<object, true>(),
+): unknown {
+  if (typeof value === "string") {
+    return truncateUtf8String(value, MAX_SUMMARY_STRING_BYTES, "… [truncated]");
+  }
+
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.get(value) === true) {
+    return "[circular]";
+  }
+
+  if (depth >= MAX_SUMMARY_DEPTH) {
+    return "[truncated nested data]";
+  }
+
+  seen.set(value, true);
+
+  return ArrayIsArray(value)
+    ? summarizeArray(value, depth, seen)
+    : summarizeObject(value, ReflectOwnKeys(value), depth, seen);
 }
 
 function describeValueType(value: unknown): string {
