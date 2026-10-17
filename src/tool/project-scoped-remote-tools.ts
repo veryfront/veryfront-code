@@ -349,6 +349,24 @@ function normalizeToolDefinitions(
       description: definition.description,
       parameters: snapshotToolParameters(definition),
     };
+    const outputDescriptor = Object.getOwnPropertyDescriptor(definition, "outputSchema");
+    if (outputDescriptor && !("value" in outputDescriptor)) {
+      throw new TypeError(
+        `Remote source "${sourceId}" returned an accessor output schema for tool "${definition.name}"`,
+      );
+    }
+    if (outputDescriptor?.value !== undefined) {
+      const output = snapshotBoundedJsonValue(outputDescriptor.value);
+      if (
+        !output.success || typeof output.value !== "object" ||
+        output.value === null || Array.isArray(output.value)
+      ) {
+        throw new TypeError(
+          `Remote source "${sourceId}" returned a malformed output schema for tool "${definition.name}"`,
+        );
+      }
+      normalized.outputSchema = output.value;
+    }
     copyToolDiscoveryMetadata(definition, normalized);
     if (definition.title !== undefined) {
       if (typeof definition.title !== "string" || definition.title.length === 0) {
