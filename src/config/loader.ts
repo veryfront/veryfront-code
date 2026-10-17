@@ -5630,29 +5630,42 @@ function ownStringProperty(value: unknown, key: string): string | undefined {
     : undefined;
 }
 
+function configResolveErrorConstructorName(
+  error: unknown,
+): DeferredConfigResolveError["constructorName"] {
+  if (error instanceof TypeError) return "TypeError";
+  if (error instanceof RangeError) return "RangeError";
+  if (error instanceof SyntaxError) return "SyntaxError";
+  return "Error";
+}
+
+function configResolveErrorName(
+  error: unknown,
+  errorObject: unknown,
+  constructorName: DeferredConfigResolveError["constructorName"],
+): string {
+  if (error instanceof Error && error.name) return error.name;
+  if (errorObject) return ownStringProperty(errorObject, "name") ?? constructorName;
+  return constructorName;
+}
+
+function configResolveErrorMessage(error: unknown, errorObject: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (errorObject) {
+    return ownStringProperty(errorObject, "message") ??
+      "Config import.meta.resolve could not resolve the requested module";
+  }
+  return "Config import.meta.resolve could not resolve the requested module";
+}
+
 function serializeConfigResolveError(
   error: unknown,
   seen = new IntrinsicSet<object>(),
 ): DeferredConfigResolveError {
   const errorObject = typeof error === "object" && error !== null ? error : undefined;
-  const constructorName = error instanceof TypeError
-    ? "TypeError"
-    : error instanceof RangeError
-    ? "RangeError"
-    : error instanceof SyntaxError
-    ? "SyntaxError"
-    : "Error";
-  const name = error instanceof Error && error.name
-    ? error.name
-    : errorObject
-    ? ownStringProperty(errorObject, "name") ?? constructorName
-    : constructorName;
-  const message = error instanceof Error
-    ? error.message
-    : errorObject
-    ? ownStringProperty(errorObject, "message") ??
-      "Config import.meta.resolve could not resolve the requested module"
-    : "Config import.meta.resolve could not resolve the requested module";
+  const constructorName = configResolveErrorConstructorName(error);
+  const name = configResolveErrorName(error, errorObject, constructorName);
+  const message = configResolveErrorMessage(error, errorObject);
   const code = errorObject ? ownStringProperty(errorObject, "code") : undefined;
   let cause: DeferredConfigResolveError | string | number | boolean | null | undefined;
 
@@ -5689,14 +5702,17 @@ export function __serializeConfigResolveErrorForTests(error: unknown) {
   return serializeConfigResolveError(error);
 }
 
+function deferredErrorCauseExpression(error: DeferredConfigResolveError): string {
+  if (error.cause === undefined) return "";
+  return `, { cause: ${
+    typeof error.cause === "object" && error.cause !== null && "constructorName" in error.cause
+      ? deferredErrorConstructorExpression(error.cause)
+      : configCodeLiteral(error.cause)
+  } }`;
+}
+
 function deferredErrorConstructorExpression(error: DeferredConfigResolveError): string {
-  const cause = error.cause === undefined
-    ? ""
-    : `, { cause: ${
-      typeof error.cause === "object" && error.cause !== null && "constructorName" in error.cause
-        ? deferredErrorConstructorExpression(error.cause)
-        : configCodeLiteral(error.cause)
-    } }`;
+  const cause = deferredErrorCauseExpression(error);
   const assignments = [
     error.name !== error.constructorName ? `failure.name = ${configCodeLiteral(error.name)};` : "",
     error.code ? `failure.code = ${configCodeLiteral(error.code)};` : "",
@@ -5744,16 +5760,17 @@ function isConfigPackageIntegerIndexKey(key: string): boolean {
   return key.length < 10 || (key.length === 10 && key < "4294967295");
 }
 
+function configPackageSuffixIndex(queryIndex: number, fragmentIndex: number): number {
+  if (queryIndex < 0) return fragmentIndex;
+  if (fragmentIndex < 0) return queryIndex;
+  if (queryIndex < fragmentIndex) return queryIndex;
+  return fragmentIndex;
+}
+
 function isValidConfigPackageTargetString(target: string): boolean {
   const queryIndex = ReflectApply(StringPrototypeIndexOf, target, ["?"]) as number;
   const fragmentIndex = ReflectApply(StringPrototypeIndexOf, target, ["#"]) as number;
-  const suffixIndex = queryIndex < 0
-    ? fragmentIndex
-    : fragmentIndex < 0
-    ? queryIndex
-    : queryIndex < fragmentIndex
-    ? queryIndex
-    : fragmentIndex;
+  const suffixIndex = configPackageSuffixIndex(queryIndex, fragmentIndex);
   const targetPath = suffixIndex < 0
     ? target
     : ReflectApply(StringPrototypeSlice, target, [0, suffixIndex]) as string;
@@ -5776,20 +5793,33 @@ function tokenizeNodeOptions(options: string | undefined): string[] {
   let token = "";
   let quote = "";
   let escaped = false;
-  for (let index = 0; index < options.length; index++) {
-    const character = options[index]!;
+  const consumeEscape = (character: string): boolean => {
     if (escaped) {
       token += character;
       escaped = false;
-      continue;
+      return true;
     }
     if (character === "\\" && quote === '"') {
       escaped = true;
-      continue;
+      return true;
     }
+    return false;
+  };
+  const consumeQuotedCharacter = (character: string): void => {
+    if (character === quote) quote = "";
+    else token += character;
+  };
+  const appendToken = (): void => {
+    if (token.length > 0) {
+      tokens[tokens.length] = token;
+      token = "";
+    }
+  };
+  for (let index = 0; index < options.length; index++) {
+    const character = options[index]!;
+    if (consumeEscape(character)) continue;
     if (quote !== "") {
-      if (character === quote) quote = "";
-      else token += character;
+      consumeQuotedCharacter(character);
       continue;
     }
     if (character === '"' || character === "'") {
@@ -5799,16 +5829,13 @@ function tokenizeNodeOptions(options: string | undefined): string[] {
     if (
       character === " " || character === "\t" || character === "\r" || character === "\n"
     ) {
-      if (token.length > 0) {
-        tokens[tokens.length] = token;
-        token = "";
-      }
+      appendToken();
       continue;
     }
     token += character;
   }
   if (escaped) token += "\\";
-  if (token.length > 0) tokens[tokens.length] = token;
+  appendToken();
   return tokens;
 }
 
@@ -5832,18 +5859,22 @@ function nodeConfigPackageConditions(
     }
     customConditions[customConditions.length] = condition;
   };
+  const consumeAddonOption = (argument: string): boolean => {
+    if (matchesNodeBooleanOption(argument, "--no-addons")) {
+      addons = false;
+      return true;
+    }
+    if (matchesNodeBooleanOption(argument, "--addons")) {
+      addons = true;
+      return true;
+    }
+    return false;
+  };
   const collect = (arguments_: readonly string[]): void => {
     for (let index = 0; index < arguments_.length; index++) {
       const argument = arguments_[index];
       if (argument === undefined) continue;
-      if (matchesNodeBooleanOption(argument, "--no-addons")) {
-        addons = false;
-        continue;
-      }
-      if (matchesNodeBooleanOption(argument, "--addons")) {
-        addons = true;
-        continue;
-      }
+      if (consumeAddonOption(argument)) continue;
       if (
         argument === "-e" || argument === "--eval" || argument === "-p" ||
         argument === "--print"
@@ -5856,7 +5887,6 @@ function nodeConfigPackageConditions(
       }
       if (ReflectApply(StringPrototypeStartsWith, argument, ["--conditions="]) as boolean) {
         appendCustom(ReflectApply(StringPrototypeSlice, argument, [13]) as string);
-        continue;
       }
     }
   };
@@ -5918,6 +5948,34 @@ function isConfigPackageConditionActive(
   return false;
 }
 
+function configPackageArrayTarget(
+  entry: readonly unknown[],
+  conditions: readonly string[],
+): ConfigPackageTarget {
+  if (entry.length === 0) return null;
+  let fallback: ConfigPackageTarget = CONFIG_PACKAGE_TARGET_NO_MATCH;
+  for (let index = 0; index < entry.length; index += 1) {
+    const target = configPackageTarget(entry[index], conditions);
+    if (target === CONFIG_PACKAGE_TARGET_NO_MATCH) continue;
+    if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) return target;
+    if (target === CONFIG_PACKAGE_TARGET_INVALID || target === null) {
+      fallback = target;
+      continue;
+    }
+    return target;
+  }
+  return fallback;
+}
+
+function hasConfigPackageIntegerIndex(keys: readonly PropertyKey[]): boolean {
+  for (const key of keys) {
+    if (typeof key === "string" && isConfigPackageIntegerIndexKey(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function configPackageTarget(
   entry: unknown,
   conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
@@ -5927,27 +5985,11 @@ function configPackageTarget(
   }
   if (entry === null) return null;
   if (ArrayIsArray(entry)) {
-    if (entry.length === 0) return null;
-    let fallback: ConfigPackageTarget = CONFIG_PACKAGE_TARGET_NO_MATCH;
-    for (let index = 0; index < entry.length; index += 1) {
-      const target = configPackageTarget(entry[index], conditions);
-      if (target === CONFIG_PACKAGE_TARGET_NO_MATCH) continue;
-      if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) return target;
-      if (target === CONFIG_PACKAGE_TARGET_INVALID || target === null) {
-        fallback = target;
-        continue;
-      }
-      return target;
-    }
-    return fallback;
+    return configPackageArrayTarget(entry, conditions);
   }
   if (typeof entry !== "object") return CONFIG_PACKAGE_TARGET_INVALID;
   const keys = ReflectOwnKeys(entry);
-  for (const key of keys) {
-    if (typeof key === "string" && isConfigPackageIntegerIndexKey(key)) {
-      return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
-    }
-  }
+  if (hasConfigPackageIntegerIndex(keys)) return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
   for (const key of keys) {
     if (typeof key !== "string" || !isConfigPackageConditionActive(key, conditions)) {
       continue;
@@ -6023,24 +6065,27 @@ function configPackageMapTarget(
 
   let bestKey: string | undefined;
   let bestPrefixLength = -1;
-  for (const key of ReflectOwnKeys(map)) {
-    if (typeof key !== "string") continue;
+  const considerPatternKey = (key: string): void => {
     const star = ReflectApply(StringPrototypeIndexOf, key, ["*"]) as number;
-    if (star < 0) continue;
-    if ((ReflectApply(StringPrototypeIndexOf, key, ["*", star + 1]) as number) >= 0) continue;
+    if (star < 0) return;
+    if ((ReflectApply(StringPrototypeIndexOf, key, ["*", star + 1]) as number) >= 0) return;
     const prefix = ReflectApply(StringPrototypeSlice, key, [0, star]) as string;
     const suffix = ReflectApply(StringPrototypeSlice, key, [star + 1]) as string;
-    if (!(ReflectApply(StringPrototypeStartsWith, specifier, [prefix]) as boolean)) continue;
-    if (!(ReflectApply(StringPrototypeEndsWith, specifier, [suffix]) as boolean)) continue;
+    if (!(ReflectApply(StringPrototypeStartsWith, specifier, [prefix]) as boolean)) return;
+    if (!(ReflectApply(StringPrototypeEndsWith, specifier, [suffix]) as boolean)) return;
     if (
       specifier.length < key.length ||
       prefix.length < bestPrefixLength ||
       (prefix.length === bestPrefixLength && bestKey !== undefined && key.length <= bestKey.length)
     ) {
-      continue;
+      return;
     }
     bestKey = key;
     bestPrefixLength = prefix.length;
+  };
+  for (const key of ReflectOwnKeys(map)) {
+    if (typeof key !== "string") continue;
+    considerPatternKey(key);
   }
   if (bestKey === undefined) return CONFIG_PACKAGE_TARGET_NO_MATCH;
 
@@ -6068,14 +6113,17 @@ function configPackageExportsTarget(
   if (exports !== null && typeof exports === "object" && !ArrayIsArray(exports)) {
     let hasSubpathKey = false;
     let hasConditionKey = false;
-    for (const key of ReflectOwnKeys(exports)) {
-      if (typeof key !== "string") continue;
-      if (ReflectApply(StringPrototypeStartsWith, key, ["."]) as boolean) {
-        hasSubpathKey = true;
-      } else {
-        hasConditionKey = true;
+    const classifyExportKeys = (): void => {
+      for (const key of ReflectOwnKeys(exports)) {
+        if (typeof key !== "string") continue;
+        if (ReflectApply(StringPrototypeStartsWith, key, ["."]) as boolean) {
+          hasSubpathKey = true;
+        } else {
+          hasConditionKey = true;
+        }
       }
-    }
+    };
+    classifyExportKeys();
     if (hasSubpathKey && hasConditionKey) return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
     if (hasSubpathKey) return configPackageMapTarget(exports, subpath, conditions);
   }
