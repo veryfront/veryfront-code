@@ -1129,58 +1129,67 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
   let apostropheLineStart = -1;
   let inlineCodeEnd = -1;
   let proseApostrophes: ReadonlySet<number> = new Set();
-  for (const match of text.matchAll(pattern)) {
-    while (cursor < match.index!) {
-      const character = text[cursor];
-      if (character === "\n") lineStart = cursor + 1;
-      const urlEnd = proseUrlEnd(text, cursor);
-      if (urlEnd !== undefined) {
-        cursor = urlEnd;
-        continue;
+  function skipProseApostrophe(character: string | undefined): boolean {
+    if (character === "'") {
+      if (apostropheLineStart !== lineStart) {
+        apostropheLineStart = lineStart;
+        proseApostrophes = gapProseApostrophes(text, lineStart);
       }
-      const commentEnd = sourceCommentEnd(text, cursor);
-      if (commentEnd !== undefined) {
-        const end = commentEnd ?? text.length;
-        const newline = text.slice(cursor, end).lastIndexOf("\n");
-        if (newline !== -1) lineStart = cursor + newline + 1;
-        cursor = end;
-        continue;
-      }
-      if (character === "'") {
-        if (apostropheLineStart !== lineStart) {
-          apostropheLineStart = lineStart;
-          proseApostrophes = gapProseApostrophes(text, lineStart);
-        }
-        if (proseApostrophes.has(cursor)) {
-          cursor++;
-          continue;
-        }
-      }
-      if (
-        character === "`" && cursor !== inlineCodeEnd - 1 && text[cursor - 1] !== "`" &&
-        text[cursor + 1] !== "`"
-      ) {
-        const inlineCode = /^`[^`\r\n]+`/.exec(text.slice(cursor));
-        if (inlineCode && text[cursor + inlineCode[0].length] !== "`") {
-          inlineCodeEnd = cursor + inlineCode[0].length;
-          const code = inlineCode[0].slice(1, -1).trimStart();
-          const configuration = code.includes("{") || code.includes("=") || code.startsWith("[") ||
-            /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/i.test(code);
-          if (!configuration) {
-            cursor = inlineCodeEnd;
-            continue;
-          }
-        }
-      }
-      if (character === '"' || character === "'") {
-        const quoteStart = cursor;
-        cursor = scanQuotedValueEnd(text, cursor, character) ?? text.length;
-        const newline = text.slice(quoteStart, cursor).lastIndexOf("\n");
-        if (newline !== -1) lineStart = quoteStart + newline + 1;
-      } else {
+      if (proseApostrophes.has(cursor)) {
         cursor++;
+        return true;
       }
     }
+    return false;
+  }
+  function skipInlineCode(character: string | undefined): boolean {
+    if (
+      character === "`" && cursor !== inlineCodeEnd - 1 && text[cursor - 1] !== "`" &&
+      text[cursor + 1] !== "`"
+    ) {
+      const inlineCode = /^`[^`\r\n]+`/.exec(text.slice(cursor));
+      if (inlineCode && text[cursor + inlineCode[0].length] !== "`") {
+        inlineCodeEnd = cursor + inlineCode[0].length;
+        const code = inlineCode[0].slice(1, -1).trimStart();
+        const configuration = code.includes("{") || code.includes("=") || code.startsWith("[") ||
+          /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/i.test(code);
+        if (!configuration) {
+          cursor = inlineCodeEnd;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  function scanCharacter(): void {
+    const character = text[cursor];
+    if (character === "\n") lineStart = cursor + 1;
+    const urlEnd = proseUrlEnd(text, cursor);
+    if (urlEnd !== undefined) {
+      cursor = urlEnd;
+      return;
+    }
+    const commentEnd = sourceCommentEnd(text, cursor);
+    if (commentEnd !== undefined) {
+      const end = commentEnd ?? text.length;
+      const newline = text.slice(cursor, end).lastIndexOf("\n");
+      if (newline !== -1) lineStart = cursor + newline + 1;
+      cursor = end;
+      return;
+    }
+    if (skipProseApostrophe(character)) return;
+    if (skipInlineCode(character)) return;
+    if (character === '"' || character === "'") {
+      const quoteStart = cursor;
+      cursor = scanQuotedValueEnd(text, cursor, character) ?? text.length;
+      const newline = text.slice(quoteStart, cursor).lastIndexOf("\n");
+      if (newline !== -1) lineStart = quoteStart + newline + 1;
+    } else {
+      cursor++;
+    }
+  }
+  for (const match of text.matchAll(pattern)) {
+    while (cursor < match.index!) scanCharacter();
     if (cursor <= match.index!) yield match;
   }
 }
@@ -1277,17 +1286,24 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
 function maskQuotedProseText(text: string): string {
   const chunks: string[] = [];
   let start = 0;
-  for (let index = 0; index < text.length; index++) {
+  let index = 0;
+  while (index < text.length) {
     const quote = text[index];
-    if (quote !== '"' && quote !== "'") continue;
+    if (quote !== '"' && quote !== "'") {
+      index++;
+      continue;
+    }
     if (
       quote === "'" && /\p{L}/u.test(text[index - 1] ?? "") && /\p{L}/u.test(text[index + 1] ?? "")
-    ) continue;
+    ) {
+      index++;
+      continue;
+    }
     const end = scanQuotedValueEnd(text, index, quote);
     if (end === undefined || /[\r\n]/.test(text.slice(index, end))) return text;
     chunks.push(text.slice(start, index), "quote");
     start = end;
-    index = end - 1;
+    index = end;
   }
   chunks.push(text.slice(start));
   return chunks.join("");
@@ -1385,24 +1401,21 @@ function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
   let structured = false;
   let jsonFence = false;
   let cursor = 0;
-  while (cursor < text.length) {
-    const start = skipWhitespace(text, cursor);
-    if (start >= text.length) break;
-    cursor = start;
-    if (text[start] === "{" || text[start] === "[") {
-      const end = scanNestedArrayOrObjectEnd(text, start);
-      if (end === null) return new Set();
-      if (end === undefined) {
-        const body = text.slice(start);
-        const valid = text[start] === "{"
-          ? scanIncompleteLeadingObjectToolIds(body) !== undefined
-          : isValidIncompleteArrayPrefix(body);
-        return valid ? apostrophes : new Set();
-      }
-      structured = true;
-      cursor = end;
-      continue;
+  function consumeStructuredValue(start: number): ReadonlySet<number> | undefined {
+    const end = scanNestedArrayOrObjectEnd(text, start);
+    if (end === null) return new Set();
+    if (end === undefined) {
+      const body = text.slice(start);
+      const valid = text[start] === "{"
+        ? scanIncompleteLeadingObjectToolIds(body) !== undefined
+        : isValidIncompleteArrayPrefix(body);
+      return valid ? apostrophes : new Set();
     }
+    structured = true;
+    cursor = end;
+    return undefined;
+  }
+  function consumeProseLine(): boolean {
     const newline = text.indexOf("\n", cursor);
     const end = newline === -1 ? text.length : newline;
     const line = text.slice(cursor, end);
@@ -1410,22 +1423,34 @@ function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
       jsonFence = true;
       structured = true;
       cursor = end + 1;
-      continue;
+      return true;
     }
     if (jsonFence && /^ {0,3}```[ \t]*\r?$/.test(line)) {
       jsonFence = false;
       cursor = end + 1;
-      continue;
+      return true;
     }
-    if (jsonFence) return new Set();
+    if (jsonFence) return false;
     if (
       !isPlainProseText(normalizeProseApostrophes(line)) &&
       recoverableContractFactLine(line) === undefined
     ) {
-      return new Set();
+      return false;
     }
     for (const index of gapProseApostrophes(text, cursor)) apostrophes.add(index);
     cursor = end + 1;
+    return true;
+  }
+  while (cursor < text.length) {
+    const start = skipWhitespace(text, cursor);
+    if (start >= text.length) break;
+    cursor = start;
+    if (text[start] === "{" || text[start] === "[") {
+      const result = consumeStructuredValue(start);
+      if (result !== undefined) return result;
+      continue;
+    }
+    if (!consumeProseLine()) return new Set();
   }
   return structured ? apostrophes : new Set();
 }
@@ -1436,25 +1461,32 @@ function quoteAtEnd(
 ): { value: string; index: number } | undefined {
   const proseApostrophes = structuredHeadProseApostrophes(text.slice(0, limit));
   let quote: { value: string; index: number } | undefined;
-  for (let index = 0; index < limit; index++) {
+  let index = 0;
+  function scanUnquotedCharacter(character: string): { value: string; index: number } | undefined {
+    const urlEnd = proseUrlEnd(text, index);
+    if (urlEnd !== undefined) {
+      if (urlEnd > limit) return { value: "url", index };
+      index = urlEnd - 1;
+      return undefined;
+    }
+    if (character === "/" && ["/", "*"].includes(text[index + 1] ?? "")) {
+      const end = sourceCommentEnd(text, index);
+      if (typeof end !== "number" || end > limit) {
+        return { value: "comment", index };
+      }
+      index = end - 1;
+      return undefined;
+    }
+    if (character === "'" && proseApostrophes.has(index)) return undefined;
+    if (character === '"' || character === "'") quote = { value: character, index };
+    return undefined;
+  }
+  while (index < limit) {
     const character = text[index]!;
     if (quote === undefined) {
-      const urlEnd = proseUrlEnd(text, index);
-      if (urlEnd !== undefined) {
-        if (urlEnd > limit) return { value: "url", index };
-        index = urlEnd - 1;
-        continue;
-      }
-      if (character === "/" && ["/", "*"].includes(text[index + 1] ?? "")) {
-        const end = sourceCommentEnd(text, index);
-        if (typeof end !== "number" || end > limit) {
-          return { value: "comment", index };
-        }
-        index = end - 1;
-        continue;
-      }
-      if (character === "'" && proseApostrophes.has(index)) continue;
-      if (character === '"' || character === "'") quote = { value: character, index };
+      const result = scanUnquotedCharacter(character);
+      if (result !== undefined) return result;
+      index++;
       continue;
     }
     if (character === "\\") {
@@ -1462,8 +1494,21 @@ function quoteAtEnd(
     } else if (character === quote.value) {
       quote = undefined;
     }
+    index++;
   }
   return quote;
+}
+
+function isInheritedQuoteEscaped(
+  text: string,
+  start: number,
+  initialQuote: string | undefined,
+): boolean {
+  let trailingBackslashes = 0;
+  for (let index = start - 1; index >= 0 && text[index] === "\\"; index--) {
+    trailingBackslashes++;
+  }
+  return initialQuote !== undefined && trailingBackslashes % 2 === 1;
 }
 
 function quoteStateAtTail(
@@ -1475,49 +1520,56 @@ function quoteStateAtTail(
   let quote: { value: string; inherited: boolean } | undefined = initialQuote === undefined
     ? undefined
     : { value: initialQuote, inherited: true };
-  let trailingBackslashes = 0;
-  for (let index = start - 1; index >= 0 && text[index] === "\\"; index--) {
-    trailingBackslashes++;
-  }
-  let escaped = initialQuote !== undefined && trailingBackslashes % 2 === 1;
+  let escaped = isInheritedQuoteEscaped(text, start, initialQuote);
   let lineStart = text.lastIndexOf("\n", start - 1) + 1;
   let cachedLineStart = -1;
   let proseApostrophes: ReadonlySet<number> = new Set();
-  for (let index = start; index < end; index++) {
+  let index = start;
+  function isProseApostrophe(character: string): boolean {
+    if (character !== "'") return false;
+    if (cachedLineStart !== lineStart) {
+      cachedLineStart = lineStart;
+      proseApostrophes = gapProseApostrophes(text, lineStart);
+    }
+    return proseApostrophes.has(index);
+  }
+  function scanUnquotedCharacter(
+    character: string,
+  ): { value: string; inherited: boolean; escaped: boolean; commentEnd?: number } | undefined {
+    const urlEnd = proseUrlEnd(text, index);
+    if (urlEnd !== undefined) {
+      if (urlEnd > end) {
+        return { value: "url", inherited: false, escaped: false, commentEnd: urlEnd };
+      }
+      index = urlEnd - 1;
+      return undefined;
+    }
+    const commentEnd = sourceCommentEnd(text, index);
+    if (commentEnd !== undefined) {
+      if (commentEnd === null || commentEnd > end) {
+        return {
+          value: "comment",
+          inherited: false,
+          escaped: false,
+          commentEnd: commentEnd ?? text.length,
+        };
+      }
+      index = commentEnd - 1;
+      return undefined;
+    }
+    if (isProseApostrophe(character)) return undefined;
+    if (character === '"' || character === "'") {
+      quote = { value: character, inherited: false };
+    }
+    return undefined;
+  }
+  while (index < end) {
     if (index > start && text[index - 1] === "\n") lineStart = index;
     const character = text[index]!;
     if (quote === undefined) {
-      const urlEnd = proseUrlEnd(text, index);
-      if (urlEnd !== undefined) {
-        if (urlEnd > end) {
-          return { value: "url", inherited: false, escaped: false, commentEnd: urlEnd };
-        }
-        index = urlEnd - 1;
-        continue;
-      }
-      const commentEnd = sourceCommentEnd(text, index);
-      if (commentEnd !== undefined) {
-        if (commentEnd === null || commentEnd > end) {
-          return {
-            value: "comment",
-            inherited: false,
-            escaped: false,
-            commentEnd: commentEnd ?? text.length,
-          };
-        }
-        index = commentEnd - 1;
-        continue;
-      }
-      if (character === "'") {
-        if (cachedLineStart !== lineStart) {
-          cachedLineStart = lineStart;
-          proseApostrophes = gapProseApostrophes(text, lineStart);
-        }
-        if (proseApostrophes.has(index)) continue;
-      }
-      if (character === '"' || character === "'") {
-        quote = { value: character, inherited: false };
-      }
+      const result = scanUnquotedCharacter(character);
+      if (result !== undefined) return result;
+      index++;
       continue;
     }
     if (escaped) {
@@ -1527,6 +1579,7 @@ function quoteStateAtTail(
     } else if (character === quote.value) {
       quote = undefined;
     }
+    index++;
   }
   return quote === undefined ? undefined : { ...quote, escaped };
 }
@@ -1538,6 +1591,53 @@ function recoverableImportPath(source: string): string | undefined {
   if ((quote !== '"' && quote !== "'") || value.at(-1) !== quote) return undefined;
   const path = value.slice(1, -1);
   return path.length > 0 && !/["'\\\r\n]/.test(path) ? path : undefined;
+}
+
+function recoverableStaticImport(
+  content: string,
+  importStart: RegExpExecArray,
+): string | undefined {
+  const remainder = content.slice(importStart[0].length);
+  const quoteIndex = remainder.search(/["']/);
+  const beforeSpecifier = quoteIndex === -1 ? remainder : remainder.slice(0, quoteIndex);
+  const from = beforeSpecifier.trimEnd().endsWith("from")
+    ? beforeSpecifier.trimEnd().length - 4
+    : -1;
+  if (
+    from > 0 && /[ \t]/.test(remainder[from - 1]!) &&
+    /^[A-Za-z0-9_$*,{} \t]+$/.test(remainder.slice(0, from).trimEnd())
+  ) {
+    const path = recoverableImportPath(remainder.slice(from + 4));
+    if (path !== undefined) return `import ${JSON.stringify(path)}`;
+  } else if (importStart[1] === "import") {
+    const path = recoverableImportPath(remainder);
+    if (path !== undefined) return `import ${JSON.stringify(path)}`;
+  }
+  return undefined;
+}
+
+function recoverableArrayFact(array: RegExpExecArray): string | undefined {
+  const values = parseJsonArrayFieldBody(array[2]!);
+  if (
+    values?.every((value) =>
+      typeof value === "string" && !/\s/.test(value) &&
+      (array[1] === "provider_tool_ids" || TOOL_ID_VALUE_PATTERN.test(value))
+    )
+  ) return `${array[1]}:${JSON.stringify(values)}`;
+  return undefined;
+}
+
+function recoverableDynamicImport(
+  content: string,
+  dynamicStart: RegExpExecArray,
+): string | undefined {
+  let remainder = content.slice(dynamicStart[0].length).trim();
+  if (remainder.endsWith(";")) remainder = remainder.slice(0, -1).trimEnd();
+  if (remainder.endsWith(")")) {
+    const path = recoverableImportPath(remainder.slice(0, -1));
+    if (path !== undefined) return `import(${JSON.stringify(path)})`;
+  }
+  return undefined;
 }
 
 function recoverableContractFactLine(line: string): string | undefined {
@@ -1552,42 +1652,19 @@ function recoverableContractFactLine(line: string): string | undefined {
     /^ {0,3}(?:[,{(][ \t]*)?["']?(tool_ids|tools|provider_tool_ids)["']?[ \t]*[:=][ \t]*\[([\s\S]*)\][ \t]*[,;}]?[ \t]*$/i
       .exec(content);
   if (array !== null) {
-    const values = parseJsonArrayFieldBody(array[2]!);
-    if (
-      values?.every((value) =>
-        typeof value === "string" && !/\s/.test(value) &&
-        (array[1] === "provider_tool_ids" || TOOL_ID_VALUE_PATTERN.test(value))
-      )
-    ) return `${array[1]}:${JSON.stringify(values)}`;
+    const recovered = recoverableArrayFact(array);
+    if (recovered !== undefined) return recovered;
   }
 
   const importStart = /^ {0,3}(import|export)[ \t]+/.exec(content);
   if (importStart !== null) {
-    const remainder = content.slice(importStart[0].length);
-    const quoteIndex = remainder.search(/["']/);
-    const beforeSpecifier = quoteIndex === -1 ? remainder : remainder.slice(0, quoteIndex);
-    const from = beforeSpecifier.trimEnd().endsWith("from")
-      ? beforeSpecifier.trimEnd().length - 4
-      : -1;
-    if (
-      from > 0 && /[ \t]/.test(remainder[from - 1]!) &&
-      /^[A-Za-z0-9_$*,{} \t]+$/.test(remainder.slice(0, from).trimEnd())
-    ) {
-      const path = recoverableImportPath(remainder.slice(from + 4));
-      if (path !== undefined) return `import ${JSON.stringify(path)}`;
-    } else if (importStart[1] === "import") {
-      const path = recoverableImportPath(remainder);
-      if (path !== undefined) return `import ${JSON.stringify(path)}`;
-    }
+    const recovered = recoverableStaticImport(content, importStart);
+    if (recovered !== undefined) return recovered;
   }
   const dynamicStart = /^ {0,3}import[ \t]*\(/.exec(content);
   if (dynamicStart !== null) {
-    let remainder = content.slice(dynamicStart[0].length).trim();
-    if (remainder.endsWith(";")) remainder = remainder.slice(0, -1).trimEnd();
-    if (remainder.endsWith(")")) {
-      const path = recoverableImportPath(remainder.slice(0, -1));
-      if (path !== undefined) return `import(${JSON.stringify(path)})`;
-    }
+    const recovered = recoverableDynamicImport(content, dynamicStart);
+    if (recovered !== undefined) return recovered;
   }
 
   const modelId =
@@ -1598,11 +1675,46 @@ function recoverableContractFactLine(line: string): string | undefined {
   return integrationId?.[1];
 }
 
-function recoverPlainProseTail(
+function recoverableJsonObjectFacts(parsed: Record<string, unknown>): string {
+  return Object.entries(parsed)
+    .flatMap(([sourceKey, fieldValue]) => {
+      const key = sourceKey.toLowerCase();
+      if (!["model", "tools", "tool_ids", "provider_tool_ids"].includes(key)) return [];
+      if (key === "tools" && Array.isArray(fieldValue)) {
+        const ids: string[] = [];
+        addToolIdsFromParsedArray(ids, fieldValue, true);
+        return ids.length > 0 ? [`tools:${JSON.stringify(ids)}`] : [];
+      }
+      const value = recoverableContractFactLine(`${key}:${JSON.stringify(fieldValue)}`);
+      return value === undefined ? [] : [value];
+    }).join("\n");
+}
+
+function readJsonFenceFacts(
+  text: string,
+  lineEnd: number,
+  lineStart: number,
+): { facts: string; blockEnd: number } | undefined {
+  const closing = /^ {0,3}```[ \t]*\r?$/gm;
+  closing.lastIndex = lineEnd + 1;
+  const match = closing.exec(text);
+  if (match === null) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(lineEnd + 1, match.index));
+  } catch { /* malformed fences do not contribute facts */ }
+  if (!isPlainRecord(parsed)) return undefined;
+  const facts = recoverableJsonObjectFacts(parsed);
+  const blockEnd = match.index + match[0].length;
+  if (facts.length > blockEnd - lineStart) return undefined;
+  return { facts, blockEnd };
+}
+
+function proseTailLineStart(
   text: string,
   headLength: number,
   tailStart: number,
-): string | undefined {
+): number | undefined {
   if (tailStart - headLength > CHILD_RUN_PROSE_RECOVERY_GAP_LIMIT) return undefined;
   let lineStart = tailStart;
   if (lineStart > 0 && text[lineStart - 1] !== "\n") {
@@ -1614,47 +1726,39 @@ function recoverPlainProseTail(
     return undefined;
   }
 
+  return lineStart;
+}
+
+function recoverPlainProseTail(
+  text: string,
+  headLength: number,
+  tailStart: number,
+): string | undefined {
+  const initialLineStart = proseTailLineStart(text, headLength, tailStart);
+  if (initialLineStart === undefined) return undefined;
+  let lineStart = initialLineStart;
   let foundFact = false;
   let output = " ".repeat(lineStart - tailStart);
-  while (lineStart < text.length) {
-    const lineEnd = text.indexOf("\n", lineStart);
-    const end = lineEnd === -1 ? text.length : lineEnd;
-    const line = text.slice(lineStart, end);
+  function consumeJsonFence(line: string, lineEnd: number): "none" | "handled" | "complete" {
     if (/^ {0,3}```json[ \t]*\r?$/i.test(line) && lineEnd !== -1) {
-      const closing = /^ {0,3}```[ \t]*\r?$/gm;
-      closing.lastIndex = lineEnd + 1;
-      const match = closing.exec(text);
-      if (match !== null) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(text.slice(lineEnd + 1, match.index));
-        } catch { /* malformed fences do not contribute facts */ }
-        if (isPlainRecord(parsed)) {
-          const facts = Object.entries(parsed)
-            .flatMap(([sourceKey, fieldValue]) => {
-              const key = sourceKey.toLowerCase();
-              if (!["model", "tools", "tool_ids", "provider_tool_ids"].includes(key)) return [];
-              if (key === "tools" && Array.isArray(fieldValue)) {
-                const ids: string[] = [];
-                addToolIdsFromParsedArray(ids, fieldValue, true);
-                return ids.length > 0 ? [`tools:${JSON.stringify(ids)}`] : [];
-              }
-              const value = recoverableContractFactLine(`${key}:${JSON.stringify(fieldValue)}`);
-              return value === undefined ? [] : [value];
-            }).join("\n");
-          const blockEnd = match.index + match[0].length;
-          const blockLength = blockEnd - lineStart;
-          if (facts.length <= blockLength) {
-            foundFact ||= facts.length > 0;
-            output += facts + " ".repeat(blockLength - facts.length);
-            if (blockEnd === text.length) return foundFact ? output : undefined;
-            output += "\n";
-            lineStart = blockEnd + 1;
-            continue;
-          }
-        }
+      const recovered = readJsonFenceFacts(text, lineEnd, lineStart);
+      if (recovered !== undefined) {
+        const { facts, blockEnd } = recovered;
+        const blockLength = blockEnd - lineStart;
+        foundFact ||= facts.length > 0;
+        output += facts + " ".repeat(blockLength - facts.length);
+        if (blockEnd === text.length) return "complete";
+        output += "\n";
+        lineStart = blockEnd + 1;
+        return "handled";
       }
     }
+    return "none";
+  }
+  function recoveredText(): string | undefined {
+    return foundFact ? output : undefined;
+  }
+  function appendRecoveredLine(line: string): boolean {
     const factLine = recoverableContractFactLine(line);
     if (factLine !== undefined && factLine.length <= line.length) {
       foundFact = true;
@@ -1665,14 +1769,26 @@ function recoverPlainProseTail(
     ) {
       output += " ".repeat(line.length);
     } else {
-      output += " ".repeat(text.length - lineStart);
-      return foundFact ? output : undefined;
+      return false;
     }
-    if (lineEnd === -1) return foundFact ? output : undefined;
+    return true;
+  }
+  while (lineStart < text.length) {
+    const lineEnd = text.indexOf("\n", lineStart);
+    const end = lineEnd === -1 ? text.length : lineEnd;
+    const line = text.slice(lineStart, end);
+    const fenced = consumeJsonFence(line, lineEnd);
+    if (fenced === "complete") return recoveredText();
+    if (fenced === "handled") continue;
+    if (!appendRecoveredLine(line)) {
+      output += " ".repeat(text.length - lineStart);
+      return recoveredText();
+    }
+    if (lineEnd === -1) return recoveredText();
     output += "\n";
     lineStart = lineEnd + 1;
   }
-  return foundFact ? output : undefined;
+  return recoveredText();
 }
 
 function boundedContractFactWindows(text: string, headLength: number): string[] {
@@ -1704,18 +1820,23 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
       ? undefined
       : openQuote?.value,
   );
-  if (tailQuote?.value === "comment" || tailQuote?.value === "url") {
-    tailStart = tailQuote.commentEnd ?? text.length;
-  } else if (tailQuote !== undefined) {
-    const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value, tailQuote.escaped);
-    if (quoteEnd === undefined) {
-      if (!tailQuote.inherited || !proseApostrophe) return [head, ""];
+  function resolveTailQuote(): string[] | undefined {
+    if (tailQuote?.value === "comment" || tailQuote?.value === "url") {
+      tailStart = tailQuote.commentEnd ?? text.length;
+    } else if (tailQuote !== undefined) {
+      const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value, tailQuote.escaped);
+      if (quoteEnd === undefined) {
+        if (!tailQuote.inherited || !proseApostrophe) return [head, ""];
+        return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
+      }
+      tailStart = quoteEnd;
+    } else if (proseApostrophe) {
       return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
     }
-    tailStart = quoteEnd;
-  } else if (proseApostrophe) {
-    return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
+    return undefined;
   }
+  const recoveredTail = resolveTailQuote();
+  if (recoveredTail !== undefined) return recoveredTail;
   while (
     tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&
     isContractFactTokenCharacter(text[tailStart])
