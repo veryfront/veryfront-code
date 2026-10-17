@@ -270,6 +270,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     cacheNamespace: config.cacheNamespace,
     baseDir,
     allowHostProjectCodeExecution: true,
+    assertCurrent: config.assertCurrent,
   };
 
   const result: DiscoveryResult = {

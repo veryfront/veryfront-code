@@ -2893,6 +2893,7 @@ export async function importModule(
     moduleUrl.searchParams.set("v", String(Date.now()));
     let module: unknown;
     try {
+      await context.assertCurrent?.();
       module = await import(moduleUrl.href);
     } catch (error) {
       // A deferred import reached at module scope: the reason is already

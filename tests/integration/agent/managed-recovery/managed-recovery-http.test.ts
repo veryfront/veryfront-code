@@ -82,7 +82,7 @@ import {
   createManagedRecoveryHttpTransport,
 } from "#veryfront/internal-agents/managed-recovery-http.ts";
 import { readManagedRecoveryBootConfig } from "#veryfront/internal-agents/managed-recovery-runtime-bootstrap.ts";
-import { createHash } from "node:crypto";
+import { createHash, Hash } from "node:crypto";
 import { assertThrows } from "#veryfront/testing/assert.ts";
 
 it("paired transport keeps original credentials private, bound and redirect-free", async () => {
@@ -90,6 +90,7 @@ it("paired transport keeps original credentials private, bound and redirect-free
   const files = [{ path: "a.ts", entityType: "function", content: "hello" }];
   const value = admission();
   value.identity = { ...identity, sourceHash: createRecoverySourceManifest(files).hash };
+  const contentHash = createHash("sha256").update("hello").digest("hex");
   let mode = "valid";
   const seen: Array<
     { path: string; auth: string | null; terminal: string | null; redirect: string | undefined }
@@ -117,7 +118,7 @@ it("paired transport keeps original credentials private, bound and redirect-free
         version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         path: "a.ts",
         entity_type: "function",
-        content_hash: createHash("sha256").update("hello").digest("hex"),
+        content_hash: contentHash,
         byte_size: 5,
         content: mode === "tampered" ? "wrong" : "hello",
       }],
@@ -132,10 +133,26 @@ it("paired transport keeps original credentials private, bound and redirect-free
     });
     const transport = createManagedRecoveryHttpTransport("https://trusted.test", fetcher);
     assertEquals(await transport.readOwnership(claims), receipt(value));
-    assertEquals(await transport.listImmutableReleaseFiles(claims), {
-      sourceBinding: value.sourceBinding,
-      files,
-    });
+    const update = Hash.prototype.update;
+    const digest = Hash.prototype.digest;
+    try {
+      Hash.prototype.update = function () {
+        throw new Error("project replaced hash update");
+      };
+      Hash.prototype.digest = function () {
+        throw new Error("project replaced hash digest");
+      };
+      assertEquals(await transport.listImmutableReleaseFiles(claims), {
+        sourceBinding: value.sourceBinding,
+        files,
+      });
+      mode = "tampered";
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      mode = "valid";
+    } finally {
+      Hash.prototype.update = update;
+      Hash.prototype.digest = digest;
+    }
     assertEquals(seen[0], {
       path: `/runs/${identity.canonicalRunId}/runtime/recovery-ownership`,
       auth: "Bearer original-invocation",

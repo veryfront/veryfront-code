@@ -1,4 +1,5 @@
 import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
@@ -21,6 +22,11 @@ const SIGNED_REQUEST_PATH_BASE = "https://control-plane.invalid";
 const SIGNED_REQUEST_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/u;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const SafeURL = URL;
+// Verification remains host-owned after project modules run in this process.
+const hostSubtle = crypto.subtle;
+const hostDigest = hostSubtle.digest.bind(hostSubtle);
+const hostVerify = hostSubtle.verify.bind(hostSubtle);
+const hostImportKey = hostSubtle.importKey.bind(hostSubtle);
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -383,7 +389,10 @@ export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneCl
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
-  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<DiscoveryResult>;
+  ensureProjectDiscovery: (
+    ctx: HandlerContext,
+    assertCurrent?: () => Promise<void>,
+  ) => Promise<DiscoveryResult>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];
 }
@@ -412,7 +421,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 function parseCompactJwsPart<T>(encodedPart: string): T {
-  return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
+  return JSON.parse(createPrivateTextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
 }
 
 function parseCompactJwsObject(
@@ -601,7 +610,7 @@ function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
     return cachedEd25519PublicKey.promise;
   }
 
-  const promise = crypto.subtle.importKey(
+  const promise = hostImportKey(
     "spki",
     pemToDer(pem, "PUBLIC KEY"),
     "Ed25519",
@@ -618,7 +627,7 @@ function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
 }
 
 async function sha256Base64url(body: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  const hash = await hostDigest("SHA-256", toArrayBuffer(encodePrivateText(body)));
   return base64urlEncodeBytes(new Uint8Array(hash));
 }
 
@@ -663,10 +672,10 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
   const claimSnapshot = options.parseClaims(encodedPayload);
 
-  const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+  const signingInput = toArrayBuffer(encodePrivateText(`${encodedHeader}.${encodedPayload}`));
   const signature = base64urlDecodeToBytes(encodedSignature);
   const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-  const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+  const verified = await hostVerify("Ed25519", publicKey, signature, signingInput);
 
   if (!verified) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
@@ -1007,10 +1016,10 @@ async function verifySignedRequestJwsSignature(
     parseSignatureProtectedHeader(encodedHeader);
     const claims = parseClaims(encodedPayload);
 
-    const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+    const signingInput = toArrayBuffer(encodePrivateText(`${encodedHeader}.${encodedPayload}`));
     const signature = base64urlDecodeToBytes(encodedSignature);
     const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-    const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+    const verified = await hostVerify("Ed25519", publicKey, signature, signingInput);
     if (!verified) return false;
 
     if (claims.iss !== "veryfront-api") return false;

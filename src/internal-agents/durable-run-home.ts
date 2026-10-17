@@ -13,7 +13,8 @@ import {
 import { constants } from "node:fs";
 import { link, lstat, mkdir, open, opendir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
 import {
   type DurableRunIdentity,
   getDurableRunIdentitySchema,
@@ -34,7 +35,7 @@ const recordPattern = /^\d{10}\.json$/;
 const byteLength = (text: string) => privateByteLength(encodePrivateText(text));
 const recordName = (sequence: number) =>
   `${apply(padStart, nativeString(sequence), [10, "0"])}.json`;
-const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+const digest = (value: string) => privateSha256Hex(value);
 const invalid = () => new Error("Durable run home is invalid or conflicts with this run");
 function isExists(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EEXIST";

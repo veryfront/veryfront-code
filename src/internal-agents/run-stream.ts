@@ -1431,9 +1431,8 @@ export async function createRuntimeAgentStreamResponse(
         throw new Error("Managed recovery requires acknowledged actual runtime continuation state");
       }
       managedRecovery.writer.bindSignal(abortSignal);
-      recoveryLifetime = await startManagedRecoveryLifetime(managedRecovery.owner, () => {
-        deps.sessionManager.cancelRun(input.runId, abortSignal);
-      });
+      recoveryLifetime = managedRecovery.lifetime;
+      await recoveryLifetime.assertCurrent();
     }
   } catch (error) {
     deps.sessionManager.failRun(input.runId, abortSignal);

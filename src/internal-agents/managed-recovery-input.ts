@@ -80,14 +80,18 @@ export async function assertManagedRecoveryRequestBinding(
   session: ManagedRecoveryRunSession,
 ): Promise<void> {
   session.signal.throwIfAborted();
-  const requestHash = recoverySuffixPayloadHash({
-    context: input.context,
-    tools: input.tools,
-    ...(input.state !== undefined ? { state: input.state } : {}),
-    ...(input.forwardedProps !== undefined ? { forwardedProps: input.forwardedProps } : {}),
-    ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
-    ...(input.resumeToolCall !== undefined ? { resumeToolCall: input.resumeToolCall } : {}),
-  });
+  // Bind every stable execution selector, not just model-visible inputs. Messages and
+  // server-resolved replay/history evidence are reconciled with the authenticated
+  // checkpoint separately; credentials and admission rotate on replacement.
+  const {
+    credentials: _credentials,
+    managedRecoveryAdmission: _admission,
+    messages: _messages,
+    serverResolvedProviderReplayCheckpoints: _providerReplay,
+    serverResolvedTrustedHostedHistoryMessageIds: _trustedHistory,
+    ...execution
+  } = input;
+  const requestHash = recoverySuffixPayloadHash(execution);
   await session.owner.assertExecutionBinding(requestHash);
   session.signal.throwIfAborted();
 }

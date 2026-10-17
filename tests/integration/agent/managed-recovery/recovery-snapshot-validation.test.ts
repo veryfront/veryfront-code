@@ -1,3 +1,8 @@
+import { parseManagedRecoverySnapshotV1 } from "#veryfront/runtime/managed-recovery-snapshot.ts";
+import {
+  getTrustedSkillLoadResultRefs,
+  hydrateActiveSkillStateFromMessages,
+} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "#veryfront/tool";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
@@ -779,7 +784,7 @@ it("continuation presentation text matches native assistant and interrupted reco
   );
 });
 
-it("continuation bookkeeping supports sealed history and native skill reference lists", () => {
+it("continuation bookkeeping supports sealed history and native skill reference lists", async () => {
   const value = continuationFixture();
   const result = {
     skillId: "synthetic",
@@ -834,6 +839,55 @@ it("continuation bookkeeping supports sealed history and native skill reference 
   assertEquals(parseRecoverySnapshot(history).runtimeContinuation?.trustedSkillLoadResultIds, [
     "skill-call",
   ]);
+  for (
+    const provenance of [
+      { trustedSkillLoadResultIds: ["skill-call"] },
+      {
+        trustedSkillLoadResultIds: [],
+        trustedSkillLoadResultRefs: [{
+          messageIndex: 1,
+          messageId: "history-result",
+          partIndex: 0,
+          toolCallId: "skill-call",
+        }],
+      },
+    ]
+  ) {
+    const parsed = parseManagedRecoverySnapshotV1({
+      ...history,
+      runtimeContinuation: { ...history.runtimeContinuation, ...provenance },
+    });
+    assertEquals(getTrustedSkillLoadResultRefs(parsed.messages), []);
+    assertEquals(hydrateActiveSkillStateFromMessages(parsed.messages).activeSkillId, undefined);
+    const model = scriptedModel([{ text: "Complete" }], { only: "stream" });
+    let observed = false;
+    const runtime = new AgentRuntime("public-snapshot-untrusted", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      skills: false,
+      maxSteps: 1,
+    }, {
+      resolveModelRuntime: () => model,
+      persistRecoveryBoundary: async (boundary) => {
+        observed = true;
+        assertEquals(getTrustedSkillLoadResultRefs(boundary.messages), []);
+        assertEquals(
+          hydrateActiveSkillStateFromMessages(boundary.messages).activeSkillId,
+          undefined,
+        );
+        assertEquals(boundary.continuation.activeSkillDelegationOverrides, undefined);
+      },
+    });
+    await new Response(await runtime.stream(parsed.messages)).text();
+    assertEquals(observed, true);
+    const authenticated = validateRecoverySnapshotForRestore(parsed, parsed.binding);
+    assertEquals(getTrustedSkillLoadResultRefs(authenticated.messages).length, 1);
+    assertEquals(
+      hydrateActiveSkillStateFromMessages(authenticated.messages).activeSkillId,
+      "synthetic",
+    );
+  }
+
   assertThrows(() =>
     parseRecoverySnapshot({
       ...history,

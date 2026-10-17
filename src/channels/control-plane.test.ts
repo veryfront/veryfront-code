@@ -386,6 +386,66 @@ describe("channels/control-plane", () => {
       assertEquals(bindingGetterCalls, 0);
     });
 
+    it("signature verification uses host crypto and text methods captured before project code", async () => {
+      const body = JSON.stringify({ requestId: "agents-1", authorized: true });
+      const tamperedBody = JSON.stringify({ requestId: "agents-1", authorized: false });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const options = {
+        audience: "demo-project",
+        expectedProjectId: "proj-1",
+        expectedSubject: "agents-1",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+      const digest = crypto.subtle.digest;
+      const verify = crypto.subtle.verify;
+      const importKey = crypto.subtle.importKey;
+      const encode = TextEncoder.prototype.encode;
+      const decode = TextDecoder.prototype.decode;
+      const originalDigest = await digest.call(crypto.subtle, "SHA-256", encoder.encode(body));
+      const freshSignature = await createControlPlaneSignature(body);
+      const originalPayload = new TextDecoder().decode(
+        Uint8Array.from(
+          atob(jws.split(".")[1]!.replaceAll("-", "+").replaceAll("_", "/")),
+          (char) => char.charCodeAt(0),
+        ),
+      );
+      try {
+        crypto.subtle.digest = () => Promise.resolve(originalDigest);
+        await assertRejects(() => verifyControlPlaneJws(jws, tamperedBody, options));
+        assertEquals(
+          await verifyControlPlaneJwsRequestSignature(jws, tamperedBody, options),
+          false,
+        );
+        crypto.subtle.verify = () => Promise.resolve(true);
+        crypto.subtle.importKey = () => {
+          throw new Error("project key import");
+        };
+        TextEncoder.prototype.encode = () => encode.call(encoder, body);
+        TextDecoder.prototype.decode = () => originalPayload;
+        // A fresh key exercises importKey instead of the existing verification cache.
+        const valid = await verifyControlPlaneJws(freshSignature.jws, body, {
+          ...options,
+          publicKeyPem: freshSignature.publicKeyPem,
+        });
+        assertEquals(valid.project_id, "proj-1");
+        assertEquals(await verifyControlPlaneJwsRequestSignature(jws, body, options), true);
+        await assertRejects(() => verifyControlPlaneJws(jws, tamperedBody, options));
+        const parts = jws.split(".");
+        const alteredSignature = `${parts[0]}.${parts[1]}.${"A".repeat(86)}`;
+        await assertRejects(() => verifyControlPlaneJws(alteredSignature, body, options));
+        assertEquals(await verifyControlPlaneJwsSignature(alteredSignature, options), false);
+      } finally {
+        crypto.subtle.digest = digest;
+        crypto.subtle.verify = verify;
+        crypto.subtle.importKey = importKey;
+        TextEncoder.prototype.encode = encode;
+        TextDecoder.prototype.decode = decode;
+      }
+    });
+
     it("rejects a control-plane signature with an unsupported algorithm header", async () => {
       const body = JSON.stringify({
         requestId: "agents-1",

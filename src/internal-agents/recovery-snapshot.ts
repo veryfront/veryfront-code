@@ -16,9 +16,8 @@ import {
 import { getTextFromMemoryParts } from "#veryfront/agent/memory/memory-interface.ts";
 import { getToolResultError } from "#veryfront/tool/result.ts";
 import {
+  getEligiblePauseCheckpointSkillLoadResultRefs,
   getSkillActivationResult,
-  getTrustedSkillLoadResultIds,
-  getTrustedSkillLoadResultRefs,
   restoreTrustedSkillLoadResultsFromPauseCheckpoint,
 } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { readAttachedProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
@@ -363,10 +362,13 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     if (trustedIds.length || trustedRefs.length) {
       // Reuse the runtime's own eligibility checks for unique successful skill
       // activation results instead of inventing a second result-shape policy.
-      restoreTrustedSkillLoadResultsFromPauseCheckpoint(snapshot.messages, trustedIds, trustedRefs);
-      const eligibleIds = createPrivateSet(getTrustedSkillLoadResultIds(snapshot.messages));
+      const eligibleRefs = getEligiblePauseCheckpointSkillLoadResultRefs(
+        snapshot.messages,
+        trustedIds,
+        trustedRefs,
+      );
+      const eligibleIds = createPrivateSet(mapPrivateArray(eligibleRefs, (ref) => ref.toolCallId));
       if (somePrivateArray(trustedIds, (id) => !eligibleIds.has(id))) throw invalid();
-      const eligibleRefs = getTrustedSkillLoadResultRefs(snapshot.messages);
       if (
         somePrivateArray(
           trustedRefs,
@@ -469,7 +471,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
             applySkillDelegationOverridesToToolInput(
               call.toolName,
               input.data.args,
-              key && overridesAtResult.has(key) ? overridesAtResult.get(key) : activeOverrides,
+              overridesAtResult.has(key) ? overridesAtResult.get(key) : activeOverrides,
             ),
           )
         ) throw invalid();
@@ -529,6 +531,11 @@ export function validateRecoverySnapshotForRestore(
   applyProviderReplayCheckpointsToMessages(
     snapshot.messages,
     parseServerResolvedProviderReplayCheckpoints(replay),
+  );
+  restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+    snapshot.messages,
+    snapshot.runtimeContinuation?.trustedSkillLoadResultIds,
+    snapshot.runtimeContinuation?.trustedSkillLoadResultRefs,
   );
   return snapshot;
 }

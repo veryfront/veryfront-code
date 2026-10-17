@@ -23,7 +23,7 @@ import {
   createNativeRequestInit,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
-import { createHash } from "node:crypto";
+import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
 import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -361,7 +361,7 @@ export function createManagedRecoveryHttpTransport(
       const files = mapPrivateArray(manifest.files, (file) => {
         if (
           byteLength(file.content, "utf8") !== file.byte_size ||
-          createHash("sha256").update(file.content, "utf8").digest("hex") !== file.content_hash
+          privateSha256Hex(file.content) !== file.content_hash
         ) {
           throw new Error("Managed recovery release file integrity failed");
         }

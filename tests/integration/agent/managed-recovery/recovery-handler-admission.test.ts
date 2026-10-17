@@ -354,154 +354,196 @@ for (const expireBeforeHandoff of [false, true]) {
   });
 }
 
-for (const preparation of ["environment", "config"]) {
-  it(`cancellation during source ${preparation} prevents discovery`, async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    let discoveryCalls = 0;
-    let releasePreparation = () => {};
-    let enteredPreparation = () => {};
-    const entered = new Promise<void>((resolve) => {
-      enteredPreparation = resolve;
-    });
-    const released = new Promise<void>((resolve) => {
-      releasePreparation = resolve;
-    });
-    const pausePreparation = async () => {
-      enteredPreparation();
-      await released;
-    };
-    const recoveryDirectory = await makeTempDir();
-    const sessionManager = new AgentRunSessionManager({
-      recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
-        const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
-        if (!admission) throw new Error("Expected verified recovery admission");
-        const owner = await RecoverySessionOwner.acquire({
-          claims,
-          directory: recoveryDirectory,
-          awaitRetiredPreviousOwner,
-          validateCurrentOwnership: async () => ({
-            version: 1,
-            identity: {
-              projectId: admission.identity.projectId,
-              canonicalRunId: admission.identity.canonicalRunId,
-              publicRunId: admission.identity.publicRunId,
-              agentId: admission.identity.agentId,
-              threadId: admission.identity.threadId,
+for (const preparation of ["environment", "config", "discovery"]) {
+  for (const loss of ["cancellation", "supersession", "expiry"]) {
+    it(`${loss} during source ${preparation} prevents project evaluation`, async () => {
+      let loseOwnership = false;
+      let sessionSignal: AbortSignal | undefined;
+      const projectId = "11111111-1111-4111-8111-111111111111";
+      let discoveryCalls = 0;
+      let releasePreparation = () => {};
+      let enteredPreparation = () => {};
+      const entered = new Promise<void>((resolve) => {
+        enteredPreparation = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      const pausePreparation = async () => {
+        enteredPreparation();
+        await released;
+      };
+      const recoveryDirectory = await makeTempDir();
+      class PreparationSessionManager extends AgentRunSessionManager {
+        override async startManagedRecoveryRun(
+          ...args: Parameters<AgentRunSessionManager["startManagedRecoveryRun"]>
+        ) {
+          const session = await super.startManagedRecoveryRun(...args);
+          sessionSignal = session.signal;
+          return session;
+        }
+      }
+      const sessionManager = new PreparationSessionManager({
+        recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+          const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
+          if (!admission) throw new Error("Expected verified recovery admission");
+          const owner = await RecoverySessionOwner.acquire({
+            claims,
+            directory: recoveryDirectory,
+            awaitRetiredPreviousOwner,
+            validateCurrentOwnership: async () => {
+              if (loseOwnership && loss === "expiry") return await new Promise<never>(() => {});
+              return ({
+                version: 1,
+                identity: {
+                  projectId: admission.identity.projectId,
+                  canonicalRunId: admission.identity.canonicalRunId,
+                  publicRunId: admission.identity.publicRunId,
+                  agentId: admission.identity.agentId,
+                  threadId: admission.identity.threadId,
+                },
+                generation: loseOwnership && loss === "supersession"
+                  ? {
+                    ...admission.generation,
+                    dispatchNonce: "77777777-7777-4777-8777-777777777777",
+                  }
+                  : admission.generation,
+                acknowledgedEventId: 0,
+                acknowledgedExternalSequence: 0,
+                leaseRemainingMs: 1_000,
+              });
             },
-            generation: admission.generation,
-            acknowledgedEventId: 0,
-            acknowledgedExternalSequence: 0,
-            leaseRemainingMs: 10_000,
-          }),
-        });
-        return { owner };
-      },
-    });
-    const handler = createTestAgentStreamHandler({
-      sessionManager,
-      loadAgentSourceEnvironment: async () => {
-        if (preparation === "environment") await pausePreparation();
-        return {};
-      },
-      ensureProjectDiscovery: async () => {
-        discoveryCalls++;
-        return createEmptyDiscoveryResult();
-      },
-      getAgent: () => undefined,
-      getAllAgentIds: () => [],
-    });
-    const body = createAgentStreamRequestBody({
-      project: { projectId, sourceTargetEnvironmentId: "33333333-3333-4333-8333-333333333333" },
-      agentSource: { type: "release", releaseId: "44444444-4444-4444-8444-444444444444" },
-      credentials: { authToken: "synthetic-invocation" },
-      managedRecoveryAdmission: {
-        version: 1,
-        identity: {
-          projectId,
-          canonicalRunId: "22222222-2222-4222-8222-222222222222",
-          publicRunId: "run_1",
-          agentId: "assistant-1",
-          threadId: "10000000-1000-4000-8000-100000000001",
-          sourceHash: "a".repeat(64),
+          });
+          return { owner };
         },
-        generation: {
-          workerId: "worker-1",
-          dispatchNonce: "66666666-6666-4666-8666-666666666666",
-          transportRecoveryAttempt: 0,
+      });
+      const handler = createTestAgentStreamHandler({
+        sessionManager,
+        loadAgentSourceEnvironment: async () => {
+          if (preparation === "environment") await pausePreparation();
+          return {};
         },
-        acknowledgedExternalSequence: 0,
-        leaseRemainingMs: 10_000,
-        sourceBinding: {
-          projectId,
-          environmentId: "33333333-3333-4333-8333-333333333333",
-          releaseId: "44444444-4444-4444-8444-444444444444",
+        ensureProjectDiscovery: async (_ctx, assertCurrent) => {
+          if (preparation === "discovery") await pausePreparation();
+          await assertCurrent?.();
+          discoveryCalls++;
+          return createEmptyDiscoveryResult();
         },
-        eventPersistence: "runtime-owned-v1",
-        expiresAt: Math.floor(Date.now() / 1000) + 30,
-      },
-    });
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-      requestId: "run_1",
-      projectId,
-    });
-    const request = sealIngressCredentials(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-          [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+      });
+      const body = createAgentStreamRequestBody({
+        project: { projectId, sourceTargetEnvironmentId: "33333333-3333-4333-8333-333333333333" },
+        agentSource: { type: "release", releaseId: "44444444-4444-4444-8444-444444444444" },
+        credentials: { authToken: "synthetic-invocation" },
+        managedRecoveryAdmission: {
+          version: 1,
+          identity: {
+            projectId,
+            canonicalRunId: "22222222-2222-4222-8222-222222222222",
+            publicRunId: "run_1",
+            agentId: "assistant-1",
+            threadId: "10000000-1000-4000-8000-100000000001",
+            sourceHash: "a".repeat(64),
+          },
+          generation: {
+            workerId: "worker-1",
+            dispatchNonce: "66666666-6666-4666-8666-666666666666",
+            transportRecoveryAttempt: 0,
+          },
+          acknowledgedExternalSequence: 0,
+          leaseRemainingMs: 10_000,
+          sourceBinding: {
+            projectId,
+            environmentId: "33333333-3333-4333-8333-333333333333",
+            releaseId: "44444444-4444-4444-8444-444444444444",
+          },
+          eventPersistence: "runtime-owned-v1",
+          expiresAt: Math.floor(Date.now() / 1000) + 30,
         },
-        body,
-      }),
-    );
-    assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
-    const ctx = createCtx(publicKeyPem);
-    ctx.projectId = projectId;
-    const originalFreshness = ctx.adapter.fs.ensureSourceSnapshotFresh;
-    ctx.adapter.fs.ensureSourceSnapshotFresh = async (reason, options) => {
-      if (preparation === "config" && reason === "agent-source-config") await pausePreparation();
-      return await originalFreshness?.(reason, options);
-    };
-    const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
-    try {
-      const pending = handler.handle(request, ctx);
-      await entered;
-      const cancelBody = "";
-      const cancelSignature = await createControlPlaneSignature(cancelBody, {
-        requestMethod: "DELETE",
-        requestPath: "/api/control-plane/runs/run_1",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
         requestId: "run_1",
         projectId,
       });
-      Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", cancelSignature.publicKeyPem);
-      const cancelCtx = createCtx(cancelSignature.publicKeyPem);
-      cancelCtx.projectId = projectId;
-      const cancelled = await new AgentRunCancelHandler(sessionManager).handle(
-        new Request("https://example.com/api/control-plane/runs/run_1", {
-          method: "DELETE",
-          headers: { "x-veryfront-control-plane-jws": cancelSignature.jws },
-          body: cancelBody,
+      const request = sealIngressCredentials(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+            [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+          },
+          body,
         }),
-        cancelCtx,
       );
-      releasePreparation();
-      const result = await pending;
-      assertExists(cancelled.response);
-      assertEquals(cancelled.response.status, 202);
-      assertEquals(await cancelled.response.json(), { accepted: true });
-      assertExists(result.response);
-      await result.response.body?.cancel();
-      assertEquals(result.response.status >= 400, true);
-      assertEquals(discoveryCalls, 0);
-      assertEquals(sessionManager.getRunStatus("run_1"), null);
-      assertEquals(sessionManager.cancelRun("run_1"), false);
-    } finally {
-      releasePreparation();
-      await Deno.remove(recoveryDirectory, { recursive: true });
-      if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-      else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
-    }
-  });
+      assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
+      const originalFreshness = ctx.adapter.fs.ensureSourceSnapshotFresh;
+      ctx.adapter.fs.ensureSourceSnapshotFresh = async (reason, options) => {
+        if (preparation === "config" && reason === "agent-source-config") await pausePreparation();
+        return await originalFreshness?.(reason, options);
+      };
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+      try {
+        const pending = handler.handle(request, ctx);
+        await entered;
+        let cancelled: Awaited<ReturnType<AgentRunCancelHandler["handle"]>> | undefined;
+        if (loss === "cancellation") {
+          const cancelBody = "";
+          const cancelSignature = await createControlPlaneSignature(cancelBody, {
+            requestMethod: "DELETE",
+            requestPath: "/api/control-plane/runs/run_1",
+            requestId: "run_1",
+            projectId,
+          });
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", cancelSignature.publicKeyPem);
+          const cancelCtx = createCtx(cancelSignature.publicKeyPem);
+          cancelCtx.projectId = projectId;
+          cancelled = await new AgentRunCancelHandler(sessionManager).handle(
+            new Request("https://example.com/api/control-plane/runs/run_1", {
+              method: "DELETE",
+              headers: { "x-veryfront-control-plane-jws": cancelSignature.jws },
+              body: cancelBody,
+            }),
+            cancelCtx,
+          );
+        } else {
+          loseOwnership = true;
+          assertExists(sessionSignal);
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 2_000);
+            const finish = () => {
+              clearTimeout(timeout);
+              resolve();
+            };
+            if (sessionSignal?.aborted) finish();
+            else sessionSignal?.addEventListener("abort", finish, { once: true });
+          });
+        }
+        const abortedBeforePreparationFinished = sessionSignal?.aborted;
+        releasePreparation();
+        const result = await pending;
+        assertEquals(abortedBeforePreparationFinished, true);
+        if (cancelled) {
+          assertExists(cancelled.response);
+          assertEquals(cancelled.response.status, 202);
+          assertEquals(await cancelled.response.json(), { accepted: true });
+        }
+        assertExists(result.response);
+        await result.response.body?.cancel();
+        assertEquals(result.response.status >= 400, true);
+        assertEquals(discoveryCalls, 0);
+        assertEquals(sessionManager.getRunStatus("run_1"), null);
+        assertEquals(sessionManager.cancelRun("run_1"), false);
+      } finally {
+        releasePreparation();
+        await Deno.remove(recoveryDirectory, { recursive: true });
+        if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+      }
+    });
+  }
 }

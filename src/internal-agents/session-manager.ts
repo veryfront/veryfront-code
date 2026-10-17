@@ -1,3 +1,4 @@
+import { startManagedRecoveryLifetime } from "./managed-recovery-lifetime.ts";
 import type { createManagedRecoveryWriter } from "./managed-recovery-writer.ts";
 import { getBootManagedRecoveryFactory } from "./managed-recovery-runtime-bootstrap.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
@@ -11,6 +12,7 @@ import type { RecoverySnapshot } from "./recovery-snapshot.ts";
 
 export type ManagedRecoveryOwnerFactory = (input: {
   claims: VerifiedControlPlaneRequestClaims;
+  onOwnerAcquired?: (owner: RecoverySessionOwner) => Promise<void>;
   awaitRetiredPreviousOwner: (generation: RecoveryAdmission["generation"]) => Promise<void>;
 }) => Promise<
   {
@@ -159,6 +161,7 @@ export class AgentRunSessionManager {
       owner: RecoverySessionOwner;
       writer?: Awaited<ReturnType<typeof createManagedRecoveryWriter>>;
       snapshot?: RecoverySnapshot;
+      lifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>>;
       settle: () => void;
     }
   > {
@@ -173,9 +176,17 @@ export class AgentRunSessionManager {
     if (!this.managedSessions.has(input.runId)) this.assertCapacity();
     const acquisition = new AbortController();
     this.acquiringManagedRuns.set(input.runId, acquisition);
+    let lifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+    let cancelCurrent = () => acquisition.abort();
     try {
       const acquired = await factory({
         claims: input.claims,
+        onOwnerAcquired: async (owner) => {
+          acquisition.signal.throwIfAborted();
+          owner.assertAdmittedClaims(input.claims);
+          if (lifetime) throw new Error("Managed recovery owner already acquired");
+          lifetime = await startManagedRecoveryLifetime(owner, () => cancelCurrent());
+        },
         awaitRetiredPreviousOwner: async (generation) => {
           const previous = this.managedSessions.get(input.runId);
           if (
@@ -194,13 +205,14 @@ export class AgentRunSessionManager {
       if (acquisition.signal.aborted) throw new AgentRunCancelledError();
       const owner = acquired.owner;
       owner.assertAdmittedClaims(input.claims);
+      lifetime ??= await startManagedRecoveryLifetime(owner, () => cancelCurrent());
       const snapshot = acquired.snapshot === undefined
         ? undefined
         : await owner.validateRestoredSnapshot(acquired.snapshot);
       if (owner.requiresRestoredSnapshot && !snapshot) {
         throw new Error("Managed recovery requires an acknowledged durable snapshot");
       }
-      await owner.assertCurrentOwnership();
+      await lifetime.assertCurrent();
       if (acquisition.signal.aborted) throw new AgentRunCancelledError();
       if (this.managedSessions.has(input.runId)) throw new AgentRunAlreadyExistsError(input.runId);
       // Each generation gets its own resume-session namespace. Retiring one generation
@@ -210,6 +222,10 @@ export class AgentRunSessionManager {
         recoveryOwnerFactory: undefined,
       });
       const signal = manager.startRun(input);
+      cancelCurrent = () => {
+        acquisition.abort();
+        manager.cancelRun(input.runId, signal);
+      };
       let settleRetired = () => {};
       const retired = new Promise<void>((resolve) => {
         settleRetired = resolve;
@@ -225,9 +241,11 @@ export class AgentRunSessionManager {
       return {
         signal,
         owner,
+        lifetime,
         ...(acquired.writer ? { writer: acquired.writer } : {}),
         ...(snapshot ? { snapshot } : {}),
         settle: () => {
+          lifetime?.stop();
           settleRetired();
           if (
             this.managedSessions.get(input.runId) === session && !manager.getRunStatus(input.runId)
@@ -236,6 +254,9 @@ export class AgentRunSessionManager {
           }
         },
       };
+    } catch (error) {
+      lifetime?.stop();
+      throw error;
     } finally {
       this.acquiringManagedRuns.delete(input.runId);
     }

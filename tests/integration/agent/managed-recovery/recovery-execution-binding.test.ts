@@ -110,7 +110,12 @@ it("signed recovery execution binds immutable source, agent and conversation bef
           leaseRemainingMs: 10_000,
         }),
       });
-      const session = { owner, signal: new AbortController().signal, settle: () => {} };
+      const session = {
+        owner,
+        signal: new AbortController().signal,
+        settle: () => {},
+        lifetime: { stop: () => {}, assertCurrent: async () => {} },
+      };
       const boundInput = { ...input, forwardedProps: { a: 1, b: 2 } };
       await assertManagedRecoveryRequestBinding(boundInput, session);
       await assertManagedRecoveryRequestBinding({
@@ -121,6 +126,34 @@ it("signed recovery execution binds immutable source, agent and conversation bef
         const overrides of [
           { context: [{ type: "text", text: "Different runtime context" }] },
           { state: { changed: true } },
+          { messageId: projectId },
+          { taskId: "changed-task" },
+          { parentRunId: "run-parent" },
+          { executionEnvironmentId: projectId },
+          { runtimeTargetEnvironmentId: projectId },
+          { sourceTargetEnvironmentId: projectId },
+          {
+            runtimeTargetKind: "preview_branch",
+            runtimeTargetBranchId: projectId,
+            agentSource: { type: "branch", branch: "main" },
+            sourceTargetEnvironmentId: undefined,
+            runtimeTargetEnvironmentId: undefined,
+          },
+          {
+            sourceProject: {
+              projectId,
+              projectSlug: "source",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+            executionProject: {
+              projectId: environmentId,
+              projectSlug: "execution",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: projectId,
+            },
+            credentials: { authToken: "synthetic-invocation", sourceAuthToken: "synthetic" },
+          },
           { forwardedProps: { a: 1, b: 3 } },
           { tools: [{ name: "different_tool" }] },
           { allowDelegation: false },
@@ -134,6 +167,26 @@ it("signed recovery execution binds immutable source, agent and conversation bef
         await assertRejects(() => assertManagedRecoveryRequestBinding(replacement, session));
         await assertManagedRecoveryRequestBinding(boundInput, session);
       }
+      // These fields legitimately rotate or advance under replacement admission;
+      // their authority comes from signed credentials and checkpoint reconciliation.
+      await assertManagedRecoveryRequestBinding(
+        getInternalAgentStreamRequestSchema().parse({
+          ...boundInput,
+          credentials: { authToken: "rotated-invocation" },
+          managedRecoveryAdmission: {
+            ...admission,
+            generation: {
+              ...admission.generation,
+              transportRecoveryAttempt: 1,
+              dispatchNonce: projectId,
+            },
+          },
+          messages: [{ id: "restored-history", role: "user", content: "checkpoint history" }],
+          serverResolvedProviderReplayCheckpoints: [{ messageId: projectId }],
+          serverResolvedTrustedHostedHistoryMessageIds: [projectId],
+        }),
+        session,
+      );
       const oversized = getInternalAgentStreamRequestSchema().parse({
         ...input,
         messages: [{ id: "large", role: "user", content: "x".repeat(240_000) }],

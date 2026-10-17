@@ -54,7 +54,7 @@ export function createManagedRecoveryHostFactory(input: {
   const validateOwnership = input.validateCurrentOwnership;
   const loadSnapshot = input.loadAcknowledgedSnapshot;
   const readSuffixPage = input.readRecoverySuffixPage;
-  return async ({ claims, awaitRetiredPreviousOwner }) => {
+  return async ({ claims, awaitRetiredPreviousOwner, onOwnerAcquired }) => {
     const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
     if (
       !admission || admission.sourceBinding.projectId !== claims.project_id ||
@@ -76,6 +76,7 @@ export function createManagedRecoveryHostFactory(input: {
       validateCurrentOwnership: () => validateOwnership(claims),
       awaitRetiredPreviousOwner,
     });
+    await onOwnerAcquired?.(owner);
     let snapshot = await loadSnapshot(admission.identity);
     if (readSuffixPage && (snapshot !== undefined || owner.requiresRestoredSnapshot)) {
       const parsed = snapshot === undefined ? undefined : parseRecoverySnapshot(snapshot);

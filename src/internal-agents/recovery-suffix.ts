@@ -73,7 +73,7 @@ export const getRecoverySuffixPageSchema = defineSchema((v) => {
 });
 export type RecoverySuffixPage = InferSchema<ReturnType<typeof getRecoverySuffixPageSchema>>;
 
-import { createHash } from "node:crypto";
+import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   getRecoverySnapshotSchema,
@@ -122,7 +122,7 @@ export function recoverySuffixPayloadHash(payload: unknown): string {
     }
     return `${result}}`;
   }
-  return createHash("sha256").update(canonical(value), "utf8").digest("hex");
+  return privateSha256Hex(canonical(value));
 }
 
 /**
