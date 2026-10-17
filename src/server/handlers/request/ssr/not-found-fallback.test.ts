@@ -33,7 +33,9 @@ function createMockAdapter(
   overrides: {
     stat?: (
       path: string,
-    ) => Promise<{ isFile: boolean; isDirectory: boolean; size: number; mtime: null }>;
+    ) => Promise<
+      { isFile: boolean; isDirectory: boolean; size: number; mtime: null }
+    >;
     readFile?: (path: string) => Promise<string>;
   } = {},
 ): RuntimeAdapter {
@@ -100,19 +102,35 @@ describe(
         const req = new Request("http://localhost/not-found");
         const builder = new ResponseBuilder();
 
-        const result = await tryNotFoundFallback(req, "not-found", ctx, builder);
+        const result = await tryNotFoundFallback(
+          req,
+          "not-found",
+          ctx,
+          builder,
+        );
         assertEquals(result, null);
       });
 
       it("returns null when app path is not a directory", async () => {
         const adapter = createMockAdapter({
-          stat: () => Promise.resolve({ isFile: true, isDirectory: false, size: 0, mtime: null }),
+          stat: () =>
+            Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              size: 0,
+              mtime: null,
+            }),
         });
         const ctx = makeCtx({ adapter });
         const req = new Request("http://localhost/not-found");
         const builder = new ResponseBuilder();
 
-        const result = await tryNotFoundFallback(req, "not-found", ctx, builder);
+        const result = await tryNotFoundFallback(
+          req,
+          "not-found",
+          ctx,
+          builder,
+        );
         assertEquals(result, null);
       });
 
@@ -126,7 +144,10 @@ describe(
         try {
           setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
           clearReactVersionCache();
-          await Deno.writeTextFile(join(projectDir, "package.json"), "{ malformed");
+          await Deno.writeTextFile(
+            join(projectDir, "package.json"),
+            "{ malformed",
+          );
           const adapter = createMockAdapter({
             stat: () => {
               statCalls++;
@@ -194,7 +215,12 @@ describe(
           const req = new Request("http://localhost/a/b/missing");
           const builder = new ResponseBuilder();
 
-          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          const result = await tryNotFoundFallback(
+            req,
+            "a/b/missing",
+            ctx,
+            builder,
+          );
           assertExists(result);
           assertEquals(result.status, 404);
           const html = await result.text();
@@ -227,14 +253,22 @@ describe(
           const req = new Request("http://localhost/a/b/missing");
           const builder = new ResponseBuilder();
 
-          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          const result = await tryNotFoundFallback(
+            req,
+            "a/b/missing",
+            ctx,
+            builder,
+          );
           assertExists(result);
           assertEquals(result.status, 404);
           const html = await result.text();
           // The id attribute only survives a real SSR render: the
           // extractNotFoundText fallback rebuilds the text as a bare <p>, so
           // this pins the assertion below to the render path.
-          assertStringIncludes(html, '<p id="hosted-not-found">Missing Hosted</p>');
+          assertStringIncludes(
+            html,
+            '<p id="hosted-not-found">Missing Hosted</p>',
+          );
           assertEquals(html.includes("data-node-file"), false);
         });
       });
@@ -242,93 +276,138 @@ describe(
       it("keeps node positions on the reserved not-found component in hosted preview", async () => {
         const adapter = await getAdapter();
 
-        await withTestContext("not-found-fallback-hosted-preview", async (context) => {
-          const segDir = join(context.projectDir, "app", "a", "b");
-          await mkdir(segDir, { recursive: true });
-          await writeTextFile(
-            join(segDir, "not-found.tsx"),
-            `export default function NotFound(){ return <p id="preview-not-found">Missing Preview</p>; }`,
-          );
+        await withTestContext(
+          "not-found-fallback-hosted-preview",
+          async (context) => {
+            const segDir = join(context.projectDir, "app", "a", "b");
+            await mkdir(segDir, { recursive: true });
+            await writeTextFile(
+              join(segDir, "not-found.tsx"),
+              `export default function NotFound(){ return <p id="preview-not-found">Missing Preview</p>; }`,
+            );
 
-          // Hosted preview compiles as production. Only the request
-          // environment separates it from the case above.
-          const ctx = makeCtx({
-            projectDir: context.projectDir,
-            adapter,
-            isLocalProject: false,
-            resolvedEnvironment: "preview",
-          });
-          const req = new Request("http://localhost/a/b/missing");
-          const builder = new ResponseBuilder();
+            // Hosted preview compiles as production. Only the request
+            // environment separates it from the case above.
+            const ctx = makeCtx({
+              projectDir: context.projectDir,
+              adapter,
+              isLocalProject: false,
+              resolvedEnvironment: "preview",
+            });
+            const req = new Request("http://localhost/a/b/missing");
+            const builder = new ResponseBuilder();
 
-          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
-          assertExists(result);
-          assertEquals(result.status, 404);
-          const html = await result.text();
-          assertStringIncludes(html, "Missing Preview");
-          assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
-        });
+            const result = await tryNotFoundFallback(
+              req,
+              "a/b/missing",
+              ctx,
+              builder,
+            );
+            assertExists(result);
+            assertEquals(result.status, 404);
+            const html = await result.text();
+            assertStringIncludes(html, "Missing Preview");
+            assertStringIncludes(
+              html,
+              'data-node-file="app/a/b/not-found.tsx"',
+            );
+          },
+        );
       });
 
       it("falls back to the component's JSX text when the not-found render throws", async () => {
         const adapter = await getAdapter();
 
-        await withTestContext("not-found-fallback-render-failure", async (context) => {
-          const segDir = join(context.projectDir, "app", "a", "b");
-          await mkdir(segDir, { recursive: true });
-          // The JSX text stays in the source so extractNotFoundText can recover it.
-          await writeTextFile(
-            join(segDir, "not-found.tsx"),
-            `export default function NotFound(){ throw new Error("boom"); return <p>Missing Text</p>; }`,
-          );
+        await withTestContext(
+          "not-found-fallback-render-failure",
+          async (context) => {
+            const segDir = join(context.projectDir, "app", "a", "b");
+            await mkdir(segDir, { recursive: true });
+            // The JSX text stays in the source so extractNotFoundText can recover it.
+            await writeTextFile(
+              join(segDir, "not-found.tsx"),
+              `export default function NotFound(){ throw new Error("boom"); return <p>  Missing &gt; Text  </p>; }`,
+            );
 
-          const ctx = makeCtx({
-            projectDir: context.projectDir,
-            adapter,
-            isLocalProject: false,
-            resolvedEnvironment: "preview",
-          });
-          const req = new Request("http://localhost/a/b/missing");
-          const builder = new ResponseBuilder();
+            const ctx = makeCtx({
+              projectDir: context.projectDir,
+              adapter,
+              isLocalProject: false,
+              resolvedEnvironment: "preview",
+            });
+            const req = new Request("http://localhost/a/b/missing");
+            const builder = new ResponseBuilder();
 
-          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
-          assertExists(result, "a failed not-found render must still produce a response");
-          assertEquals(result.status, 404, "a failed not-found render must still answer 404");
-          const html = await result.text();
-          assertStringIncludes(
-            html,
-            "<p>Missing Text</p>",
-            "the text fallback must survive an SSR render failure",
-          );
-        });
+            const result = await tryNotFoundFallback(
+              req,
+              "a/b/missing",
+              ctx,
+              builder,
+            );
+            assertExists(
+              result,
+              "a failed not-found render must still produce a response",
+            );
+            assertEquals(
+              result.status,
+              404,
+              "a failed not-found render must still answer 404",
+            );
+            const html = await result.text();
+            assertStringIncludes(
+              html,
+              "<p>Missing &gt; Text</p>",
+              "the text fallback must survive an SSR render failure",
+            );
+          },
+        );
       });
 
       it("uses the last-resort text when the failing not-found component has no JSX text", async () => {
         const adapter = await getAdapter();
 
-        await withTestContext("not-found-fallback-render-failure-bare", async (context) => {
-          const segDir = join(context.projectDir, "app", "a", "b");
-          await mkdir(segDir, { recursive: true });
-          await writeTextFile(
-            join(segDir, "not-found.tsx"),
-            `export default function NotFound(){ throw new Error("boom"); }`,
-          );
+        await withTestContext(
+          "not-found-fallback-render-failure-bare",
+          async (context) => {
+            const segDir = join(context.projectDir, "app", "a", "b");
+            await mkdir(segDir, { recursive: true });
+            await writeTextFile(
+              join(segDir, "not-found.tsx"),
+              `export default function NotFound(){ throw new Error("boom"); }`,
+            );
 
-          const ctx = makeCtx({
-            projectDir: context.projectDir,
-            adapter,
-            isLocalProject: false,
-            resolvedEnvironment: "preview",
-          });
-          const req = new Request("http://localhost/a/b/missing");
-          const builder = new ResponseBuilder();
+            const ctx = makeCtx({
+              projectDir: context.projectDir,
+              adapter,
+              isLocalProject: false,
+              resolvedEnvironment: "preview",
+            });
+            const req = new Request("http://localhost/a/b/missing");
+            const builder = new ResponseBuilder();
 
-          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
-          assertExists(result, "a failed not-found render must still produce a response");
-          assertEquals(result.status, 404, "a failed not-found render must still answer 404");
-          const html = await result.text();
-          assertStringIncludes(html, "<p>Not Found</p>", "the last-resort text must be served");
-        });
+            const result = await tryNotFoundFallback(
+              req,
+              "a/b/missing",
+              ctx,
+              builder,
+            );
+            assertExists(
+              result,
+              "a failed not-found render must still produce a response",
+            );
+            assertEquals(
+              result.status,
+              404,
+              "a failed not-found render must still answer 404",
+            );
+            const html = await result.text();
+            assertStringIncludes(
+              html,
+              "<p>Not Found</p>",
+              "the last-resort text must be served",
+            );
+          },
+        );
       });
 
       it("renders with the React version configured for the project", async () => {
@@ -339,43 +418,49 @@ describe(
           renderToStaticMarkup: () => `<p>${marker}</p>`,
         });
 
-        await withTestContext("not-found-fallback-react-version", async (context) => {
-          __setServerModuleLoaderForTests((_url, label, reactVersion) => {
-            if (label === "React") {
-              loadedVersions.push(reactVersion);
-              return Promise.resolve({ default: React });
-            }
-            throw new Error(`Unexpected module load: ${label}`);
-          });
-          __injectReactDOMServerForTests(server("default-react"));
-          __injectReactDOMServerForTests(server("project-react-18"), "18.3.1");
+        await withTestContext(
+          "not-found-fallback-react-version",
+          async (context) => {
+            __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+              if (label === "React") {
+                loadedVersions.push(reactVersion);
+                return Promise.resolve({ default: React });
+              }
+              throw new Error(`Unexpected module load: ${label}`);
+            });
+            __injectReactDOMServerForTests(server("default-react"));
+            __injectReactDOMServerForTests(
+              server("project-react-18"),
+              "18.3.1",
+            );
 
-          const appDir = join(context.projectDir, "src", "site");
-          await mkdir(appDir, { recursive: true });
-          await writeTextFile(
-            join(appDir, "not-found.tsx"),
-            "export default function NotFound() { return null; }",
-          );
+            const appDir = join(context.projectDir, "src", "site");
+            await mkdir(appDir, { recursive: true });
+            await writeTextFile(
+              join(appDir, "not-found.tsx"),
+              "export default function NotFound() { return null; }",
+            );
 
-          const ctx = makeCtx({
-            projectDir: context.projectDir,
-            adapter,
-            config: {
-              react: { version: "18.3.1" },
-              directories: { app: "src/site" },
-            } as HandlerContext["config"],
-          });
-          const result = await tryNotFoundFallback(
-            new Request("http://localhost/missing"),
-            "missing",
-            ctx,
-            new ResponseBuilder(),
-          );
+            const ctx = makeCtx({
+              projectDir: context.projectDir,
+              adapter,
+              config: {
+                react: { version: "18.3.1" },
+                directories: { app: "src/site" },
+              } as HandlerContext["config"],
+            });
+            const result = await tryNotFoundFallback(
+              new Request("http://localhost/missing"),
+              "missing",
+              ctx,
+              new ResponseBuilder(),
+            );
 
-          assertExists(result);
-          assertStringIncludes(await result.text(), "project-react-18");
-          assertEquals(loadedVersions, ["18.3.1"]);
-        });
+            assertExists(result);
+            assertStringIncludes(await result.text(), "project-react-18");
+            assertEquals(loadedVersions, ["18.3.1"]);
+          },
+        );
       });
 
       it("keeps the reserved component and React rendering on snapshot A after package state B", async () => {
@@ -486,7 +571,8 @@ describe(
             "example-package": "1.0.0",
           });
           assertEquals(
-            (observed?.source as { projectDir?: string } | undefined)?.projectDir,
+            (observed?.source as { projectDir?: string } | undefined)
+              ?.projectDir,
             projectDir,
           );
           assertEquals(observed?.moduleServerOrigin, "http://localhost");

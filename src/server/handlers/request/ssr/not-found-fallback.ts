@@ -84,7 +84,8 @@ export async function tryNotFoundFallback(
     // cache entry can never disagree with how it was built. The "preview" tail
     // is the platform-wide convention for an unresolved environment, the same
     // one that already picks the cache strategy and the no-cache headers.
-    const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
+    const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ??
+      "preview";
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
@@ -173,9 +174,14 @@ async function extractNotFoundText(
         if (!st.isFile) continue;
 
         const src = await ctx.adapter.fs.readFile(file);
-        const match = src.match(/>\s*([^\s<][^<]*)</);
-
-        if (match?.[1]) return `<p>${match[1].trimEnd()}</p>`;
+        const segments = src.split("<");
+        for (let index = 0; index < segments.length - 1; index++) {
+          const segment = segments[index]!;
+          const close = segment.indexOf(">");
+          if (close === -1) continue;
+          const text = segment.slice(close + 1).trim();
+          if (text) return `<p>${text}</p>`;
+        }
       } catch (_) {
         /* expected: not-found file may not exist, try next */
       }
