@@ -14,6 +14,25 @@ function ownValue(value: unknown, key: string): unknown {
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+function projectSandboxProblemErrors(
+  problemErrors: unknown[],
+): Record<string, string>[] | undefined {
+  const errors: Record<string, string>[] = [];
+  for (let index = 0; index < problemErrors.length; index++) {
+    const item = ownValue(problemErrors, String(index));
+    if (!item || typeof item !== "object" || isArray(item)) return undefined;
+    const fields: Record<string, string> = {};
+    for (const key of ["field", "message", "code"]) {
+      const field = ownValue(item, key);
+      if (typeof field === "string" && field.length <= 1024) {
+        fields[key] = sanitizeBoundedDiagnosticText(field);
+      }
+    }
+    errors.push(fields);
+  }
+  return errors;
+}
+
 /** Keep the SDK error identity while exposing a bounded canonical API problem. */
 function responseProblem(text: string, status: number): Record<string, unknown> | undefined {
   let value: unknown;
@@ -39,22 +58,24 @@ function responseProblem(text: string, status: number): Record<string, unknown> 
   }
   const problemErrors = ownValue(problem, "errors");
   if (isArray(problemErrors) && problemErrors.length <= 50) {
-    const errors: Record<string, string>[] = [];
-    for (let index = 0; index < problemErrors.length; index++) {
-      const item = ownValue(problemErrors, String(index));
-      if (!item || typeof item !== "object" || isArray(item)) return undefined;
-      const fields: Record<string, string> = {};
-      for (const key of ["field", "message", "code"]) {
-        const field = ownValue(item, key);
-        if (typeof field === "string" && field.length <= 1024) {
-          fields[key] = sanitizeBoundedDiagnosticText(field);
-        }
-      }
-      errors.push(fields);
-    }
+    const errors = projectSandboxProblemErrors(problemErrors);
+    if (errors === undefined) return undefined;
     projected.errors = errors;
   }
   return projected;
+}
+
+function serializeSandboxProblem(problem: Record<string, unknown> | undefined): string {
+  return problem ? " " + JSON.stringify(problem) : "";
+}
+
+function sandboxProblemContext(
+  problem: Record<string, unknown> | undefined,
+  truncated: boolean,
+): { responseProblem: Record<string, unknown> } | { responseTruncated: true } | undefined {
+  if (problem) return { responseProblem: problem };
+  if (truncated) return { responseTruncated: true };
+  return undefined;
 }
 
 /** @internal Preserve HTTP status without changing the existing request-error slug/category. */
@@ -82,13 +103,9 @@ export async function createSandboxHttpError(
   const problem = truncated ? undefined : responseProblem(text, response.status);
   return REQUEST_ERROR.create({
     status: response.status,
-    detail: `${operation}: ${response.status}${problem ? ` ${JSON.stringify(problem)}` : ""}${
+    detail: `${operation}: ${response.status}${serializeSandboxProblem(problem)}${
       truncated ? " [truncated]" : ""
     }`,
-    context: problem
-      ? { responseProblem: problem }
-      : truncated
-      ? { responseTruncated: true }
-      : undefined,
+    context: sandboxProblemContext(problem, truncated),
   });
 }

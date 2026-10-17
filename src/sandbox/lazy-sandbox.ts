@@ -207,7 +207,7 @@ export class LazySandbox {
   private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
-  #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
+  readonly #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
     assertSandboxCreationOptions(options);
@@ -657,6 +657,10 @@ export class LazySandbox {
       this.resetSessionState(pendingCleanupId);
     }
 
+    await this.bootstrapNewSession();
+  }
+
+  private async bootstrapNewSession(): Promise<void> {
     for (let attempt = 1; attempt <= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         await this.bootstrapCreatedSession();
