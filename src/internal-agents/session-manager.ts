@@ -371,6 +371,23 @@ export class AgentRunSessionManager {
     return this.sessions.cancelRun(runId) || acquisition !== undefined;
   }
 
+  /** Release only the cancelled producer's capacity after its cleanup joins. */
+  settleCancelledRun(runId: string, signal: AbortSignal): void {
+    if (!signal.aborted) return;
+    const managed = this.managedSessions.get(runId);
+    if (managed?.signal === signal) {
+      managed.manager.settleCancelledRun(runId, signal);
+      return;
+    }
+    if (this.allocatedOrdinarySignals.get(signal) !== runId) return;
+    this.allocatedOrdinarySignals.delete(signal);
+    this.sessions.settleCancelledRun(runId, signal);
+    if (this.ordinarySignals.get(runId) === signal) {
+      this.ordinarySignals.delete(runId);
+      this.servingIdentities.delete(runId);
+    }
+  }
+
   completeRun(runId: string, signal?: AbortSignal): void {
     const allocated = signal ?? this.ordinarySignals.get(runId);
     if (allocated && this.allocatedOrdinarySignals.get(allocated) === runId) {

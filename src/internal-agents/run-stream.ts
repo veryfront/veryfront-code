@@ -2310,7 +2310,9 @@ export async function createRuntimeAgentStreamResponse(
             }
             if (sandboxClosed && producerCompletion) {
               void producerCompletion.then(async () => {
-                if (abortSignal.aborted) deps.sessionManager.completeRun(input.runId, abortSignal);
+                if (abortSignal.aborted) {
+                  deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
+                }
                 settledStop();
                 managedRecovery?.settle();
                 if (manualPause) {
@@ -2318,7 +2320,9 @@ export async function createRuntimeAgentStreamResponse(
                   await settleHostedAgentPause(manualPause);
                 }
               }, (error) => {
-                if (abortSignal.aborted) deps.sessionManager.failRun(input.runId, abortSignal);
+                if (abortSignal.aborted) {
+                  deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
+                }
                 settledStop();
                 managedRecovery?.settle();
                 if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
@@ -2336,7 +2340,7 @@ export async function createRuntimeAgentStreamResponse(
                 !managedRecovery && abortSignal.aborted &&
                 (readerReachedEof || readerCancellationCompleted)
               ) {
-                deps.sessionManager.completeRun(input.runId, abortSignal);
+                deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
               }
               settledStop("abandoned");
             }

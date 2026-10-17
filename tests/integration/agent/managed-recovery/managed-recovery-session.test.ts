@@ -180,10 +180,16 @@ it("actual session replacement joins predecessor and fences its late finalizer",
     });
     assertEquals(replaced, false);
     assertThrows(() => manager.startRun({ runId: "unrelated", threadId: identity.threadId }));
+    manager.settleCancelledRun(identity.publicRunId, first.signal);
+    assertEquals(manager.getRunStatus(identity.publicRunId), null);
+    // Producer bookkeeping retirement alone must not free the managed owner slot.
+    assertThrows(() => manager.startRun({ runId: "unrelated", threadId: identity.threadId }));
     first.settle();
     const second = await replacement;
     assertEquals(retirements, 1);
     assertEquals(second.signal.aborted, false);
+    manager.settleCancelledRun(identity.publicRunId, first.signal);
+    assertEquals(manager.getRunStatus(identity.publicRunId), "running");
     manager.failRun(identity.publicRunId, first.signal);
     assertEquals(manager.getRunStatus(identity.publicRunId), "running");
     manager.completeRun(identity.publicRunId, second.signal);
@@ -648,7 +654,7 @@ it("cancelled ordinary cleanup blocks managed acquisition at combined capacity",
       "Maximum concurrent sessions",
     );
     assertEquals(acquisitions, 0);
-    manager.failRun("ordinary", ordinary);
+    manager.settleCancelledRun("ordinary", ordinary);
     await assertRejects(
       () =>
         manager.startManagedRecoveryRun({

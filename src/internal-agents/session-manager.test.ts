@@ -330,7 +330,7 @@ describe("cancelled execution finalization", () => {
         const runId = `cancelled-${index}`;
         const signal = manager.startRun({ runId, threadId: "thread" });
         manager.cancelRun(runId);
-        manager.failRun(runId, signal);
+        manager.settleCancelledRun(runId, signal);
         assertEquals(manager.getRunStatus(runId), null);
       }
       const signal = manager.startRun({ runId: "after-cancellations", threadId: "thread" });
@@ -392,6 +392,63 @@ it("session TTL cancellation retains producer capacity until cleanup", async () 
     manager.completeRun("expired", signal);
     const next = manager.startRun({ runId: "next", threadId: "thread" });
     manager.completeRun("next", next);
+  } finally {
+    manager.reset();
+  }
+});
+
+it("cancelled settlement cannot release a live or replacement producer", () => {
+  const manager = new AgentRunSessionManager({ maxConcurrentSessions: 2 });
+  try {
+    const old = manager.startRun({ runId: "reused", threadId: "thread" });
+    manager.settleCancelledRun("reused", old);
+    const peer = manager.startRun({ runId: "peer", threadId: "thread" });
+    assertThrows(() => manager.startRun({ runId: "blocked", threadId: "thread" }));
+    manager.completeRun("peer", peer);
+    manager.cancelRun("reused", old);
+    const replacement = manager.startRun({ runId: "reused", threadId: "thread" });
+    manager.settleCancelledRun("wrong-id", old);
+    assertThrows(() => manager.startRun({ runId: "blocked", threadId: "thread" }));
+    manager.settleCancelledRun("reused", old);
+    manager.settleCancelledRun("reused", old);
+    assertEquals(manager.getRunStatus("reused"), "running");
+    const next = manager.startRun({ runId: "next", threadId: "thread" });
+    assertThrows(() => manager.startRun({ runId: "blocked", threadId: "thread" }));
+    manager.completeRun("reused", replacement);
+    manager.completeRun("next", next);
+  } finally {
+    manager.reset();
+  }
+});
+
+it("settles overflow cancelled sessions and ordinary capacity under the same signal", () => {
+  const manager = new AgentRunSessionManager({ maxConcurrentSessions: 1001 });
+  const signals: AbortSignal[] = [];
+  try {
+    for (let index = 0; index <= 1000; index++) {
+      const id = `overflow-${index}`;
+      signals.push(manager.startRun({ runId: id, threadId: "thread" }));
+      manager.cancelRun(id);
+    }
+    const overflow = signals[1000];
+    if (!overflow) throw new Error("Expected overflow producer");
+    assertEquals(manager.getRunStatus("overflow-1000"), "cancelled");
+    assertThrows(() => manager.startRun({ runId: "blocked", threadId: "thread" }));
+    manager.settleCancelledRun("overflow-1000", overflow);
+    assertEquals(manager.getRunStatus("overflow-1000"), null);
+    const replacement = manager.startRun({ runId: "overflow-1000", threadId: "thread" });
+    manager.settleCancelledRun("overflow-1000", overflow);
+    assertEquals(manager.getRunStatus("overflow-1000"), "running");
+    assertThrows(() => manager.startRun({ runId: "blocked", threadId: "thread" }));
+    manager.cancelRun("overflow-1000", replacement);
+    manager.settleCancelledRun("overflow-1000", replacement);
+    for (let index = 0; index < 1000; index++) {
+      const signal = signals[index];
+      if (!signal) throw new Error("Expected cancelled producer");
+      manager.settleCancelledRun(`overflow-${index}`, signal);
+    }
+    const next = manager.startRun({ runId: "after-overflow", threadId: "thread" });
+    manager.completeRun("after-overflow", next);
   } finally {
     manager.reset();
   }
