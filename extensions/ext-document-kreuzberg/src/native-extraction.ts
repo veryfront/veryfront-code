@@ -48,11 +48,11 @@ function decodeXmlText(value: string): string {
     /&#x([0-9a-f]+);/gi,
     (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)),
   ).replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&amp;", "&");
 }
 
 function extractPptxSlideText(xml: string): string {
