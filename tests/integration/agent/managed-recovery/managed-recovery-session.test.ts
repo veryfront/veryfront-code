@@ -1,4 +1,4 @@
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-recovery-writer.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -196,7 +196,7 @@ import {
 import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
 import { agent as createAgent } from "#veryfront/agent";
 
-it("pre-producer setup failure settles and actual next stream restores its private predecessor snapshot", async () => {
+it("pre-producer setup failure restores its snapshot and late response cancellation preserves the replacement", async () => {
   const previous = Deno.env.get(envKey);
   const directory = await makeTempDir();
   const firstAdmission = admission();
@@ -258,6 +258,14 @@ it("pre-producer setup failure settles and actual next stream restores its priva
       };
     },
   });
+  let retainedStop: () => void = () => {
+    throw new Error("Managed response did not register its stop callback");
+  };
+  const registerStop = manager.stopRegistry.register.bind(manager.stopRegistry);
+  manager.stopRegistry.register = (runId, stop) => {
+    retainedStop = stop;
+    return registerStop(runId, stop);
+  };
   try {
     const agent = createAgent({
       id: "recovery-proof",
@@ -304,13 +312,28 @@ it("pre-producer setup failure settles and actual next stream restores its priva
         continue;
       }
       const response = await responsePromise;
-      await response.text();
       if (attempt === 1) {
         assertEquals(observed, [{
           id: "durable-user",
           role: "user",
           parts: [{ type: "text", text: "acknowledged durable input" }],
         }]);
+        await waitFor(() => manager.getRunStatus(identity.publicRunId) === null);
+        current = admission(2);
+        const replacement = await manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: crypto.randomUUID(),
+          claims: await signed(current),
+        });
+        assertEquals(replacement.signal.aborted, false);
+        retainedStop();
+        assertEquals(replacement.signal.aborted, false);
+        // Leave the predecessor's queued response bytes unread, then detach it.
+        await response.body!.cancel();
+        assertEquals(replacement.signal.aborted, false);
+        assertEquals(manager.getRunStatus(identity.publicRunId), "running");
+        manager.completeRun(identity.publicRunId, replacement.signal);
+        replacement.settle();
       }
     }
   } finally {

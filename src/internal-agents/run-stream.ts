@@ -1429,7 +1429,7 @@ export async function createRuntimeAgentStreamResponse(
           new Error("Internal agent stop requested"),
         );
       }
-      deps.sessionManager.cancelRun(input.runId);
+      deps.sessionManager.cancelRun(input.runId, abortSignal);
     });
   } catch (error) {
     revokePlatformDependencyOwner(input);
@@ -2197,7 +2197,7 @@ export async function createRuntimeAgentStreamResponse(
             if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
             readerExitReason = error;
             if (error instanceof AgentRunCancelledError) {
-              deps.sessionManager.cancelRun(input.runId);
+              deps.sessionManager.cancelRun(input.runId, abortSignal);
               setSpanAttributes(runSpan, {
                 ...buildInternalAgentRunTraceAttributes({
                   runInput: input,
@@ -2367,7 +2367,7 @@ export async function createRuntimeAgentStreamResponse(
       const status = deps.sessionManager.getRunStatus(input.runId);
       const shouldCancelActiveRun = status !== null && status !== "waiting";
       if (shouldCancelActiveRun) {
-        deps.sessionManager.cancelRun(input.runId);
+        deps.sessionManager.cancelRun(input.runId, abortSignal);
       }
       logger.info("Internal agent runtime client detached", {
         runId: input.runId,
