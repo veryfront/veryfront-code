@@ -35,11 +35,8 @@ type ReasoningPart = Extract<ChatUiMessage["parts"][number], { type: "reasoning"
 
 function toolPartName(part: ChatUiMessage["parts"][number]): string {
   if (!isToolUiPart(part)) return "";
-  return typeof part.toolName === "string" && part.toolName.length > 0
-    ? part.toolName
-    : part.type.startsWith("tool-")
-    ? part.type.slice(5)
-    : "";
+  if (typeof part.toolName === "string" && part.toolName.length > 0) return part.toolName;
+  return part.type.startsWith("tool-") ? part.type.slice(5) : "";
 }
 
 /** Match legacy terminal aliases to the output state already used by mirrored chunks. */
@@ -172,46 +169,49 @@ function assignFallbackTextOccurrences(
   for (let index = candidates.length - 1; index >= 0; index--) {
     remainingMaximum[index] = remainingMaximum[index + 1]! + candidates[index]![0]!.length;
   }
+  const considerSelection = (characters: number): void => {
+    // A recovered suffix may cross another assigned occurrence, never unrelated text.
+    if (
+      selected.some((match) => {
+        const first = match.indexes[0];
+        const last = match.indexes.at(-1);
+        if (first === undefined || last === undefined) return false;
+        for (let index = first; index <= last; index++) if (!used.has(index)) return true;
+        return false;
+      })
+    ) return;
+    let inversions = 0;
+    for (let left = 0; left < selected.length; left++) {
+      for (let right = left + 1; right < selected.length; right++) {
+        const first = selected[left]!.indexes[0];
+        const second = selected[right]!.indexes[0];
+        if (first !== undefined && second !== undefined && first > second) inversions++;
+      }
+    }
+    const earlier = selected.findIndex((match, index) =>
+      (match.indexes[0] ?? Infinity) !== (best[index]!.indexes[0] ?? Infinity)
+    );
+    const prefersEarlier = earlier >= 0 &&
+      (selected[earlier]!.indexes[0] ?? Infinity) < (best[earlier]!.indexes[0] ?? Infinity);
+    if (
+      characters > bestCharacters ||
+      (characters === bestCharacters && used.size > bestConsumed) ||
+      (characters === bestCharacters && used.size === bestConsumed &&
+        inversions < bestInversions) ||
+      (characters === bestCharacters && used.size === bestConsumed &&
+        inversions === bestInversions && prefersEarlier)
+    ) {
+      best = [...selected];
+      bestCharacters = characters;
+      bestConsumed = used.size;
+      bestInversions = inversions;
+    }
+  };
   const visit = (occurrence: number, characters: number): void => {
     consumeSearchStep();
     if (characters + (remainingMaximum[occurrence] ?? 0) < bestCharacters) return;
     if (occurrence === candidates.length) {
-      // A recovered suffix may cross another assigned occurrence, never unrelated text.
-      if (
-        selected.some((match) => {
-          const first = match.indexes[0];
-          const last = match.indexes.at(-1);
-          if (first === undefined || last === undefined) return false;
-          for (let index = first; index <= last; index++) if (!used.has(index)) return true;
-          return false;
-        })
-      ) return;
-      let inversions = 0;
-      for (let left = 0; left < selected.length; left++) {
-        for (let right = left + 1; right < selected.length; right++) {
-          const first = selected[left]!.indexes[0];
-          const second = selected[right]!.indexes[0];
-          if (first !== undefined && second !== undefined && first > second) inversions++;
-        }
-      }
-      const earlier = selected.findIndex((match, index) =>
-        (match.indexes[0] ?? Infinity) !== (best[index]!.indexes[0] ?? Infinity)
-      );
-      const prefersEarlier = earlier >= 0 &&
-        (selected[earlier]!.indexes[0] ?? Infinity) < (best[earlier]!.indexes[0] ?? Infinity);
-      if (
-        characters > bestCharacters ||
-        (characters === bestCharacters && used.size > bestConsumed) ||
-        (characters === bestCharacters && used.size === bestConsumed &&
-          inversions < bestInversions) ||
-        (characters === bestCharacters && used.size === bestConsumed &&
-          inversions === bestInversions && prefersEarlier)
-      ) {
-        best = [...selected];
-        bestCharacters = characters;
-        bestConsumed = used.size;
-        bestInversions = inversions;
-      }
+      considerSelection(characters);
       return;
     }
     for (const match of candidates[occurrence]!) {
@@ -440,14 +440,28 @@ export function buildFinalizedMessageState(
     finalStepFallbackParts.filter((part) => part.type === "reasoning").length;
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
-  const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
-    if (fallbackPart.type === "text") {
-      hasPlacedMissingText = true;
-      const assignedMatch = assignedTextMatches[fallbackTextIndex++];
-      let matchedIndexes = assignedMatch?.indexes ?? [];
-      let matchingStart = matchedIndexes[0] ?? -1;
-      let matchedCount = matchedIndexes.length;
-      let matchedLength = assignedMatch?.length ?? 0;
+  const recoverFallbackText = (
+    fallbackPart: Extract<ChatUiMessage["parts"][number], { type: "text" }>,
+  ): ChatUiMessage["parts"] => {
+    hasPlacedMissingText = true;
+    const assignedMatch = assignedTextMatches[fallbackTextIndex++];
+    let matchedIndexes = assignedMatch?.indexes ?? [];
+    let matchingStart = matchedIndexes[0] ?? -1;
+    let matchedCount = matchedIndexes.length;
+    let matchedLength = assignedMatch?.length ?? 0;
+    const shouldSelectCandidate = (start: number, count: number, prefixLength: number): boolean => {
+      // Recovery is append-only: reuse an earlier exact block, never a backwards prefix.
+      if (start < persistedTextCursor && prefixLength !== fallbackPart.text.trim().length) {
+        return false;
+      }
+      if (matchingStart < 0) return true;
+      if (fallbackTextCount === 1) {
+        return start + count > matchingStart + matchedCount ||
+          (start + count === matchingStart + matchedCount && prefixLength > matchedLength);
+      }
+      return start < matchingStart || (start === matchingStart && prefixLength > matchedLength);
+    };
+    const findPrefixMatch = (): void => {
       for (
         let start = 0;
         start < persistedTextParts.length && !assignedMatch;
@@ -465,21 +479,9 @@ export function buildFinalizedMessageState(
             return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
           }));
           if (prefixLength === 0) break;
-          // Recovery is append-only: an exact completed block may sit before a
-          // previously appended missing block. Reuse it, never a backwards prefix.
-          if (start < persistedTextCursor && prefixLength !== fallbackPart.text.trim().length) {
-            continue;
-          }
           // Multiple fallback blocks consume prefixes in order. A single block
           // still recovers the latest partial repetition from the final step.
-          if (
-            matchingStart < 0 ||
-            (fallbackTextCount === 1
-              ? start + count > matchingStart + matchedCount ||
-                (start + count === matchingStart + matchedCount && prefixLength > matchedLength)
-              : start < matchingStart ||
-                (start === matchingStart && prefixLength > matchedLength))
-          ) {
+          if (shouldSelectCandidate(start, count, prefixLength)) {
             matchingStart = start;
             matchedCount = count;
             matchedIndexes = indexes;
@@ -487,63 +489,68 @@ export function buildFinalizedMessageState(
           }
         }
       }
-      const matchedParts = matchingStart < 0
-        ? []
-        : matchedIndexes.map((index) => persistedTextParts[index]!);
-      if (matchedCount > 0) {
-        for (const index of matchedIndexes) consumedTextIndexes.add(index);
-        persistedTextCursor = Math.max(persistedTextCursor, matchedIndexes.at(-1)! + 1);
-      }
-      const missingTextParts = appendMissingFallbackTextPart(matchedParts, {
-        text: fallbackPart.text,
-      })
-        .slice(matchedParts.length);
-      recoveredFallbackParts.push(...missingTextParts);
-      return missingTextParts;
+    };
+    findPrefixMatch();
+    const matchedParts = matchingStart < 0
+      ? []
+      : matchedIndexes.map((index) => persistedTextParts[index]!);
+    if (matchedCount > 0) {
+      for (const index of matchedIndexes) consumedTextIndexes.add(index);
+      persistedTextCursor = Math.max(persistedTextCursor, matchedIndexes.at(-1)! + 1);
     }
-    if (fallbackPart.type === "reasoning") {
-      remainingFallbackReasoning -= 1;
-      const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
-        openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
-          compatibleReasoningCompletion(part, fallbackPart)
-          ? [index]
-          : []
+    const missingTextParts = appendMissingFallbackTextPart(matchedParts, {
+      text: fallbackPart.text,
+    })
+      .slice(matchedParts.length);
+    recoveredFallbackParts.push(...missingTextParts);
+    return missingTextParts;
+  };
+  const recoverFallbackReasoning = (fallbackPart: ReasoningPart): ChatUiMessage["parts"] => {
+    remainingFallbackReasoning -= 1;
+    const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
+      openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
+        compatibleReasoningCompletion(part, fallbackPart)
+        ? [index]
+        : []
+    );
+    // The last final-step reasoning belongs to the latest block. Complete the
+    // open one before an earlier closed block that merely has the same content.
+    let matchingIndex = remainingFallbackReasoning === 0 && compatible.length === 1
+      ? compatible[0]!
+      : unmatchedPersistedReasoningParts.findIndex((part) =>
+        hasSameReasoningContent(part, fallbackPart)
       );
-      // The last final-step reasoning belongs to the latest block. Complete the
-      // open one before an earlier closed block that merely has the same content.
-      let matchingIndex = remainingFallbackReasoning === 0 && compatible.length === 1
-        ? compatible[0]!
-        : unmatchedPersistedReasoningParts.findIndex((part) =>
-          hasSameReasoningContent(part, fallbackPart)
-        );
-      if (matchingIndex < 0 && compatible.length === 1) matchingIndex = compatible[0]!;
-      if (matchingIndex < 0) {
-        recoveredFallbackParts.push(fallbackPart);
-        return [fallbackPart];
-      }
-      const original = unmatchedPersistedReasoningParts.splice(matchingIndex, 1)[0]!;
-      const id = openReasoningId(original, input.mirroredToolChunkState);
-      if (id !== undefined && compatibleReasoningCompletion(original, fallbackPart)) {
-        const updated: ReasoningPart = bindReasoningPartIdentity(
-          {
-            ...original,
-            // Keep the mirrored prefix when the final step adds no text beyond it.
-            text: fallbackPart.text.startsWith(original.text) ? fallbackPart.text : original.text,
-            ...("state" in original ? { state: "done" as const } : {}),
-            ...(fallbackPart.signature === undefined ? {} : { signature: fallbackPart.signature }),
-            ...(fallbackPart.redactedData === undefined
-              ? {}
-              : { redactedData: fallbackPart.redactedData }),
-          },
-          id,
-          true,
-        );
-        completedParts[completedParts.indexOf(original)] = updated;
-        reasoningCompletions.set(updated, { id, prefix: original.text });
-        recoveredFallbackParts.push(updated);
-      }
-      return [];
+    if (matchingIndex < 0 && compatible.length === 1) matchingIndex = compatible[0]!;
+    if (matchingIndex < 0) {
+      recoveredFallbackParts.push(fallbackPart);
+      return [fallbackPart];
     }
+    const original = unmatchedPersistedReasoningParts.splice(matchingIndex, 1)[0]!;
+    const id = openReasoningId(original, input.mirroredToolChunkState);
+    if (id !== undefined && compatibleReasoningCompletion(original, fallbackPart)) {
+      const updated: ReasoningPart = bindReasoningPartIdentity(
+        {
+          ...original,
+          // Keep the mirrored prefix when the final step adds no text beyond it.
+          text: fallbackPart.text.startsWith(original.text) ? fallbackPart.text : original.text,
+          ...("state" in original ? { state: "done" as const } : {}),
+          ...(fallbackPart.signature === undefined ? {} : { signature: fallbackPart.signature }),
+          ...(fallbackPart.redactedData === undefined
+            ? {}
+            : { redactedData: fallbackPart.redactedData }),
+        },
+        id,
+        true,
+      );
+      completedParts[completedParts.indexOf(original)] = updated;
+      reasoningCompletions.set(updated, { id, prefix: original.text });
+      recoveredFallbackParts.push(updated);
+    }
+    return [];
+  };
+  const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
+    if (fallbackPart.type === "text") return recoverFallbackText(fallbackPart);
+    if (fallbackPart.type === "reasoning") return recoverFallbackReasoning(fallbackPart);
     if (isToolUiPart(fallbackPart)) {
       recoveredFallbackParts.push(
         completedParts.find((part) =>
@@ -559,11 +566,19 @@ export function buildFinalizedMessageState(
       : [];
   });
   // Durable content is append-only; recovery cannot move an already emitted part.
-  const fallbackParts = persistedMessage.parts.length === 0
-    ? finalStepFallbackParts.filter((part) => !input.isAborted || !isToolUiPart(part))
-    : hasPlacedMissingText
-    ? [...completedParts, ...missingFallbackParts]
-    : appendMissingFallbackTextPart([...completedParts, ...missingFallbackParts], input.finalStep);
+  let fallbackParts: ChatUiMessage["parts"];
+  if (persistedMessage.parts.length === 0) {
+    fallbackParts = finalStepFallbackParts.filter((part) =>
+      !input.isAborted || !isToolUiPart(part)
+    );
+  } else if (hasPlacedMissingText) {
+    fallbackParts = [...completedParts, ...missingFallbackParts];
+  } else {
+    fallbackParts = appendMissingFallbackTextPart(
+      [...completedParts, ...missingFallbackParts],
+      input.finalStep,
+    );
+  }
   const finalizedMessage = fallbackParts.length !== persistedMessage.parts.length ||
       fallbackParts.some((part, index) => part !== persistedMessage.parts[index])
     ? {
@@ -632,23 +647,30 @@ function buildOrderedFallbackChunks(
   const reasoningParts = parts.filter((part): part is ReasoningPart => part.type === "reasoning");
   let reasoningIndex = 0;
   const completions = new Map<string, { id: string; prefix: string }>();
+  const completeReasoningChunk = (
+    chunk: ChatUiMessageChunk<MessageMetadata>,
+  ): ChatUiMessageChunk<MessageMetadata>[] | undefined => {
+    if (chunk.type === "reasoning-start") {
+      const completion = reasoningCompletions.get(reasoningParts[reasoningIndex++]!);
+      if (completion && state.openReasoningParts?.get(completion.id) === completion.prefix) {
+        completions.set(chunk.id, completion);
+        return [];
+      }
+    }
+    if (chunk.type === "reasoning-delta" || chunk.type === "reasoning-end") {
+      const completion = completions.get(chunk.id);
+      if (completion) {
+        if (chunk.type === "reasoning-end") return [{ ...chunk, id: completion.id }];
+        const delta = chunk.delta.slice(completion.prefix.length);
+        return delta ? [{ ...chunk, id: completion.id, delta }] : [];
+      }
+    }
+    return undefined;
+  };
   return buildFallbackUiMessageChunksFromParts(parts, messageId, state).flatMap(
     (chunk): ChatUiMessageChunk<MessageMetadata>[] => {
-      if (chunk.type === "reasoning-start") {
-        const completion = reasoningCompletions.get(reasoningParts[reasoningIndex++]!);
-        if (completion && state.openReasoningParts?.get(completion.id) === completion.prefix) {
-          completions.set(chunk.id, completion);
-          return [];
-        }
-      }
-      if (chunk.type === "reasoning-delta" || chunk.type === "reasoning-end") {
-        const completion = completions.get(chunk.id);
-        if (completion) {
-          if (chunk.type === "reasoning-end") return [{ ...chunk, id: completion.id }];
-          const delta = chunk.delta.slice(completion.prefix.length);
-          return delta ? [{ ...chunk, id: completion.id, delta }] : [];
-        }
-      }
+      const completion = completeReasoningChunk(chunk);
+      if (completion !== undefined) return completion;
       if (
         chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
         chunk.type !== "reasoning-end"
@@ -801,6 +823,15 @@ export function buildDetachedFallbackChunks(
   ];
 }
 
+function terminalOutputCallIds(
+  state: MirroredToolChunkState,
+  output: NonNullable<ReturnType<typeof terminalToolOutputState>>,
+): ReadonlySet<string> {
+  if (output === "available") return state.outputAvailableToolCallIds;
+  if (output === "error") return state.outputErrorToolCallIds;
+  return state.outputDeniedToolCallIds;
+}
+
 /** Current hosted mirrors append V1 metadata; V2 writers must enter through lifecycle frames. */
 export function buildToolResultOwnershipCorrectionEvents(input: {
   persistedMessage: ChatUiMessage;
@@ -815,11 +846,7 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
     if (
       outputState === undefined ||
       part.providerExecuted !== true ||
-      !(outputState === "available"
-        ? input.mirroredToolChunkState.outputAvailableToolCallIds
-        : outputState === "error"
-        ? input.mirroredToolChunkState.outputErrorToolCallIds
-        : input.mirroredToolChunkState.outputDeniedToolCallIds).has(part.toolCallId) ||
+      !terminalOutputCallIds(input.mirroredToolChunkState, outputState).has(part.toolCallId) ||
       input.mirroredToolChunkState.ownershipCorrectedToolCallIds?.has(part.toolCallId)
     ) return [];
     const persisted = input.persistedMessage.parts.filter((candidate) =>
