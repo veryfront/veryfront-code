@@ -10,15 +10,14 @@ export interface FilesystemCacheStoreOptions {
 
 export class FilesystemCacheStore implements CacheStore {
   private baseDir: string;
-  private localAdapterPromise: Promise<RuntimeAdapter>;
+  private localAdapterPromise?: Promise<RuntimeAdapter>;
 
   constructor(options: FilesystemCacheStoreOptions) {
     this.baseDir = options.baseDir;
-    this.localAdapterPromise = getLocalAdapter();
   }
 
   private async getLocalFS() {
-    const adapter = await this.localAdapterPromise;
+    const adapter = await (this.localAdapterPromise ??= getLocalAdapter());
     return adapter.fs;
   }
 

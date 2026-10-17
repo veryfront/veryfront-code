@@ -501,7 +501,7 @@ describe("agent/agent-service-registration", () => {
       service_name: "docs-agent",
       service_key: "docs-agent:test",
       scope_kind: "project",
-      project_id: "11111111-1111-4111-a111-111111111111",
+      project_reference: "11111111-1111-4111-a111-111111111111",
       agent_id: "support",
       base_url: "https://agent.example.com",
       invoke_url: "https://agent.example.com/api/runs",

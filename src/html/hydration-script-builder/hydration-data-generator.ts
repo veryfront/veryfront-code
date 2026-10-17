@@ -24,7 +24,7 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
     return relativePath === ".." || relativePath.startsWith("../") ? "" : relativePath;
   }
 
-  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "") || "/";
   const projectPrefix = normalizedProjectDir.endsWith("/")
     ? normalizedProjectDir
     : `${normalizedProjectDir}/`;
@@ -86,7 +86,7 @@ export function generateHydrationData(
     appRouterRoot: toProjectRelativePath(
       options.config?.directories?.app ?? "app",
       options.projectDir,
-    ).replace(/^\/+|\/+$/g, ""),
+    ).replace(/^\/+|(?<!\/)\/+$/g, ""),
     isolatedClientPage: options.isolatedClientPage,
     pagePath: options.pagePath
       ? toProjectRelativePath(options.pagePath, options.projectDir) || undefined

@@ -45,7 +45,7 @@ export class DevEndpointsHandler extends BaseHandler {
     switch (pathname) {
       case "/_veryfront/hmr.js": {
         const port = url.searchParams.get("port") ?? DEFAULT_HMR_PORT;
-        return getHMRScript(parseInt(port, 10));
+        return getHMRScript(Number.parseInt(port, 10));
       }
       case "/_veryfront/error-overlay.js":
         return getErrorOverlay();

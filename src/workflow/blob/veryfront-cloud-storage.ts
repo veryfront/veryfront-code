@@ -376,7 +376,7 @@ function normalizePrefix(prefix: string | undefined): string {
 }
 
 function joinUrl(base: string, path: string): string {
-  const normalizedBase = applyIntrinsic(stringReplace, base, [/\/+$/, ""]) as string;
+  const normalizedBase = applyIntrinsic(stringReplace, base, [/(?<!\/)\/+$/, ""]) as string;
   const normalizedPath = applyIntrinsic(stringReplace, path, [/^\/+/, ""]) as string;
   return `${normalizedBase}/${normalizedPath}`;
 }

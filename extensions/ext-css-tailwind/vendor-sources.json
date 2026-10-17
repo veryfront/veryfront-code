@@ -13,6 +13,20 @@
         "sha256": "0650b9739a9ae52731159a8bc53fb07de020412b413071fa701fc9ecc8ffbace",
         "url": "https://registry.npmjs.org/@tailwindcss/typography/-/typography-0.5.19.tgz"
       }
+    },
+    {
+      "name": "tw-animate-css",
+      "version": "1.4.0",
+      "source": "vendor/tw-animate-css.js",
+      "sha256": "02f3d754f1b6c9f5b9d8b7dbc737f17dad1f985027c16ed808f38cfc95443938",
+      "license": "MIT",
+      "upstream": {
+        "name": "tw-animate-css",
+        "version": "1.4.0",
+        "source": "dist/tw-animate.css",
+        "sha256": "6035b41301945cd65eb233b4653965e3c235338faae51b0f55676d591daaef23",
+        "url": "https://registry.npmjs.org/tw-animate-css/-/tw-animate-css-1.4.0.tgz"
+      }
     }
   ]
 }

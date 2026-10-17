@@ -31,9 +31,10 @@ interface NestedMapping {
   [key: string]: NestedMapping | unknown;
 }
 
-const FLAG_PATTERN = /^(?:-(?:(?<doubleDash>-)(?<negated>no-)?)?)(?<key>.+?)(?:=(?<value>.*))?$/s;
+const FLAG_PATTERN =
+  /^(?:-(?:(?<doubleDash>-)(?<negated>no-)?)?)(?<key>.[^=]*)(?:=(?<value>.*))?$/s;
 const LETTER_PATTERN = /[A-Za-z]/;
-const NUMBER_PATTERN = /-?\d+(\.\d*)?(e-?\d+)?$/;
+const NUMBER_PATTERN = /(?<!\d)-?\d+(\.\d*)?(e-?\d+)?$/;
 const HYPHEN_PATTERN = /^(-|--)[^-]/;
 const VALUE_PATTERN = /=(?<value>.+)/;
 const LONG_FLAG_PATTERN = /^--[^=]+$/;

@@ -29,7 +29,7 @@ function isBrowserOnlyModule(specifier: string): boolean {
 function extractImportNames(list: string): string[] {
   return list
     .split(",")
-    .map((n) => n.trim().split(/\s+as\s+/).at(-1)?.trim() ?? "")
+    .map((n) => n.trim().split(/(?<!\s)\s+as\s+/).at(-1)?.trim() ?? "")
     .filter(Boolean);
 }
 

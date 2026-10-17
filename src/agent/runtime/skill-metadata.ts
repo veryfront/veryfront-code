@@ -413,7 +413,7 @@ function extractDescriptionFromMarkdown(content: string, fallback: string): stri
       continue;
     }
 
-    const headerMatch = /^#+\s+(.+)$/.exec(trimmed);
+    const headerMatch = /^#+\s+(\S.*)$/.exec(trimmed);
     const description = (headerMatch?.[1] ?? trimmed).trim();
 
     if (description.length <= 100) {

@@ -292,7 +292,7 @@ function bytesToBase64Url(bytes: Uint8Array): string {
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
   }
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/(?<!=)=+$/, "");
 }
 
 function textToBase64Url(value: string): string {

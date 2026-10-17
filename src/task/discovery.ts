@@ -260,7 +260,7 @@ function logDiscoveredTask(task: DiscoveredTask, debug: boolean): void {
  */
 export function deriveTaskId(filePath: string, tasksDir: string): string {
   let relative = normalizeTaskDiscoveryPath(filePath);
-  const normalizedTasksDir = normalizeTaskDiscoveryPath(tasksDir).replace(/\/+$/, "");
+  const normalizedTasksDir = normalizeTaskDiscoveryPath(tasksDir).replace(/(?<!\/)\/+$/, "");
   const dirPrefix = normalizedTasksDir === "" ? "/" : `${normalizedTasksDir}/`;
   if (relative.startsWith(dirPrefix)) {
     relative = relative.slice(dirPrefix.length);

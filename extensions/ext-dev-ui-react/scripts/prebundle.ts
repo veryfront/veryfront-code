@@ -55,7 +55,7 @@ if (bundleBytes.length > MAX_PRODUCTION_BUNDLE_BYTES) {
 if (/\besm\.sh\b/i.test(bundle)) {
   throw new Error("The offline Dev UI bundle contains an esm.sh dependency");
 }
-if (/(?:^|[;}])\s*import\s*(?:[({*]|[\w$])/m.test(bundle)) {
+if (/(?:^|[;}])[^\S\n]*import\s*(?:[({*]|[\w$])/m.test(bundle)) {
   throw new Error("The offline Dev UI bundle contains an unresolved import");
 }
 if (

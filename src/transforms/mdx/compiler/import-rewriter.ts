@@ -1,3 +1,4 @@
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../../modules/loader-shared/import-syntax.mjs";
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { CompilationTarget } from "#veryfront/extensions/content/index.ts";
 import { base64urlEncode } from "#veryfront/utils";
@@ -66,16 +67,14 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
   const basedir = dirname(config.filePath);
   const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
 
-  // Rewrite `import … from '…'` and `export … from '…'`, including multiline
-  // destructured imports.  `[\s\S]*?` crosses newlines so that
-  //   import {
-  //     Foo,
-  //     Bar
-  //   } from "mod"
-  // is rewritten in one pass.  The non-greedy match stops at the first `from`
-  // keyword, which is correct for well-formed ESM.
+  // Shared binding syntax keeps multiline imports, comments, Unicode names,
+  // and string/reserved-word exports intact while locating module specifiers.
   let result = body.replace(
-    /(^[ \t]*(?:import|export)\s+[\s\S]*?\bfrom\b\s*)(["'])([^"']+)(\2)/gm,
+    new RegExp(
+      String
+        .raw`(^[ \t]*(?:import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM})(["'])([^"']+)(\2)`,
+      "gmu",
+    ),
     (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
   );
 

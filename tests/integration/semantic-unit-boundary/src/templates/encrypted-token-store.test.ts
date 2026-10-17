@@ -66,6 +66,72 @@ async function withEncryptionKey(operation: () => Promise<void>): Promise<void> 
 }
 
 describe("generated encrypted OAuth token store", () => {
+  it("clears source key buffers after copying and owned buffers after import", async () => {
+    await withEncryptionKey(async () => {
+      const OriginalUint8Array = globalThis.Uint8Array;
+      const keyBuffers: Uint8Array[] = [];
+      const backend = createRecordingBackend();
+      let store: ReturnType<typeof createEncryptedTokenStore>;
+      // Observe raw-key allocations only during synchronous construction.
+      globalThis.Uint8Array = new Proxy(OriginalUint8Array, {
+        construct(target, args) {
+          const bytes = Reflect.construct(target, args) as Uint8Array;
+          if (bytes.length === 32) keyBuffers.push(bytes);
+          return bytes;
+        },
+      });
+      try {
+        store = createEncryptedTokenStore(backend);
+      } finally {
+        globalThis.Uint8Array = OriginalUint8Array;
+      }
+      assertEquals(keyBuffers.length, 2);
+      assertEquals([...keyBuffers[0]!], Array(32).fill(0));
+      await store.setTokens("drive", "alice", { accessToken: "key-cleanup-token" });
+      for (const bytes of keyBuffers) assertEquals([...bytes], Array(32).fill(0));
+      assertEquals((await store.getTokens("drive", "alice"))?.accessToken, "key-cleanup-token");
+    });
+  });
+
+  it("encrypts with the configured AES key, verified independently of the store reader", async () => {
+    await withEncryptionKey(async () => {
+      const configured = getEnv(ENCRYPTION_KEY_ENV)!;
+      const keyBytes = Uint8Array.from(
+        configured.match(/.{2}/g)!,
+        (byte) => Number.parseInt(byte, 16),
+      );
+      const backend = createRecordingBackend();
+      const set = backend.set;
+      let storageKey = "";
+      let envelope = "";
+      backend.set = (key, value) => {
+        storageKey = key;
+        envelope = value;
+        return set(key, value);
+      };
+      const store = createEncryptedTokenStore(backend);
+      await store.setTokens("drive", "alice", { accessToken: "configured-key-token" });
+      const encoded = envelope.split(":")[2]!;
+      const combined = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+      const nativeKey = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, [
+        "decrypt",
+      ]);
+      const plaintext = await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: combined.subarray(0, 12),
+          additionalData: new TextEncoder().encode(storageKey),
+        },
+        nativeKey,
+        combined.subarray(12),
+      );
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(plaintext)).tokens.accessToken,
+        "configured-key-token",
+      );
+    });
+  });
+
   it("preserves OAuth scope provenance through state and token rows", async () => {
     await withEncryptionKey(async () => {
       const backend = createRecordingBackend();

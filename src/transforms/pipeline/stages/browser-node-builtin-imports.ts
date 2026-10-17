@@ -104,7 +104,7 @@ export async function rewriteNodeBuiltinNamedImports(code: string): Promise<stri
 
     if (clause === "") return null; // side-effect-only import
 
-    const namedMatch = clause.match(/\{([^}]*)\}/);
+    const namedMatch = clause.match(/\{([^{}]*)\}/);
     if (!namedMatch?.[1]) return null; // no named bindings
 
     const pairs = toDestructurePairs(namedMatch[1]);
@@ -114,7 +114,7 @@ export async function rewriteNodeBuiltinNamedImports(code: string): Promise<stri
     const source = JSON.stringify(imp.n);
 
     // Anything left of the named clause (a default binding) keeps its own import.
-    const leading = clause.replace(/\{[^}]*\}/, "").replace(/,\s*$/, "").replace(/^\s*,/, "")
+    const leading = clause.replace(/\{[^{}]*\}/, "").replace(/,\s*$/, "").replace(/^\s*,/, "")
       .trim();
 
     const defaultImport = leading ? `import ${leading} from ${source};` : "";

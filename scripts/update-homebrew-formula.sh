@@ -15,7 +15,7 @@ set -e
 VERSION="${1:-}"
 REPO="veryfront/veryfront"
 
-if [ -z "$VERSION" ]; then
+if [[ -z "$VERSION" ]]; then
   echo "Usage: $0 VERSION"
   echo "Example: $0 0.0.75"
   exit 1
@@ -67,7 +67,7 @@ echo ""
 
 # Check if homebrew-tap repo exists locally
 TAP_REPO="${HOME}/vf2/homebrew-tap"
-if [ -d "$TAP_REPO" ]; then
+if [[ -d "$TAP_REPO" ]]; then
   echo ""
   read -p "Update ${TAP_REPO}/Formula/veryfront.rb? (y/N) " -n 1 -r
   echo

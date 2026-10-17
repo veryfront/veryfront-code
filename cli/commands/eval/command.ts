@@ -238,7 +238,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function joinApiUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${baseUrl.replace(/(?<!\/)\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 function parseGatewayBillingGroupFinalization(

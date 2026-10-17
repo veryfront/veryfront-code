@@ -70,5 +70,5 @@ export function isWithinDirectory(baseDir: string, targetPath: string): boolean 
 }
 
 function stripTrailingSlashes(path: string): string {
-  return path === "/" ? path : path.replace(/\/+$/, "");
+  return path === "/" ? path : path.replace(/(?<!\/)\/+$/, "");
 }

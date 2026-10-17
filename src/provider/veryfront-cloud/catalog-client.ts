@@ -435,7 +435,7 @@ function cacheKey(scope: VeryfrontCloudCatalogScope): string {
  */
 function catalogUrl(apiBaseUrl: string): string {
   const url = new URL(apiBaseUrl);
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${VERYFRONT_CLOUD_CATALOG_PATH}`;
+  url.pathname = `${url.pathname.replace(/(?<!\/)\/+$/, "")}/${VERYFRONT_CLOUD_CATALOG_PATH}`;
   url.hash = "";
   return url.toString();
 }

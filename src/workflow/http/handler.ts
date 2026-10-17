@@ -371,7 +371,7 @@ export function createWorkflowHandler(
   client: WorkflowClient,
   options: WorkflowHandlerOptions,
 ): WorkflowHandlers {
-  const basePath = (options.basePath ?? DEFAULT_BASE_PATH).replace(/\/+$/, "") || "/";
+  const basePath = (options.basePath ?? DEFAULT_BASE_PATH).replace(/(?<!\/)\/+$/, "") || "/";
   const maxEventStreams = readPositiveLimit(
     options.maxEventStreams,
     DEFAULT_MAX_EVENT_STREAMS,

@@ -344,7 +344,7 @@ function toPosixPath(path: string): string {
 }
 
 function stripTrailingSlash(path: string): string {
-  return replaceString(toPosixPath(path), /\/+$/, "");
+  return replaceString(toPosixPath(path), /(?<!\/)\/+$/, "");
 }
 
 function trimLeadingSlash(path: string): string {

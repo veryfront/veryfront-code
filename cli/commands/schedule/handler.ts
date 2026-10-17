@@ -342,7 +342,7 @@ export async function waitForRemoteScheduleRun(
   while (true) {
     const run = requireRemoteScheduleRun(await client.getRun(runId), runId);
     const observedAt = now();
-    const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : NaN;
+    const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : Number.NaN;
     if (executionStartedAtMs === undefined && Number.isFinite(parsedStartedAt)) {
       executionStartedAtMs = Math.min(parsedStartedAt, observedAt);
     } else if (run.status !== "pending" && executionStartedAtMs === undefined) {

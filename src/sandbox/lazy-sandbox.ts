@@ -167,7 +167,7 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
 
 function normalizeDataPlaneBaseUrl(url: string): string {
   const trimmed = applyIntrinsic(stringTrim, url, []) as string;
-  return applyIntrinsic(stringReplace, trimmed, [/\/+$/, ""]) as string;
+  return applyIntrinsic(stringReplace, trimmed, [/(?<!\/)\/+$/, ""]) as string;
 }
 
 /** Provisions a sandbox when first used and records activity while the client is active. */

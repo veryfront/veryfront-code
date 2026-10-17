@@ -93,6 +93,13 @@ describe("studio/element-selector-injector", () => {
       );
     });
 
+    it("annotates self-closing void elements without attributes", () => {
+      const result = injectElementSelectors('<div id="root"><br/><hr/><input/></div>');
+      for (const tag of ["br", "hr", "input"]) {
+        assertEquals(result.includes(`<${tag} data-vf-selector=`), true);
+      }
+    });
+
     it("should keep the attribute inside a self-closing tag", () => {
       const result = injectElementSelectors(`<div id="root"><img src="a.png" /></div>`);
 

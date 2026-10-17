@@ -649,7 +649,7 @@ function requireProxyApiBaseUrl(value: string | undefined): string {
     ) {
       throw new TypeError("unsupported proxy API URL");
     }
-    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+    return `${url.origin}${url.pathname.replace(/(?<!\/)\/+$/, "")}`;
   } catch {
     throw CONFIG_VALIDATION_FAILED.create({
       detail:
@@ -4278,8 +4278,8 @@ const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
   // Deno, when the importer resolves out of the global npm cache.
   /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
   // Deno, for a specifier no import map or node_modules entry claims.
-  /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
-  /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+  /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+\S.*)?$/,
+  /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+\S.*)?$/,
   // Node CommonJS. Legitimately multi-line, so it is matched against the whole
   // message; the trailing lines are part of the pattern rather than noise after
   // it, which is why the first-line retry must not be what handles this form.

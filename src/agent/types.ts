@@ -235,6 +235,13 @@ export interface AgentConfig<TOutput = any> {
    */
   bootstrapTools?: string[];
   /**
+   * Best-effort initial schemas for up to 16 exact tool names. Only tools in the
+   * final authorized, provider-visible catalog are exposed; missing or denied
+   * tools are ignored. Does not grant access or displace required bootstrap
+   * schemas when the model's tool limit is reached. Root runs only.
+   */
+  optionalBootstrapTools?: string[];
+  /**
    * Return references for oversized model-facing tool results, with bounded
    * veryfront__get_tool_result reads. Raw results remain available to events and callbacks.
    * Omit or false to preserve inline result behavior.

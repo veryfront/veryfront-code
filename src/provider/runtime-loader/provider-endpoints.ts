@@ -20,7 +20,7 @@ function joinUrl(base: string, path: string): string {
   const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
   const pathQuery = queryIndex === -1 ? undefined : path.slice(queryIndex + 1);
 
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${pathname.replace(/^\/+/, "")}`;
+  url.pathname = `${url.pathname.replace(/(?<!\/)\/+$/, "")}/${pathname.replace(/^\/+/, "")}`;
   if (pathQuery !== undefined) {
     const pathParams = new URLSearchParams(pathQuery);
     const overriddenNames = new Set(pathParams.keys());

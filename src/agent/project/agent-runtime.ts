@@ -343,6 +343,9 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(toolNames === undefined ? {} : { tools: toolNames }),
     ...(config.toolLoading === undefined ? {} : { toolLoading: config.toolLoading }),
     ...(config.bootstrapTools === undefined ? {} : { bootstrapTools: config.bootstrapTools }),
+    ...(config.optionalBootstrapTools === undefined
+      ? {}
+      : { optionalBootstrapTools: config.optionalBootstrapTools }),
     ...(config.bootstrapSkill === undefined ? {} : { bootstrapSkill: config.bootstrapSkill }),
     ...(config.toolResultContext === undefined
       ? {}

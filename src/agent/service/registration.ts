@@ -67,6 +67,9 @@ export type RegisterAgentPushRuntimeServiceRequest = {
   service_name: string;
   service_key: string;
   scope_kind: "global" | "project";
+  /** Project ID or slug of a project-scoped service. */
+  project_reference?: string;
+  /** @deprecated Use {@link RegisterAgentPushRuntimeServiceRequest.project_reference}. */
   project_id?: string;
   agent_id?: string;
   base_url: string;
@@ -165,6 +168,7 @@ const registerAgentPushRuntimeServiceRequestSchema = lazySchema(
       service_name: v.string().min(1).max(128),
       service_key: v.string().min(1).max(128),
       scope_kind: v.enum(["global", "project"] as const),
+      project_reference: v.string().optional(),
       project_id: v.string().optional(),
       agent_id: v.string().optional(),
       base_url: v.string().url(),
@@ -210,7 +214,7 @@ export type CreateAgentServiceRegistrationLifecycleOptions =
 
 function normalizeBaseUrl(value: string): string {
   const url = new URL(value);
-  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
@@ -411,7 +415,7 @@ function buildRegistrationRequest(
     service_name: input.serviceName,
     service_key: input.serviceKey,
     scope_kind: input.scopeKind,
-    project_id: input.projectId,
+    project_reference: input.projectId,
     agent_id: input.agentId,
     base_url: input.baseUrl,
     invoke_url: input.invokeUrl,

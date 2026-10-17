@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 
 /**
  * Architecture Validation Script
@@ -169,7 +170,7 @@ async function checkLayerDependencies(): Promise<Violation[]> {
     // Top layer can import from anywhere (no restrictions)
   };
 
-  const importPattern = /import\s+(?:type\s+)?(?:\{[^}]*\}|[^;]+)\s+from\s+["']([^"']+)["']/g;
+  const importPattern = new RegExp(String.raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}["']([^"']+)["']`, "gu");
   const vfImportPattern = /#veryfront\/(\w+)/;
 
   try {

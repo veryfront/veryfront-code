@@ -74,7 +74,7 @@ function topLevelSlug(exportPath: string): string {
 }
 
 function extractReferenceDescription(line: string): string | undefined {
-  const match = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/);
+  const match = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*)\|/);
   return match?.[1].trim();
 }
 

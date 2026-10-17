@@ -292,7 +292,7 @@ end
 `;
 
 function appendStorageSchemaVersion(base: string): string {
-  return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
+  return `${base.replace(/(?<!:):+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
 }
 
 /**
@@ -3652,7 +3652,7 @@ export class RedisBackend implements WorkflowBackend {
       runId,
       workflowId: data.workflowId ?? "",
       input: data.input ? JSON.parse(data.input) : undefined,
-      priority: data.priority ? parseInt(data.priority) : undefined,
+      priority: data.priority ? Number.parseInt(data.priority) : undefined,
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       deliveryId: message.id,
     };

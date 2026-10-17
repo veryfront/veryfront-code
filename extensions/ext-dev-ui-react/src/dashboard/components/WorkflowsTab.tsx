@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { dashboardMutationHeaders } from "../mutation-request.ts";
 import type { Agent, Tool } from "../App.tsx";
 import { Sidebar } from "./Sidebar.tsx";
@@ -422,6 +422,7 @@ function WorkflowExecutor({
   workflowId: string;
   inputSchema?: Record<string, unknown>;
 }): React.ReactElement {
+  const inputId = useId();
   const [input, setInput] = useState<string>(() => {
     const example = generateExampleFromSchema(inputSchema);
     return JSON.stringify(example, null, 2);
@@ -496,10 +497,14 @@ function WorkflowExecutor({
   return (
     <Card title="Start Workflow" className="mt-6">
       <div className="p-4">
-        <label className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1">
+        <label
+          htmlFor={inputId}
+          className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1"
+        >
           Input (JSON)
         </label>
         <textarea
+          id={inputId}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder='{"topic": "AI Safety", "requiresApproval": false}'

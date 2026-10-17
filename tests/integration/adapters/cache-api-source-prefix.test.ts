@@ -41,6 +41,7 @@ function globToRegExp(pattern: string): RegExp {
 function createCacheApi() {
   const entries = new Map<string, string>();
   const patterns: string[] = [];
+  const deletedCounts: number[] = [];
   const fetchMock: typeof fetch = (input, init) => {
     const url = new URL(String(input));
     const requestInit = observeFetchRequestInit(init);
@@ -73,9 +74,11 @@ function createCacheApi() {
         deleted++;
       }
     }
-    return Promise.resolve(Response.json({ pattern, status: "deleted", deleted_count: deleted }));
+    deletedCounts.push(deleted);
+    // The canonical delete acknowledgement carries no count.
+    return Promise.resolve(Response.json({ ok: true }));
   };
-  return { entries, patterns, fetchMock };
+  return { entries, patterns, deletedCounts, fetchMock };
 }
 
 function withApiBackend<T>(
@@ -196,7 +199,10 @@ it("removes slash-branch runtime-scoped entries through the real API backend", a
         context.branch,
         "the credential scope must not alter the encoded source",
       );
-      assertEquals(await backend.delByPattern(`${prefix}:*`), 1);
+      // The acknowledgement has no count, so the backend reports 0; the API
+      // double records what the pattern actually removed.
+      assertEquals(await backend.delByPattern(`${prefix}:*`), 0);
+      assertEquals(api.deletedCounts.at(-1), 1, "the pattern must remove exactly the scoped key");
       assertEquals(await backend.get(key), null);
       assertEquals(await backend.get(otherKey), "other");
     }

@@ -860,7 +860,7 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
   }
   validateSoqlDataCategoryClause(tool, args.q);
   const suppliedWithoutDataCategory = omitSoqlDataCategoryClause(supplied);
-  for (const match of suppliedWithoutDataCategory.matchAll(/[a-z][a-z0-9_]*\s*\(/gi)) {
+  for (const match of suppliedWithoutDataCategory.matchAll(/(?<![a-z0-9_])[a-z0-9_]+\s*\(/gi)) {
     const token = match[0].replace("(", "").trim().toLowerCase();
     if (!["where", "and", "or", "not", "in", "includes", "excludes"].includes(token)) {
       throw new TypeError("Salesforce curated tool SOQL does not allow predicate functions");

@@ -419,29 +419,29 @@ export function resetErrorCollector(): void {
 /** Error shape for parse compile. */
 export function parseCompileError(output: string): Partial<DevError> | null {
   const tsMatch = output.match(
-    /^(.+?)\((\d+),(\d+)\):\s*error\s+\w+:\s*(.+)$/m,
+    /^([^\r\n]+?)\((\d+),(\d+)\):[^\S\n]*error[^\S\n]+\w+:[^\S\n]*(\S[^\r\n]*)$/m,
   );
   if (tsMatch && tsMatch[1] && tsMatch[2] && tsMatch[3] && tsMatch[4]) {
     return {
       type: "compile",
       category: "BUILD",
       file: tsMatch[1],
-      line: parseInt(tsMatch[2], 10),
-      column: parseInt(tsMatch[3], 10),
+      line: Number.parseInt(tsMatch[2], 10),
+      column: Number.parseInt(tsMatch[3], 10),
       message: tsMatch[4],
     };
   }
 
   const esbuildMatch = output.match(
-    /^ERROR:\s*\[([^\]]+):(\d+):(\d+)\]\s*(.+)$/m,
+    /^ERROR:[^\S\n]*\[([^\]\r\n]+):(\d+):(\d+)\][^\S\n]*(\S[^\r\n]*)$/m,
   );
   if (esbuildMatch && esbuildMatch[1] && esbuildMatch[2] && esbuildMatch[3] && esbuildMatch[4]) {
     return {
       type: "bundle",
       category: "BUILD",
       file: esbuildMatch[1],
-      line: parseInt(esbuildMatch[2], 10),
-      column: parseInt(esbuildMatch[3], 10),
+      line: Number.parseInt(esbuildMatch[2], 10),
+      column: Number.parseInt(esbuildMatch[3], 10),
       message: esbuildMatch[4],
     };
   }

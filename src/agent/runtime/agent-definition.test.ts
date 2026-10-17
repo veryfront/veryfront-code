@@ -455,6 +455,7 @@ it("runtime definitions retain structured discovery and access settings", () => 
     knowledge: { "support/**": true, "support/private/**": false },
     toolLoading: "deferred" as const,
     bootstrapTools: ["get_run"],
+    optionalBootstrapTools: ["create_file"],
     bootstrapSkill: "support",
     toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048 },
   };
@@ -483,6 +484,8 @@ knowledge:
 tool-loading: deferred
 bootstrap-tools:
   - get_run
+optional-bootstrap-tools:
+  - create_file
 bootstrap-skill: support
 tool-result-context:
   maxInlineBytes: 8192
@@ -493,6 +496,7 @@ Help users.`,
   assertEquals(result.knowledge, { "support/**": true, "support/private/**": false });
   assertEquals(result.toolLoading, "deferred");
   assertEquals(result.bootstrapTools, ["get_run"]);
+  assertEquals(result.optionalBootstrapTools, ["create_file"]);
   assertEquals(result.bootstrapSkill, "support");
   assertEquals(result.toolResultContext, { maxInlineBytes: 8192 });
 });

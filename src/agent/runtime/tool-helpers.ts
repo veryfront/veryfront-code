@@ -435,17 +435,18 @@ async function executeRemoteToolFromSources(
     ) {
       throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
     }
-    const execute = () => {
+    const execute = (args: Record<string, unknown> = input) => {
       // Discovery and terminal admission can both suspend. The owner may have
       // settled during either await, so check at the actual effect boundary.
       dispatch?.assertAuthority?.();
-      return source.executeTool(toolName, input, context);
+      return source.executeTool(toolName, args, context);
     };
     return {
       handled: true,
       result: await (hasTrustedPlatformSource(source)
         ? executeTerminalRunTool(toolName, input, context, execute)
-        : dispatchWithTerminalRunControl(context, execute)),
+        : dispatchWithTerminalRunControl(context, () =>
+          execute())),
     };
   }
 

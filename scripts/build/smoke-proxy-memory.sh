@@ -15,11 +15,11 @@ health_path="/_proxy/health"
 container=""
 platform_args=()
 
-if [ -n "$container_platform" ]; then
+if [[ -n "$container_platform" ]]; then
   platform_args=(--platform "$container_platform")
 fi
 
-if [ ! -f "$binary" ]; then
+if [[ ! -f "$binary" ]]; then
   echo "proxy binary not found: $binary" >&2
   exit 1
 fi
@@ -33,13 +33,13 @@ binary_dir="$(cd "$(dirname "$binary")" && pwd)"
 binary_name="$(basename "$binary")"
 
 cleanup() {
-  if [ -n "$container" ]; then
+  if [[ -n "$container" ]]; then
     docker rm -f "$container" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
 
-if [ -z "${PROXY_MEMORY_IMAGE:-}" ] && ! docker pull ${platform_args[@]+"${platform_args[@]}"} "$container_image" >/dev/null; then
+if [[ -z "${PROXY_MEMORY_IMAGE:-}" ]] && ! docker pull ${platform_args[@]+"${platform_args[@]}"} "$container_image" >/dev/null; then
   echo "mirror pull failed for $container_image; falling back to $fallback_image" >&2
   container_image="$fallback_image"
 fi
@@ -71,7 +71,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
       break
     fi
 
-    if [ "$(docker inspect --format '{{.State.Running}}' "$container")" != "true" ]; then
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$container")" != "true" ]]; then
       break
     fi
     sleep 1
@@ -81,13 +81,13 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}}' "$container"
   )
 
-  if [ "$ready" != "true" ]; then
+  if [[ "$ready" != "true" ]]; then
     docker logs "$container" >&2 || true
     echo "proxy memory smoke attempt ${attempt} failed before health; OOMKilled=${oom_killed}, exit=${exit_code}" >&2
     exit 1
   fi
 
-  if [ "$oom_killed" != "false" ]; then
+  if [[ "$oom_killed" != "false" ]]; then
     docker logs "$container" >&2 || true
     echo "proxy memory smoke attempt ${attempt} was OOM killed" >&2
     exit 1
@@ -97,7 +97,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
   read -r oom_killed exit_code < <(
     docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}}' "$container"
   )
-  if [ "$oom_killed" != "false" ] || [ "$exit_code" != "0" ]; then
+  if [[ "$oom_killed" != "false" ]] || [[ "$exit_code" != "0" ]]; then
     docker logs "$container" >&2 || true
     echo "proxy memory smoke attempt ${attempt} did not stop cleanly; OOMKilled=${oom_killed}, exit=${exit_code}" >&2
     exit 1

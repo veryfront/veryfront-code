@@ -139,7 +139,10 @@ export function getHostedChildWrittenArtifactPath(
 
 /** Normalizes hosted child artifact path. */
 export function normalizeHostedChildArtifactPath(path: string): string | null {
-  const trimmedPath = path.trim().replace(/^[`"'(]+|[`"'),.;:!?]+$/g, "");
+  const trimmedPath = path.trim().replace(/^[`"'(]+/, "").replace(
+    /(?<![`"'),.;:!?])[`"'),.;:!?]+$/,
+    "",
+  );
   if (trimmedPath.length === 0) {
     return null;
   }

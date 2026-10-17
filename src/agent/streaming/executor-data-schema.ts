@@ -10,6 +10,7 @@ import {
   executorAgentJson,
   getExecutorAgentFailureCodeSchema,
 } from "../hosted/executor-agent-schema.ts";
+import { getToolResultSequenceSchema } from "#veryfront/runtime/tool-result-sequence.ts";
 
 const getUsageSchema = defineSchema((v) => {
   const count = v.number().nonnegative().optional();
@@ -150,6 +151,7 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       type: v.literal("tool-output-available"),
       toolCallId: id,
       output: json.optional(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     })
       .strict(),
@@ -159,13 +161,19 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       toolName: id.optional(),
       input: json.optional(),
       errorText: v.string(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     }).strict(),
-    v.object({ type: v.literal("tool-output-denied"), toolCallId: id }).strict(),
+    v.object({
+      type: v.literal("tool-output-denied"),
+      toolCallId: id,
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
+    }).strict(),
     v.object({
       type: v.literal("tool-output-error"),
       toolCallId: id,
       errorText: v.string(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     }).strict(),
     v.object({ type: v.literal("error"), error: v.string(), code: v.string().optional() }).strict(),

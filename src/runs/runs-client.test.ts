@@ -629,7 +629,6 @@ describe("VeryfrontRunsClient", () => {
     mockFetch([
       jsonResponse({
         data: [],
-        schedules: [],
         source_schedules: [],
       }),
     ]);
@@ -651,11 +650,11 @@ describe("VeryfrontRunsClient", () => {
     );
   });
 
-  it("reads the legacy schedules key and matches a schedule that is not listed first", async () => {
+  it("matches a listed schedule that is not listed first", async () => {
     const matchingScheduleId = "44444444-4444-4444-8444-444444444444";
     mockFetch([
       jsonResponse({
-        schedules: [
+        data: [
           {
             id: "99999999-9999-4999-8999-999999999999",
             name: "Another active schedule",
@@ -696,30 +695,6 @@ describe("VeryfrontRunsClient", () => {
       call(1).url,
       "https://93.184.216.34/projects/dreamy-haven",
     );
-  });
-
-  it("reads data when a response carries both data and the legacy schedules key", async () => {
-    const listedSchedule = {
-      id: scheduleId,
-      name: "Process job submissions",
-      status: "active",
-      target: { kind: "agent", id: "job-submission-orchestrator" },
-      definition_source: "source",
-      source_trigger_id: "process-job-submissions",
-      timeout_seconds: 1800,
-    };
-    mockFetch([
-      jsonResponse({ data: [listedSchedule], schedules: [], source_schedules: [] }),
-      jsonResponse({ id: projectId, slug: "dreamy-haven", name: "Project" }),
-      jsonResponse(makeRun(), 202),
-    ]);
-    const client = createTestClient();
-
-    const response = await client.createScheduleRunFromSource({
-      sourceTriggerId: "process-job-submissions",
-    });
-
-    assertEquals(response.scheduleRun.schedule_id, scheduleId);
   });
 
   it("does not trust a non-active schedule returned by the active filter", async () => {
@@ -986,9 +961,29 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(events.page_info, { self: null, first: null, prev: null, next: "12" });
     assertEquals(
       call(0).url,
-      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111/events?after_event_id=1&limit=10",
+      "https://93.184.216.34/runs/11111111-1111-4111-8111-111111111111/events?cursor=1&sort_order=asc&limit=10",
     );
     assertEquals(call(0).init?.method, "GET");
+  });
+
+  it("sends afterEventId 0 as an ascending page without a cursor", async () => {
+    mockFetch([jsonResponse({ data: [], page_info: { next: null } })]);
+    await createTestClient().events("11111111-1111-4111-8111-111111111111", { afterEventId: 0 });
+    const query = new URL(call(0).url).searchParams;
+    assertEquals(query.get("cursor"), null);
+    assertEquals(query.get("sort_order"), "asc");
+    assertEquals(query.get("after_event_id"), null);
+  });
+
+  it("rejects an afterEventId that is not a non-negative integer before fetching", async () => {
+    for (const afterEventId of [-1, 1.5, Number.NaN]) {
+      await assertRejects(
+        () => createTestClient().events("11111111-1111-4111-8111-111111111111", { afterEventId }),
+        Error,
+        "afterEventId must be a non-negative integer.",
+      );
+    }
+    assertEquals(fetchCalls.length, 0);
   });
 
   it("preserves canonical event metadata while adapting pagination", async () => {

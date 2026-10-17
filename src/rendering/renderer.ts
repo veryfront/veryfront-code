@@ -265,7 +265,7 @@ function getBoundedEnvNumber(
 function normalizeComparableSlug(slug: string): string {
   const trimmed = slug.trim();
   if (!trimmed || trimmed === "index" || trimmed === "/index") return "/";
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  const withoutTrailingSlash = trimmed.replace(/(?<!\/)\/+$/, "");
   const normalized = withoutTrailingSlash.startsWith("/")
     ? withoutTrailingSlash
     : `/${withoutTrailingSlash}`;

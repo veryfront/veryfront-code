@@ -10,7 +10,7 @@ proxy_pid=""
 max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-201326592}"
 
 cleanup() {
-  if [ -n "$proxy_pid" ]; then
+  if [[ -n "$proxy_pid" ]]; then
     kill "$proxy_pid" 2>/dev/null || true
     wait "$proxy_pid" 2>/dev/null || true
   fi
@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 actual_binary_bytes="$(wc -c < "$binary" | tr -d '[:space:]')"
-if [ "$actual_binary_bytes" -gt "$max_binary_bytes" ]; then
+if [[ "$actual_binary_bytes" -gt "$max_binary_bytes" ]]; then
   echo "proxy binary size ${actual_binary_bytes} exceeds ${max_binary_bytes} bytes" >&2
   exit 1
 fi
@@ -38,7 +38,7 @@ run_smoke() {
   for _ in {1..30}; do
     if curl --connect-timeout 1 --max-time 2 -fsS "http://127.0.0.1:${port}/_proxy/health" 2>/dev/null \
       | grep -Fq '"status":"ok"'; then
-      if [ -n "$expected_log" ]; then
+      if [[ -n "$expected_log" ]]; then
         if ! grep -Fq "$expected_log" "$log_file"; then
           sleep 1
           continue

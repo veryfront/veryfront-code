@@ -46,19 +46,27 @@ function extractExamples(filePath) {
   const jsdoc = jsdocMatch[0];
   const examples = [];
 
-  // Match @example blocks: @example [Title]\n```lang\ncode\n```
-  const exampleRegex = /@example\s*([^\n]*)\n\s*\*\s*```(\w+)?\n([\s\S]*?)```/g;
-  let match;
-  while ((match = exampleRegex.exec(jsdoc)) !== null) {
-    const title = match[1].trim() || `Example ${examples.length + 1}`;
-    const lang = match[2] || "ts";
-    // Strip leading " * " from each line (JSDoc continuation)
-    const code = match[3]
+  let cursor = 0;
+  while (cursor < jsdoc.length) {
+    const start = jsdoc.indexOf("@example", cursor);
+    if (start === -1) break;
+    cursor = start + "@example".length;
+    const newline = jsdoc.indexOf("\n", cursor);
+    if (newline === -1) break;
+    const opening = /^\s*\*\s*```(\w+)?\n/.exec(jsdoc.slice(newline + 1));
+    if (!opening) continue;
+    const bodyStart = newline + 1 + opening[0].length;
+    const bodyEnd = jsdoc.indexOf("```", bodyStart);
+    if (bodyEnd === -1) break;
+    const title = jsdoc.slice(cursor, newline).trim() || `Example ${examples.length + 1}`;
+    const lang = opening[1] || "ts";
+    const code = jsdoc.slice(bodyStart, bodyEnd)
       .split("\n")
       .map((line) => line.replace(/^\s*\*\s?/, ""))
       .join("\n")
       .trim();
     examples.push({ title, code, lang });
+    cursor = bodyEnd + 3;
   }
   return examples;
 }

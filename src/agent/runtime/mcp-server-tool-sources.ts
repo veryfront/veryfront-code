@@ -123,7 +123,7 @@ export function getRuntimeUnavailableOptionalRemoteTools(
 }
 
 function stripTrailingSlashes(value: string): string {
-  return applyIntrinsic(stringReplace, value, [/\/+$/, ""]) as string;
+  return applyIntrinsic(stringReplace, value, [/(?<!\/)\/+$/, ""]) as string;
 }
 
 function hasVisibleRegistryTool(toolName: string, agentId?: string): boolean {

@@ -14,7 +14,7 @@ import {
   markTrustedPlatformPolicyToolDefinition,
   markTrustedPlatformPolicyToolResultPart,
 } from "./skill-policy-enforcement.ts";
-import { createToolExposureState } from "./tool-exposure.ts";
+import { createToolExposureState, searchToolExposure } from "./tool-exposure.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { flattenSystemInstructions } from "./tool-inventory.ts";
 
@@ -92,6 +92,107 @@ describe("agent/runtime-step", () => {
       "veryfront__tool_search",
     ]);
     assertEquals(prepared.toolExposurePlan.deferred.map((tool) => tool.name), ["write_state"]);
+  });
+
+  it("optional startup schemas intersect the final step catalog and preserve mandatory readers", async () => {
+    for (const writable of [false, true]) {
+      const input = bootstrapStepInput(["read_state"]);
+      const prepared = await prepareAgentRuntimeStep({
+        ...input,
+        config: {
+          ...input.config,
+          optionalBootstrapTools: ["write_state", "missing_tool", "write_state"],
+        },
+        getAvailableTools: async () =>
+          writable
+            ? [toolDefinition("read_state"), toolDefinition("write_state"), toolDefinition("other")]
+            : [toolDefinition("read_state"), toolDefinition("other")],
+      });
+      assertEquals(
+        prepared.tools.map((tool) => tool.name).sort(),
+        writable
+          ? ["read_state", "veryfront__tool_search", "write_state"]
+          : ["read_state", "veryfront__tool_search"],
+      );
+      assertEquals(
+        prepared.toolExposurePlan.authorized.some((tool) => tool.name === "missing_tool"),
+        false,
+      );
+      assertEquals(prepared.configuredBootstrapToolNames, ["read_state"]);
+    }
+  });
+
+  it("optional hints preserve mandatory schemas when no optional capacity remains", async () => {
+    const input = bootstrapStepInput(["read_state", "write_state"]);
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      reservedToolSlots: 126,
+      config: { ...input.config, model: "openai/gpt-4.1", optionalBootstrapTools: ["missing"] },
+    });
+    assertEquals(prepared.tools.map((tool) => tool.name).sort(), ["read_state", "write_state"]);
+  });
+
+  it("optional startup schemas leave capacity for a discovered tool", async () => {
+    const state = createToolExposureState();
+    const input = bootstrapStepInput(["read_state"]);
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      reservedToolSlots: 125,
+      toolExposureState: state,
+      config: { ...input.config, model: "openai/gpt-4.1", optionalBootstrapTools: ["write_state"] },
+      getAvailableTools: async () => [
+        toolDefinition("read_state"),
+        toolDefinition("write_state"),
+        toolDefinition("other"),
+      ],
+    });
+    assertEquals(prepared.tools.map((tool) => tool.name).sort(), [
+      "read_state",
+      "veryfront__tool_search",
+    ]);
+    assertEquals(prepared.toolExposurePlan.maxLoadedTools, 2);
+    const discovered = searchToolExposure({
+      query: "write_state",
+      authorized: prepared.toolExposurePlan.authorized,
+      state,
+      maxLoadedTools: prepared.toolExposurePlan.maxLoadedTools,
+    });
+    assertEquals(discovered.loadedCount > 0, true);
+    assertEquals(state.loadedToolNames.has("write_state"), true);
+  });
+
+  it("optional hints do not load a catalog for a model without tool calling", async () => {
+    const input = bootstrapStepInput([]);
+    let catalogLoads = 0;
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      supportsToolCalling: false,
+      config: { ...input.config, optionalBootstrapTools: ["write_state"] },
+      getAvailableTools: async () => {
+        catalogLoads++;
+        throw new Error("Required MCP server unavailable");
+      },
+    });
+    assertEquals(catalogLoads, 0);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.toolExposurePlan.authorized, []);
+  });
+
+  it("required bootstrap validation still loads the catalog without model tool calling", async () => {
+    const input = bootstrapStepInput(["read_state"]);
+    let catalogLoads = 0;
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      supportsToolCalling: false,
+      config: { ...input.config, optionalBootstrapTools: ["write_state"] },
+      getAvailableTools: async () => {
+        catalogLoads++;
+        return [toolDefinition("read_state"), toolDefinition("write_state")];
+      },
+    });
+    assertEquals(catalogLoads, 1);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.configuredBootstrapToolNames, ["read_state"]);
   });
 
   it("reports host-merged startup tools for provider capping to retain", async () => {

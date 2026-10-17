@@ -132,7 +132,7 @@ interface CloudFileDetailResponse {
 }
 
 function buildUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${base.replace(/(?<!\/)\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 function estimateTokenCount(text: string): number {
@@ -839,7 +839,7 @@ function branchFileRef(branch: string): string {
 }
 
 function buildContentDirPattern(contentDir: string): string {
-  return `${contentDir.replace(/\/+$/, "")}/**`;
+  return `${contentDir.replace(/(?<!\/)\/+$/, "")}/**`;
 }
 
 function buildContentFilesQuery(
