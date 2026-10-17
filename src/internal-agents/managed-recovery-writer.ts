@@ -264,6 +264,7 @@ export async function createManagedRecoveryWriter(input: {
     async appendMappedEvent(
       mapped: { event: string; payload: Record<string, unknown> },
       occurrenceId?: string,
+      observedToolResult = false,
     ) {
       try {
         const event = coerceWireEvent(mapped.event, mapped.payload);
@@ -280,8 +281,15 @@ export async function createManagedRecoveryWriter(input: {
           fail(error);
           throw error;
         }
+        if (
+          observedToolResult && (event.type !== "TOOL_CALL_START" || occurrenceId !== undefined)
+        ) {
+          throw new Error("Recovery observation cannot carry local tool admission");
+        }
         const receipt = await append(event, occurrenceId);
-        if (event.type === "TOOL_CALL_START") {
+        // Result-only provider observations carry no executable local occurrence.
+        // Persist them without resolving an admission that could authorize a tool.
+        if (event.type === "TOOL_CALL_START" && !observedToolResult) {
           if (!occurrenceId || receipt.toolAdmissions.length !== 1) {
             throw new Error("Recovery tool start lacks exact durable admission");
           }

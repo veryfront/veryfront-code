@@ -2029,10 +2029,14 @@ export async function createRuntimeAgentStreamResponse(
               }
               providerReplayStepOpen = false;
             };
-            const emitMappedEvent = async (mappedEvent: {
-              event: string;
-              payload: Record<string, unknown>;
-            }, occurrenceId?: string) => {
+            const emitMappedEvent = async (
+              mappedEvent: {
+                event: string;
+                payload: Record<string, unknown>;
+              },
+              occurrenceId?: string,
+              observedToolResult = false,
+            ) => {
               if (mappedEvent.event === "StepStarted") {
                 await flushProviderReplayTurn();
                 providerReplayStepOpen = shouldEmitProviderReplayCheckpoints;
@@ -2055,7 +2059,11 @@ export async function createRuntimeAgentStreamResponse(
               }
               prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
               runOutcome.observe(mappedEvent.event, mappedEvent.payload);
-              await managedRecovery?.writer?.appendMappedEvent(mappedEvent, occurrenceId);
+              await managedRecovery?.writer?.appendMappedEvent(
+                mappedEvent,
+                occurrenceId,
+                observedToolResult,
+              );
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             };
             heartbeatTimer = setInterval(
@@ -2101,6 +2109,8 @@ export async function createRuntimeAgentStreamResponse(
                       typeof event.privateToolCallOccurrenceId === "string"
                       ? event.privateToolCallOccurrenceId
                       : undefined,
+                    mappedEvent.event === "ToolCallStart" &&
+                      event.privateObservedToolResult === true,
                   );
                 }
               }
@@ -2117,6 +2127,7 @@ export async function createRuntimeAgentStreamResponse(
                     typeof event.privateToolCallOccurrenceId === "string"
                     ? event.privateToolCallOccurrenceId
                     : undefined,
+                  mappedEvent.event === "ToolCallStart" && event.privateObservedToolResult === true,
                 );
               }
             }
