@@ -22,6 +22,7 @@ import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
+  transferHostedTerminalAuthority,
 } from "./terminal-credential.ts";
 
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -666,7 +667,25 @@ describe("authenticated accepted child evidence readers", () => {
         }),
       )
     }.signature`;
-    registerHostedTerminalCredential(owner, token);
+    const writer = `header.${
+      btoa(
+        JSON.stringify({
+          projectId: "project-1",
+          runId: "run-1",
+          workerGeneration: {
+            projectId: "project-1",
+            runId: "run-1",
+            canonicalRunId: inheritedParentId,
+          },
+        }),
+      )
+    }.signature`;
+    registerHostedTerminalCredential(
+      owner,
+      token,
+      writer,
+      () => Promise.resolve({ verified: true }),
+    );
     return {
       owner,
       evidence: hostedAcceptedChildEvidence(owner, "project-1", signal, {
@@ -867,4 +886,54 @@ it("verifies signed task input before returning every terminal workflow receipt"
       "signed binding mismatch",
     );
   }
+});
+
+it("retains the verified agent binding when inherited evidence authority transfers", async () => {
+  const writer = `header.${
+    btoa(
+      JSON.stringify({
+        projectId: "project-1",
+        runId: "child-run",
+        workerGeneration: {
+          projectId: "project-1",
+          runId: "child-run",
+          canonicalRunId: inheritedChildId,
+        },
+      }),
+    )
+  }.signature`;
+  let verifications = 0;
+  const binding = {
+    ...inheritedBinding(),
+    verifyRunEventAppendToken: (
+      input: { token: string; projectId: string; runId: string; agentId?: string },
+    ) => {
+      assertEquals(input, {
+        token: writer,
+        projectId: "project-1",
+        runId: "child-run",
+        agentId: "child",
+      });
+      verifications++;
+      return Promise.resolve({ verified: true });
+    },
+    fetch: ((input: string | URL | Request) => {
+      assertEquals(
+        String(input),
+        `https://api.example/v1/runs/${inheritedChildId}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+      );
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    }) as typeof fetch,
+  };
+  const run = await acceptInheritedRunAdmission(
+    inheritedExecutionResponse({}, { "X-Veryfront-Run-Event-Token": writer }),
+    binding,
+  );
+  const transferred = { runId: run.runId };
+  transferHostedTerminalAuthority(run, transferred);
+  assertEquals(
+    await hostedAcceptedChildEvidence(transferred, "project-1").readParentToolResults(),
+    [],
+  );
+  assertEquals(verifications, 2);
 });

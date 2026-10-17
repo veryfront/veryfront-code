@@ -204,3 +204,29 @@ for (const reader of ["parent", "version"] as const) {
     await assertRejects(() => pending!, Error, "no longer active");
   });
 }
+
+for (const failure of [false, true]) {
+  it(`revokes on source ${failure ? "failure" : "close"} without a downstream EOF read`, async () => {
+    let captured: HostedChildTaskInputResolver | undefined;
+    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const response = await withHostedChildTaskInputResolver(async () => undefined, async () => {
+      captured = getHostedChildTaskInputResolver();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            source = controller;
+          },
+        }),
+      );
+    });
+    source!.enqueue(new Uint8Array([1]));
+    const reader = response.body!.getReader();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (failure) source!.error(new Error("source failed"));
+    else source!.close();
+    // Let the source completion observer run, without reading downstream again.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await assertRejects(() => captured!(request), Error, "no longer active");
+    await reader.cancel().catch(() => {});
+  });
+}

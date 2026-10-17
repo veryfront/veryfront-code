@@ -1,3 +1,5 @@
+import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { authorizeHostedTaskInput } from "./task-input.ts";
@@ -55,6 +57,12 @@ import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts"
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
+const evidenceDecode = atob;
+const evidenceSplit = String.prototype.split;
+const evidenceReplaceAll = String.prototype.replaceAll;
+const evidenceResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const evidenceResponseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const evidenceResponseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
 const evidenceFreeze = Object.freeze;
 const evidenceIsArray = Array.isArray;
 const evidenceSafeInteger = Number.isSafeInteger;
@@ -81,6 +89,7 @@ const credentials = createPrivateWeakStore<
     leaseExpiresAt?: number;
     projectId: string;
     runId: string;
+    agentId?: string;
     authToken?: string;
     apiUrl?: string;
     fetch?: typeof globalThis.fetch;
@@ -115,6 +124,7 @@ export function registerHostedTerminalCredential(
     verifyRunEventAppendToken,
     token,
     projectId: request.projectId,
+    agentId: request.agentId,
     runId: request.durableRootRun.runId,
     authToken: request.authToken,
     ...(eventToken ? { eventToken } : {}),
@@ -567,6 +577,7 @@ export async function acceptInheritedRunAdmission(
   }
   credentials.set(run, {
     token,
+    agentId: binding.agentId,
     verifyRunEventAppendToken: binding.verifyRunEventAppendToken,
     ...(verification && typeof verification === "object" && verification.verified === true &&
         typeof verification.rootRunId === "string"
@@ -810,7 +821,7 @@ export function hostedInheritedRootRunId(
   return authority.rootRunId;
 }
 
-/** Existing authenticated API routes, bounded to one parent and its project. */
+/** Read authenticated API evidence using the verified writer parent and its project. */
 export function hostedAcceptedChildEvidence(
   descriptor: HostedTerminalDescriptor | ParsedHostedChatRequest,
   projectId: string,
@@ -822,7 +833,49 @@ export function hostedAcceptedChildEvidence(
     !authority?.authToken || !(transport?.apiUrl ?? authority.apiUrl) ||
     !(transport?.fetch ?? authority.fetch ?? hostFetch) || authority.projectId !== projectId
   ) throw new Error("Accepted receipt readers require exact parent authority");
-  const canonical = terminalRoute(authority.token, authority.runId).id;
+  async function verifiedParentId(): Promise<string> {
+    const writer = authority!.eventToken;
+    const verification = writer && await authority!.verifyRunEventAppendToken?.({
+      token: writer,
+      projectId,
+      runId: authority!.runId,
+      ...(authority!.agentId ? { agentId: authority!.agentId } : {}),
+    });
+    if (
+      !writer || !(verification === true ||
+        (verification && typeof verification === "object" && verification.verified === true))
+    ) {
+      throw new Error("Accepted receipt readers require verified parent authority");
+    }
+    // Decode only the unchanged writer that the host just authenticated. Terminal
+    // payloads are routing hints and cannot authorize reads with the parent bearer.
+    const encoded = apply(evidenceSplit, writer, ["."])[1];
+    const claims = snapshotOwnDataRecords(privateJsonParse(
+      evidenceDecode(
+        apply(evidenceReplaceAll, apply(evidenceReplaceAll, encoded, ["-", "+"]), ["_", "/"]),
+      ),
+    )) as {
+      projectId?: unknown;
+      runId?: unknown;
+      workerGeneration?: { projectId?: unknown; runId?: unknown; canonicalRunId?: unknown };
+      projectExecutionAttempt?: { canonicalRunId?: unknown };
+    };
+    const worker = claims.workerGeneration;
+    const canonical = worker?.canonicalRunId ?? claims.projectExecutionAttempt?.canonicalRunId;
+    if (
+      claims.projectId !== projectId || claims.runId !== authority!.runId ||
+      (worker && (worker.projectId !== projectId || worker.runId !== authority!.runId)) ||
+      typeof canonical !== "string" ||
+      !apply(
+        evidenceRegExpExec,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        [canonical],
+      )
+    ) {
+      throw new Error("Accepted receipt readers require verified parent identity");
+    }
+    return canonical;
+  }
   const send = transport?.fetch ?? authority.fetch ?? hostFetch,
     token = authority.authToken,
     resolveApiUrl = createVeryfrontApiRequestUrlResolver(transport?.apiUrl ?? authority.apiUrl!);
@@ -835,13 +888,25 @@ export function hostedAcceptedChildEvidence(
       redirect: "error",
       signal: requestSignal,
     });
-    if (!response.ok) throw new Error(`Accepted receipt read failed (${response.status})`);
-    const body = await readResponseTextPrefix(response, 3_000_000, requestSignal);
+    if (!apply(evidenceResponseOk, response, [])) {
+      throw new Error(
+        `Accepted receipt read failed (${apply(evidenceResponseStatus, response, [])})`,
+      );
+    }
+    const stream = apply(evidenceResponseBody, response, []) as ReadableStream<Uint8Array> | null;
+    const body = await readResponseTextPrefix(
+      {
+        body: stream ? { getReader: () => getPrivateStreamReader(stream) } : null,
+      },
+      3_000_000,
+      requestSignal,
+    );
     if (body.truncated) throw new Error("Accepted receipt read exceeds byte budget");
     return privateJsonParse(body.text);
   }
   return evidenceFreeze({
     async readParentToolResults() {
+      const canonical = await verifiedParentId();
       const page = await read(
         `/runs/${
           evidenceEncodeURIComponent(canonical)
@@ -860,6 +925,7 @@ export function hostedAcceptedChildEvidence(
       return evidenceFreeze(mapPrivateArray(page.data, (row) => evidenceFreeze(row)));
     },
     async readCommittedVersion(path: string, versionId: string) {
+      await verifiedParentId();
       if (
         typeof path !== "string" || !path || path.length > 512 || typeof versionId !== "string" ||
         !apply(

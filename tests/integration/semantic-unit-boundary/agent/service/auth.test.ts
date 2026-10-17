@@ -65,6 +65,7 @@ import {
   runWithHostedPlatformDependencies,
 } from "#veryfront/agent/hosted/platform-dependency-credential.ts";
 import {
+  hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalToolSourceFactory,
   registerHostedTerminalCredential,
@@ -2558,4 +2559,94 @@ describe("native accepted task input signed claims", () => {
       );
     }
   });
+});
+
+it("binds parent evidence reads to RS256-verified writer generation instead of terminal hints", async () => {
+  const projectId = apiRunEventWriterContract.payload.projectId;
+  const runId = apiRunEventWriterContract.payload.runId;
+  const canonical = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const foreign = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const payload = {
+    ...apiRunEventWriterContract.payload,
+    agentId: "parent-agent",
+    platformToolDependencies: [{ toolId: "intake", platformTools: ["veryfront__create_file"] }],
+    workerGeneration: {
+      projectId,
+      runId,
+      canonicalRunId: canonical,
+      dispatchNonce: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workerId: "worker",
+      transportRecoveryAttempt: 0,
+    },
+  };
+  const fixture = await createRs256JwtFixture(payload);
+  const auth = createHostedServiceAuth({
+    authProvider: webCryptoAuthProvider,
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
+      NODE_ENV: "production",
+      VERYFRONT_API_URL: "https://api.example.test",
+    }),
+  });
+  for (const tampered of [false, true]) {
+    const owner = {
+      projectId,
+      agentId: "parent-agent",
+      authToken: "synthetic-parent-auth",
+      durableRootRun: { runId },
+    } as import("#veryfront/agent/hosted/chat-request-parser.ts").ParsedHostedChatRequest;
+    const writer = tampered
+      ? `${fixture.token.split(".")[0]}.${
+        encodeBase64UrlBytes(
+          new TextEncoder().encode(
+            JSON.stringify({
+              ...payload,
+              workerGeneration: { ...payload.workerGeneration, canonicalRunId: foreign },
+            }),
+          ),
+        )
+      }.${fixture.token.split(".")[2]}`
+      : fixture.token;
+    registerHostedTerminalCredential(
+      owner,
+      createUnsignedJwt({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId,
+        canonicalRunId: foreign,
+        dispatchNonce: "forged",
+      }),
+      writer,
+      auth.verifyRunEventAppendToken,
+    );
+    let reads = 0;
+    const evidence = hostedAcceptedChildEvidence(owner, projectId, undefined, {
+      apiUrl: "https://api.example.test",
+      fetch: (input) => {
+        reads++;
+        assertEquals(
+          String(input),
+          `https://api.example.test/runs/${canonical}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+        );
+        return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+      },
+    });
+    if (tampered) {
+      await assertRejects(
+        () => evidence.readParentToolResults(),
+        Error,
+        "verified parent authority",
+      );
+      await assertRejects(
+        () => evidence.readCommittedVersion("note", canonical),
+        Error,
+        "verified parent authority",
+      );
+      assertEquals(reads, 0);
+    } else {
+      assertEquals(await evidence.readParentToolResults(), []);
+      assertEquals(reads, 1);
+    }
+  }
 });

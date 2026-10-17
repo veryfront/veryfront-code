@@ -1,3 +1,4 @@
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import {
   createPrivateReadableStream,
   getPrivateStreamReader,
@@ -28,7 +29,7 @@ const responseStatusText = Object.getOwnPropertyDescriptor(NativeResponse.protot
   .get!;
 const responseHeaders = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!.get!;
 const hasInstance = Function.prototype[Symbol.hasInstance];
-/** Application-owned deterministic receipt selection, scoped to one active parent execution. */
+/** Select deterministic receipts until the parent returns or its response source closes. */
 export async function withHostedChildTaskInputResolver<T>(
   resolver: HostedChildTaskInputResolver | undefined,
   operation: () => Promise<T>,
@@ -43,6 +44,10 @@ export async function withHostedChildTaskInputResolver<T>(
       : null;
     if (resultBody) {
       const reader = getPrivateStreamReader(resultBody);
+      const revoke = () => {
+        scope.active = false;
+      };
+      void chainPrivatePromise(reader.closed, revoke, revoke);
       const body = createPrivateReadableStream<Uint8Array>({
         async pull(controller) {
           try {

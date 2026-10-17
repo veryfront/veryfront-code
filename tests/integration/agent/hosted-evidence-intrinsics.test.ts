@@ -13,7 +13,7 @@ import {
   type HostedAcceptedTaskInputEvent,
   snapshotHostedAcceptedTaskInputEvent,
 } from "#veryfront/agent/hosted/accepted-task-input.ts";
-import { assertThrows } from "#veryfront/testing/assert.ts";
+import { assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
@@ -30,16 +30,7 @@ it("pins both credentialed evidence readers when tenant code replaces string met
     authToken: "synthetic-parent-token",
     durableRootRun: { runId: "parent" },
   } as ParsedHostedChatRequest;
-  const token = `header.${
-    btoa(JSON.stringify({
-      tokenUse: "run_event_writer",
-      writerPurpose: "current_run_terminal",
-      runId: "parent",
-      canonicalRunId: canonical,
-      dispatchNonce: "dispatch",
-    }))
-  }.signature`;
-  registerHostedTerminalCredential(owner, token);
+  registerEvidenceOwner(owner, true);
   const calls: { url: string; authorization: string | null }[] = [];
   const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
     apiUrl: "https://api.example/v1///",
@@ -178,20 +169,7 @@ it("does not skip or replace parent evidence when tenant code poisons array trav
     authToken: "synthetic-parent-token",
     durableRootRun: { runId: "parent" },
   } as ParsedHostedChatRequest;
-  registerHostedTerminalCredential(
-    owner,
-    `header.${
-      btoa(
-        JSON.stringify({
-          tokenUse: "run_event_writer",
-          writerPurpose: "current_run_terminal",
-          runId: "parent",
-          canonicalRunId: canonical,
-          dispatchNonce: "dispatch",
-        }),
-      )
-    }.signature`,
-  );
+  registerEvidenceOwner(owner, true);
   const valid = {
     run_id: canonical,
     event_type: "TOOL_CALL_RESULT",
@@ -543,4 +521,239 @@ it("cancels the actual response reader despite a replaced native cancel method",
   }
   assertEquals(intercepted, false);
   assertEquals(reason, "stop");
+});
+
+function evidenceOwner() {
+  return {
+    projectId: "project-1",
+    authToken: "synthetic-parent-token",
+    durableRootRun: { runId: "parent" },
+  } as ParsedHostedChatRequest;
+}
+const evidenceCanonical = "11111111-1111-4111-8111-111111111111";
+function evidenceToken(claims: object) {
+  return `header.${btoa(JSON.stringify(claims))}.signature`;
+}
+function registerEvidenceOwner(owner: ParsedHostedChatRequest, verified: boolean) {
+  const terminal = evidenceToken({
+    tokenUse: "run_event_writer",
+    writerPurpose: "current_run_terminal",
+    runId: "parent",
+    canonicalRunId: evidenceCanonical,
+    dispatchNonce: "dispatch",
+  });
+  const writer = evidenceToken({
+    projectId: "project-1",
+    runId: "parent",
+    workerGeneration: {
+      projectId: "project-1",
+      runId: "parent",
+      canonicalRunId: evidenceCanonical,
+    },
+  });
+  registerHostedTerminalCredential(owner, terminal, writer, (input) => {
+    assertEquals(input, {
+      token: writer,
+      projectId: "project-1",
+      runId: "parent",
+      ...(owner.agentId ? { agentId: owner.agentId } : {}),
+    });
+    return Promise.resolve({ verified });
+  });
+}
+
+it("consumes both evidence responses without exposing authenticated bytes to replaced hooks", async () => {
+  const owner = { ...evidenceOwner(), agentId: "parent-agent" };
+  registerEvidenceOwner(owner, true);
+  const version = "77777777-7777-4777-8777-777777777777";
+  const responses = [
+    Response.json({ data: [], page_info: { next: null } }),
+    Response.json({ path: "note", id: version, content: "private bytes" }),
+  ];
+  let index = 0;
+  const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+    apiUrl: "https://api.example",
+    fetch: () => Promise.resolve(responses[index++]!),
+  });
+  const ok = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+  const body = Object.getOwnPropertyDescriptor(Response.prototype, "body")!;
+  const status = Object.getOwnPropertyDescriptor(Response.prototype, "status")!;
+  const read = ReadableStreamDefaultReader.prototype.read;
+  let intercepted = 0;
+  try {
+    Object.defineProperty(Response.prototype, "ok", {
+      configurable: true,
+      get() {
+        intercepted++;
+        return Reflect.apply(ok.get!, this, []);
+      },
+    });
+    for (const [key, descriptor] of [["body", body], ["status", status]] as const) {
+      Object.defineProperty(Response.prototype, key, {
+        configurable: true,
+        get() {
+          intercepted++;
+          return Reflect.apply(descriptor.get!, this, []);
+        },
+      });
+    }
+    ReadableStreamDefaultReader.prototype.read = function () {
+      intercepted++;
+      return Reflect.apply(read, this, []);
+    };
+    await evidence.readParentToolResults();
+    assertEquals(await evidence.readCommittedVersion("note", version), {
+      path: "note",
+      versionId: version,
+      content: "private bytes",
+    });
+  } finally {
+    Object.defineProperty(Response.prototype, "ok", ok);
+    Object.defineProperty(Response.prototype, "body", body);
+    Object.defineProperty(Response.prototype, "status", status);
+    ReadableStreamDefaultReader.prototype.read = read;
+  }
+  assertEquals(intercepted, 0);
+});
+
+it("rejects unverified parent evidence authority before sending the broad bearer", async () => {
+  const owner = evidenceOwner();
+  registerEvidenceOwner(owner, false);
+  let calls = 0;
+  const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+    apiUrl: "https://api.example",
+    fetch: () => {
+      calls++;
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    },
+  });
+  await assertRejects(() => evidence.readParentToolResults(), Error, "verified parent");
+  assertEquals(calls, 0);
+});
+
+it("uses the verified writer parent when the terminal routing payload names another run", async () => {
+  const owner = evidenceOwner();
+  const writer = evidenceToken({
+    projectId: "project-1",
+    runId: "parent",
+    workerGeneration: {
+      projectId: "project-1",
+      runId: "parent",
+      canonicalRunId: evidenceCanonical,
+    },
+  });
+  const terminal = evidenceToken({
+    tokenUse: "run_event_writer",
+    writerPurpose: "current_run_terminal",
+    runId: "parent",
+    canonicalRunId: "22222222-2222-4222-8222-222222222222",
+    dispatchNonce: "dispatch",
+  });
+  registerHostedTerminalCredential(owner, terminal, writer, (input) => {
+    assertEquals(input.token, writer);
+    return Promise.resolve(true);
+  });
+  let url: string | undefined;
+  const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+    apiUrl: "https://api.example",
+    fetch: (input) => {
+      url = String(input);
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    },
+  });
+  await evidence.readParentToolResults();
+  assertEquals(
+    url,
+    `https://api.example/runs/${evidenceCanonical}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+  );
+});
+
+for (
+  const claims of [
+    { projectId: "foreign", runId: "parent" },
+    { projectId: "project-1", runId: "foreign" },
+    { projectId: "project-1", runId: "parent" },
+    {
+      projectId: "project-1",
+      runId: "parent",
+      workerGeneration: {
+        projectId: "foreign",
+        runId: "parent",
+        canonicalRunId: evidenceCanonical,
+      },
+    },
+    {
+      projectId: "project-1",
+      runId: "parent",
+      workerGeneration: {
+        projectId: "project-1",
+        runId: "foreign",
+        canonicalRunId: evidenceCanonical,
+      },
+    },
+  ]
+) {
+  it(`rejects absent or conflicting signed parent identity ${JSON.stringify(claims)}`, async () => {
+    const owner = evidenceOwner();
+    registerHostedTerminalCredential(
+      owner,
+      "unused-routing-hint",
+      evidenceToken(claims),
+      () => Promise.resolve(true),
+    );
+    let calls = 0;
+    const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+      apiUrl: "https://api.example",
+      fetch: () => {
+        calls++;
+        throw new Error("Unexpected read");
+      },
+    });
+    const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, "workerGeneration");
+    try {
+      Object.defineProperty(Object.prototype, "workerGeneration", {
+        configurable: true,
+        value: { projectId: "project-1", runId: "parent", canonicalRunId: evidenceCanonical },
+      });
+      await assertRejects(() => evidence.readParentToolResults(), Error, "verified parent");
+      await assertRejects(
+        () => evidence.readCommittedVersion("note", evidenceCanonical),
+        Error,
+        "verified parent",
+      );
+    } finally {
+      if (descriptor) Object.defineProperty(Object.prototype, "workerGeneration", descriptor);
+      else Reflect.deleteProperty(Object.prototype, "workerGeneration");
+    }
+    assertEquals(calls, 0);
+  });
+}
+
+it("reads a verified project attempt without terminal hints", async () => {
+  const owner = {
+    ...evidenceOwner(),
+    durableRootRun: { runId: evidenceCanonical },
+  } as ParsedHostedChatRequest;
+  const writer = evidenceToken({
+    projectId: "project-1",
+    runId: evidenceCanonical,
+    projectExecutionAttempt: { canonicalRunId: evidenceCanonical },
+  });
+  registerHostedTerminalCredential(
+    owner,
+    "unused-routing-hint",
+    writer,
+    () => Promise.resolve(true),
+  );
+  const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+    apiUrl: "https://api.example",
+    fetch: (input) => {
+      assertEquals(
+        String(input),
+        `https://api.example/runs/${evidenceCanonical}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+      );
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    },
+  });
+  assertEquals(await evidence.readParentToolResults(), []);
 });
