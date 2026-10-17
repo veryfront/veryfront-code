@@ -168,27 +168,31 @@ function splitIdentifierTokens(value: string): string[] {
   return tokens;
 }
 
+function hasFilePathScheme(path: string): boolean {
+  return path.length >= 5 &&
+    (stringCodeUnitAt(path, 0) | ASCII_LOWERCASE_OFFSET) === 102 &&
+    (stringCodeUnitAt(path, 1) | ASCII_LOWERCASE_OFFSET) === 105 &&
+    (stringCodeUnitAt(path, 2) | ASCII_LOWERCASE_OFFSET) === 108 &&
+    (stringCodeUnitAt(path, 3) | ASCII_LOWERCASE_OFFSET) === 101 &&
+    stringCodeUnitAt(path, 4) === COLON_CODE_UNIT;
+}
+
+function hasWindowsDriveAt(path: string, cursor: number): boolean {
+  return cursor + 2 < path.length &&
+    isAsciiLetterCodeUnit(stringCodeUnitAt(path, cursor)) &&
+    stringCodeUnitAt(path, cursor + 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor + 2));
+}
+
 function isWindowsPath(path: string): boolean {
   if (path.length >= 2) {
     const first = stringCodeUnitAt(path, 0);
     const second = stringCodeUnitAt(path, 1);
     if (isPathSeparatorCodeUnit(first) && isPathSeparatorCodeUnit(second)) return true;
   }
-  if (
-    path.length >= 3 &&
-    isAsciiLetterCodeUnit(stringCodeUnitAt(path, 0)) &&
-    stringCodeUnitAt(path, 1) === COLON_CODE_UNIT &&
-    isPathSeparatorCodeUnit(stringCodeUnitAt(path, 2))
-  ) {
-    return true;
-  }
+  if (hasWindowsDriveAt(path, 0)) return true;
 
-  const hasFileScheme = path.length >= 5 &&
-    (stringCodeUnitAt(path, 0) | ASCII_LOWERCASE_OFFSET) === 102 &&
-    (stringCodeUnitAt(path, 1) | ASCII_LOWERCASE_OFFSET) === 105 &&
-    (stringCodeUnitAt(path, 2) | ASCII_LOWERCASE_OFFSET) === 108 &&
-    (stringCodeUnitAt(path, 3) | ASCII_LOWERCASE_OFFSET) === 101 &&
-    stringCodeUnitAt(path, 4) === COLON_CODE_UNIT;
+  const hasFileScheme = hasFilePathScheme(path);
   if (!hasFileScheme) return false;
 
   let cursor = 5;
@@ -204,10 +208,7 @@ function isWindowsPath(path: string): boolean {
     if (cursor > authorityStart) return true;
   }
   while (cursor < path.length && isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor))) cursor++;
-  return cursor + 2 < path.length &&
-    isAsciiLetterCodeUnit(stringCodeUnitAt(path, cursor)) &&
-    stringCodeUnitAt(path, cursor + 1) === COLON_CODE_UNIT &&
-    isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor + 2));
+  return hasWindowsDriveAt(path, cursor);
 }
 
 function normalizePathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number {
@@ -217,6 +218,25 @@ function normalizePathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number
       codeUnit <= ASCII_UPPERCASE_Z_CODE_UNIT
     ? codeUnit + ASCII_LOWERCASE_OFFSET
     : codeUnit;
+}
+
+function fillPathPrefixTable(
+  pattern: Uint32Array,
+  prefixTable: Uint32Array,
+  patternLength: number,
+): void {
+  prefixTable[0] = 0;
+  for (let index = 1, prefixLength = 0; index < patternLength;) {
+    if (pattern[index] === pattern[prefixLength]) {
+      prefixTable[index] = ++prefixLength;
+      index++;
+    } else if (prefixLength > 0) {
+      prefixLength = prefixTable[prefixLength - 1]!;
+    } else {
+      prefixTable[index] = 0;
+      index++;
+    }
+  }
 }
 
 /**
@@ -246,18 +266,7 @@ export function redactPathFromText(
     );
   }
 
-  prefixTable[0] = 0;
-  for (let index = 1, prefixLength = 0; index < patternLength;) {
-    if (pattern[index] === pattern[prefixLength]) {
-      prefixTable[index] = ++prefixLength;
-      index++;
-    } else if (prefixLength > 0) {
-      prefixLength = prefixTable[prefixLength - 1]!;
-    } else {
-      prefixTable[index] = 0;
-      index++;
-    }
-  }
+  fillPathPrefixTable(pattern, prefixTable, patternLength);
 
   let result = "";
   let copyStart = 0;
@@ -437,109 +446,83 @@ function readSerializationHook(value: object): unknown {
   return undefined;
 }
 
-function redactValue(
+function redactArrayValue(
   value: unknown,
   depth: number,
   seen: Set<object>,
   mode: RedactionMode,
   budget: RedactionBudget,
 ): unknown {
-  if (budget.remainingNodes <= 0) {
-    budget.exhausted = true;
-    return REDACTED;
-  }
-  budget.remainingNodes--;
-
-  if (typeof value === "string") return sanitizeUrlCredentials(value);
-  if (typeof value === "bigint") {
-    return mode === "serialization" ? apply(bigIntToString, value, []) as string : value;
-  }
-  if (typeof value === "number") {
-    return mode === "serialization" && !numberIsFinite(value) ? null : value;
-  }
-  if (typeof value === "boolean" || value === null) return value;
-  if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
-    return mode === "serialization" ? REDACTED : value;
-  }
-
-  const arrayClassification = classifyArray(value);
-  if (arrayClassification === null) return REDACTED;
-
-  if (arrayClassification) {
-    if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
-    apply(setAdd, seen, [value]);
-    try {
-      const arrayValue = value as unknown[];
-      const length = arrayValue.length;
-      if (!numberIsInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
-        return REDACTED;
-      }
-      const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
-      for (let index = 0; index < length; index++) {
-        if (mode === "compatible" && !(index in arrayValue)) continue;
-        const item = redactValue(arrayValue[index], depth + 1, seen, mode, budget);
-        if (budget.exhausted) return REDACTED;
-        if (mode === "compatible") {
-          redacted[index] = item;
-        } else {
-          apply(arrayPush, redacted, [item]);
-        }
-      }
-      return redacted;
-    } catch {
-      // Array indices can be accessors or proxy traps. A failed read makes the
-      // serialized contents unknowable, so the complete array fails closed.
-      return REDACTED;
-    } finally {
-      apply(setDelete, seen, [value]);
-    }
-  }
-
-  // Objects defining `toJSON` (Date, URL, custom serializers) are serialized
-  // by `JSON.stringify` via the *return value* of `toJSON`, not their own
-  // enumerable keys. A key-based pass over the object's own properties would
-  // therefore miss credentials smuggled through `toJSON`, e.g.
-  // `{ toJSON: () => ({ apiKey: "sk-..." }) }` (CODEX P2). When `toJSON`
-  // returns an object, array, or scalar, the serialization API redacts *that*
-  // snapshot. The compatibility API keeps scalar serializers such as Date and
-  // URL intact, preserving the established generic return contract.
   if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
-  let toJSON: unknown;
+  apply(setAdd, seen, [value]);
   try {
-    toJSON = readSerializationHook(value);
-  } catch {
-    // Accessors can throw before a serializer is callable. Never inspect the
-    // raw object after that because its eventual serialization is unknown.
-    return REDACTED;
-  }
-
-  if (typeof toJSON === "function") {
-    apply(setAdd, seen, [value]);
-    try {
-      const serialized = apply(toJSON, value, []);
-      if (mode === "serialization") {
-        return redactValue(serialized, depth + 1, seen, mode, budget);
-      }
-      if (typeof serialized === "string") {
-        const sanitized = sanitizeUrlCredentials(serialized);
-        return sanitized === serialized ? value : sanitized;
-      }
-      if (serialized !== null && typeof serialized === "object") {
-        if (classifyArray(serialized) === null) return REDACTED;
-        return redactValue(serialized, depth + 1, seen, mode, budget);
-      }
-
-      // Other scalar results serialize safely as-is in compatibility mode.
-      return value;
-    } catch {
-      // A throwing toJSON must never let the raw object (whose own keys we
-      // skipped) through: fail closed.
+    const arrayValue = value as unknown[];
+    const length = arrayValue.length;
+    if (!numberIsInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
       return REDACTED;
-    } finally {
-      apply(setDelete, seen, [value]);
     }
+    const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
+    for (let index = 0; index < length; index++) {
+      if (mode === "compatible" && !(index in arrayValue)) continue;
+      const item = redactValue(arrayValue[index], depth + 1, seen, mode, budget);
+      if (budget.exhausted) return REDACTED;
+      if (mode === "compatible") {
+        redacted[index] = item;
+      } else {
+        apply(arrayPush, redacted, [item]);
+      }
+    }
+    return redacted;
+  } catch {
+    // Array indices can be accessors or proxy traps. A failed read makes the
+    // serialized contents unknowable, so the complete array fails closed.
+    return REDACTED;
+  } finally {
+    apply(setDelete, seen, [value]);
   }
+}
 
+function redactSerializationHookValue(
+  value: unknown,
+  toJSON: () => unknown,
+  depth: number,
+  seen: Set<object>,
+  mode: RedactionMode,
+  budget: RedactionBudget,
+): unknown {
+  apply(setAdd, seen, [value]);
+  try {
+    const serialized = apply(toJSON, value, []);
+    if (mode === "serialization") {
+      return redactValue(serialized, depth + 1, seen, mode, budget);
+    }
+    if (typeof serialized === "string") {
+      const sanitized = sanitizeUrlCredentials(serialized);
+      return sanitized === serialized ? value : sanitized;
+    }
+    if (serialized !== null && typeof serialized === "object") {
+      if (classifyArray(serialized) === null) return REDACTED;
+      return redactValue(serialized, depth + 1, seen, mode, budget);
+    }
+
+    // Other scalar results serialize safely as-is in compatibility mode.
+    return value;
+  } catch {
+    // A throwing toJSON must never let the raw object (whose own keys we
+    // skipped) through: fail closed.
+    return REDACTED;
+  } finally {
+    apply(setDelete, seen, [value]);
+  }
+}
+
+function redactObjectProperties(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  mode: RedactionMode,
+  budget: RedactionBudget,
+): unknown {
   apply(setAdd, seen, [value]);
   try {
     const out: Record<string, unknown> = {};
@@ -581,6 +564,70 @@ function redactValue(
   } finally {
     apply(setDelete, seen, [value]);
   }
+}
+
+function redactScalarValue(value: unknown, mode: RedactionMode): unknown {
+  switch (typeof value) {
+    case "string":
+      return sanitizeUrlCredentials(value);
+    case "bigint":
+      return mode === "serialization" ? apply(bigIntToString, value, []) as string : value;
+    case "number":
+      return mode === "serialization" && !numberIsFinite(value) ? null : value;
+    case "undefined":
+    case "function":
+    case "symbol":
+      return mode === "serialization" ? REDACTED : value;
+    default:
+      return value;
+  }
+}
+
+function redactValue(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  mode: RedactionMode,
+  budget: RedactionBudget,
+): unknown {
+  if (budget.remainingNodes <= 0) {
+    budget.exhausted = true;
+    return REDACTED;
+  }
+  budget.remainingNodes--;
+
+  if (value === null || typeof value !== "object") return redactScalarValue(value, mode);
+
+  const arrayClassification = classifyArray(value);
+  if (arrayClassification === null) return REDACTED;
+
+  if (arrayClassification) {
+    return redactArrayValue(value, depth, seen, mode, budget);
+  }
+
+  // Objects defining `toJSON` (Date, URL, custom serializers) are serialized
+  // by `JSON.stringify` via the *return value* of `toJSON`, not their own
+  // enumerable keys. A key-based pass over the object's own properties would
+  // therefore miss credentials smuggled through `toJSON`, e.g.
+  // `{ toJSON: () => ({ apiKey: "sk-..." }) }` (CODEX P2). When `toJSON`
+  // returns an object, array, or scalar, the serialization API redacts *that*
+  // snapshot. The compatibility API keeps scalar serializers such as Date and
+  // URL intact, preserving the established generic return contract.
+  if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
+  let toJSON: unknown;
+  try {
+    toJSON = readSerializationHook(value);
+  } catch {
+    // Accessors can throw before a serializer is callable. Never inspect the
+    // raw object after that because its eventual serialization is unknown.
+    return REDACTED;
+  }
+
+  if (typeof toJSON === "function") {
+    return redactSerializationHookValue(value, toJSON as () => unknown, depth, seen, mode, budget);
+  }
+
+  return redactObjectProperties(value, depth, seen, mode, budget);
 }
 
 /**
@@ -738,9 +785,8 @@ function assignmentValueEndsAt(input: string, start: number): boolean {
   return boundaryEnd >= input.length || assignmentStartsAt(input, boundaryEnd);
 }
 
-function redactAssignmentValue(input: string, start: number): RedactedAssignmentValue {
+function assignmentScanStart(input: string, start: number): number | RedactedAssignmentValue {
   let scanStart = start;
-  let preserveValueQuote = true;
   if (apply(stringStartsWith, input, [REDACTED, start])) {
     const markerEnd = start + REDACTED.length;
     if (assignmentValueEndsAt(input, markerEnd)) {
@@ -750,81 +796,108 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       };
     }
     scanStart = markerEnd;
-    preserveValueQuote = false;
   }
+
+  return scanStart;
+}
+
+function redactAssignmentValue(input: string, start: number): RedactedAssignmentValue {
+  const initial = assignmentScanStart(input, start);
+  if (typeof initial !== "number") return initial;
+  const scanStart = initial;
+  const preserveValueQuote = scanStart === start;
 
   const wrapperQuote = preserveValueQuote &&
       (input[scanStart] === `"` || input[scanStart] === "'" || input[scanStart] === "`")
     ? input[scanStart]
     : "";
   let wrapperQuoteClosed = false;
-  const replacement = (): string =>
-    wrapperQuote ? `${wrapperQuote}${REDACTED}${wrapperQuoteClosed ? wrapperQuote : ""}` : REDACTED;
+  const replacement = (): string => {
+    if (!wrapperQuote) return REDACTED;
+    return `${wrapperQuote}${REDACTED}${wrapperQuoteClosed ? wrapperQuote : ""}`;
+  };
 
   const expectedClosings: string[] = [];
   let quote = "";
   let quoteStart = -1;
-  for (let index = scanStart; index < input.length;) {
-    const character = input[index]!;
-    if (quote) {
-      if (character === "\\") {
-        index += 2;
-        continue;
-      }
-      if (character === quote) {
-        if (quoteStart === scanStart && expectedClosings.length === 0) {
-          wrapperQuoteClosed = true;
-          return { end: index + 1, replacement: replacement() };
-        }
-        quote = "";
-        quoteStart = -1;
-      }
-      index++;
-      continue;
+  const consumeQuotedCharacter = (
+    index: number,
+    character: string,
+  ): number | RedactedAssignmentValue => {
+    if (character === "\\") {
+      return index + 2;
     }
-
+    if (character === quote) {
+      if (quoteStart === scanStart && expectedClosings.length === 0) {
+        wrapperQuoteClosed = true;
+        return { end: index + 1, replacement: replacement() };
+      }
+      quote = "";
+      quoteStart = -1;
+    }
+    return index + 1;
+  };
+  const consumeContainerClosing = (
+    index: number,
+    character: string,
+  ): number | RedactedAssignmentValue => {
+    if (expectedClosings[expectedClosings.length - 1] !== character) {
+      return { end: input.length, replacement: replacement() };
+    }
+    apply(arrayPop, expectedClosings, []);
+    index++;
+    if (
+      expectedClosings.length === 0 &&
+      assignmentValueEndsAt(input, index)
+    ) {
+      return { end: index, replacement: replacement() };
+    }
+    return index;
+  };
+  const consumeOpeningCharacter = (index: number, character: string): number | undefined => {
     if (character === `"` || character === "'" || character === "`") {
       quote = character;
       quoteStart = index;
-      index++;
-      continue;
+      return index + 1;
     }
     if (character === "{" || character === "[") {
       apply(arrayPush, expectedClosings, [character === "{" ? "}" : "]"]);
-      index++;
-      continue;
+      return index + 1;
     }
-    if (
-      expectedClosings.length > 0 &&
-      (character === "}" || character === "]")
-    ) {
-      if (expectedClosings[expectedClosings.length - 1] !== character) {
-        return { end: input.length, replacement: replacement() };
-      }
-      apply(arrayPop, expectedClosings, []);
-      index++;
-      if (
-        expectedClosings.length === 0 &&
-        assignmentValueEndsAt(input, index)
-      ) {
-        return { end: index, replacement: replacement() };
-      }
-      continue;
-    }
-
-    if (
-      expectedClosings.length > 0 ||
-      !isAssignmentBoundaryCharacter(character)
-    ) {
-      index++;
-      continue;
-    }
-
+    return undefined;
+  };
+  const consumeBoundary = (index: number): number | RedactedAssignmentValue => {
     const boundaryStart = index;
     index = skipAssignmentBoundaryCharacters(input, index);
     if (index >= input.length || assignmentStartsAt(input, index)) {
       return { end: boundaryStart, replacement: replacement() };
     }
+    return index;
+  };
+  const consumeUnquotedCharacter = (
+    index: number,
+    character: string,
+  ): number | RedactedAssignmentValue => {
+    const openingEnd = consumeOpeningCharacter(index, character);
+    if (openingEnd !== undefined) return openingEnd;
+    if (expectedClosings.length > 0 && (character === "}" || character === "]")) {
+      return consumeContainerClosing(index, character);
+    }
+    if (expectedClosings.length > 0 || !isAssignmentBoundaryCharacter(character)) return index + 1;
+    return consumeBoundary(index);
+  };
+  for (let index = scanStart; index < input.length;) {
+    const character = input[index]!;
+    if (quote) {
+      const next = consumeQuotedCharacter(index, character);
+      if (typeof next !== "number") return next;
+      index = next;
+      continue;
+    }
+
+    const next = consumeUnquotedCharacter(index, character);
+    if (typeof next !== "number") return next;
+    index = next;
   }
 
   return { end: input.length, replacement: replacement() };
@@ -873,6 +946,13 @@ function redactCredentialAssignments(
   return cursor === 0 ? input : result + sliceString(input, cursor);
 }
 
+function matchesSensitiveKeyPattern(candidate: string): boolean {
+  for (let index = 0; index < SENSITIVE_KEY_PATTERNS.length; index++) {
+    if (candidate === SENSITIVE_KEY_PATTERNS[index]) return true;
+  }
+  return false;
+}
+
 /**
  * Classify free-text assignment keys without applying the structured-key
  * substring policy to ordinary words. Identifier and camel-case boundaries
@@ -904,9 +984,7 @@ function isSensitiveAssignmentKey(key: string): boolean {
       const token = tokens[end]!;
       if (token.length === 0) continue;
       candidate += token;
-      for (let index = 0; index < SENSITIVE_KEY_PATTERNS.length; index++) {
-        if (candidate === SENSITIVE_KEY_PATTERNS[index]) return true;
-      }
+      if (matchesSensitiveKeyPattern(candidate)) return true;
     }
   }
 
