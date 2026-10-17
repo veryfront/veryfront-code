@@ -109,7 +109,9 @@ export class DurableRunHome {
       if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
       names.push(entry.name);
     }
-    const records = names.filter((name) => /^\d{10}\.json$/.test(name)).sort();
+    const records = names.filter((name) => /^\d{10}\.json$/.test(name)).sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0
+    );
     if (
       names.some((name) =>
         name !== "identity.json" && !name.startsWith(".pending-") && !records.includes(name)
