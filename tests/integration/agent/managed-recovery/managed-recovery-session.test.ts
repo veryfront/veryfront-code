@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-recovery-writer.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -99,7 +100,7 @@ it("managed sessions require opt-in and genuine private claims", async () => {
 
 it("actual session replacement joins predecessor and fences its late finalizer", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   let current = admission();
   const prior = current;
   let retirements = 0;
@@ -197,7 +198,7 @@ import { agent as createAgent } from "#veryfront/agent";
 
 it("pre-producer setup failure settles and actual next stream restores its private predecessor snapshot", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   const firstAdmission = admission();
   let current = firstAdmission;
   const manager = new AgentRunSessionManager({
@@ -325,7 +326,7 @@ import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts"
 
 it("blocked renewal cannot extend the last live receipt deadline", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   let calls = 0;
   let unblock = () => {};
   const blocked = new Promise<unknown>((resolve) => {
@@ -367,7 +368,7 @@ it("blocked renewal cannot extend the last live receipt deadline", async () => {
 
 it("actual stream denies a callable effect after live generation changes", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   const first = admission();
   let current = first;
   let effects = 0;

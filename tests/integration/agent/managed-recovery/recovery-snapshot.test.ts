@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -92,7 +93,7 @@ function fixture() {
 it("actual provider and tool checkpoint schemas survive disk roundtrip and attach replay privately", async () => {
   const value = fixture();
   const parsed = parseRecoverySnapshot(value);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity: parsed.binding.identity });
     await home.append({ sequence: 1, value: parsed });

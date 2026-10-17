@@ -240,7 +240,7 @@ export function createManagedRecoveryHttpTransport(
       const initial = getRecoveryOwnershipReceiptSchema().parse(
         await readBoundedJson(
           await request(
-            `/runs/${canonicalRunId}/runtime/ownership`,
+            `/runs/${canonicalRunId}/runtime/recovery-ownership`,
             {
               authorization: `Bearer ${credentials.invocation}`,
               "x-veryfront-run-terminal-token": credentials.terminal,
@@ -335,7 +335,7 @@ export function createManagedRecoveryHttpTransport(
     readOwnership: async (claims: VerifiedControlPlaneRequestClaims) => {
       const credentials = credentialsFor(claims);
       const response = await request(
-        `/runs/${credentials.admission.identity.canonicalRunId}/runtime/ownership`,
+        `/runs/${credentials.admission.identity.canonicalRunId}/runtime/recovery-ownership`,
         {
           authorization: `Bearer ${credentials.invocation}`,
           "x-veryfront-run-terminal-token": credentials.terminal,

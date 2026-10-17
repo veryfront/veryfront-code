@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -86,7 +87,7 @@ it("real signed admission cannot be copied into a forged recovery capability", a
       Object.isFrozen(getVerifiedControlPlaneRecoveryAdmission(claims)?.generation),
       true,
     );
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     try {
       await assertRejects(() =>
         RecoverySessionOwner.acquire({
@@ -107,7 +108,7 @@ it("real signed admission cannot be copied into a forged recovery capability", a
 
 it("disk ownership permits only a newer signed live generation and never persists credentials", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const first = admission();
     const claims = await signed(first);
@@ -165,7 +166,7 @@ it("disk ownership permits only a newer signed live generation and never persist
 
 it("current ownership rejects mismatched generations, regressed cursors and elapsed lease budgets", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = { ...admission(), acknowledgedExternalSequence: 4 };
     const claims = await signed(value);
@@ -242,7 +243,7 @@ it("adapter signatures and out-of-scope or credential-bearing admissions cannot 
 
 it("older and concurrent duplicate admissions never retire the replacement owner", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const original = admission();
     const originalClaims = await signed(original);
@@ -290,7 +291,7 @@ it("older and concurrent duplicate admissions never retire the replacement owner
 
 it("failed acquisition can recover through a freshly issued nonce at the same transport attempt", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const original = admission();
     await RecoverySessionOwner.acquire({

@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -100,7 +101,7 @@ it("paired transport keeps original credentials private, bound and redirect-free
     });
     if (mode === "error") return new Response("private failure content", { status: 403 });
     if (mode === "oversized") return new Response("x".repeat(65_537));
-    if (path.endsWith("/runtime/ownership")) return Response.json(receipt(value));
+    if (path.endsWith("/runtime/recovery-ownership")) return Response.json(receipt(value));
     return Response.json({
       project_id: value.sourceBinding.projectId,
       release_id: value.sourceBinding.releaseId,
@@ -132,7 +133,7 @@ it("paired transport keeps original credentials private, bound and redirect-free
       files,
     });
     assertEquals(seen[0], {
-      path: `/runs/${identity.canonicalRunId}/runtime/ownership`,
+      path: `/runs/${identity.canonicalRunId}/runtime/recovery-ownership`,
       auth: "Bearer original-invocation",
       terminal: "original-terminal",
       redirect: "error",
@@ -164,7 +165,7 @@ it("paired transport keeps original credentials private, bound and redirect-free
 
 it("boot configuration is disabled by default and rejects partial or invalid immutable binding", async () => {
   assertEquals(readManagedRecoveryBootConfig(() => undefined), undefined);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const values: Record<string, string> = {
       VERYFRONT_MANAGED_RECOVERY_ENABLED: "true",
@@ -211,7 +212,7 @@ it("canonical writer uses original credential, independent DB cursor and exact r
       "https://trusted.test",
       async (url, init) => {
         assertEquals(init?.redirect, "error");
-        if (String(url).endsWith("/runtime/ownership")) {
+        if (String(url).endsWith("/runtime/recovery-ownership")) {
           return Response.json({
             ...receipt(value),
             acknowledgedEventId: 91,
@@ -379,6 +380,46 @@ it("authority byte bounds ignore project chunk length accessors", async () => {
       () => Promise.resolve(response),
     );
     await assertRejects(() => transport.readOwnership(claims), Error, "exceeds its bound");
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("legacy ownership receipts cannot grant private recovery authority", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    bindManagedRecoveryCredentials(claims, {
+      authToken: "original-invocation",
+      terminalToken: "original-terminal",
+      writerToken: "original-writer",
+    });
+    const legacy = {
+      version: 1,
+      identity: {
+        project_id: value.identity.projectId,
+        canonical_run_id: value.identity.canonicalRunId,
+        public_run_id: value.identity.publicRunId,
+      },
+      generation: {
+        worker_id: value.generation.workerId,
+        dispatch_nonce: value.generation.dispatchNonce,
+        transport_recovery_attempt: value.generation.transportRecoveryAttempt,
+      },
+      lease_remaining_ms: value.leaseRemainingMs,
+      acknowledged_external_sequence: value.acknowledgedExternalSequence,
+    };
+    const transport = createManagedRecoveryHttpTransport("https://trusted.test", (url) => {
+      assertEquals(
+        String(url),
+        `https://trusted.test/runs/${identity.canonicalRunId}/runtime/recovery-ownership`,
+      );
+      return Promise.resolve(Response.json(legacy));
+    });
+    await assertRejects(() => transport.readOwnership(claims));
+    await assertRejects(() => transport.createEventAppender(claims));
   } finally {
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);

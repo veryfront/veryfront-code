@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -10,7 +11,7 @@ const identity = {
   sourceHash: "a".repeat(64),
 };
 it("durable home survives reopening and rejects a foreign identity", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity });
     await home.append({ sequence: 1, value: { kind: "entered" } });
@@ -28,7 +29,7 @@ it("durable home survives reopening and rejects a foreign identity", async () =>
 });
 
 it("durable home rejects gaps, conflicting retries, corrupt and torn committed bytes", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity });
     await assertRejects(() => home.append({ sequence: 2, value: null }));
@@ -47,7 +48,7 @@ it("durable home rejects gaps, conflicting retries, corrupt and torn committed b
 });
 
 it("concurrent handles cannot overwrite a committed sequence", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const [a, b] = await Promise.all([
       DurableRunHome.open({ directory, identity }),
@@ -65,7 +66,7 @@ it("concurrent handles cannot overwrite a committed sequence", async () => {
 });
 
 it("bounds and symlink records fail closed", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   const outside = await Deno.makeTempFile();
   try {
     const home = await DurableRunHome.open({ directory, identity });
@@ -81,7 +82,7 @@ it("bounds and symlink records fail closed", async () => {
 
 for (const boundary of ["pending", "committed"]) {
   it(`real process crash at ${boundary} boundary survives fresh process reopening`, async () => {
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     try {
       const process = new Deno.Command(Deno.execPath(), {
         args: [
@@ -123,7 +124,7 @@ for (const boundary of ["pending", "committed"]) {
 }
 
 it("real concurrent processes exclusively publish one conflicting sequence", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const outputs = await Promise.all(
       ["writer-A", "writer-B"].map((boundary) =>
@@ -153,8 +154,8 @@ it("real concurrent processes exclusively publish one conflicting sequence", asy
 });
 
 it("transplanted valid record and committed gaps are rejected", async () => {
-  const directory = await Deno.makeTempDir();
-  const foreignDirectory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
+  const foreignDirectory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity });
     const foreign = await DurableRunHome.open({
@@ -173,7 +174,7 @@ it("transplanted valid record and committed gaps are rejected", async () => {
 });
 
 it("real concurrent identical retries both acknowledge durable immutable bytes", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const outputs = await Promise.all([1, 2].map(() =>
       new Deno.Command(Deno.execPath(), {
@@ -201,7 +202,7 @@ it("real concurrent identical retries both acknowledge durable immutable bytes",
 });
 
 it("abandoned pending publications do not exhaust committed recovery bounds", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity });
     for (let index = 0; index < 4160; index++) {
@@ -216,7 +217,7 @@ it("abandoned pending publications do not exhaust committed recovery bounds", as
 });
 
 it("special record files reject without waiting for a writer", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const home = await DurableRunHome.open({ directory, identity });
     const result = await new Deno.Command("mkfifo", {

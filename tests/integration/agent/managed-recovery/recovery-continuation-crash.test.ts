@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -7,7 +8,7 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import { parseAgentPauseCheckpoint } from "#veryfront/agent/runtime/manual-pause.ts";
 
 it("actual safe loop checkpoint survives SIGKILL and replacement preserves step budget without repeating the tool", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const child = new Deno.Command(Deno.execPath(), {
       args: [

@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -78,7 +79,7 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 
 it("real cross-project runtime boundaries omit private message metadata while preserving signed bindings", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     value.sourceBinding.projectId = "77777777-7777-4777-8777-777777777777";
@@ -185,7 +186,7 @@ it("real cross-project runtime boundaries omit private message metadata while pr
 
 it("completed incoming tool history continues without inventing current-run admission and collisions fail closed", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     const claims = await signed(value);
@@ -311,7 +312,7 @@ it("completed incoming tool history continues without inventing current-run admi
 
 it("actual original tool frames admit intent before callback and acknowledge result before durable continuation", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     const claims = await signed(value);
@@ -440,7 +441,7 @@ it("actual original tool frames admit intent before callback and acknowledge res
 
 it("actual managed startup skill obtains original occurrence admission before loader execution", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const { registerSkill, skillRegistryInternal } = await import("#veryfront/skill/registry.ts");
     const { createSkillTestAdapter } = await import("#veryfront/skill/testing.ts");
@@ -568,7 +569,7 @@ it("actual managed startup skill obtains original occurrence admission before lo
 it("safe snapshot publication rejects an API that ignores the atomic checkpoint sidecar", async () => {
   const { assertRejects } = await import("#veryfront/testing/assert.ts");
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     const claims = await signed(value);
@@ -627,7 +628,7 @@ it("safe snapshot publication rejects an API that ignores the atomic checkpoint 
 
 it("provider-executed current calls persist replay without waiting for local admission", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     const claims = await signed(value);
@@ -740,7 +741,7 @@ for (
 ) {
   it(`persistence failure retires pending ${failureKind} work without an external abort`, async () => {
     const previous = Deno.env.get(envKey);
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const controller = new AbortController();
     let pending: Promise<unknown> | undefined;
     try {

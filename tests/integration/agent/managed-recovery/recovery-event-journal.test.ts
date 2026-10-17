@@ -1,10 +1,11 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { DurableRunHome } from "#veryfront/internal-agents/durable-run-home.ts";
 import { RecoveryEventJournal } from "#veryfront/internal-agents/recovery-event-journal.ts";
 it("journal reopens and replays only the acknowledged cursor suffix", async () => {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   const identity = {
     projectId: "11111111-1111-4111-8111-111111111111",
     canonicalRunId: "22222222-2222-4222-8222-222222222222",

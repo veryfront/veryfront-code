@@ -1,3 +1,4 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -79,7 +80,7 @@ import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manag
 
 it("trusted immutable host admits a distinct execution project using its exact live receipt", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   const files = [{ path: "agents/proof.ts", entityType: "function", content: "synthetic" }];
   const value = admission();
   value.identity = {
@@ -138,7 +139,7 @@ it("trusted immutable host admits a distinct execution project using its exact l
 
 it("foreign source host and wrong served release are rejected before any ownership I/O", async () => {
   const previous = Deno.env.get(envKey);
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     const value = admission();
     const claims = await signed(value);
