@@ -404,31 +404,9 @@ async function deriveConfigurationId(
   return `config-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/**
- * Build the hosted HTTP `resolve()` callback. Each call authorizes the project, its
- * slug, the named environment and its active release with the request's source token,
- * binds the published tenant-source image to that exact project release, and then
- * reads the authorized project environment. Any mismatch rejects; the ingress turns
- * rejection into a non-cacheable unavailable response with no host execution.
- */
-export function createHostedHttpResolver(
+function resolveHostedHttpSession(
   options: HostedHttpResolverOptions,
-): HostedHttpIngressOptions["resolve"] {
-  const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
-  const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
-  const repository = options.sourceImageRepository;
-  if (typeof repository !== "string" || !isImageRepository(repository)) {
-    throw new TypeError("Hosted HTTP resolver requires a source image repository");
-  }
-  const serviceAccountId = options.serviceAccountId;
-  if (typeof serviceAccountId !== "string" || !serviceAccountId.trim()) {
-    throw new TypeError("Hosted HTTP resolver requires the source service account ID");
-  }
-  if (typeof options.lookupSourceImage !== "function") {
-    throw new TypeError("Hosted HTTP resolver requires a source image lookup");
-  }
-  // Copy only the documented session fields; each one is validated below, so nothing
-  // unvalidated reaches the executor session.
+): HostedHttpResolverOptions["session"] {
   const given = options.session ?? ({} as HostedHttpResolverOptions["session"]);
   const session: HostedHttpResolverOptions["session"] = {
     expectedBrokerInstanceId: given.expectedBrokerInstanceId,
@@ -458,6 +436,35 @@ export function createHostedHttpResolver(
       value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 30_000)
     ) throw new TypeError("Hosted HTTP resolver requires bounded executor session limits");
   }
+  return session;
+}
+
+/**
+ * Build the hosted HTTP `resolve()` callback. Each call authorizes the project, its
+ * slug, the named environment and its active release with the request's source token,
+ * binds the published tenant-source image to that exact project release, and then
+ * reads the authorized project environment. Any mismatch rejects; the ingress turns
+ * rejection into a non-cacheable unavailable response with no host execution.
+ */
+export function createHostedHttpResolver(
+  options: HostedHttpResolverOptions,
+): HostedHttpIngressOptions["resolve"] {
+  const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
+  const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
+  const repository = options.sourceImageRepository;
+  if (typeof repository !== "string" || !isImageRepository(repository)) {
+    throw new TypeError("Hosted HTTP resolver requires a source image repository");
+  }
+  const serviceAccountId = options.serviceAccountId;
+  if (typeof serviceAccountId !== "string" || !serviceAccountId.trim()) {
+    throw new TypeError("Hosted HTTP resolver requires the source service account ID");
+  }
+  if (typeof options.lookupSourceImage !== "function") {
+    throw new TypeError("Hosted HTTP resolver requires a source image lookup");
+  }
+  // Copy only the documented session fields; each one is validated below, so nothing
+  // unvalidated reaches the executor session.
+  const session = resolveHostedHttpSession(options);
   const prepareMs = limit(
     options.prepareTimeoutMs,
     DEFAULT_PREPARE_TIMEOUT_MS,

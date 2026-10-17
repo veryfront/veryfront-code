@@ -112,6 +112,10 @@ interface WarmGeneration {
   starting?: PromiseWithResolvers<void>;
 }
 
+function assertRoomAttempt(attempt: number): void {
+  if (attempt >= MAX_ROOM_ATTEMPTS) throw exhausted();
+}
+
 /** Refuse a request whose own allocation deadline has passed. */
 function assertWithinDeadline(input: PreparedHostedHttpInput): void {
   if (input.allocation.hardDeadlineAt <= hostedHttpInputNow(input)) {
@@ -233,7 +237,8 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     if (slot && slot.active > 0 && !constructed.has(key.generationId)) {
       // Its first request has reserved the slot but not yet constructed the generation,
       // so the pool has nothing to retire. Keep the slot; construction retires it.
-      return (slot.starting ??= Promise.withResolvers<void>()).promise;
+      slot.starting ??= Promise.withResolvers<void>();
+      return slot.starting.promise;
     }
     return generations.retire(key).then(() => {
       constructed.delete(key.generationId);
@@ -268,7 +273,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   function evict(slot: WarmGeneration): Promise<void> {
     const id = slot.key.generationId;
     const pending = evictions.get(id);
-    if (pending) return pending;
+    if (pending !== undefined) return pending;
     const eviction = release(slot.key).then(() => {
       evictions.delete(id);
     }, (error) => {
@@ -289,6 +294,29 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     return false;
   }
 
+  function countProjectGenerations(projectId: string, exempt: string | undefined): number {
+    let ofProject = 0;
+    for (const [id, slot] of warm) {
+      if (slot.projectId === projectId && !slot.predecessor && id !== exempt) ofProject++;
+    }
+    return ofProject;
+  }
+
+  function findIdleGeneration(
+    replaced: Readonly<WorkerGenerationIdentity> | undefined,
+    idle: (slot: WarmGeneration | undefined) => boolean,
+  ): WarmGeneration | undefined {
+    // The environment's previous generation is retired anyway; reuse its slot first.
+    let candidate = replaced ? warm.get(replaced.generationId) : undefined;
+    if (!idle(candidate)) {
+      candidate = undefined;
+      for (const slot of warm.values()) {
+        if (idle(slot) && (!candidate || slot.usedAt < candidate.usedAt)) candidate = slot;
+      }
+    }
+    return candidate;
+  }
+
   /**
    * Make room for one new generation of `projectId`. Returns nothing when a slot is free,
    * or the retirement to wait for. Only an executor with no request in flight is retired:
@@ -304,10 +332,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const exempt = replaced && !hasPredecessor(replaced.scopeId)
       ? replaced.generationId
       : undefined;
-    let ofProject = 0;
-    for (const [id, slot] of warm) {
-      if (slot.projectId === projectId && !slot.predecessor && id !== exempt) ofProject++;
-    }
+    const ofProject = countProjectGenerations(projectId, exempt);
     const projectFull = ofProject >= perProject;
     if (!projectFull && warm.size < maxActive) return undefined;
     // Share a retirement already under way rather than retiring a second executor.
@@ -317,14 +342,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const idle = (slot: WarmGeneration | undefined): slot is WarmGeneration =>
       slot !== undefined && !slot.retiring && slot.active === 0 &&
       (!projectFull || slot.projectId === projectId);
-    // The environment's previous generation is retired anyway; reuse its slot first.
-    let candidate = replaced ? warm.get(replaced.generationId) : undefined;
-    if (!idle(candidate)) {
-      candidate = undefined;
-      for (const slot of warm.values()) {
-        if (idle(slot) && (!candidate || slot.usedAt < candidate.usedAt)) candidate = slot;
-      }
-    }
+    const candidate = findIdleGeneration(replaced, idle);
     if (!candidate) throw exhausted();
     return evict(candidate);
   }
@@ -360,6 +378,45 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     }
   }
 
+  function reserveGeneration(
+    identity: Readonly<WorkerGenerationIdentity>,
+    current: Readonly<WorkerGenerationIdentity> | undefined,
+    projectId: string,
+    requestedAt: number,
+  ): Readonly<WorkerGenerationIdentity> {
+    // A new generation for this environment: drain the previous one.
+    if (current) {
+      const previous = warm.get(current.generationId);
+      if (previous && !hasPredecessor(current.scopeId)) previous.predecessor = true;
+      retire(current);
+    }
+    const key = Object.freeze({
+      scopeId: identity.scopeId,
+      generationId: `${identity.generationId}:${++epoch}`,
+    });
+    scopes.set(key.scopeId, key);
+    // The caller's request is counted before this function yields, so a slot that is
+    // only reserved is never mistaken for an idle executor.
+    warm.set(key.generationId, {
+      key,
+      projectId,
+      active: 1,
+      usedAt: ++clock,
+      retiring: false,
+      predecessor: false,
+    });
+    rememberOrder(identity, requestedAt);
+    return key;
+  }
+
+  function recordWarmRequest(current: Readonly<WorkerGenerationIdentity>): void {
+    const slot = warm.get(current.generationId);
+    if (slot) {
+      slot.active++;
+      slot.usedAt = ++clock;
+    }
+  }
+
   /** The generation key for a request, with the request counted on its slot. */
   async function currentKey(
     identity: Readonly<WorkerGenerationIdentity>,
@@ -372,17 +429,13 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       order(identity, requestedAt);
       const current = scopes.get(identity.scopeId);
       if (current?.generationId.startsWith(`${identity.generationId}:`)) {
-        const slot = warm.get(current.generationId);
-        if (slot) {
-          slot.active++;
-          slot.usedAt = ++clock;
-        }
+        recordWarmRequest(current);
         rememberOrder(identity, requestedAt);
         return current;
       }
       const room = makeRoom(projectId, current);
-      if (room) {
-        if (attempt >= MAX_ROOM_ATTEMPTS) throw exhausted();
+      if (room !== undefined) {
+        assertRoomAttempt(attempt);
         // Other waiters share this retirement; it continues if this request gives up.
         room.catch(() => {});
         try {
@@ -394,29 +447,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         }
         continue;
       }
-      // A new generation for this environment: drain the previous one.
-      if (current) {
-        const previous = warm.get(current.generationId);
-        if (previous && !hasPredecessor(current.scopeId)) previous.predecessor = true;
-        retire(current);
-      }
-      const key = Object.freeze({
-        scopeId: identity.scopeId,
-        generationId: `${identity.generationId}:${++epoch}`,
-      });
-      scopes.set(key.scopeId, key);
-      // The caller's request is counted before this function yields, so a slot that is
-      // only reserved is never mistaken for an idle executor.
-      warm.set(key.generationId, {
-        key,
-        projectId,
-        active: 1,
-        usedAt: ++clock,
-        retiring: false,
-        predecessor: false,
-      });
-      rememberOrder(identity, requestedAt);
-      return key;
+      return reserveGeneration(identity, current, projectId, requestedAt);
     }
   }
 
