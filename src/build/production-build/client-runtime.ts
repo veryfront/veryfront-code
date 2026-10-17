@@ -289,7 +289,7 @@ function hasSupportedExtension(filePath: string): boolean {
 }
 
 function stripTrailingSeparator(path: string): string {
-  return path.replace(/[\\/]+$/, "");
+  return path.replace(/(?<![\\/])[\\/]+$/, "");
 }
 
 function stripSpecifier(specifier: string): string {

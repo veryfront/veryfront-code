@@ -125,7 +125,7 @@ function normalizeTriggerDirectory(value: unknown): string {
     ) {
       throw new TypeError("invalid source directory");
     }
-    const normalized = value.replaceAll("\\", "/").replace(/\/+$/, "");
+    const normalized = value.replaceAll("\\", "/").replace(/(?<!\/)\/+$/, "");
     if (
       normalized.length === 0 || normalized.startsWith("/") ||
       /^[A-Za-z]:/.test(normalized) ||

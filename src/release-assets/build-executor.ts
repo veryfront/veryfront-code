@@ -646,7 +646,7 @@ function resolveKnownModulePathWithExtensions(
     path
       .replace(/^\/?_vf_modules\//, "")
       .replace(/^\/+/, "")
-      .replace(/[?#].*$/, ""),
+      .replace(/[?#].*$/s, ""),
   );
   if (!normalized) return null;
 
@@ -886,7 +886,7 @@ function releaseLogicalPathFromMaterializedPath(
   const normalizeHostPath = hostOs === "windows"
     ? (path: string) => path.replaceAll("\\", "/")
     : (path: string) => path;
-  const materializedRoot = normalizeHostPath(tempDir).replace(/^\/+|\/+$/g, "");
+  const materializedRoot = normalizeHostPath(tempDir).replace(/^\/+|(?<!\/)\/+$/g, "");
   const normalizedPath = normalizeHostPath(basePath).replace(/^\/+/, "");
   return normalizedPath.startsWith(`${materializedRoot}/`)
     ? normalizedPath.slice(materializedRoot.length + 1)

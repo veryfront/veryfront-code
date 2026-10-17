@@ -435,7 +435,9 @@ export async function createIntegrationClient(
     result: IntegrationJsonObject,
     integration: string,
   ): { sessionToken: string; connectUrl: string; expiresAt: string } {
-    const expires = typeof result.expires_at === "string" ? Date.parse(result.expires_at) : NaN;
+    const expires = typeof result.expires_at === "string"
+      ? Date.parse(result.expires_at)
+      : Number.NaN;
     let connectUrl: URL;
     try {
       connectUrl = new URL(

@@ -388,7 +388,7 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
 
   const packageSubpath = ReflectApply(
     RegExpPrototypeExec,
-    /^Package subpath\s+["'](\.\/[^"']+)["']\s+is not defined by\s+["']exports["']\s+in\s+(?:["']([^"']+[/\\]package\.json)["']|(.+?[/\\]package\.json))(?:\s+imported from\s+.+)?$/,
+    /^Package subpath\s+["'](\.\/[^"']+)["']\s+is not defined by\s+["']exports["']\s+in\s+(?:["']([^"']+[/\\]package\.json)["']|(.+?[/\\]package\.json))(?:\s+imported from\s+\S.*)?$/,
     [message],
   ) as RegExpExecArray | null;
   if (packageSubpath) {
@@ -441,8 +441,8 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
       // trailing parenthetical names the owning package when the referrer
       // lives in the global Deno npm cache (`deno add npm:veryfront`).
       /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
-      /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
-      /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+      /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+\S.*)?$/,
+      /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+\S.*)?$/,
     ]
   ) {
     const match = ReflectApply(RegExpPrototypeExec, pattern, [message]) as

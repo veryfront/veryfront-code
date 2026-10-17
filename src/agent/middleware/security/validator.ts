@@ -105,7 +105,7 @@ export const COMMON_BLOCKED_PATTERNS = {
     /ignore\s+all\s+previous\s+prompts/i,
     /you\s+are\s+now\s+a/i,
     /pretend\s+you\s+are/i,
-    /(^|\n)\s*system:\s*/i,
+    /(^|\n)[^\S\n]*system:\s*/i,
     /<\|im_start\|>/i,
     /<\|im_end\|>/i,
   ],

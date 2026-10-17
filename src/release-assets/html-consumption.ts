@@ -28,7 +28,7 @@ export function normalizeManifestModuleKey(path: string): string {
   if (typeof path !== "string") return "";
   let key = path.replace(/^\/?_vf_modules\//, "");
   key = key.replace(/^\/+/, "");
-  key = key.replace(/[?#].*$/, "");
+  key = key.replace(/[?#].*$/s, "");
   return key;
 }
 

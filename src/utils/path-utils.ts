@@ -4,7 +4,7 @@ import { logger } from "./logger/logger.ts";
 
 function stripTrailingSlash(pathname: string): string {
   if (pathname === "/") return pathname;
-  return pathname.replace(/\/+$/, "");
+  return pathname.replace(/(?<!\/)\/+$/, "");
 }
 
 /** Normalizes path. */

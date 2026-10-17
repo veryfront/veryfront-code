@@ -74,7 +74,7 @@ function auditAliasName(name: string, version: string): string {
       .toLowerCase()
       .replace(/^@/, "")
       .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
+      .replace(/^-+|(?<!-)-+$/g, "")
   }`;
 }
 
@@ -90,7 +90,7 @@ export function buildAuditPackageJson(
 }
 
 function normalizeWorkspaceMemberPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/(?<!\/)\/+$/, "");
 }
 
 async function readImportMapManifests(): Promise<ImportMapManifest[]> {

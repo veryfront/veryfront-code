@@ -691,20 +691,20 @@ export function createNodeExpect(): ExpectFn {
   };
 }
 
-let expect: ExpectFn;
-
-if (isDeno) {
-  const stdExpect = await import("#std/expect.ts");
-  expect = stdExpect.expect as ExpectFn;
-} else if (isBun) {
-  const importBunTest = new Function("return import('bun:test')") as () => Promise<{
-    expect?: ExternalExpectFn;
-    default?: { expect?: ExternalExpectFn };
-  }>;
-  const bunTestModule = await importBunTest();
-  expect = (bunTestModule.expect ?? bunTestModule.default?.expect) as ExpectFn;
-} else {
-  expect = createNodeExpect();
+async function loadExpect(): Promise<ExpectFn> {
+  if (isDeno) {
+    const stdExpect = await import("#std/expect.ts");
+    return stdExpect.expect as ExpectFn;
+  }
+  if (isBun) {
+    const importBunTest = new Function("return import('bun:test')") as () => Promise<{
+      expect?: ExternalExpectFn;
+      default?: { expect?: ExternalExpectFn };
+    }>;
+    const bunTestModule = await importBunTest();
+    return (bunTestModule.expect ?? bunTestModule.default?.expect) as ExpectFn;
+  }
+  return createNodeExpect();
 }
 
-export { expect };
+export const expect: ExpectFn = await loadExpect();

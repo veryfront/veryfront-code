@@ -264,7 +264,7 @@ function createEvalReportDirTimestamp(runId: string): string {
 function sanitizeEvalReportDirLabel(label: string): string {
   const normalized = label.startsWith("eval:") ? label.slice("eval:".length) : label;
   return normalized.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(
-    /^[-._]+|[-._]+$/g,
+    /^[-._]+|(?<![-._])[-._]+$/g,
     "",
   );
 }
@@ -345,7 +345,7 @@ function createEvalSuiteChildDirectory(
 }
 
 function sanitizeModelIdForPath(model: string): string {
-  return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|_+$/g, "") || "model";
+  return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|(?<!_)_+$/g, "") || "model";
 }
 
 function uniqueTrimmedValues(values: string[]): string[] {

@@ -1801,7 +1801,7 @@ function createDeployResult({
 
 function controlPlaneFromConfig(config: ResolvedConfig): string {
   const url = new URL(config.apiUrl);
-  const pathname = url.pathname.replace(/\/+$/, "");
+  const pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   return `${url.origin}${pathname}`;
 }
 

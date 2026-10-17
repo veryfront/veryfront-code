@@ -95,7 +95,7 @@ export default tool({
 
       const totalDuration = calls.reduce((sum, call) => {
         if (!call.duration) return sum;
-        return sum + parseInt(call.duration, 10);
+        return sum + Number.parseInt(call.duration, 10);
       }, 0);
 
       const statusCounts = calls.reduce<Record<string, number>>((acc, call) => {

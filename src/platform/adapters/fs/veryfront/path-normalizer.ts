@@ -17,7 +17,7 @@ function hasControlCharacter(value: string): boolean {
 function normalizeForComparison(value: string): string {
   const isAbsolute = value.startsWith("/");
   const normalized = value
-    .replace(/^\/+|\/+$/g, "")
+    .replace(/^\/+|(?<!\/)\/+$/g, "")
     .replace(/\/+/g, "/")
     .split("/")
     .filter((segment) => segment !== ".")
@@ -64,7 +64,7 @@ export class PathNormalizer {
       normalized = projectDir === "/" ? normalized.slice(1) : normalized.slice(projectDir.length);
     }
 
-    normalized = normalized.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+    normalized = normalized.replace(/^\/+|(?<!\/)\/+$/g, "").replace(/\/+/g, "/");
 
     // "." segments are legitimate no-ops (projectDir "." conventionally means
     // the project root elsewhere in this codebase); drop them instead of

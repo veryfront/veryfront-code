@@ -26,8 +26,8 @@ export function parseRequestLog(msg: string): LogMeta | undefined {
   const meta: LogMeta = {
     method,
     path,
-    status: parseInt(status!, 10),
-    durationMs: parseInt(duration!, 10),
+    status: Number.parseInt(status!, 10),
+    durationMs: Number.parseInt(duration!, 10),
   };
 
   if (context) {

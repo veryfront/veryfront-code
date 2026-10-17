@@ -76,7 +76,7 @@ describe("Test Command", () => {
       ].join("\n");
       const result = parseTestOutput(output, 1);
       assertEquals(result.failures.length, 1);
-      assertEquals(result.failures[0].test, "my test");
+      assertEquals(result.failures[0]?.test, "my test");
     });
 
     it("success is determined by exit code not output text", () => {
@@ -94,4 +94,10 @@ describe("Test Command", () => {
       assertEquals(result.summary.duration_ms, 25);
     });
   });
+});
+
+Deno.test("test output preserves whitespace-only failure names", () => {
+  const result = parseTestOutput("   ... FAILED\n1 passed | 1 failed", 1);
+  assertEquals(result.failures.length, 1);
+  assertEquals(result.failures[0]?.test, "");
 });

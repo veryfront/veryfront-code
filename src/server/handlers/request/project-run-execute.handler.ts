@@ -854,7 +854,7 @@ function sanitizePathSegment(value: string, fallback: string): string {
   const normalized = value
     .replace(/^eval:/, "")
     .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-+|(?<!-)-+$/g, "")
     .slice(0, 120);
   return normalized || fallback;
 }

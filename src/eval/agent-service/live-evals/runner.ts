@@ -520,7 +520,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeLiveEvalApiUrl(apiUrl: string): string {
-  return apiUrl.replace(/\/+$/, "");
+  return apiUrl.replace(/(?<!\/)\/+$/, "");
 }
 
 function createLiveEvalRunsSdk(input: {

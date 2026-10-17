@@ -146,7 +146,7 @@ export class ClientLogHandler extends BaseHandler {
       return;
     }
 
-    const pos = parseInt(posStr, 10);
+    const pos = Number.parseInt(posStr, 10);
     const start = Math.max(0, pos - 20);
     const end = Math.min(body.length, pos + 20);
 

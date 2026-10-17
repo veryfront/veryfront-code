@@ -159,7 +159,7 @@ function resolveProxyBinding(): { hostname: string; port: number } {
     return { hostname: proxyUrl.hostname, port };
   }
 
-  const port = parseInt(getEnv("PORT") || "8080");
+  const port = Number.parseInt(getEnv("PORT") || "8080");
   const hostname = getEnv("HOST") || "0.0.0.0";
   return { hostname, port };
 }
@@ -197,16 +197,16 @@ const WS_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
-const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
+const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = Number.parseInt(
   getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
 );
 // Retry configuration for transient connection errors
 const DEFAULT_SERVER_RETRY_COUNT = 1;
 const DEFAULT_SERVER_RETRY_DELAY_MS = 100;
-const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
+const VERYFRONT_SERVER_RETRY_COUNT = Number.parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_COUNT") || String(DEFAULT_SERVER_RETRY_COUNT),
 );
-const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
+const VERYFRONT_SERVER_RETRY_DELAY_MS = Number.parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
 const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(

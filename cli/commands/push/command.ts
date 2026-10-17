@@ -519,7 +519,7 @@ function suggestPreviewBranchName(branchName: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 63)
-    .replace(/-+$/g, "") || "preview";
+    .replace(/(?<!-)-+$/g, "") || "preview";
 }
 
 function assertPreviewBranchName(branchName: string): void {

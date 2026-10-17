@@ -232,7 +232,7 @@ export function shouldUnwrapAppRouterDocumentLayout(
     projectDir,
   )
     .replace(/^\.\/+/, "")
-    .replace(/^\/+|\/+$/g, "");
+    .replace(/^\/+|(?<!\/)\/+$/g, "");
 
   return APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS.some((extension) =>
     relativePath === `${relativeAppDirectory}/layout.${extension}`

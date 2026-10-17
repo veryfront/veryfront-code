@@ -1004,7 +1004,7 @@ function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBase = parseMcpRequestEndpoint(apiBaseUrl);
   if (!endpointUrl || !apiBase || endpointUrl.origin !== apiBase.origin) return false;
 
-  const basePath = apiBase.pathname.replace(/\/+$/, "");
+  const basePath = apiBase.pathname.replace(/(?<!\/)\/+$/, "");
   const controlPlanePath = `${basePath}/mcp`;
   if (endpointUrl.pathname === controlPlanePath) return true;
 
@@ -1300,7 +1300,7 @@ function isTrustedDeploymentMcpEndpoint(
   for (const trustedUrl of trustedEndpointUrls) {
     if (endpointUrl.origin !== trustedUrl.origin) continue;
 
-    const trustedPath = trustedUrl.pathname.replace(/\/+$/, "");
+    const trustedPath = trustedUrl.pathname.replace(/(?<!\/)\/+$/, "");
     if (!trustedPath.endsWith("/mcp")) continue;
     const projectPathPrefix = `${trustedPath.slice(0, -4)}/projects/`;
     if (!endpointUrl.pathname.startsWith(projectPathPrefix)) continue;

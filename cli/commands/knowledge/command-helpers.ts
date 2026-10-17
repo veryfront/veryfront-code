@@ -18,7 +18,8 @@ export interface KnowledgeSourceCollection {
 }
 
 function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "document";
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|(?<!-)-+$/g, "") ||
+    "document";
 }
 
 const CHAT_UPLOAD_PREFIX_RE =
@@ -52,7 +53,7 @@ export function normalizeKnowledgeRelativePath(
 }
 
 function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+  return value.replace(/(?<!\/)\/+$/, "");
 }
 
 function relativeToNormalizedPrefix(path: string, prefix: string): string {

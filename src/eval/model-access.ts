@@ -103,7 +103,7 @@ function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
     if (baseUrl === undefined) continue;
     try {
       const base = new URL(baseUrl);
-      const apiRoot = `${base.origin}${base.pathname.replace(/\/+$/, "")}`;
+      const apiRoot = `${base.origin}${base.pathname.replace(/(?<!\/)\/+$/, "")}`;
       for (const routePrefix of GATEWAY_ROUTE_PREFIXES) {
         if (requestUrl.startsWith(`${apiRoot}${routePrefix}`)) return true;
       }

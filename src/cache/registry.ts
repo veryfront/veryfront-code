@@ -247,7 +247,7 @@ class CacheRegistry {
               COUNT: REDIS_SCAN_BATCH_COUNT,
             });
             cursor = typeof result.cursor === "string"
-              ? parseInt(result.cursor, 10)
+              ? Number.parseInt(result.cursor, 10)
               : result.cursor;
             keys.push(...result.keys);
           } while (cursor !== 0 && keys.length < limit);

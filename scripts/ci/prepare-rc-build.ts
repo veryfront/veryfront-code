@@ -61,7 +61,7 @@ export async function prepareRcBuildVersion(
     );
   }
 
-  const manifestVersionPattern = /^(\s*"version"\s*:\s*)"([^"]+)"(,?\s*)$/gm;
+  const manifestVersionPattern = /^([^\S\n]*"version"\s*:\s*)"([^"]+)"(,?[^\S\n]*)$/gm;
   const manifestVersionMatches = [...manifestSource.matchAll(
     manifestVersionPattern,
   )];

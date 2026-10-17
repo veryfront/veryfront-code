@@ -292,7 +292,7 @@ function sortComponents(
 }
 
 function normalizeWorkspaceMemberPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/(?<!\/)\/+$/, "");
 }
 
 export function workspaceMembersFromDenoConfig(
@@ -327,7 +327,7 @@ function outputFileNameForManifest(manifestPath: string): string {
 }
 
 function joinOutputPath(outputDir: string, fileName: string): string {
-  return `${outputDir.replace(/\/+$/, "")}/${fileName}`;
+  return `${outputDir.replace(/(?<!\/)\/+$/, "")}/${fileName}`;
 }
 
 export function sbomOutputsForAllManifests(

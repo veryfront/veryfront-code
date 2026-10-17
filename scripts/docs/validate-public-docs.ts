@@ -500,7 +500,7 @@ function blockedRepositoryRule(repository: string): RepositoryRule {
 
 function canonicalizeHttpUrls(text: string): string {
   return text.replace(/https?:\/\/[^\s<>"'`]+/gi, (rawUrl) => {
-    const suffix = rawUrl.match(/[),.;:!?]+$/)?.[0] ?? "";
+    const suffix = rawUrl.match(/(?<![),.;:!?])[),.;:!?]+$/)?.[0] ?? "";
     const candidate = rawUrl.slice(0, rawUrl.length - suffix.length);
     try {
       const url = new URL(candidate);

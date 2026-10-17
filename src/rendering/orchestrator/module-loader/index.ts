@@ -821,7 +821,7 @@ function missingModuleTarget(message: string): string {
 }
 
 function normalizeMissingModuleTarget(message: string): string {
-  const target = missingModuleTarget(message).replace(/[?#].*$/, "");
+  const target = missingModuleTarget(message).replace(/[?#].*$/s, "");
   if (target.startsWith("file://")) {
     try {
       return decodeURIComponent(new URL(target).pathname);
@@ -833,7 +833,7 @@ function normalizeMissingModuleTarget(message: string): string {
 }
 
 function normalizeUnresolvedSpecifier(specifier: string): string {
-  const withoutSuffix = specifier.replace(/[?#].*$/, "");
+  const withoutSuffix = specifier.replace(/[?#].*$/s, "");
   return (rewriteSsrProjectAliasSpecifier(withoutSuffix) ?? withoutSuffix)
     .replace(/^(\.\/|\.\.\/)+/, "")
     .replace(/^\/+/, "");

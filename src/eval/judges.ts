@@ -251,7 +251,7 @@ END EVALUATION DATA
 function stripJsonFence(value: string): string {
   const trimmed = value.trim();
   if (!trimmed.startsWith("```")) return trimmed;
-  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  return trimmed.replace(/^```(?:json)?\s*/i, "").trimEnd().replace(/```$/, "").trim();
 }
 
 function extractJsonObject(value: string): string | null {

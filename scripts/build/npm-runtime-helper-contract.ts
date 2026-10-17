@@ -50,7 +50,7 @@ export async function assertNpmRuntimeHelperContract(
         continue;
       }
 
-      const pathSpecifier = specifier.replace(/[?#].*$/, "");
+      const pathSpecifier = specifier.replace(/[?#].*$/s, "");
       const targetPath = resolve(dirname(sourcePath), pathSpecifier);
       if (isWithinDirectory(sourceRoot, targetPath)) continue;
 

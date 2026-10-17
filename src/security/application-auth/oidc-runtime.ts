@@ -818,7 +818,7 @@ function defaultSessionCookieNameForOrigin(origin: string): string {
   }
   if (!isLoopbackHost(url.hostname)) return SESSION_COOKIE_NAME;
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  const host = url.hostname.toLowerCase().replace(/[^0-9a-z]+/g, "_").replace(/^_+|_+$/g, "");
+  const host = url.hostname.toLowerCase().replace(/[^0-9a-z]+/g, "_").replace(/^_+|(?<!_)_+$/g, "");
   if (host.length === 0 || port.length === 0) return SESSION_COOKIE_NAME;
   return `${SESSION_COOKIE_NAME}_${host}_${port}`;
 }

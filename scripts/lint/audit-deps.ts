@@ -193,7 +193,7 @@ export function auditDependencyImports(
 }
 
 function normalizeWorkspaceMemberPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/(?<!\/)\/+$/, "");
 }
 
 async function readImportMapManifests(): Promise<ImportMapManifest[]> {

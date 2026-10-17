@@ -992,7 +992,7 @@ export class MCPServer {
 
     // Parse strictly: accept only "Bearer <token>" (scheme case-insensitive) and
     // reject other/no-scheme headers rather than passing a malformed value on.
-    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+    const bearerMatch = /^Bearer\s+(\S.*)$/i.exec(authHeader.trim());
     if (!bearerMatch) return false;
     const token = (bearerMatch[1] ?? "").trim();
     if (!token) return false;

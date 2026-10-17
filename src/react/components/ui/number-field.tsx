@@ -25,7 +25,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 
 const COMPLETE_NUMBER_PATTERN = /^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/;
-const NUMERIC_PREFIX_PATTERN = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d*))?(?:[eE][+-]?\d*)?$/;
+const NUMERIC_PREFIX_PATTERN = /^[+-]?\d*(?:\.\d*)?(?:[eE][+-]?\d*)?$/;
 
 /** Props accepted by `<NumberField>`. */
 export interface NumberFieldProps
