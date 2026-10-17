@@ -15,27 +15,34 @@ const messages: ChatUiMessage[] = [{
   }],
 }];
 
-describe("attachment XML escaping after project code replaces replaceAll", () => {
-  for (const mode of ["throw", "identity"] as const) {
-    it(`keeps attachment names escaped with ${mode} replacement`, async () => {
-      const render = () =>
-        inlineRuntimeMessageFileContents(messages, () => Promise.resolve("body"));
-      const expected = await render();
-      const original = Object.getOwnPropertyDescriptor(String.prototype, "replaceAll")!;
-      let actual: Awaited<ReturnType<typeof render>>;
-      try {
-        Object.defineProperty(String.prototype, "replaceAll", {
-          ...original,
-          value: function (this: string): string {
-            if (mode === "throw") throw new Error("project replaced replaceAll");
-            return String(this);
-          },
-        });
-        actual = await render();
-      } finally {
-        Object.defineProperty(String.prototype, "replaceAll", original);
-      }
-      assertEquals(actual, expected);
-    });
+describe("attachment XML escaping after project code replaces string or regex intrinsics", () => {
+  const targets = [
+    { prototype: String.prototype, key: "replaceAll" },
+    { prototype: String.prototype, key: "replace" },
+    { prototype: RegExp.prototype, key: Symbol.replace },
+  ];
+  for (const { prototype, key } of targets) {
+    for (const mode of ["throw", "identity"] as const) {
+      it(`keeps attachment names escaped with ${String(key)} ${mode} replacement`, async () => {
+        const render = () =>
+          inlineRuntimeMessageFileContents(messages, () => Promise.resolve("body"));
+        const expected = await render();
+        const original = Object.getOwnPropertyDescriptor(prototype, key)!;
+        let actual: Awaited<ReturnType<typeof render>>;
+        try {
+          Object.defineProperty(prototype, key, {
+            ...original,
+            value: function (this: string | RegExp, input: string): string {
+              if (mode === "throw") throw new Error("project replaced escaping intrinsic");
+              return typeof this === "string" ? this : input;
+            },
+          });
+          actual = await render();
+        } finally {
+          Object.defineProperty(prototype, key, original);
+        }
+        assertEquals(actual, expected);
+      });
+    }
   }
 });
