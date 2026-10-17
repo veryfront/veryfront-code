@@ -1726,10 +1726,10 @@ function executeFrameworkToolSearch(input: {
         ...result,
         contract,
         nextStep: isAvailable
-          ? "This tool is already available. Call it with this input schema."
+          ? "This tool is already available. Call it with this input schema. The output schema is the declared result contract, or null when absent."
           : result.loadedCount > 0
-          ? "This tool is loaded for the next step. Call it with this input schema."
-          : "This is the exact input schema, but the tool could not be loaded within the current tool limit.",
+          ? "This tool is loaded for the next step. Call it with this input schema. The output schema is the declared result contract, or null when absent."
+          : "These are the exact declared schemas, but the tool could not be loaded within the current tool limit.",
       },
       checkpoint: checkpoint(),
     };

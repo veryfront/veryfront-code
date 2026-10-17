@@ -217,8 +217,12 @@ function isJsonStructureWithin(
   return true;
 }
 
-function normalizeParameters(inputSchema: unknown, toolName: string): JsonSchema {
-  const snapshot = snapshotBoundedJsonValue(inputSchema);
+function normalizeParameters(
+  schema: unknown,
+  toolName: string,
+  kind: "input" | "output" = "input",
+): JsonSchema {
+  const snapshot = snapshotBoundedJsonValue(schema);
   if (
     !snapshot.success ||
     !isRecord(snapshot.value) ||
@@ -230,11 +234,11 @@ function normalizeParameters(inputSchema: unknown, toolName: string): JsonSchema
     serializedByteLength(snapshot.value) > MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES
   ) {
     throw protocolError(
-      `Remote MCP tools/list returned a malformed input schema for tool "${toolName}"`,
+      `Remote MCP tools/list returned a malformed ${kind} schema for tool "${toolName}"`,
     );
   }
 
-  if (Object.keys(snapshot.value).length === 0) {
+  if (kind === "input" && Object.keys(snapshot.value).length === 0) {
     return { type: "object", properties: {} };
   }
 
@@ -263,6 +267,9 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     name: entry.name,
     description: entry.description,
     parameters: normalizeParameters(entry.inputSchema, entry.name),
+    ...(entry.outputSchema === undefined
+      ? {}
+      : { outputSchema: normalizeParameters(entry.outputSchema, entry.name, "output") }),
   };
 
   // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
