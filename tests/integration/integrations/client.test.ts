@@ -8,6 +8,10 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { createIntegrationClient, IntegrationApiError } from "../../../src/integrations/client.ts";
 import type { IntegrationToolResult } from "../../../src/integrations/client-types.ts";
 
@@ -282,6 +286,34 @@ describe("explicit integration client", () => {
       }
     });
     assertEquals(requests, 1);
+  });
+
+  it("reports an egress-blocked private API as its own kind, not a transport failure", async () => {
+    let requests = 0;
+    const transport = {
+      fetch: () => {
+        requests++;
+        return Promise.resolve(Response.json(project));
+      },
+      pinnedFetch: () => {
+        requests++;
+        return Promise.resolve(Response.json(project));
+      },
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      const error = await __runWithOutboundFetchTransportForTests(
+        transport,
+        () => assertRejects(() => createIntegrationClient(context), IntegrationApiError),
+      );
+      assertInstanceOf(error, IntegrationApiError);
+      assertEquals(error.kind, "egress_blocked");
+      assertEquals(error.outcomeUnknown, false);
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+    assertEquals(requests, 0);
   });
 
   it("reports uncertain execution without replay when dispatch fails", async () => {

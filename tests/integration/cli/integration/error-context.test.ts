@@ -58,6 +58,7 @@ describe("integration JSON safety metadata", () => {
   for (
     const [kind, status, unknown] of [
       ["transport", undefined, false],
+      ["egress_blocked", undefined, false],
       ["unsupported_precondition", undefined, false],
       ["unsupported_precondition", 200, true],
       ["transport", undefined, true],
