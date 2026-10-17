@@ -26,8 +26,8 @@ const CHAT_UPLOAD_PREFIX_RE =
   /^chat-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d+-[a-z0-9]+-/i;
 
 export function normalizeKnowledgeInputPath(inputPath: string): string {
-  const rawPath = inputPath.replace(/\\/g, "/");
-  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
+  const rawPath = inputPath.replaceAll("\\", "/");
+  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replaceAll("\\", "/");
   if (
     rawPath.split("/").includes("..") || !normalizedPath || normalizedPath.startsWith("..") ||
     normalizedPath.startsWith("/") || normalizedPath.split("/").includes("..")
@@ -41,8 +41,8 @@ export function normalizeKnowledgeRelativePath(
   inputPath: string,
   label = "knowledge relative path",
 ): string {
-  const rawPath = inputPath.replace(/\\/g, "/");
-  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
+  const rawPath = inputPath.replaceAll("\\", "/");
+  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replaceAll("\\", "/");
   if (
     rawPath.split("/").includes("..") || !normalizedPath || normalizedPath.startsWith("..") ||
     normalizedPath.startsWith("/") || normalizedPath.split("/").includes("..")
@@ -80,9 +80,9 @@ export function deriveOkfBundleRelativePath(source: KnowledgeSource, bundleRoot:
     return relativeToNormalizedPrefix(source.uploadPath, bundleRoot);
   }
 
-  const root = normalize(bundleRoot).replace(/\\/g, "/");
-  const localPath = normalize(source.localPath).replace(/\\/g, "/");
-  const relativePath = relative(root, localPath).replace(/\\/g, "/");
+  const root = normalize(bundleRoot).replaceAll("\\", "/");
+  const localPath = normalize(source.localPath).replaceAll("\\", "/");
+  const relativePath = relative(root, localPath).replaceAll("\\", "/");
   return normalizeKnowledgeRelativePath(relativePath, "OKF bundle relative path");
 }
 
@@ -99,7 +99,7 @@ export function formatKnowledgeUploadSource(uploadPath: string): string {
 
 export function resolveExplicitUploadPath(inputPath: string): string {
   const normalizedInput = normalizeKnowledgeInputPath(inputPath);
-  const displayInput = inputPath.replace(/\\/g, "/");
+  const displayInput = inputPath.replaceAll("\\", "/");
   const uploadPath = normalizeProjectUploadPath(inputPath);
   if (
     !uploadPath || uploadPath === "uploads" || normalizedInput === "uploads" ||
@@ -119,7 +119,7 @@ export function isLikelyLocalPath(value: string): boolean {
 
 export function isProjectUploadReference(value: string): boolean {
   if (isLikelyLocalPath(value)) return false;
-  const normalizedValue = normalize(value).replace(/\\/g, "/").replace(/^\/+/, "");
+  const normalizedValue = normalize(value).replaceAll("\\", "/").replace(/^\/+/, "");
   return normalizedValue === "uploads" || normalizedValue.startsWith("uploads/");
 }
 
@@ -273,7 +273,7 @@ export function buildSourceReference(source: KnowledgeSource): string {
 export function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
   const normalized = normalize(
     source.kind === "upload" ? source.uploadPath : source.localPath,
-  ).replace(/\\/g, "/");
+  ).replaceAll("\\", "/");
 
   let stripped: string;
   if (source.kind === "upload") {
@@ -319,13 +319,13 @@ export function deriveKnowledgeRemotePath(
   outputDir: string,
   knowledgePath: string,
 ): string {
-  const relativeOutputPath = relative(outputDir, outputPath).replace(/\\/g, "/");
+  const relativeOutputPath = relative(outputDir, outputPath).replaceAll("\\", "/");
   if (!relativeOutputPath || relativeOutputPath.startsWith("..")) {
     throw new Error(`Output path is outside output directory: ${outputPath}`);
   }
   const prefix = normalizeKnowledgeInputPath(knowledgePath);
   const normalizedRelative = normalizeKnowledgeRelativePath(relativeOutputPath);
-  return `${prefix}/${normalizedRelative}`.replace(/\\/g, "/");
+  return `${prefix}/${normalizedRelative}`.replaceAll("\\", "/");
 }
 
 export function createKnowledgeIngestResult(input: {

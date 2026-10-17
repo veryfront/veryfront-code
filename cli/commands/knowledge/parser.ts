@@ -171,7 +171,7 @@ function titleizeFilename(path: string): string {
 }
 
 function cleanText(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function yamlQuote(value: unknown): string {
@@ -209,7 +209,7 @@ function buildFrontmatter(source: string, sourceType: string, description: strin
 }
 
 function validateOkfBundleRelativePath(path: string): string {
-  const normalized = path.replace(/\\/g, "/").split("/").filter((segment) => segment.length > 0)
+  const normalized = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0)
     .join("/");
   if (
     !normalized || normalized.startsWith("/") || normalized.startsWith("../") ||

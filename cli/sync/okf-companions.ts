@@ -44,7 +44,7 @@ function collectOkfBundleRoots(
     if (typeof file.content !== "string") continue;
     const inspected = inspectOkfDocument(file.path, file.content);
     if (!hasOkfVersionDeclaration(inspected.metadata)) continue;
-    const root = dirname(file.path).replace(/\\/g, "/");
+    const root = dirname(file.path).replaceAll("\\", "/");
     roots.add(root === "." ? "" : root);
   }
   return roots;
@@ -108,7 +108,10 @@ function resolveOkfCompanionCandidates(
   // before join/normalize can erase it or reinterpret it as a project path.
   if (
     !path || path.includes("\\") || path.split("/").includes("..") ||
-    [...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+    [...path].some((character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint < 32 || codePoint === 127;
+    })
   ) return [];
 
   const referencePath = path.replace(/^\/+/, "");
@@ -116,7 +119,7 @@ function resolveOkfCompanionCandidates(
     root,
     rawPath: root ? join(root, referencePath) : referencePath,
   }));
-  const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  const documentDir = dirname(documentPath).replaceAll("\\", "/");
   const rawPaths: { rawPath: string; root?: string }[] = path.startsWith("/")
     ? rootFallbacks
     : documentDir === "."
@@ -124,7 +127,7 @@ function resolveOkfCompanionCandidates(
     : [{ rawPath: join(documentDir, path) }, ...rootFallbacks];
   const candidates: string[] = [];
   for (const entry of rawPaths) {
-    const normalized = normalize(entry.rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+    const normalized = normalize(entry.rawPath).replaceAll("\\", "/").replace(/^\/+/, "");
     if (
       !normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") ||
       normalized.split("/").includes("..")
