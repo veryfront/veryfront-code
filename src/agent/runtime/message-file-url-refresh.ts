@@ -198,30 +198,27 @@ export async function inlineRuntimeMessageFileContents(
     return contentPromise;
   }
 
-  async function inlinePart(
+  function recordInlineFailure(
+    error: unknown,
     file: FileUIPartWithUpload,
-    message: ChatUiMessage,
     messageIndex: number,
     partIndex: number,
-  ) {
-    const contentPromise = contentForFile(file, message);
-    let inlineContent: InlineFileContent | undefined;
-    try {
-      inlineContent = await contentPromise;
-    } catch (error) {
-      // Attachments on the newest user message must stay hard failures, and
-      // caller aborts always propagate; stale history attachments degrade.
-      if (messageIndex === newestUserMessageIndex || options.abortSignal?.aborted) {
-        throw error;
-      }
-      inlineTextByPart.set(
-        `${messageIndex}:${partIndex}`,
-        `[attachment unavailable: ${file.filename ?? file.uploadId ?? "file"}]`,
-      );
-      return;
-    }
-    if (!inlineContent) return;
+  ): void {
+    // Attachments on the newest user message must stay hard failures, and
+    // caller aborts always propagate; stale history attachments degrade.
+    if (messageIndex === newestUserMessageIndex || options.abortSignal?.aborted) throw error;
+    inlineTextByPart.set(
+      `${messageIndex}:${partIndex}`,
+      `[attachment unavailable: ${file.filename ?? file.uploadId ?? "file"}]`,
+    );
+  }
 
+  function storeInlineContent(
+    file: FileUIPartWithUpload,
+    inlineContent: InlineFileContent,
+    messageIndex: number,
+    partIndex: number,
+  ): void {
     let content = inlineContent.content;
     let truncated = inlineContent.truncated;
     if (content.length > remainingBudget) {
@@ -253,7 +250,16 @@ export async function inlineRuntimeMessageFileContents(
         );
         continue;
       }
-      await inlinePart(file, message, messageIndex, partIndex);
+      const contentPromise = contentForFile(file, message);
+      let inlineContent: InlineFileContent | undefined;
+      try {
+        inlineContent = await contentPromise;
+      } catch (error) {
+        recordInlineFailure(error, file, messageIndex, partIndex);
+        continue;
+      }
+      if (!inlineContent) continue;
+      storeInlineContent(file, inlineContent, messageIndex, partIndex);
     }
   }
 
