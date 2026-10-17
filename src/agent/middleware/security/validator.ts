@@ -147,6 +147,11 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 const RegExpConstructor = RegExp;
+const TRUSTED_LOOKBEHIND_PREFIX = String.raw`(?<=[\s\S]{`;
+const TRUSTED_NEGATIVE_LOOKBEHIND_PREFIX = String.raw`(?<![\s\S]{`;
+const TRUSTED_POSITION_UPPER_PREFIX = String.raw`})(?<![\s\S]{`;
+const TRUSTED_EXCLUDED_POSITION_PREFIX = String.raw`(?!(?<=[\s\S]{`;
+const TRUSTED_WORD_PATTERN = String.raw`\w`;
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const objectEntries = Object.entries;
@@ -625,19 +630,24 @@ function extractAdjacentRuns(
     run = [];
   };
 
+  function isTransparentMessage(message: Message): boolean {
+    if (role === "user" && message.role === "tool") return true;
+    if (role === "user" && message.role === "system") return true;
+    if (role === "system" && message.role === "tool" && !sendableToolMessages?.has(message)) {
+      return true;
+    }
+    if (
+      message.role === "assistant" &&
+      (!sendableAssistantMessages?.has(message) ||
+        role === "user" && anthropicCompactedAssistantMessages?.has(message))
+    ) return true;
+    return false;
+  }
+
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     if (message.role !== role) {
-      if (role === "user" && message.role === "tool") continue;
-      if (role === "user" && message.role === "system") continue;
-      if (role === "system" && message.role === "tool" && !sendableToolMessages?.has(message)) {
-        continue;
-      }
-      if (
-        message.role === "assistant" &&
-        (!sendableAssistantMessages?.has(message) ||
-          role === "user" && anthropicCompactedAssistantMessages?.has(message))
-      ) continue;
+      if (isTransparentMessage(message)) continue;
       flushRun();
       continue;
     }
@@ -784,22 +794,7 @@ function extractMergedRunTexts(
     ? createMessageOccurrenceMatcher(previousMessages, messages)
     : undefined;
   const runTexts = createPrivateSet<string>();
-  const mergedRuns = extractMergedRuns(messages);
-  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
-    const run = mergedRuns[runIndex]!;
-    // Only an identical grouping keeps its provenance. Comparing text alone
-    // would also exempt a newly joined boundary that happens to duplicate a
-    // different historical run, or a run shortened by trimming.
-    if (
-      previousRuns !== undefined &&
-      somePrivateArray(previousRuns, (previous) =>
-        previous.length === run.length &&
-        everyPrivateArray(previous, (message, index) => sameOccurrence?.(message, run[index])))
-    ) continue;
-    if (mustInclude && !somePrivateArray(run, (message) => mustInclude.has(message))) continue;
-    if (mustAlsoInclude && !somePrivateArray(run, (message) => mustAlsoInclude.has(message))) {
-      continue;
-    }
+  function addRunTexts(run: Message[]): void {
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       // The OpenAI-compatible converter and the Anthropic builder join system
       // run members with a blank line, but the Google builder sends each
@@ -819,6 +814,24 @@ function extractMergedRunTexts(
         );
       }
     }
+  }
+  const mergedRuns = extractMergedRuns(messages);
+  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
+    const run = mergedRuns[runIndex]!;
+    // Only an identical grouping keeps its provenance. Comparing text alone
+    // would also exempt a newly joined boundary that happens to duplicate a
+    // different historical run, or a run shortened by trimming.
+    if (
+      previousRuns !== undefined &&
+      somePrivateArray(previousRuns, (previous) =>
+        previous.length === run.length &&
+        everyPrivateArray(previous, (message, index) => sameOccurrence?.(message, run[index])))
+    ) continue;
+    if (mustInclude && !somePrivateArray(run, (message) => mustInclude.has(message))) continue;
+    if (mustAlsoInclude && !somePrivateArray(run, (message) => mustAlsoInclude.has(message))) {
+      continue;
+    }
+    addRunTexts(run);
   }
   return [...runTexts];
 }
@@ -946,6 +959,27 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
   return changed ? sanitizedMessages : messages;
 }
 
+function findUnsafeRunAssembly(validator: InputValidator, run: Message[]): string | undefined {
+  let unsafeAssembly: string | undefined;
+  for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+    for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+      const assembled = joinPrivateArray(
+        mapPrivateArray(
+          run,
+          (message) => joinPrivateArray(messageTextParts(message, false), partSeparator),
+        ),
+        runSeparator,
+      );
+      if ((validator.sanitize(assembled) ?? assembled) !== assembled) {
+        unsafeAssembly = assembled;
+        break;
+      }
+    }
+    if (unsafeAssembly !== undefined) break;
+  }
+  return unsafeAssembly;
+}
+
 /**
  * Sanitize across messages the provider merges into one turn.
  *
@@ -985,23 +1019,7 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     // a separate `systemInstruction` part whose server-side concatenation
     // separator is unspecified, as is Anthropic's between the text blocks of a
     // merged user turn, so the bare concatenation must trigger a rewrite too.
-    let unsafeAssembly: string | undefined;
-    for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-      for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-        const assembled = joinPrivateArray(
-          mapPrivateArray(
-            run,
-            (message) => joinPrivateArray(messageTextParts(message, false), partSeparator),
-          ),
-          runSeparator,
-        );
-        if ((validator.sanitize(assembled) ?? assembled) !== assembled) {
-          unsafeAssembly = assembled;
-          break;
-        }
-      }
-      if (unsafeAssembly !== undefined) break;
-    }
+    const unsafeAssembly = findUnsafeRunAssembly(validator, run);
     if (unsafeAssembly === undefined) continue;
 
     // Keep the triggering assembly: introducing a newline before sanitizing
@@ -1088,11 +1106,9 @@ function negativeAssertionBody(
   nestedNegative: boolean;
 } | undefined {
   const source = pattern.source;
-  const prefixLength = source.startsWith("(?!", start)
-    ? 3
-    : source.startsWith("(?<!", start)
-    ? 4
-    : 0;
+  let prefixLength = 0;
+  if (source.startsWith("(?!", start)) prefixLength = 3;
+  else if (source.startsWith("(?<!", start)) prefixLength = 4;
   if (prefixLength === 0) return undefined;
   let context = false;
   let backrefs = false;
@@ -1174,6 +1190,11 @@ function lastTextCodeUnit(text: string): string | undefined {
   return text.length > 0 ? text[text.length - 1] : undefined;
 }
 
+function regexUnicodeFlag(pattern: RegExp): string {
+  if (pattern.unicodeSets) return "v";
+  return pattern.unicode ? "u" : "";
+}
+
 /** Prove an assembly match also has a path using unchanged trusted context. */
 function createTrustedMatchPredicate(
   pattern: RegExp,
@@ -1196,26 +1217,29 @@ function createTrustedMatchPredicate(
   const units = (text: string) => {
     if (!unicode) return text.length;
     let count = 0;
-    for (let index = 0; index < text.length; count++) {
+    let index = 0;
+    while (index < text.length) {
       index += (privateTextCodePointAt(text, index) ?? 0) > 0xffff ? 2 : 1;
+      count++;
     }
     return count;
   };
   const lower = units(privateTextSlice(assembled, 0, segment.start));
   const upper = lower + units(segment.text);
-  const lowerGuard = "(?<=[\\s\\S]{" + lower + "})";
-  const upperGuard = "(?<![\\s\\S]{" + (upper + 1) + "})";
+  const lowerGuard = TRUSTED_LOOKBEHIND_PREFIX + lower + "})";
+  const upperGuard = TRUSTED_NEGATIVE_LOOKBEHIND_PREFIX + (upper + 1) + "})";
   const atPosition = (position: number) =>
-    "(?<=[\\s\\S]{" + position + "})(?<![\\s\\S]{" + (position + 1) + "})";
+    TRUSTED_LOOKBEHIND_PREFIX + position + TRUSTED_POSITION_UPPER_PREFIX + (position + 1) + "})";
   const excludePosition = (position: number) =>
-    "(?!(?<=[\\s\\S]{" + position + "})(?<![\\s\\S]{" + (position + 1) + "}))";
+    TRUSTED_EXCLUDED_POSITION_PREFIX + position + TRUSTED_POSITION_UPPER_PREFIX + (position + 1) +
+    "}))";
   let ignoreCase = pattern.ignoreCase;
   const isWord = (character: string | undefined) =>
     character !== undefined &&
     testBlockedPattern(
       new RegExpConstructor(
-        "\\w",
-        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
+        TRUSTED_WORD_PATTERN,
+        regexUnicodeFlag(pattern) + (ignoreCase ? "i" : ""),
       ),
       character,
     );
@@ -1228,8 +1252,8 @@ function createTrustedMatchPredicate(
       character !== undefined &&
       testBlockedPattern(
         new RegExpConstructor(
-          "\\w",
-          (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
+          TRUSTED_WORD_PATTERN,
+          regexUnicodeFlag(pattern) + (localIgnoreCase ? "i" : ""),
         ),
         character,
       );
