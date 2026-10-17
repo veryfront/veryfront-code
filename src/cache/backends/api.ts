@@ -634,8 +634,10 @@ export class ApiCacheBackend implements CacheBackend {
     // backend cannot open the breaker every cache read (agent streams,
     // execute, agents/list) depends on, nor stop other projects' invalidations.
     const invalidationCircuitBreaker = this.invalidationCircuitBreaker(projectRef ?? "");
+    // The API acknowledges a pattern delete with `{ ok: true }` and no count, so
+    // this backend reports 0: the number of deleted entries is unknown.
     const deletePattern = async () => {
-      const result = await this.request<{ deleted_count?: number }>(
+      await this.request<{ ok: true }>(
         "DELETE",
         `${ENTRIES_OPERATION}?pattern=${encodeURIComponent(prefixed)}`,
         undefined,
@@ -646,7 +648,7 @@ export class ApiCacheBackend implements CacheBackend {
           operation: ENTRIES_OPERATION,
         },
       );
-      return result?.deleted_count ?? 0;
+      return 0;
     };
 
     if (!token || !projectRef) return await deletePattern();
