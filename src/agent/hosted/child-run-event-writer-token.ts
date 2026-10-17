@@ -1,3 +1,5 @@
+import { hash } from "node:crypto";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import type { HostedAcceptedChildEvidence } from "./accepted-child-evidence.ts";
 import {
   type HostedAcceptedTaskInputEvent,
@@ -57,6 +59,9 @@ type Fetch = typeof globalThis.fetch;
 
 // These intrinsics are captured before tenant code can mutate the shared realm.
 // Secret-bearing operations below must use only these references.
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
 const NativeTextEncoder = TextEncoder;
 const NativeHeaders = Headers;
 const headersSet = NativeHeaders.prototype.set;
@@ -789,6 +794,7 @@ export async function persistHostedAcceptedTaskInput(
     capability?: HostedRunEventWriterCapability;
     parentRunId: string;
     event: HostedAcceptedTaskInputEvent;
+    toolCallId: string;
     abortSignal?: AbortSignal;
   },
 ): Promise<HostedAcceptedTaskInputReceipt> {
@@ -798,7 +804,14 @@ export async function persistHostedAcceptedTaskInput(
     !state || state.runId !== input.parentRunId || !state.canonicalRunId ||
     !isRunUuid(state.canonicalRunId)
   ) throw new Error("Accepted task input requires exact-parent hosted authority");
+  if (typeof input.toolCallId !== "string" || !trim(input.toolCallId)) {
+    throw new Error("Accepted task input requires a tool call identity");
+  }
   const event = snapshotHostedAcceptedTaskInputEvent(input.event);
+  const idempotencyKey = hash(
+    "sha256",
+    privateJsonStringify([state.canonicalRunId, input.toolCallId, event.type]),
+  );
   const signal = input.abortSignal
     ? AbortSignal.any([input.abortSignal, AbortSignal.timeout(state.timeoutMs)])
     : AbortSignal.timeout(state.timeoutMs);
@@ -810,16 +823,26 @@ export async function persistHostedAcceptedTaskInput(
         Authorization: `Bearer ${state.runEventAppendToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
+        "Idempotency-Key": idempotencyKey,
       },
       body: privateJsonStringify({ events: [event] }),
       redirect: "error",
       signal,
     },
   );
-  if (!response.ok) throw new Error(`Accepted task input persistence failed (${response.status})`);
-  const responseBody = await readResponseTextPrefix(response, 4096, signal);
-  if (responseBody.truncated) throw new Error("Accepted input persistence receipt exceeds budget");
-  const body = privateJsonParse(responseBody.text);
+  if (!apply(responseOk, response, [])) {
+    throw new Error(
+      `Accepted task input persistence failed (${apply(responseStatus, response, [])})`,
+    );
+  }
+  const stream = apply(responseBody, response, []) as ReadableStream<Uint8Array> | null;
+  const responseText = await readResponseTextPrefix(
+    { body: stream ? { getReader: () => getPrivateStreamReader(stream) } : null },
+    4096,
+    signal,
+  );
+  if (responseText.truncated) throw new Error("Accepted input persistence receipt exceeds budget");
+  const body = privateJsonParse(responseText.text);
   const eventId = ownValue(body, "latest_event_id");
   if (
     ownValue(body, "run_id") !== state.canonicalRunId || ownValue(body, "appended_count") !== 1 ||

@@ -47,6 +47,7 @@ it("grants an exact-parent child receipt only after authenticated event persiste
     () =>
       persistHostedAcceptedTaskInput({
         parentRunId,
+        toolCallId: "call-1",
         event,
         abortSignal: new AbortController().signal,
       }),
@@ -82,6 +83,7 @@ it("rejects malformed nested input before authenticated persistence transport", 
       persistHostedAcceptedTaskInput({
         capability: writer,
         parentRunId,
+        toolCallId: "call-1",
         event: Object.defineProperty({ ...event }, "payload", { value: payload }),
       })
     );
@@ -90,9 +92,16 @@ it("rejects malformed nested input before authenticated persistence transport", 
 });
 
 it("rejects absent or wrong-parent persistence authority before transport", async () => {
-  await assertRejects(() => persistHostedAcceptedTaskInput({ parentRunId, event }));
   await assertRejects(() =>
-    persistHostedAcceptedTaskInput({ capability: capability(), parentRunId: "foreign", event })
+    persistHostedAcceptedTaskInput({ parentRunId, toolCallId: "call-1", event })
+  );
+  await assertRejects(() =>
+    persistHostedAcceptedTaskInput({
+      capability: capability(),
+      parentRunId: "foreign",
+      toolCallId: "call-1",
+      event,
+    })
   );
   const unbound = createHostedRunEventWriterCapability({
     apiUrl: "https://api.example",
@@ -100,7 +109,12 @@ it("rejects absent or wrong-parent persistence authority before transport", asyn
     runEventAppendToken: "private-writer",
   });
   await assertRejects(() =>
-    persistHostedAcceptedTaskInput({ capability: unbound, parentRunId, event })
+    persistHostedAcceptedTaskInput({
+      capability: unbound,
+      parentRunId,
+      toolCallId: "call-1",
+      event,
+    })
   );
 });
 
@@ -119,6 +133,7 @@ it("does not grant a receipt for failed oversized or inconsistent persistence ac
       persistHostedAcceptedTaskInput({
         capability: capability(() => Promise.resolve(response)),
         parentRunId,
+        toolCallId: "call-1",
         event,
       })
     );
@@ -144,3 +159,76 @@ it("requires matching parent authority before exposing accepted child evidence r
     hostedAcceptedChildEvidenceFromCapability(capability(), parentRunId, "project")
   );
 });
+
+it("recovers the original keyed receipt after response loss with a fresh capability", async () => {
+  const stored = new Map<string, { payload: string; eventId: number }>();
+  let writes = 0;
+  let loseResponse = true;
+  const fetch: FetchTransport = async (_url, init) => {
+    const key = new Headers(init?.headers).get("Idempotency-Key");
+    const payload = String(init?.body);
+    const previous = key ? stored.get(key) : undefined;
+    if (previous && previous.payload !== payload) return new Response(null, { status: 409 });
+    const eventId = previous?.eventId ?? ++writes;
+    if (key) stored.set(key, { payload, eventId });
+    if (loseResponse) {
+      loseResponse = false;
+      throw new Error("Response lost after commit");
+    }
+    return Response.json({ run_id: canonicalRunId, appended_count: 1, latest_event_id: eventId });
+  };
+  const persist = (toolCallId: string, accepted = event) =>
+    persistHostedAcceptedTaskInput({
+      capability: capability(fetch),
+      parentRunId,
+      toolCallId,
+      event: accepted,
+    });
+  await assertRejects(() => persist("call-1"), Error, "Response lost");
+  const receipt = await persist("call-1");
+  assertEquals(hostedAcceptedTaskInputReference(receipt, parentRunId, event.targetAgentId), {
+    event_id: 1,
+  });
+  await persist("call-2");
+  const replay = await persist("call-1");
+  assertEquals(hostedAcceptedTaskInputReference(replay, parentRunId, event.targetAgentId), {
+    event_id: 1,
+  });
+  await assertRejects(() => persist("call-1", { ...event, payload: { intakeId: "changed" } }));
+  assertEquals(writes, 2);
+});
+
+for (const hook of ["ok", "status", "body", "getReader"] as const) {
+  it(`consumes accepted receipts without mutable ${hook} hooks`, async () => {
+    const response = hook === "status" ? new Response(null, { status: 403 }) : result();
+    const target = hook === "getReader" ? ReadableStream.prototype : Response.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(target, hook)!;
+    let intercepted = 0;
+    const poison = () => {
+      intercepted++;
+      throw new Error("Tenant hook invoked");
+    };
+    const writer = capability(() => {
+      Object.defineProperty(
+        target,
+        hook,
+        hook === "getReader" ? { ...descriptor, value: poison } : { ...descriptor, get: poison },
+      );
+      return Promise.resolve(response);
+    });
+    try {
+      const operation = () =>
+        persistHostedAcceptedTaskInput({
+          capability: writer,
+          parentRunId,
+          toolCallId: "call-1",
+          event,
+        });
+      if (hook === "status") await assertRejects(operation, Error, "(403)");
+      else await operation();
+    } finally {
+      Object.defineProperty(target, hook, descriptor);
+    }
+    assertEquals(intercepted, 0);
+  });
+}

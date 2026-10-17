@@ -984,6 +984,7 @@ async function prepareAcceptedInvocationInput<
   const receipt = persistHostedAcceptedTaskInput({
     capability,
     parentRunId: input.parentRunId,
+    toolCallId: input.executionOptions.toolCallId,
     event: {
       ...accepted,
       type: ACCEPTED_TASK_INPUT_EVENT_TYPE,

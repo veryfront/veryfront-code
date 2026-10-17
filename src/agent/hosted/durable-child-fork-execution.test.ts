@@ -2045,24 +2045,8 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
             appended_count: 1,
             latest_event_id: writes,
           });
-          if (cancelDuringAppend) {
-            const body = response.body!, controller = cancelDuringAppend;
-            Object.defineProperty(response, "body", {
-              value: {
-                getReader() {
-                  const reader = body.getReader();
-                  return {
-                    read: () => reader.read(),
-                    cancel: () => reader.cancel(),
-                    releaseLock() {
-                      reader.releaseLock();
-                      controller.abort();
-                    },
-                  };
-                },
-              },
-            });
-          }
+          // Cancel after the server commits, before the receipt is consumed.
+          cancelDuringAppend?.abort();
           return Promise.resolve(response);
         }
         return Promise.resolve(Response.json({
@@ -2214,11 +2198,28 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
       await assertRejects(() =>
         executeHostedDurableChildFork({
           ...input,
-          executionOptions: { ...input.executionOptions, abortSignal: cancelDuringAppend!.signal },
+          executionOptions: {
+            ...input.executionOptions,
+            toolCallId: `${input.executionOptions.toolCallId}-cancelled`,
+            abortSignal: cancelDuringAppend!.signal,
+          },
         })
       );
       assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 0]);
       cancelDuringAppend = undefined;
+      await assertRejects(() =>
+        executeHostedDurableChildFork({
+          ...input,
+          executionOptions: {
+            ...input.executionOptions,
+            toolCallId: `${input.executionOptions.toolCallId}-cancelled`,
+          },
+        })
+      );
+      assertEquals([resolutions, reads, writes, admissions], [1, 1, 1, 0]);
+      // An interrupted receipt stays ambiguous in that capability. A separate
+      // invocation still exercises successful admission and same-call replay.
+      resolutions = reads = writes = 0;
       const [first, concurrent] = await Promise.all([
         executeHostedDurableChildFork(input),
         executeHostedDurableChildFork(input),
