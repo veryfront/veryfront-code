@@ -1,5 +1,8 @@
 import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
-import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import {
   bindRuntimeStreamForwardingController,
   withRuntimeStreamOwnership,
@@ -204,6 +207,8 @@ import {
   enforceSkillPolicy,
   getProviderObservedSkillBodies,
   getTrustedSkillLoadResultIds,
+  getTrustedSkillLoadResultRefs,
+  hasAmbiguousTrustedSkillLoadResultIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
@@ -2874,6 +2879,8 @@ async function executeStartupSkill(input: {
   toolCalls: ToolCall[];
   onToolCall?: (toolCall: ToolCall) => void;
   resolveLoader: (toolName: string) => unknown;
+  recoveryStart?: (call: ToolCall) => Promise<void>;
+  recoveryResult?: (call: ToolCall) => Promise<void>;
   execute: (
     toolName: string,
     toolCallId: string,
@@ -2916,10 +2923,12 @@ async function executeStartupSkill(input: {
   try {
     // An observer failure settles the persisted call like an execution failure.
     input.onToolCall?.(toolCall);
-    result = await runWithFrameworkSkillBootstrap(
-      loader,
-      () => input.execute(definition.name, toolCallId, args, admittedTurn),
-    );
+    if (input.recoveryStart) await input.recoveryStart(toolCall);
+    result = await runWithToolCallOccurrenceDispatch(toolCall, () =>
+      runWithFrameworkSkillBootstrap(
+        loader,
+        () => input.execute(definition.name, toolCallId, args, admittedTurn),
+      ));
     validateRuntimeSkillBootstrapResult(result, skillId);
   } catch (error) {
     toolCall.status = "error";
@@ -2928,6 +2937,7 @@ async function executeStartupSkill(input: {
     const failed = createToolErrorMessage(toolCallId, definition.name, toolCall.error);
     pushPrivateArray(input.messages, failed);
     await input.persistMessage(failed);
+    if (input.recoveryResult) await input.recoveryResult(toolCall);
     throw error;
   }
   toolCall.status = "completed";
@@ -2944,6 +2954,7 @@ async function executeStartupSkill(input: {
   pushPrivateArray(input.messages, resultMessage);
   await input.persistMessage(resultMessage);
   input.skillState.applySuccessfulResult(result);
+  if (input.recoveryResult) await input.recoveryResult(toolCall);
 }
 
 async function traceConfiguredToolExecution(input: {
@@ -3142,8 +3153,41 @@ type RuntimeStepState = {
   context?: Record<string, unknown>;
 };
 
+/** Preserve per-assistant replay identity rather than the external response aggregate ID. */
+function createRecoveryBoundary(
+  messages: Message[],
+  toolExposureCheckpoint: ToolExposureCheckpoint,
+): AgentRuntimeRecoveryBoundary {
+  const replay: ProviderReplayCheckpoint[] = [];
+  const canonicalMessages = mapPrivateArray(messages, (message) => {
+    if (message.role === "assistant") {
+      const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
+      // Recovery retains native metadata even when the provider emitted only text.
+      state.replayRequired = true;
+      const checkpoint = captureProviderReplayCheckpoint(
+        state,
+        readAttachedProviderMetadata(message),
+      );
+      if (checkpoint) pushPrivateArray(replay, checkpoint);
+    }
+    return message;
+  });
+  return { messages: canonicalMessages, toolExposureCheckpoint, providerReplayCheckpoints: replay };
+}
+
+/** Private host observation of the exact canonical continuation boundary. */
+export type AgentRuntimeRecoveryBoundary = {
+  messages: Message[];
+  toolExposureCheckpoint: ToolExposureCheckpoint;
+  providerReplayCheckpoints: ProviderReplayCheckpoint[];
+  runtimeContinuation?: AgentPauseCheckpoint;
+};
+
 /** @internal Framework-only AgentRuntime construction options. */
 export type AgentRuntimeInternalOptions = {
+  /** Original host callback only; never read from authored agent config or context. */
+  persistRecoveryBoundary?: (boundary: AgentRuntimeRecoveryBoundary) => Promise<void>;
+  recoveryContinuation?: unknown;
   /** Framework-owned continuation and pause capability for this exact dispatch. */
   manualPause?: AgentManualPause;
   resolveModelRuntime?: AgentModelRuntimeResolver;
@@ -3261,6 +3305,8 @@ export class AgentRuntime {
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #modelStreamTimeouts: AgentRuntimeInternalOptions["modelStreamTimeouts"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
+  #persistRecoveryBoundary: AgentRuntimeInternalOptions["persistRecoveryBoundary"];
+  #recoveryContinuation: AgentPauseCheckpoint | undefined;
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
   private id: string;
@@ -3288,6 +3334,10 @@ export class AgentRuntime {
     this.#modelStreamTimeouts = internalOptions.modelStreamTimeouts;
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
+    this.#persistRecoveryBoundary = internalOptions.persistRecoveryBoundary;
+    this.#recoveryContinuation = internalOptions.recoveryContinuation === undefined
+      ? undefined
+      : parseAgentPauseCheckpoint(internalOptions.recoveryContinuation);
     this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
@@ -4704,6 +4754,13 @@ export class AgentRuntime {
         });
         const modelMessages = fittedRequest.modelMessages;
         effectiveToolExposurePlan = fittedRequest.plan;
+        if (this.#persistRecoveryBoundary) {
+          await this.#persistRecoveryBoundary(createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ));
+          throwIfAborted(abortSignal);
+        }
         const request = assembleRequest(modelMessages);
         currentSystemPrompt = request.systemPrompt;
         const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
@@ -5515,7 +5572,7 @@ export class AgentRuntime {
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
-    const continuation = await this.#manualPause?.load();
+    const continuation = this.#recoveryContinuation ?? await this.#manualPause?.load();
     const checkpoint = continuation == null ? undefined : parseAgentPauseCheckpoint(continuation);
     if (checkpoint?.providerMetadata) {
       mapPrivateArray(checkpoint.messages, (message) => {
@@ -5539,6 +5596,7 @@ export class AgentRuntime {
     restoreTrustedSkillLoadResultsFromPauseCheckpoint(
       currentMessages,
       checkpoint?.trustedSkillLoadResultIds,
+      checkpoint?.trustedSkillLoadResultRefs,
     );
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
@@ -5607,52 +5665,67 @@ export class AgentRuntime {
     let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
       this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
+    const captureRecoveryContinuation = (nextStep: number): AgentPauseCheckpoint =>
+      parseAgentPauseCheckpoint({
+        version: 1,
+        nextStep,
+        messages: currentMessages,
+        toolCalls,
+        usage: totalUsage,
+        latestAssistantText,
+        completed: completedWithinStepBudget,
+        ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+        recoveredEmptyResponse,
+        startupSkillLoaded,
+        recoveredInterruptedLocalToolBatch,
+        hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+        activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+        // Omitted when empty so checkpoints without trusted loads keep the prior shape.
+        ...(() => {
+          const ids = getTrustedSkillLoadResultIds(currentMessages);
+          if (hasAmbiguousTrustedSkillLoadResultIds(currentMessages)) {
+            return { trustedSkillLoadResultRefs: getTrustedSkillLoadResultRefs(currentMessages) };
+          }
+          return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
+        })(),
+        resumeToolCallExecuted,
+        agentWriteFinalResponseToolGuardEnabled,
+        interruptedLocalToolBatchRecoveryStep,
+        interruptedLocalToolBatchRecoveryText,
+        providerMetadata: mapPrivateArray(
+          filterPrivateArray(
+            currentMessages,
+            (message) => readAttachedProviderMetadata(message) !== undefined,
+          ),
+          (message) => ({
+            messageId: message.id,
+            metadata: readAttachedProviderMetadata(message)!,
+          }),
+        ),
+        runtimeGeneratedMessageIds: mapPrivateArray(
+          filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
+          (message) => message.id,
+        ),
+        toolExposureCheckpoint: pauseToolExposureAuthorized
+          ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
+          : initialToolExposureCheckpoint,
+      });
     const pauseAtBoundary = async (nextStep: number) => {
+      if (this.#persistRecoveryBoundary) {
+        const runtimeContinuation = captureRecoveryContinuation(nextStep);
+        await this.#persistRecoveryBoundary({
+          ...createRecoveryBoundary(
+            currentMessages,
+            runtimeContinuation.toolExposureCheckpoint ?? { version: 2, loadedToolNames: [] },
+          ),
+          runtimeContinuation,
+        });
+      }
       if (!this.#manualPause) return;
       if (this.#manualPause.requested && !(await this.#manualPause.requested())) return;
       let saved: AgentPauseCheckpoint;
       try {
-        saved = parseAgentPauseCheckpoint({
-          version: 1,
-          nextStep,
-          messages: currentMessages,
-          toolCalls,
-          usage: totalUsage,
-          latestAssistantText,
-          completed: completedWithinStepBudget,
-          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
-          recoveredEmptyResponse,
-          startupSkillLoaded,
-          recoveredInterruptedLocalToolBatch,
-          hasSubmittedFormInput: skillState.hasSubmittedFormInput,
-          activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-          // Omitted when empty so checkpoints without trusted loads keep the prior shape.
-          ...(() => {
-            const ids = getTrustedSkillLoadResultIds(currentMessages);
-            return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
-          })(),
-          resumeToolCallExecuted,
-          agentWriteFinalResponseToolGuardEnabled,
-          interruptedLocalToolBatchRecoveryStep,
-          interruptedLocalToolBatchRecoveryText,
-          providerMetadata: mapPrivateArray(
-            filterPrivateArray(
-              currentMessages,
-              (message) => readAttachedProviderMetadata(message) !== undefined,
-            ),
-            (message) => ({
-              messageId: message.id,
-              metadata: readAttachedProviderMetadata(message)!,
-            }),
-          ),
-          runtimeGeneratedMessageIds: mapPrivateArray(
-            filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
-            (message) => message.id,
-          ),
-          toolExposureCheckpoint: pauseToolExposureAuthorized
-            ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
-            : initialToolExposureCheckpoint,
-        });
+        saved = captureRecoveryContinuation(nextStep);
       } catch {
         if (this.#manualPause.release && !(await this.#manualPause.release())) return;
         logger.warn(
@@ -5760,6 +5833,58 @@ export class AgentRuntime {
           skillState,
           toolCalls,
           onToolCall: callbacks?.onToolCall,
+          ...(this.#persistRecoveryBoundary
+            ? {
+              recoveryStart: async (call: ToolCall) => {
+                const occurrenceId = introduceToolCallOccurrence(call);
+                if (!occurrenceId) {
+                  throw new Error("Managed startup skill lacks original occurrence scope");
+                }
+                sendSSE(controller, encoder, {
+                  type: "tool-input-start",
+                  toolCallId: call.id,
+                  toolName: call.name,
+                  privateToolCallOccurrenceId: occurrenceId,
+                });
+                sendSSE(controller, encoder, {
+                  type: "tool-input-available",
+                  toolCallId: call.id,
+                  toolName: call.name,
+                  input: call.args,
+                });
+                await this.#persistRecoveryBoundary!(
+                  createRecoveryBoundary(
+                    currentMessages,
+                    createToolExposureCheckpoint(
+                      effectiveToolExposurePlan.authorized,
+                      toolExposureState,
+                    ),
+                  ),
+                );
+              },
+              recoveryResult: async (call: ToolCall) => {
+                sendSSE(
+                  controller,
+                  encoder,
+                  call.error === undefined
+                    ? { type: "tool-output-available", toolCallId: call.id, output: call.result }
+                    : { type: "tool-output-error", toolCallId: call.id, errorText: call.error },
+                );
+                if (call.status === "completed") startupSkillLoaded = true;
+                const runtimeContinuation = captureRecoveryContinuation(step);
+                await this.#persistRecoveryBoundary!({
+                  ...createRecoveryBoundary(
+                    currentMessages,
+                    createToolExposureCheckpoint(
+                      effectiveToolExposurePlan.authorized,
+                      toolExposureState,
+                    ),
+                  ),
+                  runtimeContinuation,
+                });
+              },
+            }
+            : {}),
           resolveLoader: (name) =>
             resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
           execute: async (toolName, toolCallId, args, admittedTurn) => {
@@ -5872,6 +5997,14 @@ export class AgentRuntime {
         if (admittedTurn.start === currentMessages.length) {
           pushPrivateArray(currentMessages, assistantToolCallMessage);
           await persistMessage(assistantToolCallMessage);
+        }
+
+        if (this.#persistRecoveryBoundary) {
+          await this.#persistRecoveryBoundary(createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ));
+          throwIfAborted(abortSignal);
         }
 
         const toolCall: ToolCall = {
@@ -6014,6 +6147,7 @@ export class AgentRuntime {
             toolCalls,
           );
         }
+        if (this.#persistRecoveryBoundary) await pauseAtBoundary(step);
       }
 
       // Include the parked result delivered to this request, but exclude new same-step results.
@@ -6076,6 +6210,13 @@ export class AgentRuntime {
       });
       const modelMessages = fittedRequest.modelMessages;
       effectiveToolExposurePlan = fittedRequest.plan;
+      if (this.#persistRecoveryBoundary) {
+        await this.#persistRecoveryBoundary(createRecoveryBoundary(
+          currentMessages,
+          createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+        ));
+        throwIfAborted(abortSignal);
+      }
       const request = assembleRequest(modelMessages);
       currentSystemPrompt = request.systemPrompt;
       const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
@@ -6603,6 +6744,26 @@ export class AgentRuntime {
           : streamedInvokeAgentBatch,
         deferCompletion: streamedBatchCompletionDeferred,
       });
+      if (this.#persistRecoveryBoundary) {
+        // Recovery snapshots require an authenticated admission for every local
+        // call in this turn, including calls interrupted before input finalized.
+        // Announce them before waiting for persistence so both retry and terminal
+        // paths can acknowledge the matching error without an admission cycle.
+        for (const toolCall of streamedToolCalls) {
+          if (
+            toolCall.providerExecuted !== true && isStreamedToolCallIncomplete(toolCall) &&
+            !finalToolResults.has(toolCall.id)
+          ) {
+            announceStreamedToolCallInput(controller, encoder, toolCall);
+          }
+        }
+        await this.#persistRecoveryBoundary(
+          createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ),
+        );
+      }
 
       if (stoppedEmptyAfterCompletedTool) {
         sendSSE(controller, encoder, {
@@ -6747,6 +6908,16 @@ export class AgentRuntime {
             : {}),
         });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
+        if (completedWithinStepBudget && this.#persistRecoveryBoundary) {
+          const runtimeContinuation = captureRecoveryContinuation(step + 1);
+          await this.#persistRecoveryBoundary({
+            ...createRecoveryBoundary(
+              currentMessages,
+              createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+            ),
+            runtimeContinuation,
+          });
+        }
         if (!completedWithinStepBudget) await pauseAtBoundary(step + 1);
         break;
       }
@@ -7222,7 +7393,6 @@ export class AgentRuntime {
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
       }
-
       if (state.suppressedToolCalls.length > 0) {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
@@ -7241,6 +7411,17 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+      }
+
+      if (this.#persistRecoveryBoundary) {
+        const runtimeContinuation = captureRecoveryContinuation(step + 1);
+        await this.#persistRecoveryBoundary({
+          ...createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ),
+          runtimeContinuation,
+        });
       }
 
       throwIfAborted(abortSignal);

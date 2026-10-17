@@ -1,3 +1,7 @@
+import {
+  applyRecoveryToolExecutionPolicy,
+  assertExecutionOwnership,
+} from "#veryfront/runtime/execution-ownership-guard.ts";
 import { findSequential } from "./sequential.ts";
 import { dispatchWithTerminalRunControl, executeTerminalRunTool } from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
@@ -491,7 +495,17 @@ export function resolveConfiguredTool(
   return null;
 }
 
-export async function executeConfiguredTool(
+export function executeConfiguredTool(
+  ...args: Parameters<typeof executeConfiguredToolImplementation>
+): Promise<unknown> {
+  const managed = applyRecoveryToolExecutionPolicy(
+    { toolName: args[0], input: args[1] },
+    () => executeConfiguredToolImplementation(...args),
+  );
+  return managed ?? executeConfiguredToolImplementation(...args);
+}
+
+async function executeConfiguredToolImplementation(
   toolName: string,
   input: Record<string, unknown>,
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
@@ -507,6 +521,8 @@ export async function executeConfiguredTool(
     frameworkLocalTools?: Record<string, Tool>;
   },
 ): Promise<unknown> {
+  const ownershipCheck = assertExecutionOwnership();
+  if (ownershipCheck) await ownershipCheck;
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);

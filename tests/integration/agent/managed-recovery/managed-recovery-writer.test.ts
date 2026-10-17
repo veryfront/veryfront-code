@@ -1,0 +1,1811 @@
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import "#veryfront/schemas/_test-setup.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  createControlPlaneSignature,
+  createCtx,
+} from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
+import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
+import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-session-owner.ts";
+import { DurableRunHome } from "#veryfront/internal-agents/durable-run-home.ts";
+
+const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+const identity = {
+  projectId: "11111111-1111-4111-8111-111111111111",
+  canonicalRunId: "22222222-2222-4222-8222-222222222222",
+  publicRunId: "run-proof",
+  agentId: "proof-agent",
+  threadId: "77777777-7777-4777-8777-777777777777",
+  sourceHash: "a".repeat(64),
+};
+function admission(attempt = 0) {
+  return {
+    version: 1,
+    identity,
+    generation: {
+      workerId: `worker-${attempt}`,
+      dispatchNonce: `66666666-6666-4666-8666-${String(attempt).padStart(12, "0")}`,
+      transportRecoveryAttempt: attempt,
+    },
+    acknowledgedExternalSequence: 0,
+    leaseRemainingMs: 10_000,
+    sourceBinding: {
+      projectId: identity.projectId,
+      environmentId: "33333333-3333-4333-8333-333333333333",
+      releaseId: "44444444-4444-4444-8444-444444444444",
+    },
+    eventPersistence: "runtime-owned-v1" as const,
+    expiresAt: Math.floor(Date.now() / 1000) + 30,
+  };
+}
+function receipt(value = admission()) {
+  return {
+    version: 1,
+    identity: {
+      projectId: value.identity.projectId,
+      canonicalRunId: value.identity.canonicalRunId,
+      publicRunId: value.identity.publicRunId,
+      agentId: value.identity.agentId,
+      threadId: value.identity.threadId,
+    },
+    generation: value.generation,
+    acknowledgedEventId: 0,
+    acknowledgedExternalSequence: value.acknowledgedExternalSequence,
+    leaseRemainingMs: value.leaseRemainingMs,
+  };
+}
+async function signed(value = admission()) {
+  const body = JSON.stringify({
+    managedRecoveryAdmission: value,
+    credentials: { authToken: "NEVER_PERSIST_TEST_CREDENTIAL" },
+  });
+  const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+    projectId: value.sourceBinding.projectId,
+    requestId: identity.publicRunId,
+  });
+  Deno.env.set(envKey, publicKeyPem);
+  const ctx = createCtx(publicKeyPem);
+  ctx.projectId = value.sourceBinding.projectId;
+  return await verifyControlPlaneRequest(
+    new Request(`https://veryfront.test/api/control-plane/runs/${identity.publicRunId}/stream`, {
+      method: "POST",
+      headers: { "x-veryfront-control-plane-jws": jws },
+    }),
+    ctx,
+    body,
+  );
+}
+
+import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-recovery-writer.ts";
+import { createEphemeralAgentWithRuntimeOptions } from "#veryfront/agent/factory.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+
+it("real cross-project runtime boundaries omit private message metadata while preserving signed bindings", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    value.sourceBinding.projectId = "77777777-7777-4777-8777-777777777777";
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const events: string[] = [];
+    // Local authenticated-append fixture: this is not staging API evidence.
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (event, _occurrenceId, checkpoint) => {
+        events.push(String(event.type));
+        sequence++;
+        return {
+          eventId: sequence + 100,
+          externalSequence: sequence,
+          toolAdmissions: [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: sequence + 100,
+                snapshot_external_sequence: sequence,
+                checkpoint_event_id: sequence + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const model = scriptedModel([{ text: "Synthetic complete" }], { only: "stream" });
+    let capturedMetadata = false;
+    const metadataRuntime = createEphemeralAgentWithRuntimeOptions({
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 1,
+    }, {
+      resolveModelRuntime: () => model,
+      persistRecoveryBoundary: async (boundary) => {
+        capturedMetadata ||= boundary.runtimeContinuation?.messages.some((message) =>
+          message.metadata !== undefined
+        ) ?? false;
+        await writer.persistBoundary(boundary);
+      },
+    });
+    const result = await metadataRuntime.stream({
+      messages: [{
+        id: "synthetic-user",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic request" }],
+        metadata: { privatePolicy: "NEVER_PERSIST_PRIVATE_POLICY" },
+      }],
+    });
+    await result.toDataStreamResponse().text();
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const records = await home.read();
+    assertEquals(records.length >= 2, true);
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot(records.at(-1)!.value);
+    assertEquals(capturedMetadata, true);
+    assertEquals(snapshot.runtimeContinuation !== undefined, true);
+    assertEquals(JSON.stringify(records).includes("NEVER_PERSIST_PRIVATE_POLICY"), false);
+    assertEquals(snapshot.messages.every((message) => !("metadata" in message)), true);
+    assertEquals(
+      snapshot.runtimeContinuation!.messages.every((message) => !("metadata" in message)),
+      true,
+    );
+    const { getRecoveryContinuationSchema } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    assertEquals(
+      getRecoveryContinuationSchema().safeParse({
+        ...snapshot.runtimeContinuation,
+        messages: snapshot.runtimeContinuation!.messages.map((message) => ({
+          ...message,
+          metadata: { privatePolicy: "NEVER_PERSIST_PRIVATE_POLICY" },
+        })),
+      }).success,
+      false,
+    );
+    assertEquals(snapshot.binding.identity.projectId, identity.projectId);
+    assertEquals(snapshot.binding.sourceBinding, value.sourceBinding);
+    assertEquals(events.includes("MESSAGES_SNAPSHOT"), true);
+    assertEquals(model.callCount, 1);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("completed incoming tool history continues without inventing current-run admission and collisions fail closed", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _occurrenceId, checkpoint) => ({
+        eventId: ++sequence,
+        externalSequence: sequence,
+        toolAdmissions: [],
+        ...(checkpoint
+          ? {
+            recoveryCheckpoint: {
+              snapshot_event_id: sequence,
+              snapshot_external_sequence: sequence,
+              checkpoint_event_id: sequence + 10000,
+            },
+          }
+          : {}),
+      }),
+    });
+    writer.bindSignal(new AbortController().signal);
+    const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+    const model = scriptedModel([{ text: "Continued from history" }], { only: "stream" });
+    const runtime = new AgentRuntime("history-proof", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 1,
+      skills: false,
+    }, {
+      resolveModelRuntime: () => model,
+      persistRecoveryBoundary: writer.persistBoundary,
+    });
+    const messages = [
+      {
+        id: "old-assistant",
+        role: "assistant" as const,
+        parts: [{
+          type: "tool-call" as const,
+          toolCallId: "old-call",
+          toolName: "inspect",
+          args: {},
+        }],
+      },
+      {
+        id: "old-result",
+        role: "tool" as const,
+        parts: [{
+          type: "tool-result" as const,
+          toolCallId: "old-call",
+          toolName: "inspect",
+          result: { ok: true },
+        }],
+      },
+      {
+        id: "new-user",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Continue" }],
+      },
+    ];
+    await new Response(await runtime.stream(messages, { runId: identity.publicRunId })).text();
+    assertEquals(model.callCount, 1);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    assertEquals((await home.read()).length >= 2, true);
+    await Deno.mkdir(`${directory}/missing`);
+    const missingWriter = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory: `${directory}/missing`,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _occurrenceId, checkpoint) => ({
+        eventId: ++sequence,
+        externalSequence: sequence,
+        toolAdmissions: [],
+        ...(checkpoint
+          ? {
+            recoveryCheckpoint: {
+              snapshot_event_id: sequence,
+              snapshot_external_sequence: sequence,
+              checkpoint_event_id: sequence + 10000,
+            },
+          }
+          : {}),
+      }),
+    });
+    missingWriter.bindSignal(new AbortController().signal);
+    const missingModel = scriptedModel([{ text: "Must not run" }], { only: "stream" });
+    const missingRuntime = new AgentRuntime("missing-history", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      skills: false,
+    }, {
+      resolveModelRuntime: () => missingModel,
+      persistRecoveryBoundary: missingWriter.persistBoundary,
+    });
+    await new Response(await missingRuntime.stream([messages[0]!, messages[2]!])).text();
+    assertEquals(missingModel.callCount, 0);
+    const { assertRejects } = await import("#veryfront/testing/assert.ts");
+    await assertRejects(() =>
+      writer.appendMappedEvent({
+        event: "ToolCallStart",
+        payload: { toolCallId: "old-call", toolCallName: "inspect" },
+      }, crypto.randomUUID())
+    );
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("actual original tool frames admit intent before callback and acknowledge result before durable continuation", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    let effects = 0;
+    const order: string[] = [];
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (event, occurrenceId, checkpoint) => {
+        cursor++;
+        order.push(String(event.type));
+        const eventId = cursor;
+        return {
+          eventId,
+          externalSequence: cursor,
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: eventId,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: eventId + 10000,
+              },
+            }
+            : {}),
+          toolAdmissions: event.type === "TOOL_CALL_START"
+            ? [{
+              occurrenceId: occurrenceId!,
+              admissionEventId: String(1000 + cursor),
+              startEventId: String(eventId),
+              toolCallId: String(event.toolCallId),
+              publicToolCallId: String(event.toolCallId),
+              projectId: identity.projectId,
+              runId: identity.canonicalRunId,
+            }]
+            : [],
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const { tool } = await import("#veryfront/tool");
+    const { defineSchema } = await import("#veryfront/schemas/index.ts");
+    const { runWithToolCallOccurrences } = await import(
+      "#veryfront/runtime/tool-call-occurrence.ts"
+    );
+    const { runWithRecoveryToolExecutionPolicy } = await import(
+      "#veryfront/runtime/execution-ownership-guard.ts"
+    );
+    const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } = await import(
+      "#veryfront/internal-agents/ag-ui-sse.ts"
+    );
+    const model = scriptedModel([{
+      toolCalls: [{ id: "current-call", name: "inspect", input: {} }],
+    }, { text: "Complete" }], { only: "stream" });
+    const runtime = createEphemeralAgentWithRuntimeOptions({
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 2,
+      tools: {
+        inspect: tool({
+          id: "inspect",
+          description: "Synthetic",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            effects++;
+            order.push("ACTUAL_EFFECT");
+            return Promise.resolve({ ok: true });
+          },
+        }),
+      },
+    }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+    const result = await runWithRecoveryToolExecutionPolicy(
+      writer.executeTool,
+      () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+    );
+    const reader = result.toDataStreamResponse().body!.getReader();
+    const decoder = new TextDecoder();
+    const state = createStreamTransformState();
+    let remainder = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const parsed = parseSseJsonEvents(remainder + decoder.decode(chunk.value, { stream: true }));
+      remainder = parsed.remainder;
+      for (const event of parsed.events) {
+        for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+          await writer.appendMappedEvent(
+            mapped,
+            mapped.event === "ToolCallStart" &&
+              typeof event.privateToolCallOccurrenceId === "string"
+              ? event.privateToolCallOccurrenceId
+              : undefined,
+          );
+        }
+      }
+    }
+    reader.releaseLock();
+    assertEquals(effects, 1);
+    assertEquals(model.callCount, 2);
+    assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("ACTUAL_EFFECT"), true);
+    assertEquals(order.indexOf("ACTUAL_EFFECT") < order.indexOf("TOOL_CALL_RESULT"), true);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+    assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+    assertEquals(snapshot.runtimeContinuation?.nextStep, 2);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+for (const failTool of [false, true]) {
+  it(`repeated provider tool IDs retain distinct native turn admissions and ${failTool ? "errors" : "results"}`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let cursor = 0;
+      let effects = 0;
+      const order: string[] = [];
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId, checkpoint) => {
+          cursor++;
+          order.push(String(event.type));
+          const eventId = cursor;
+          return {
+            eventId,
+            externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: eventId,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: eventId + 10000,
+                },
+              }
+              : {}),
+            toolAdmissions: event.type === "TOOL_CALL_START"
+              ? [{
+                occurrenceId: occurrenceId!,
+                admissionEventId: String(1000 + cursor),
+                startEventId: String(eventId),
+                toolCallId: String(event.toolCallId),
+                publicToolCallId: `public-${occurrenceId}`,
+                projectId: identity.projectId,
+                runId: identity.canonicalRunId,
+              }]
+              : [],
+          };
+        },
+      });
+      writer.bindSignal(new AbortController().signal);
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      const { runWithToolCallOccurrences } = await import(
+        "#veryfront/runtime/tool-call-occurrence.ts"
+      );
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } =
+        await import(
+          "#veryfront/internal-agents/ag-ui-sse.ts"
+        );
+      const model = scriptedModel([
+        {
+          toolCalls: [{ id: "current-call", name: "inspect", input: {} }],
+        },
+        { toolCalls: [{ id: "current-call", name: "inspect", input: {} }] },
+        { text: "Complete" },
+      ], { only: "stream" });
+      const runtime = createEphemeralAgentWithRuntimeOptions({
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps: 3,
+        tools: {
+          inspect: tool({
+            id: "inspect",
+            description: "Synthetic",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              effects++;
+              order.push("ACTUAL_EFFECT");
+              if (failTool) throw new Error(`synthetic-${effects}`);
+              return Promise.resolve({ effect: effects });
+            },
+          }),
+        },
+      }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+      const result = await runWithRecoveryToolExecutionPolicy(
+        writer.executeTool,
+        () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+      );
+      const reader = result.toDataStreamResponse().body!.getReader();
+      const decoder = new TextDecoder();
+      const state = createStreamTransformState();
+      let remainder = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const parsed = parseSseJsonEvents(
+          remainder + decoder.decode(chunk.value, { stream: true }),
+        );
+        remainder = parsed.remainder;
+        for (const event of parsed.events) {
+          for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            await writer.appendMappedEvent(
+              mapped,
+              mapped.event === "ToolCallStart" &&
+                typeof event.privateToolCallOccurrenceId === "string"
+                ? event.privateToolCallOccurrenceId
+                : undefined,
+            );
+          }
+        }
+      }
+      reader.releaseLock();
+      assertEquals(effects, 2);
+      assertEquals(model.callCount, 3);
+      assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("ACTUAL_EFFECT"), true);
+      assertEquals(order.indexOf("ACTUAL_EFFECT") < order.indexOf("TOOL_CALL_RESULT"), true);
+      const home = await DurableRunHome.open({
+        directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+        identity,
+      });
+      const { parseRecoverySnapshot } = await import(
+        "#veryfront/internal-agents/recovery-snapshot.ts"
+      );
+      const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+      assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+      assertEquals(snapshot.runtimeContinuation?.nextStep, 3);
+      assertEquals(snapshot.toolBoundaries.length, 2);
+      const [first, second] = snapshot.toolBoundaries;
+      assertEquals(
+        first!.admissionReceipt.occurrenceId === second!.admissionReceipt.occurrenceId,
+        false,
+      );
+      assertEquals(first!.modelMessageId === second!.modelMessageId, false);
+      if (first!.kind === "acknowledged-receipt" && second!.kind === "acknowledged-receipt") {
+        if (failTool) {
+          const { getToolResultError } = await import("#veryfront/tool/result.ts");
+          assertEquals(getToolResultError(first!.result.result), "synthetic-1");
+          assertEquals(getToolResultError(second!.result.result), "synthetic-2");
+        } else {
+          assertEquals(first!.result.result, { effect: 1 });
+          assertEquals(second!.result.result, { effect: 2 });
+        }
+        assertEquals(first!.resultEventId === second!.resultEventId, false);
+      } else throw new Error("Both repeated occurrences must retain their own durable result");
+      const { assertThrows } = await import("#veryfront/testing/assert.ts");
+      if (first!.kind !== "acknowledged-receipt" || second!.kind !== "acknowledged-receipt") {
+        throw new Error("Expected both durable results");
+      }
+      assertThrows(() =>
+        parseRecoverySnapshot({
+          ...snapshot,
+          toolBoundaries: [first, { ...second, result: first.result }],
+        })
+      );
+      const restoredWriter = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        restoredSnapshot: snapshot,
+        bindAdmissionWriter: () => {},
+        append: async (_event, _occurrence, checkpoint) => {
+          const eventId = ++cursor;
+          return {
+            eventId,
+            externalSequence: cursor,
+            toolAdmissions: [],
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: eventId,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: eventId + 10000,
+                },
+              }
+              : {}),
+          };
+        },
+      });
+      const restoredAbort = new AbortController();
+      const restoredDeadline = setTimeout(
+        () => restoredAbort.abort(new Error("Restored occurrence deadline")),
+        5000,
+      );
+      restoredWriter.bindSignal(restoredAbort.signal);
+      try {
+        await restoredWriter.persistBoundary({
+          messages: snapshot.messages,
+          toolExposureCheckpoint: snapshot.toolExposureCheckpoint,
+          providerReplayCheckpoints: [],
+          runtimeContinuation: snapshot.runtimeContinuation,
+        });
+        const restored = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+        assertEquals(restored.toolBoundaries, snapshot.toolBoundaries);
+        assertEquals(effects, 2);
+      } finally {
+        clearTimeout(restoredDeadline);
+        restoredAbort.abort();
+      }
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+it("actual managed startup skill obtains original occurrence admission before loader execution", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const { registerSkill, skillRegistryInternal } = await import("#veryfront/skill/registry.ts");
+    const { createSkillTestAdapter } = await import("#veryfront/skill/testing.ts");
+    const { createLoadSkillTool } = await import("#veryfront/skill/tools.ts");
+    await import("#veryfront/skill/_test-setup.ts");
+    skillRegistryInternal.clearAll();
+    registerSkill("recovery-plan", {
+      id: "recovery-plan",
+      rootPath: "/skills/recovery-plan",
+      metadata: { name: "recovery-plan", description: "Synthetic" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/recovery-plan/SKILL.md": "# Recovery bootstrap",
+      }),
+    });
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    const order: string[] = [];
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (event, occurrenceId, checkpoint) => {
+        cursor++;
+        order.push(String(event.type));
+        const eventId = cursor;
+        return {
+          eventId,
+          externalSequence: cursor,
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: eventId,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: eventId + 10000,
+              },
+            }
+            : {}),
+          toolAdmissions: event.type === "TOOL_CALL_START"
+            ? [{
+              occurrenceId: occurrenceId!,
+              admissionEventId: String(1000 + cursor),
+              startEventId: String(eventId),
+              toolCallId: String(event.toolCallId),
+              publicToolCallId: String(event.toolCallId),
+              projectId: identity.projectId,
+              runId: identity.canonicalRunId,
+            }]
+            : [],
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const { runWithToolCallOccurrences } = await import(
+      "#veryfront/runtime/tool-call-occurrence.ts"
+    );
+    const { runWithRecoveryToolExecutionPolicy } = await import(
+      "#veryfront/runtime/execution-ownership-guard.ts"
+    );
+    const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } = await import(
+      "#veryfront/internal-agents/ag-ui-sse.ts"
+    );
+    const model = scriptedModel([{ text: "Complete" }], { only: "stream" });
+    const runtime = createEphemeralAgentWithRuntimeOptions({
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 1,
+      bootstrapSkill: "recovery-plan",
+      skills: ["recovery-plan"],
+      tools: { load_skill: createLoadSkillTool() },
+    }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+    const result = await runWithRecoveryToolExecutionPolicy(
+      writer.executeTool,
+      () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+    );
+    const reader = result.toDataStreamResponse().body!.getReader();
+    const decoder = new TextDecoder();
+    const state = createStreamTransformState();
+    let remainder = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const parsed = parseSseJsonEvents(remainder + decoder.decode(chunk.value, { stream: true }));
+      remainder = parsed.remainder;
+      for (const event of parsed.events) {
+        for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+          await writer.appendMappedEvent(
+            mapped,
+            mapped.event === "ToolCallStart" &&
+              typeof event.privateToolCallOccurrenceId === "string"
+              ? event.privateToolCallOccurrenceId
+              : undefined,
+          );
+        }
+      }
+    }
+    reader.releaseLock();
+    assertEquals(model.callCount, 1);
+    assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("TOOL_CALL_RESULT"), true);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+    assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+    assertEquals(snapshot.runtimeContinuation?.nextStep, 1);
+  } finally {
+    (await import("#veryfront/skill/registry.ts")).skillRegistryInternal.clearAll();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("safe snapshot publication rejects an API that ignores the atomic checkpoint sidecar", async () => {
+  const { assertRejects } = await import("#veryfront/testing/assert.ts");
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    let observedSidecar = false;
+    const { createManagedRecoveryWriter } = await import(
+      "#veryfront/internal-agents/managed-recovery-writer.ts"
+    );
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _occurrence, sidecar) => {
+        if (sidecar) observedSidecar = true;
+        return { eventId: ++sequence, externalSequence: sequence, toolAdmissions: [] };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    await assertRejects(() =>
+      writer.persistBoundary({
+        messages: [],
+        providerReplayCheckpoints: [],
+        toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+        runtimeContinuation: {
+          version: 1,
+          nextStep: 0,
+          messages: [],
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latestAssistantText: "",
+          completed: false,
+          recoveredEmptyResponse: false,
+          recoveredInterruptedLocalToolBatch: false,
+        },
+      })
+    );
+    assertEquals(observedSidecar, true);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    assertEquals((await home.read()).length, 0);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+async function captureInitialNativeRecoveryBoundary() {
+  const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+  let initial: import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary | undefined;
+  const runtime = new AgentRuntime("initial-boundary-fixture", {
+    model: "veryfront-cloud/openai/gpt-5.4",
+    system: "Synthetic",
+    maxSteps: 1,
+    skills: false,
+  }, {
+    resolveModelRuntime: () => scriptedModel([{ text: "Synthetic complete" }], { only: "stream" }),
+    persistRecoveryBoundary: async (boundary) => {
+      initial ??= boundary;
+    },
+  });
+  await new Response(await runtime.stream([])).text();
+  if (!initial) throw new Error("Expected actual native initial boundary");
+  return initial;
+}
+
+it("provider-executed current calls persist replay without waiting for local admission", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _id, checkpoint) => ({
+        eventId: ++sequence,
+        externalSequence: sequence,
+        toolAdmissions: [],
+        ...(checkpoint
+          ? {
+            recoveryCheckpoint: {
+              snapshot_event_id: sequence,
+              snapshot_external_sequence: sequence,
+              checkpoint_event_id: sequence + 10000,
+            },
+          }
+          : {}),
+      }),
+    });
+    const controller = new AbortController();
+    writer.bindSignal(controller.signal);
+    const exposure = {
+      version: 2,
+      loadedToolNames: [],
+    } satisfies import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary[
+      "toolExposureCheckpoint"
+    ];
+    const initialBoundary = await captureInitialNativeRecoveryBoundary();
+    await writer.persistBoundary(initialBoundary);
+    const call = {
+      type: "tool-call",
+      toolCallId: "provider-search",
+      toolName: "web_search",
+      args: { query: "synthetic" },
+      providerExecuted: true,
+    } as const;
+    const result = {
+      type: "tool-result",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      result: [],
+      providerExecuted: true,
+    } as const;
+    const timer = setTimeout(
+      () => controller.abort(new Error("Provider call waited for local admission")),
+      200,
+    );
+    try {
+      await writer.persistBoundary({
+        messages: [...initialBoundary.messages, {
+          id: "provider-turn",
+          role: "assistant",
+          parts: [call, { ...result, result: [] }],
+        }],
+        toolExposureCheckpoint: exposure,
+        providerReplayCheckpoints: [{
+          version: 1,
+          messageId: "provider-turn",
+          provider: "anthropic",
+          providerBlocks: [
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "server_tool_use",
+                id: call.toolCallId,
+                name: call.toolName,
+                input: call.args,
+                caller: { type: "direct" },
+              },
+            },
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "web_search_tool_result",
+                tool_use_id: call.toolCallId,
+                caller: { type: "direct" },
+                content: [],
+              },
+            },
+          ],
+          providerBlockPositions: [0, 1],
+          totalPartCount: 2,
+        }],
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+    assertEquals(snapshot.toolBoundaries, []);
+    assertEquals(snapshot.modelTurns[0]?.providerReplayCheckpoint?.messageId, "provider-turn");
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+for (
+  const failureKind of ["admission", "result", "malformed-admission", "foreign-admission"] as const
+) {
+  it(`persistence failure retires pending ${failureKind} work without an external abort`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const controller = new AbortController();
+    let pending: Promise<unknown> | undefined;
+    try {
+      const claims = await signed();
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let fail = false;
+      let cursor = 0;
+      let effects = 0;
+      const outage = new Error("Synthetic durable append failure");
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId, checkpoint) => {
+          if (
+            fail && failureKind !== "malformed-admission" && failureKind !== "foreign-admission"
+          ) throw outage;
+          return {
+            eventId: ++cursor,
+            externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: cursor,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: cursor + 10000,
+                },
+              }
+              : {}),
+            toolAdmissions:
+              event.type === "TOOL_CALL_START" && (!fail || failureKind === "foreign-admission")
+                ? [{
+                  occurrenceId: occurrenceId!,
+                  admissionEventId: "admit",
+                  startEventId: String(cursor),
+                  toolCallId: "call",
+                  publicToolCallId: "public-call",
+                  projectId: fail && failureKind === "foreign-admission"
+                    ? "77777777-7777-4777-8777-777777777777"
+                    : identity.projectId,
+                  runId: identity.canonicalRunId,
+                }]
+                : [],
+          };
+        },
+      });
+      writer.bindSignal(controller.signal);
+      const {
+        runWithToolCallOccurrences,
+        introduceToolCallOccurrence,
+        runWithToolCallOccurrenceDispatch,
+      } = await import("#veryfront/runtime/tool-call-occurrence.ts");
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { executeConfiguredTool } = await import("#veryfront/agent/runtime/tool-helpers.ts");
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      let occurrenceId = "";
+      if (failureKind === "result") {
+        const initialBoundary = await captureInitialNativeRecoveryBoundary();
+        await writer.persistBoundary(initialBoundary);
+        await writer.appendMappedEvent({
+          event: "ToolCallStart",
+          payload: { toolCallId: "call", toolCallName: "inspect" },
+        }, "occurrence");
+        pending = writer.persistBoundary({
+          messages: [...initialBoundary.messages, {
+            id: "model",
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+          }, {
+            id: "result",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "call",
+              toolName: "inspect",
+              result: { ok: true },
+            }],
+          }],
+          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+          providerReplayCheckpoints: [],
+        });
+      } else {
+        pending = runWithToolCallOccurrences(() => {
+          const call = { id: "call" };
+          occurrenceId = introduceToolCallOccurrence(call) ?? "";
+          return runWithToolCallOccurrenceDispatch(
+            call,
+            () =>
+              runWithRecoveryToolExecutionPolicy(
+                writer.executeTool,
+                () =>
+                  executeConfiguredTool("inspect", {}, {
+                    inspect: tool({
+                      id: "inspect",
+                      description: "Synthetic effect",
+                      inputSchema: defineSchema((v) => v.object({}))(),
+                      execute: () => {
+                        effects++;
+                        return Promise.resolve({ ok: true });
+                      },
+                    }),
+                  }),
+              ),
+          );
+        });
+      }
+      const retired = pending.then(() => "resolved", () => "rejected");
+      fail = true;
+      const { assertRejects } = await import("#veryfront/testing/assert.ts");
+      await assertRejects(() =>
+        writer.appendMappedEvent(
+          failureKind === "result"
+            ? { event: "ToolCallResult", payload: { toolCallId: "call", result: { ok: true } } }
+            : { event: "ToolCallStart", payload: { toolCallId: "call", toolCallName: "inspect" } },
+          occurrenceId,
+        )
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        assertEquals(
+          await Promise.race([
+            retired,
+            new Promise<string>((resolve) => {
+              timer = setTimeout(() => resolve("pending"), 200);
+            }),
+          ]),
+          "rejected",
+        );
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      assertEquals(controller.signal.aborted, false);
+      assertEquals(effects, 0);
+      await assertRejects(() =>
+        writer.persistBoundary({
+          messages: [],
+          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+          providerReplayCheckpoints: [],
+        })
+      );
+    } finally {
+      controller.abort();
+      await pending?.catch(() => {});
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+for (const maxSteps of [1, 2]) {
+  it(`truncated local input completes managed ${maxSteps === 1 ? "terminalization" : "retry"} without waiting for an unannounced admission`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(new Error("Truncated input admission deadlock")),
+      5000,
+    );
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let cursor = 0;
+      let effects = 0;
+      const order: string[] = [];
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId, checkpoint) => {
+          cursor++;
+          order.push(String(event.type));
+          const eventId = cursor;
+          return {
+            eventId,
+            externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: eventId,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: eventId + 10000,
+                },
+              }
+              : {}),
+            toolAdmissions: event.type === "TOOL_CALL_START"
+              ? [{
+                occurrenceId: occurrenceId!,
+                admissionEventId: String(1000 + cursor),
+                startEventId: String(eventId),
+                toolCallId: String(event.toolCallId),
+                publicToolCallId: String(event.toolCallId),
+                projectId: identity.projectId,
+                runId: identity.canonicalRunId,
+              }]
+              : [],
+          };
+        },
+      });
+      writer.bindSignal(abort.signal);
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      const { runWithToolCallOccurrences } = await import(
+        "#veryfront/runtime/tool-call-occurrence.ts"
+      );
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } =
+        await import(
+          "#veryfront/internal-agents/ag-ui-sse.ts"
+        );
+      const model = scriptedModel([{
+        parts: [
+          { type: "tool-input-start", id: "current-call", toolName: "inspect" },
+          { type: "tool-input-delta", id: "current-call", delta: '{"query":"unfinished' },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+      }, { text: "Complete" }], { only: "stream" });
+      const runtime = createEphemeralAgentWithRuntimeOptions({
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps,
+        tools: {
+          inspect: tool({
+            id: "inspect",
+            description: "Synthetic",
+            inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+            execute: () => {
+              effects++;
+              order.push("ACTUAL_EFFECT");
+              return Promise.resolve({ ok: true });
+            },
+          }),
+        },
+      }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+      const result = await runWithRecoveryToolExecutionPolicy(
+        writer.executeTool,
+        () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+      );
+      const reader = result.toDataStreamResponse().body!.getReader();
+      const decoder = new TextDecoder();
+      const state = createStreamTransformState();
+      let remainder = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const parsed = parseSseJsonEvents(
+          remainder + decoder.decode(chunk.value, { stream: true }),
+        );
+        remainder = parsed.remainder;
+        for (const event of parsed.events) {
+          for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            await writer.appendMappedEvent(
+              mapped,
+              mapped.event === "ToolCallStart" &&
+                typeof event.privateToolCallOccurrenceId === "string"
+                ? event.privateToolCallOccurrenceId
+                : undefined,
+            );
+          }
+        }
+      }
+      reader.releaseLock();
+      assertEquals(abort.signal.aborted, false);
+      assertEquals(effects, 0);
+      assertEquals(model.callCount, maxSteps);
+      assertEquals(order.includes("TOOL_CALL_START"), true);
+      assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("TOOL_CALL_RESULT"), true);
+      const home = await DurableRunHome.open({
+        directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+        identity,
+      });
+      const { parseRecoverySnapshot } = await import(
+        "#veryfront/internal-agents/recovery-snapshot.ts"
+      );
+      const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+      assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+      if (maxSteps === 2) assertEquals(snapshot.runtimeContinuation?.nextStep, 2);
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+it("incoming assistant history never consumes current recovery model-turn capacity", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const pendingIds: string[] = [];
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _id, checkpoint) => {
+        if (checkpoint) pendingIds.push(...checkpoint.pending_model_turn_message_ids);
+        return {
+          eventId: ++sequence,
+          externalSequence: sequence,
+          toolAdmissions: [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: sequence,
+                snapshot_external_sequence: sequence,
+                checkpoint_event_id: sequence + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+    const model = scriptedModel([{ text: "Current response" }], { only: "stream" });
+    const runtime = new AgentRuntime("history-capacity-proof", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic",
+      maxSteps: 1,
+      skills: false,
+    }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
+    const messages:
+      import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary["messages"] = Array
+        .from({ length: 101 }, (_, index) => ({
+          id: `historical-assistant-${index}`,
+          role: "assistant",
+          parts: [{ type: "text", text: `Synthetic historical response ${index}` }],
+        }));
+    messages.push({
+      id: "current-user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    });
+    const output = await new Response(
+      await runtime.stream(messages, { runId: identity.publicRunId }),
+    ).text();
+    assertEquals(model.callCount, 1);
+    assertEquals(output.includes("Current response"), true);
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const records = await home.read();
+    const snapshot = parseRecoverySnapshot(records.at(-1)!.value);
+    assertEquals(snapshot.initialHistoryMessageIds?.length, 102);
+    assertEquals(
+      snapshot.messages.filter((message) => message.id.startsWith("historical-assistant-")).length,
+      101,
+    );
+    assertEquals(snapshot.modelTurns.length, 1);
+    assertEquals(
+      snapshot.modelTurns.some((turn) => turn.messageId.startsWith("historical-assistant-")),
+      false,
+    );
+    assertEquals(pendingIds.some((id) => id.startsWith("historical-assistant-")), false);
+    assertEquals(snapshot.runtimeContinuation?.nextStep, 1);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("project Array.some replacement cannot seal an unresolved admitted tool effect", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const originalSome = Array.prototype.some;
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    let unsafeSealed = false;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (event, occurrenceId, checkpoint) => {
+        cursor++;
+        if (checkpoint) {
+          for (let index = 0; index < checkpoint.snapshot.toolBoundaries.length; index++) {
+            if (checkpoint.snapshot.toolBoundaries[index]?.kind === "admitted-intent") {
+              unsafeSealed = true;
+            }
+          }
+        }
+        return {
+          eventId: cursor,
+          externalSequence: cursor,
+          toolAdmissions: event.type === "TOOL_CALL_START"
+            ? [{
+              occurrenceId: occurrenceId!,
+              admissionEventId: "admit-1",
+              startEventId: String(cursor),
+              toolCallId: "call",
+              publicToolCallId: "call",
+              projectId: identity.projectId,
+              runId: identity.canonicalRunId,
+            }]
+            : [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: cursor,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: cursor + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const initial = await captureInitialNativeRecoveryBoundary();
+    await writer.persistBoundary(initial);
+    await writer.appendMappedEvent({
+      event: "ToolCallStart",
+      payload: { toolCallId: "call", toolCallName: "inspect" },
+    }, "55555555-5555-4555-8555-555555555555");
+    const messages: typeof initial.messages = [...initial.messages, {
+      id: "pending-model",
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+    }];
+    if (!initial.runtimeContinuation) throw new Error("Native initial continuation required");
+    Array.prototype.some = () => false;
+    await writer.persistBoundary({
+      messages,
+      toolExposureCheckpoint: initial.toolExposureCheckpoint,
+      providerReplayCheckpoints: [],
+      runtimeContinuation: { ...initial.runtimeContinuation, messages },
+    });
+    Array.prototype.some = originalSome;
+    assertEquals(
+      unsafeSealed,
+      false,
+      "An uncertain effect must never become an authenticated safe continuation",
+    );
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const records = await home.read();
+    const { parseRecoverySnapshot, validateRecoverySnapshotForRestore } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot(records[records.length - 1]!.value);
+    assertEquals(snapshot.toolBoundaries[0]?.kind, "admitted-intent");
+    let rejected = false;
+    Array.prototype.some = () => false;
+    try {
+      validateRecoverySnapshotForRestore(snapshot, snapshot.binding);
+    } catch {
+      rejected = true;
+    }
+    Array.prototype.some = originalSome;
+    assertEquals(rejected, true);
+  } finally {
+    Array.prototype.some = originalSome;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+for (const maxSteps of [1]) {
+  it("resumed local tool persists admitted intent before its effect and a restorable result before the provider", async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(new Error("Truncated input admission deadlock")),
+      5000,
+    );
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let cursor = 0;
+      let effects = 0;
+      const order: string[] = [];
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId, checkpoint) => {
+          cursor++;
+          order.push(String(event.type));
+          const eventId = cursor;
+          return {
+            eventId,
+            externalSequence: cursor,
+            ...(checkpoint
+              ? {
+                recoveryCheckpoint: {
+                  snapshot_event_id: eventId,
+                  snapshot_external_sequence: cursor,
+                  checkpoint_event_id: eventId + 10000,
+                },
+              }
+              : {}),
+            toolAdmissions: event.type === "TOOL_CALL_START"
+              ? [{
+                occurrenceId: occurrenceId!,
+                admissionEventId: String(1000 + cursor),
+                startEventId: String(eventId),
+                toolCallId: String(event.toolCallId),
+                publicToolCallId: String(event.toolCallId),
+                projectId: identity.projectId,
+                runId: identity.canonicalRunId,
+              }]
+              : [],
+          };
+        },
+      });
+      writer.bindSignal(abort.signal);
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      const { runWithToolCallOccurrences } = await import(
+        "#veryfront/runtime/tool-call-occurrence.ts"
+      );
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { parseSseJsonEvents, createStreamTransformState, mapRuntimeEventToAgUi } =
+        await import(
+          "#veryfront/internal-agents/ag-ui-sse.ts"
+        );
+      const model = scriptedModel([{ text: "Complete" }], { only: "stream" });
+      let intentBeforeEffect = false;
+      const runtime = createEphemeralAgentWithRuntimeOptions({
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps,
+        tools: {
+          inspect: tool({
+            id: "inspect",
+            description: "Synthetic",
+            inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+            execute: async () => {
+              const home = await DurableRunHome.open({
+                directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+                identity,
+              });
+              const { parseRecoverySnapshot } = await import(
+                "#veryfront/internal-agents/recovery-snapshot.ts"
+              );
+              const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+              intentBeforeEffect = snapshot.toolBoundaries.some((boundary) =>
+                boundary.kind === "admitted-intent"
+              );
+              effects++;
+              order.push("ACTUAL_EFFECT");
+              return Promise.resolve({ ok: true });
+            },
+          }),
+        },
+      }, {
+        resolveModelRuntime: () => model,
+        persistRecoveryBoundary: writer.persistBoundary,
+        resumeToolCall: { id: "resumed-call", name: "inspect", input: { query: "resume" } },
+      });
+      const result = await runWithRecoveryToolExecutionPolicy(
+        writer.executeTool,
+        () => runWithToolCallOccurrences(() => runtime.stream({ input: "Synthetic" })),
+      );
+      const reader = result.toDataStreamResponse().body!.getReader();
+      const decoder = new TextDecoder();
+      const state = createStreamTransformState();
+      let remainder = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const parsed = parseSseJsonEvents(
+          remainder + decoder.decode(chunk.value, { stream: true }),
+        );
+        remainder = parsed.remainder;
+        for (const event of parsed.events) {
+          for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            await writer.appendMappedEvent(
+              mapped,
+              mapped.event === "ToolCallStart" &&
+                typeof event.privateToolCallOccurrenceId === "string"
+                ? event.privateToolCallOccurrenceId
+                : undefined,
+            );
+          }
+        }
+      }
+      reader.releaseLock();
+      assertEquals(abort.signal.aborted, false);
+      assertEquals(effects, 1);
+      assertEquals(intentBeforeEffect, true);
+      assertEquals(model.callCount, 1);
+      assertEquals(order.includes("TOOL_CALL_START"), true);
+      assertEquals(order.indexOf("TOOL_CALL_START") < order.indexOf("TOOL_CALL_RESULT"), true);
+      const home = await DurableRunHome.open({
+        directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+        identity,
+      });
+      const { parseRecoverySnapshot } = await import(
+        "#veryfront/internal-agents/recovery-snapshot.ts"
+      );
+      const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+      assertEquals(snapshot.toolBoundaries[0]!.kind, "acknowledged-receipt");
+      if (maxSteps === 2) assertEquals(snapshot.runtimeContinuation?.nextStep, 2);
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+it("managed runtime preserves more than 100 acknowledged model turns across native continuations", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    let largestCheckpoint = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _occurrenceId, checkpoint) => {
+        const eventId = ++cursor;
+        if (checkpoint) {
+          largestCheckpoint = Math.max(
+            largestCheckpoint,
+            new TextEncoder().encode(JSON.stringify(checkpoint)).length,
+          );
+        }
+        return {
+          eventId,
+          externalSequence: cursor,
+          toolAdmissions: [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: eventId,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: eventId + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const model = scriptedModel([{ text: "Done" }], { only: "stream", repeatLastTurn: true });
+    let initial = true;
+    let messages: import("#veryfront/agent").AgentMessage[] = [{
+      id: "synthetic-user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    }];
+    const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+    const createRuntime = () =>
+      new AgentRuntime("native-turn-proof", {
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps: 102,
+        skills: false,
+      }, {
+        resolveModelRuntime: () => model,
+        persistRecoveryBoundary: async (boundary) => {
+          // Persist the initial and every completed native turn. Re-enter the same
+          // managed run with its actual transcript; no synthetic snapshot/turns.
+          if (initial || boundary.runtimeContinuation?.completed) {
+            await writer.persistBoundary(boundary);
+            initial = false;
+            messages = boundary.messages;
+          }
+        },
+      });
+    for (let turn = 0; turn < 101; turn++) {
+      if (turn > 0) {
+        messages.push({
+          id: `synthetic-user-${turn}`,
+          role: "user",
+          parts: [{ type: "text", text: "Continue" }],
+        });
+      }
+      await new Response(await createRuntime().stream(messages, { runId: identity.publicRunId }))
+        .text();
+    }
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const records = await home.read();
+    const snapshot = parseRecoverySnapshot(records[records.length - 1]!.value);
+    assertEquals(model.callCount, 101);
+    assertEquals(snapshot.modelTurns.length, 101);
+    assertEquals(snapshot.runtimeContinuation?.completed, true);
+    assertEquals(largestCheckpoint <= 192 * 1024, true);
+    console.info({
+      modelCalls: model.callCount,
+      persistedModelTurns: snapshot.modelTurns.length,
+      largestCheckpointBytes: largestCheckpoint,
+    });
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("checkpoint byte guard rejects oversized native continuation despite poisoned TextEncoder", async () => {
+  const { assertRejects } = await import("#veryfront/testing/assert.ts");
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const encode = TextEncoder.prototype.encode;
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let appends = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async () => {
+        appends++;
+        throw new Error("Oversized checkpoint must not reach transport");
+      },
+    });
+    const initial = await captureInitialNativeRecoveryBoundary();
+    if (!initial.runtimeContinuation) throw new Error("Expected native continuation");
+    const message = {
+      id: "large-user",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "x".repeat(192 * 1024) }],
+    };
+    const boundary = {
+      ...initial,
+      messages: [message],
+      runtimeContinuation: { ...initial.runtimeContinuation, messages: [message] },
+    };
+    TextEncoder.prototype.encode = () => new Uint8Array();
+    await assertRejects(
+      () => writer.persistBoundary(boundary),
+      Error,
+      "safe boundary exceeds its bound",
+    );
+    TextEncoder.prototype.encode = encode;
+    assertEquals(appends, 0);
+  } finally {
+    TextEncoder.prototype.encode = encode;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

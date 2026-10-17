@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1279-rc",
+  "version": "0.1.1279",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -100,6 +100,7 @@
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
     "./agent/pause-checkpoint": "./src/agent/pause-checkpoint.ts",
+    "./runtime/managed-recovery-snapshot": "./src/runtime/managed-recovery-snapshot.ts",
     "./agent/executor-runtime": "./src/agent/hosted/executor-runtime-entrypoint.ts",
     "./agent/managed-broker": "./src/agent/service/managed-broker.ts",
     "./agent/trusted-broker": "./src/agent/service/trusted-managed-broker.ts",
