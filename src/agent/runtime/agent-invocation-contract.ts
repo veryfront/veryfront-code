@@ -1,3 +1,4 @@
+import { snapshotHostedTaskInput } from "../hosted/task-input.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -417,6 +418,15 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     run: getRuntimeAgentRunContextSchema(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
+    taskInput: v.unknown().optional().refine((value) => {
+      if (value === undefined) return true;
+      try {
+        snapshotHostedTaskInput(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, { message: "Invalid bounded task input" }),
     messages: v.array(v.unknown()).default([]),
     tools: v.array(getRuntimeAgentToolSchema()).max(50).default([]),
     context: v.array(getRuntimeAgentContextItemSchema()).max(10).default([]).refine(

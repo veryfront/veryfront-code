@@ -274,6 +274,7 @@ export function createAgentServiceRuntime<
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
     verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
+    verifyRunTerminalToken: auth.verifyRunTerminalToken,
     verifyRunCancellationToken: auth.verifyRunCancellationToken,
     verifyRunResumeToken: auth.verifyRunResumeToken,
     tracker,

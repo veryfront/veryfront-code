@@ -1,4 +1,5 @@
 import {
+  hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalCanonicalRunId,
 } from "../hosted/terminal-credential.ts";
@@ -184,6 +185,8 @@ function createBrokerAuthority<TRequest extends ParsedHostedChatRequest>(
             runId,
             canonicalRunId: hostedTerminalCanonicalRunId(parsedRequest),
             inheritedAdmitter: hostedInheritedRunAdmitter(parsedRequest, options),
+            acceptedChildEvidence: (projectId, signal) =>
+              hostedAcceptedChildEvidence(parsedRequest, projectId, signal, options),
           })
           : undefined;
       },

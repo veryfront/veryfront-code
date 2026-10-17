@@ -14,18 +14,18 @@ import {
 } from "./vocabulary.ts";
 
 /**
- * API catalog snapshot a691aa0f (2026-09-28), plus the retained UNKNOWN fallback.
+ * API task-input candidate based on 1a1de052 (2026-10-14), plus the retained UNKNOWN fallback.
  * Recompute from that API revision's RUN_EVENT_TYPES plus UNKNOWN:
  * SHA-256 of sorted type names joined with "\n", with no trailing newline.
  * For classes, hash sorted "type=class" lines from the API's getRunEventClass;
  * UNKNOWN remains fact. All four newly added API types are facts.
  * The display catalog is not an input to either digest.
  */
-const API_RUN_EVENT_TYPE_COUNT = 57;
+const API_RUN_EVENT_TYPE_COUNT = 59;
 const API_RUN_EVENT_TYPES_SHA256 =
-  "5357bef5f2a262d41e751446b3745e883f710f179bae9c3ba3ada8102f0f4158";
+  "49563beb4f6927625b12ff27e03b68c1ea4597b460eb190ce45d8ec441b49e20";
 const API_RUN_EVENT_CLASS_BY_TYPE_SHA256 =
-  "0a65cbbbb6beea61ceea9c317228f23d9bf63078c72b19bdef6e5bd40b006d01";
+  "1305b90379ccb07114733cc35a78b494a6ad9b702d72e4504aac8a236b77c483";
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

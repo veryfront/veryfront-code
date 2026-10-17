@@ -65,6 +65,7 @@ import {
   runWithHostedPlatformDependencies,
 } from "#veryfront/agent/hosted/platform-dependency-credential.ts";
 import {
+  hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalToolSourceFactory,
   registerHostedTerminalCredential,
@@ -2518,4 +2519,339 @@ describe("hosted platform dependency source policy", () => {
       }
     }
   });
+});
+
+describe("native accepted task input signed claims", () => {
+  it("verifies paired proof and rejects missing/malformed pairs without widening grants", async () => {
+    for (
+      const fields of [
+        { taskInputSha256: "a".repeat(64), taskInputRootRunId: "run_root" },
+        { taskInputSha256: "a".repeat(64) },
+        { taskInputRootRunId: "run_root" },
+        { taskInputSha256: "A".repeat(64), taskInputRootRunId: "run_root" },
+        { taskInputSha256: "a".repeat(64), taskInputRootRunId: "invalid root" },
+      ]
+    ) {
+      const fixture = await createRs256JwtFixture({
+        ...apiRunEventWriterContract.payload,
+        ...fields,
+        integrationTools: ["outlook__move_email"],
+      });
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      const result = await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: apiRunEventWriterContract.payload.projectId,
+        runId: apiRunEventWriterContract.payload.runId,
+      });
+      assertEquals(
+        result,
+        fields.taskInputSha256 === "a".repeat(64) && fields.taskInputRootRunId === "run_root"
+          ? { verified: true, ...fields, integrationTools: ["outlook__move_email"] }
+          : { verified: false },
+      );
+    }
+  });
+});
+
+it("binds parent evidence reads to RS256-verified writer generation instead of terminal hints", async () => {
+  const projectId = apiRunEventWriterContract.payload.projectId;
+  const runId = apiRunEventWriterContract.payload.runId;
+  const canonical = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const foreign = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const payload = {
+    ...apiRunEventWriterContract.payload,
+    agentId: "parent-agent",
+    platformToolDependencies: [{ toolId: "intake", platformTools: ["veryfront__create_file"] }],
+    workerGeneration: {
+      projectId,
+      runId,
+      canonicalRunId: canonical,
+      dispatchNonce: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workerId: "worker",
+      transportRecoveryAttempt: 0,
+    },
+  };
+  const fixture = await createRs256JwtFixture(payload);
+  const auth = createHostedServiceAuth({
+    authProvider: webCryptoAuthProvider,
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
+      NODE_ENV: "production",
+      VERYFRONT_API_URL: "https://api.example.test",
+    }),
+  });
+  for (const tampered of [false, true]) {
+    const owner = {
+      projectId,
+      agentId: "parent-agent",
+      authToken: "synthetic-parent-auth",
+      durableRootRun: { runId },
+    } as import("#veryfront/agent/hosted/chat-request-parser.ts").ParsedHostedChatRequest;
+    const writer = tampered
+      ? `${fixture.token.split(".")[0]}.${
+        encodeBase64UrlBytes(
+          new TextEncoder().encode(
+            JSON.stringify({
+              ...payload,
+              workerGeneration: { ...payload.workerGeneration, canonicalRunId: foreign },
+            }),
+          ),
+        )
+      }.${fixture.token.split(".")[2]}`
+      : fixture.token;
+    registerHostedTerminalCredential(
+      owner,
+      createUnsignedJwt({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId,
+        canonicalRunId: foreign,
+        dispatchNonce: "forged",
+      }),
+      writer,
+      auth.verifyRunEventAppendToken,
+    );
+    let reads = 0;
+    const evidence = hostedAcceptedChildEvidence(owner, projectId, undefined, {
+      apiUrl: "https://api.example.test",
+      fetch: (input) => {
+        reads++;
+        assertEquals(
+          String(input),
+          `https://api.example.test/runs/${canonical}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+        );
+        return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+      },
+    });
+    if (tampered) {
+      await assertRejects(
+        () => evidence.readParentToolResults(),
+        Error,
+        "verified parent authority",
+      );
+      await assertRejects(
+        () => evidence.readCommittedVersion("note", canonical),
+        Error,
+        "verified parent authority",
+      );
+      assertEquals(reads, 0);
+    } else {
+      assertEquals(await evidence.readParentToolResults(), []);
+      assertEquals(reads, 1);
+    }
+  }
+});
+
+it("reads inherited parent evidence when only the signed terminal token carries the canonical ID", async () => {
+  const projectId = apiRunEventWriterContract.payload.projectId;
+  const runId = apiRunEventWriterContract.payload.runId;
+  const canonical = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const writer = await createRs256JwtFixture(apiRunEventWriterContract.payload);
+  const terminalPayload = {
+    ...apiRunEventWriterContract.payload,
+    canonicalRunId: canonical,
+    writerPurpose: "current_run_terminal",
+    dispatchNonce: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    workerId: "worker",
+    transportRecoveryAttempt: 0,
+    scopes: ["agent-runs:terminal:complete"],
+  };
+  const terminal = await createRs256JwtFixture(terminalPayload, writer.keyPair);
+  const auth = createHostedServiceAuth({
+    authProvider: webCryptoAuthProvider,
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: writer.publicKeyPem,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+      NODE_ENV: "production",
+      VERYFRONT_API_URL: "https://api.example.test",
+    }),
+  });
+  assertEquals(await auth.verifyRunEventAppendToken({ token: terminal.token, projectId, runId }), {
+    verified: false,
+  });
+  const source = { type: "release", releaseId: "release-fixture" } as const;
+  const owner = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+    new Request("https://runtime.example/api/runs", {
+      method: "POST",
+      headers: {
+        "X-Veryfront-Run-Event-Token": writer.token,
+        "X-Veryfront-Run-Terminal-Token": terminal.token,
+      },
+      body: JSON.stringify({
+        run: {
+          agentServiceId: "runtime-provider",
+          agentId: "parent-agent",
+          conversationId: canonical,
+          runId,
+          messageId: canonical,
+          inputAnchorMessageId: canonical,
+          requestedByUserId: canonical,
+          project: { projectId, projectSlug: "fixture-project", runtimeTargetKind: "main_branch" },
+        },
+        messages: [{
+          id: "input",
+          role: "user",
+          parts: [{ type: "text", text: "Read accepted evidence" }],
+        }],
+        agentSource: source,
+      }),
+    }),
+    {
+      authenticate: async () => ({ userId: "fixture-user", authToken: "synthetic-parent-auth" }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
+      verifyRunTerminalToken: auth.verifyRunTerminalToken,
+      runtimeSource: source,
+    },
+  );
+  assert(!(owner instanceof Response), owner instanceof Response ? await owner.text() : undefined);
+  const evidence = hostedAcceptedChildEvidence(owner, projectId, undefined, {
+    apiUrl: "https://api.example.test",
+    fetch: (input) => {
+      assertEquals(
+        String(input),
+        `https://api.example.test/runs/${canonical}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+      );
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    },
+  });
+  assertEquals(await evidence.readParentToolResults(), []);
+  assertEquals(
+    await auth.verifyRunTerminalToken!({ token: writer.token, projectId, runId }),
+    false,
+  );
+  for (
+    const overrides of [
+      { writerPurpose: "detached_completion" },
+      { projectId: "foreign" },
+      { runId: "foreign" },
+      { serviceAccountId: "foreign" },
+      { userId: "foreign" },
+      { actorType: "user" },
+      { tokenUse: "access" },
+      { canonicalRunId: "invalid" },
+      { dispatchNonce: "" },
+      { scopes: ["agent-runs:events:append"] },
+      { scope: ["runs:write"] },
+    ]
+  ) {
+    const invalid = await createRs256JwtFixture(
+      { ...terminalPayload, ...overrides },
+      writer.keyPair,
+    );
+    assertEquals(
+      await auth.verifyRunTerminalToken!({ token: invalid.token, projectId, runId }),
+      false,
+    );
+  }
+  const tamperedTerminal = `${terminal.token.split(".")[0]}.${
+    encodeJsonBase64Url({
+      ...terminalPayload,
+      canonicalRunId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    })
+  }.${terminal.token.split(".")[2]}`;
+  assertEquals(
+    await auth.verifyRunTerminalToken!({ token: tamperedTerminal, projectId, runId }),
+    false,
+  );
+  registerHostedTerminalCredential(
+    owner,
+    tamperedTerminal,
+    writer.token,
+    auth.verifyRunEventAppendToken,
+    auth.verifyRunTerminalToken,
+  );
+  let invalidReads = 0;
+  const invalidEvidence = hostedAcceptedChildEvidence(owner, projectId, undefined, {
+    apiUrl: "https://api.example.test",
+    fetch: () => {
+      invalidReads++;
+      throw new Error("Unexpected read");
+    },
+  });
+  await assertRejects(
+    () => invalidEvidence.readParentToolResults(),
+    Error,
+    "verified parent identity",
+  );
+  assertEquals(invalidReads, 0);
+});
+
+it("verifies terminal evidence with captured scope and routing intrinsics", async () => {
+  const projectId = "project-fixture", runId = "run-fixture";
+  const canonicalRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let scopes = ["agent-runs:terminal:complete"];
+  const claims = () => ({
+    sub: "server-fixture",
+    actorType: "service_account",
+    tokenUse: "run_event_writer",
+    writerPurpose: "current_run_terminal",
+    serviceAccountId: "server-fixture",
+    userId: "server-fixture",
+    projectId,
+    runId,
+    canonicalRunId,
+    dispatchNonce: "nonce-fixture",
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    scopes,
+  });
+  const token = `header.${btoa(JSON.stringify(claims()))}.signature`;
+  const invalidToken = `header.${
+    btoa(JSON.stringify({ ...claims(), canonicalRunId: "invalid" }))
+  }.signature`;
+  const auth = createHostedServiceAuth({
+    authProvider: { verifyWithPublicKey: () => Promise.resolve(claims()) },
+    getConfig: () => ({
+      VERYFRONT_API_URL: "https://api.example.test",
+      OAUTH_PUBLIC_KEY: "fixture-key",
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: "server-fixture",
+    }),
+  });
+  const { terminalRoute } = await import("#veryfront/agent/conversation/terminal-route.ts");
+  const targets = [
+    [Array, "isArray"],
+    [Array.prototype, "every"],
+    [Array.prototype, "includes"],
+    [globalThis, "Set"],
+    [RegExp.prototype, "test"],
+  ] as const;
+  for (let index = 0; index < targets.length * 2; index++) {
+    const [target, key] = targets[index % targets.length]!;
+    const original = Object.getOwnPropertyDescriptor(target, key)!;
+    let valid = false, invalid = true, invalidRouteRejected = false, route: string | undefined;
+    try {
+      Object.defineProperty(target, key, {
+        ...original,
+        value: () => {
+          if (index < targets.length) throw new Error("Tenant intrinsic hook");
+          return true;
+        },
+      });
+      valid = await auth.verifyRunTerminalToken!({ token, projectId, runId });
+      scopes = ["agent-runs:terminal:complete", "agent-runs:terminal:complete"];
+      invalid = await auth.verifyRunTerminalToken!({ token, projectId, runId });
+      route = terminalRoute(token, runId).id;
+      try {
+        terminalRoute(invalidToken, runId);
+      } catch {
+        invalidRouteRejected = true;
+      }
+    } finally {
+      Object.defineProperty(target, key, original);
+      scopes = ["agent-runs:terminal:complete"];
+    }
+    assertEquals(valid, true, `valid terminal proof under poisoned ${key}`);
+    assertEquals(invalid, false, `duplicate scopes under poisoned ${key}`);
+    assertEquals(route, canonicalRunId);
+    assertEquals(invalidRouteRejected, true, `malformed route under poisoned ${key}`);
+  }
 });

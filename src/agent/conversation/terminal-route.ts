@@ -1,6 +1,7 @@
 const parse = JSON.parse;
 const decode = atob;
 const apply = Reflect.apply;
+const exec = RegExp.prototype.exec;
 const split = String.prototype.split;
 const replaceAll = String.prototype.replaceAll;
 function claims(token: string): Record<string, unknown> {
@@ -31,7 +32,7 @@ export function terminalRoute(
     if (
       claim.tokenUse !== "run_event_writer" || claim.writerPurpose !== "current_run_terminal" ||
       claim.runId !== runId || typeof claim.canonicalRunId !== "string" ||
-      !uuid.test(claim.canonicalRunId) ||
+      apply(exec, uuid, [claim.canonicalRunId]) === null ||
       typeof claim.dispatchNonce !== "string" || !claim.dispatchNonce
     ) throw new Error();
     return { id: claim.canonicalRunId, generation: claim.dispatchNonce };

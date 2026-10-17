@@ -39,6 +39,7 @@ import {
   parseRuntimeAgentMarkdownDefinition,
   type RuntimeAgentMarkdownDefinition,
 } from "../runtime/agent-definition.ts";
+import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { CANONICAL_LOAD_SKILL_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 
 /** Terminal error codes a hosted child agent lookup reports to the parent. */
@@ -394,8 +395,11 @@ export async function fetchHostedProjectAgentDefinition(
     );
   }
   const url = new URL(
-    `/projects/${encodeURIComponent(input.projectId)}/agents/${encodeURIComponent(input.agentId)}`,
-    input.apiUrl,
+    createVeryfrontApiRequestUrlResolver(input.apiUrl)(
+      `/projects/${encodeURIComponent(input.projectId)}/agents/${
+        encodeURIComponent(input.agentId)
+      }`,
+    ),
   );
   if (input.branchId && UUID_PATTERN.test(input.branchId)) {
     url.searchParams.set("source_target_kind", "preview_branch");

@@ -1,3 +1,4 @@
+import { runWithHostedChildTaskInputExecution } from "../hosted/accepted-child-input-scope.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -359,7 +360,8 @@ export async function executeAgUiDetachedStart(
       );
     }
 
-    const detachedTask = (async () => {
+    const executionSignal = abortSignal;
+    const detachedTask = runWithHostedChildTaskInputExecution(async () => {
       try {
         if (options.startDetachedExecution) {
           await options.startDetachedExecution({
@@ -367,14 +369,14 @@ export async function executeAgUiDetachedStart(
             requestOrCtx: applicationRequest,
             rawRequest: applicationRequest!,
             context,
-            abortSignal,
+            abortSignal: executionSignal,
           });
         } else if (options.agent) {
           await startDefaultDetachedExecution({
             agent: options.agent,
             request: input.request,
             context,
-            abortSignal,
+            abortSignal: executionSignal,
             sessionManager: options.sessionManager,
           });
         } else {
@@ -386,22 +388,22 @@ export async function executeAgUiDetachedStart(
         // Finalize by signal: a park-cancelled execution can settle after the
         // resumed start has reused this run id, and must neither end that session
         // nor run lifecycle callbacks (which untrack the run id) on its behalf.
-        options.sessionManager.completeRun(input.request.runId, abortSignal);
-        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
+        options.sessionManager.completeRun(input.request.runId, executionSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, executionSignal)) return;
         await options.onFinish?.({
           runId: input.request.runId,
           threadId: input.request.threadId,
         });
       } catch (error) {
-        options.sessionManager.failRun(input.request.runId, abortSignal);
-        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
+        options.sessionManager.failRun(input.request.runId, executionSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, executionSignal)) return;
         await options.onError?.({
           runId: input.request.runId,
           threadId: input.request.threadId,
           error,
         });
       }
-    })().catch((error) => {
+    }).catch((error) => {
       // The inner try/catch handles all expected errors (execution failure, onError, failRun).
       // Reaching here means the session manager or onError callback itself threw — log so
       // the broken error-reporting pipeline is visible and the run is not silently abandoned.

@@ -1,3 +1,4 @@
+import type { HostedTaskInput } from "./task-input.ts";
 import type { ChatFinishReason } from "#veryfront/chat/protocol.ts";
 import type {
   ChatSystemMessage,
@@ -132,6 +133,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   authToken: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   model?: string;
   temperature?: number;

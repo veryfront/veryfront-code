@@ -1,3 +1,4 @@
+import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
 import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
 import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
@@ -154,6 +155,8 @@ export type DefaultHostedChatRuntimeCreationOptions =
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   projectId: string;
   projectSlug?: string;
@@ -244,11 +247,13 @@ export type CreateDefaultHostedChatRuntimeOptions = {
 };
 
 function createDefaultTaskContext(
-  input: CreateDefaultHostedChatRuntimeContextInput,
+  input: CreateDefaultHostedChatRuntimeContextInput & { taskInput: HostedTaskInput | undefined },
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
     runId: input.options.runId,
+    rootRunId: input.options.rootRunId,
+    taskInput: input.taskInput,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     projectSlug: input.options.projectSlug,
@@ -653,6 +658,7 @@ export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
+  const taskInput = resolveHostedTaskInput(input.options.taskInput, input.options);
   const runWithPlatformDependencies = captureHostedPlatformDependencyExecution();
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
@@ -679,7 +685,7 @@ export async function createDefaultHostedChatRuntime(
       );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
-        : createDefaultTaskContext({ options: input.options, modelId });
+        : createDefaultTaskContext({ options: input.options, modelId, taskInput });
       inheritHostedChildInferenceAuthority(taskContext, input.options);
       // The id is normalized, so hosted identity comes from the run's routing,
       // read with the run's credentials and served catalog.
@@ -795,6 +801,8 @@ export async function createDefaultHostedChatRuntime(
             runtimeAgent,
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,
+            rootRunId: input.options.rootRunId,
+            taskInput,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,

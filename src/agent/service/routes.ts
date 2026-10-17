@@ -204,6 +204,10 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
       error: { errorCode: string; message: string; statusCode: number };
     }
   >;
+  /** Verify exact-run terminal identity for credentialed evidence reads. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   verifyRunEventAppendToken?: (input: {
     token: string;
     projectId: string;
@@ -514,6 +518,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         verifyProjectAccess: ({ projectId, authToken }) =>
           options.verifyProjectAccess(projectId, authToken),
         verifyRunEventAppendToken: options.verifyRunEventAppendToken,
+        verifyRunTerminalToken: options.verifyRunTerminalToken,
       });
       if (isResponseLike(req)) {
         return req;
@@ -590,6 +595,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
             verifyProjectAccess: ({ projectId, authToken }) =>
               options.verifyProjectAccess(projectId, authToken),
             verifyRunEventAppendToken: options.verifyRunEventAppendToken,
+            verifyRunTerminalToken: options.verifyRunTerminalToken,
             runtimeSource,
           },
         );
