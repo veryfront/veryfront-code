@@ -6835,3 +6835,74 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(captures.length, 0);
   });
 });
+
+it("sealed ingress preserves terminal authority for managed recovery admission", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  let discoveryCalls = 0;
+  const handler = createTestAgentStreamHandler({
+    ensureProjectDiscovery: async () => {
+      discoveryCalls++;
+      return createEmptyDiscoveryResult();
+    },
+    getAgent: () => undefined,
+    getAllAgentIds: () => [],
+    sessionManager: new AgentRunSessionManager(),
+  });
+  const body = createAgentStreamRequestBody({
+    project: { projectId },
+    credentials: { authToken: "synthetic-invocation" },
+    managedRecoveryAdmission: {
+      version: 1,
+      identity: {
+        projectId,
+        canonicalRunId: "22222222-2222-4222-8222-222222222222",
+        publicRunId: "run_1",
+        sourceHash: "a".repeat(64),
+      },
+      generation: {
+        workerId: "worker-1",
+        dispatchNonce: "66666666-6666-4666-8666-666666666666",
+        transportRecoveryAttempt: 0,
+      },
+      acknowledgedExternalSequence: 0,
+      leaseRemainingMs: 10_000,
+      sourceBinding: {
+        projectId,
+        environmentId: "33333333-3333-4333-8333-333333333333",
+        releaseId: "44444444-4444-4444-8444-444444444444",
+      },
+      eventPersistence: "runtime-owned-v1",
+      expiresAt: Math.floor(Date.now() / 1000) + 30,
+    },
+  });
+  const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+    requestId: "run_1",
+    projectId,
+  });
+  const request = sealIngressCredentials(
+    new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veryfront-control-plane-jws": jws,
+        [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+      },
+      body,
+    }),
+  );
+  assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+  const ctx = createCtx(publicKeyPem);
+  ctx.projectId = projectId;
+  const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+  try {
+    const result = await handler.handle(request, ctx);
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(await result.response.json(), { error: "Agent not found" });
+    assertEquals(discoveryCalls, 1);
+  } finally {
+    if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+  }
+});

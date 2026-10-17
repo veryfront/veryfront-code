@@ -441,3 +441,44 @@ it("actual stream denies a callable effect after live generation changes", async
     else Deno.env.set(envKey, previous);
   }
 });
+
+it("project WeakMap hooks cannot intercept recovery input authority", async () => {
+  const previous = Deno.env.get(envKey);
+  const originalSet = WeakMap.prototype.set;
+  const originalGet = WeakMap.prototype.get;
+  try {
+    const claims = await signed();
+    const input = {
+      runId: identity.publicRunId,
+      threadId: "thread",
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    let intercepted = false;
+    let actual;
+    try {
+      WeakMap.prototype.set = function (key, value) {
+        if (value === claims) intercepted = true;
+        return originalSet.call(this, key, value);
+      };
+      WeakMap.prototype.get = function (key) {
+        const value = originalGet.call(this, key);
+        if (value === claims) intercepted = true;
+        return value;
+      };
+      bindManagedRecoveryInput(input, claims);
+      actual = getManagedRecoveryInputClaims(input);
+    } finally {
+      WeakMap.prototype.set = originalSet;
+      WeakMap.prototype.get = originalGet;
+    }
+    assertEquals(actual, claims);
+    assertEquals(intercepted, false);
+  } finally {
+    WeakMap.prototype.set = originalSet;
+    WeakMap.prototype.get = originalGet;
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

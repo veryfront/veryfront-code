@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   getVerifiedControlPlaneRecoveryAdmission,
   type VerifiedControlPlaneRequestClaims,
@@ -6,7 +7,10 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 
 // Object identity connects the exact signed request to the sanitized runtime input.
 // Neither forwarded props nor a copied claims/input object can carry this authority.
-const claimsByInput = new WeakMap<RuntimeRunAgentInput, VerifiedControlPlaneRequestClaims>();
+const claimsByInput = createPrivateWeakStore<
+  RuntimeRunAgentInput,
+  VerifiedControlPlaneRequestClaims
+>();
 
 export function bindManagedRecoveryInput(
   input: RuntimeRunAgentInput,

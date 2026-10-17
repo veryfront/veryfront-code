@@ -1335,7 +1335,7 @@ export class AgentStreamHandler extends BaseHandler {
       bindManagedRecoveryCredentials(verifiedClaims, {
         authToken: payload.credentials?.authToken,
         sourceAuthToken: payload.credentials?.sourceAuthToken,
-        terminalToken: req.headers.get("x-veryfront-run-terminal-token"),
+        terminalToken: readIngressCredential(req, INGRESS_RUN_TERMINAL_TOKEN_HEADER),
         writerToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER),
       });
       // Capture host process identity before entering project-controlled environment scopes.
