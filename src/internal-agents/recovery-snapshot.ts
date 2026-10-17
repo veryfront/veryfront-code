@@ -95,7 +95,6 @@ const invalid = () => new Error("Recovery snapshot is inconsistent or unsafe to 
 export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   const snapshot = getRecoverySnapshotSchema().parse(snapshotDurableValue(value));
   const { identity } = snapshot.binding;
-  if (snapshot.binding.sourceBinding.projectId !== identity.projectId) throw invalid();
   if (
     new Set(snapshot.toolExposureCheckpoint.loadedToolNames).size !==
       snapshot.toolExposureCheckpoint.loadedToolNames.length

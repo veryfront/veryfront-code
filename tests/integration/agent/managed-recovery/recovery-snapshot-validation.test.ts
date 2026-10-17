@@ -214,10 +214,10 @@ it("snapshots require an actual positive safe database acknowledgement independe
   assertThrows(() => parseRecoverySnapshot(missing));
 });
 
-it("snapshot source project must match its canonical execution project", () => {
+it("snapshot source project must match its trusted restore source project", () => {
   const value = fixture();
   assertThrows(() =>
-    parseRecoverySnapshot({
+    validateRecoverySnapshotForRestore({
       ...value,
       binding: {
         ...value.binding,
@@ -226,7 +226,7 @@ it("snapshot source project must match its canonical execution project", () => {
           projectId: "99999999-9999-4999-8999-999999999999",
         },
       },
-    })
+    }, parseRecoverySnapshot(value).binding)
   );
 });
 
@@ -541,7 +541,7 @@ it("tool result roles agree with the native provider transcript for current and 
     const value = fixture();
     const current = {
       ...value,
-      messages: [value.messages[0], { ...value.messages[1], role }],
+      messages: [value.messages[0]!, { ...value.messages[1]!, role }],
       modelTurns: [
         { messageId: "model-1", acknowledgedExternalSequence: 1 },
         ...(role === "assistant"
@@ -933,8 +933,9 @@ for (const resetPolicy of [false, true]) {
           skillsDir: "/skills",
           projectSkillLoader: {
             listProjectSkillReferences: () => Promise.resolve([]),
-            loadProjectSkill: ({ skillId }) =>
+            loadProjectSkill: (_context, skillId) =>
               Promise.resolve({
+                references: [],
                 instructions: skillId === "plain"
                   ? "Use the plain policy."
                   : "---\nname: review\ndescription: Synthetic delegation policy\nmodel: openai/gpt-5.4\nthinking: false\nmax-steps: 20\n---\nUse the synthetic delegation policy.",
@@ -1054,8 +1055,18 @@ for (const resetPolicy of [false, true]) {
     assertEquals(boundaries[1]?.input, { prompt: "synthetic" });
     const parsed = parseRecoverySnapshot(snapshot);
     assertEquals(parsed.runtimeContinuation?.toolCalls[1]?.args, delegatedInputs[0]);
+    assertEquals(
+      continuation.activeSkillDelegationOverrides,
+      resetPolicy ? {} : {
+        model: "openai/gpt-5.4",
+        thinking: false,
+        maxSteps: 20,
+      },
+    );
     for (
-      const activeSkillDelegationOverrides of [undefined, {}, { model: "foreign" }, {
+      const activeSkillDelegationOverrides of [undefined, ...(resetPolicy ? [] : [{}]), {
+        model: "foreign",
+      }, {
         ...continuation.activeSkillDelegationOverrides,
         maxSteps: 21,
       }]
@@ -1088,3 +1099,22 @@ for (const resetPolicy of [false, true]) {
     }
   });
 }
+
+it("cross-project source and run bindings remain independent and both must match trusted restore scope", () => {
+  const value = fixture();
+  value.binding.sourceBinding.projectId = "77777777-7777-4777-8777-777777777777";
+  const binding = parseRecoverySnapshot(value).binding;
+  validateRecoverySnapshotForRestore(value, binding);
+  assertThrows(() =>
+    validateRecoverySnapshotForRestore(value, {
+      ...binding,
+      sourceBinding: { ...binding.sourceBinding, projectId: binding.identity.projectId },
+    })
+  );
+  assertThrows(() =>
+    validateRecoverySnapshotForRestore(value, {
+      ...binding,
+      identity: { ...binding.identity, projectId: binding.sourceBinding.projectId },
+    })
+  );
+});

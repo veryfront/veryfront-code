@@ -308,7 +308,8 @@ export async function createManagedRecoveryWriter(input: {
           for (const part of message.parts) {
             if (
               !("toolCallId" in part) || !("toolName" in part) ||
-              !("args" in part || "input" in part)
+              !("args" in part || "input" in part) ||
+              ("providerExecuted" in part && part.providerExecuted === true)
             ) continue;
             const prior = restoredBoundaries.get(part.toolCallId);
             if (prior) {

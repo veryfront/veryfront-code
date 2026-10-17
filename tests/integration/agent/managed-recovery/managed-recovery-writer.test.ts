@@ -56,12 +56,12 @@ async function signed(value = admission()) {
     credentials: { authToken: "NEVER_PERSIST_TEST_CREDENTIAL" },
   });
   const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-    projectId: identity.projectId,
+    projectId: value.sourceBinding.projectId,
     requestId: identity.publicRunId,
   });
   Deno.env.set(envKey, publicKeyPem);
   const ctx = createCtx(publicKeyPem);
-  ctx.projectId = identity.projectId;
+  ctx.projectId = value.sourceBinding.projectId;
   return await verifyControlPlaneRequest(
     new Request(`https://veryfront.test/api/control-plane/runs/${identity.publicRunId}/stream`, {
       method: "POST",
@@ -76,11 +76,12 @@ import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-
 import { createEphemeralAgentWithRuntimeOptions } from "#veryfront/agent/factory.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 
-it("real runtime canonical boundaries materialize immutable acknowledged snapshots on disk", async () => {
+it("real cross-project runtime boundaries preserve separately signed source and run bindings on disk", async () => {
   const previous = Deno.env.get(envKey);
   const directory = await Deno.makeTempDir();
   try {
     const value = admission();
+    value.sourceBinding.projectId = "77777777-7777-4777-8777-777777777777";
     const claims = await signed(value);
     const owner = await RecoverySessionOwner.acquire({
       claims,
@@ -130,8 +131,12 @@ it("real runtime canonical boundaries materialize immutable acknowledged snapsho
     });
     const records = await home.read();
     assertEquals(records.length >= 2, true);
-    const snapshot = records.at(-1)!.value;
-    assertEquals(typeof snapshot === "object" && snapshot !== null && "messages" in snapshot, true);
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot(records.at(-1)!.value);
+    assertEquals(snapshot.binding.identity.projectId, identity.projectId);
+    assertEquals(snapshot.binding.sourceBinding, value.sourceBinding);
     assertEquals(events.includes("MESSAGES_SNAPSHOT"), true);
     assertEquals(model.callCount, 1);
   } finally {
@@ -576,6 +581,116 @@ it("safe snapshot publication rejects an API that ignores the atomic checkpoint 
       identity,
     });
     assertEquals((await home.read()).length, 0);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("provider-executed current calls persist replay without waiting for local admission", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await Deno.makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let sequence = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async () => ({ eventId: ++sequence, externalSequence: sequence, toolAdmissions: [] }),
+    });
+    const controller = new AbortController();
+    writer.bindSignal(controller.signal);
+    const exposure = {
+      version: 2,
+      loadedToolNames: [],
+    } satisfies import("#veryfront/agent/runtime/index.ts").AgentRuntimeRecoveryBoundary[
+      "toolExposureCheckpoint"
+    ];
+    await writer.persistBoundary({
+      messages: [],
+      toolExposureCheckpoint: exposure,
+      providerReplayCheckpoints: [],
+    });
+    const call = {
+      type: "tool-call",
+      toolCallId: "provider-search",
+      toolName: "web_search",
+      args: { query: "synthetic" },
+      providerExecuted: true,
+    } as const;
+    const result = {
+      type: "tool-result",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      result: [],
+      providerExecuted: true,
+    } as const;
+    const timer = setTimeout(
+      () => controller.abort(new Error("Provider call waited for local admission")),
+      200,
+    );
+    try {
+      await writer.persistBoundary({
+        messages: [{
+          id: "provider-turn",
+          role: "assistant",
+          parts: [call, { ...result, result: [] }],
+        }],
+        toolExposureCheckpoint: exposure,
+        providerReplayCheckpoints: [{
+          version: 1,
+          messageId: "provider-turn",
+          provider: "anthropic",
+          providerBlocks: [
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "server_tool_use",
+                id: call.toolCallId,
+                name: call.toolName,
+                input: call.args,
+                caller: { type: "direct" },
+              },
+            },
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "web_search_tool_result",
+                tool_use_id: call.toolCallId,
+                caller: { type: "direct" },
+                content: [],
+              },
+            },
+          ],
+          providerBlockPositions: [0, 1],
+          totalPartCount: 2,
+        }],
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const snapshot = parseRecoverySnapshot((await home.read()).at(-1)!.value);
+    assertEquals(snapshot.toolBoundaries, []);
+    assertEquals(snapshot.modelTurns[0]?.providerReplayCheckpoint?.messageId, "provider-turn");
   } finally {
     await Deno.remove(directory, { recursive: true });
     if (previous === undefined) Deno.env.delete(envKey);
