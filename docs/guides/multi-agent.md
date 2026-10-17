@@ -230,6 +230,8 @@ For workflows, hit the workflow start route from
 
 A hosted parent can register `withHostedChildTaskInputResolver(resolver, next)` around its awaited execution. The resolver receives the host-derived project, root, parent, child target and tool-call identities, together with two narrow readers: the parent's canonical tool-result page and an exact historical file version in the same project. It must return `undefined` for an unbound child, or a bounded JSON payload with source event IDs and immutable artifact references. A truncated result page fails explicitly.
 
+Accepted-input resolution applies only to durable children in the verified parent project. Cross-project delegation stays unbound, and missing durable parent context retains its normal error result.
+
 The hosted runtime records the accepted receipt through its private parent event writer. Native child admission verifies the receipt's lineage, target, successful source events and version content before storing one immutable input. The child event credential binds its project, root, run and input digest. Equal admission replay restores that same input; altered receipts conflict. Application code receives no event credential or general HTTP client.
 
 Child tools read `getVerifiedHostedTaskInput(context)`. A present binding is accepted only after native verification and must match the tool's host-derived project, root and run. JSON reconstruction does not preserve this authority. An application should validate the expected stage and historical artifact content before deriving arguments such as an email directory. Payload fields are never spread into credentials, prompts or general context. Legacy children without a binding keep their existing behavior.

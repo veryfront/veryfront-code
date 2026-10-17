@@ -732,6 +732,7 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
   if (!authority?.eventToken || !authority.apiUrl) return undefined;
   return createHostedRunEventWriterCapability({
     inheritedExecution: true,
+    projectId: authority.projectId,
     apiUrl: authority.apiUrl,
     runId: authority.runId,
     canonicalRunId: terminalRoute(authority.token, authority.runId).id,

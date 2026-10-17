@@ -2020,6 +2020,7 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
     const receipts: unknown[] = [];
     const capability = createHostedRunEventWriterCapability({
       apiUrl: API_URL,
+      projectId: PROJECT_ID,
       runId: "run_parent_1",
       canonicalRunId: PARENT_CONVERSATION_ID,
       runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
@@ -2119,6 +2120,39 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
         }],
       };
     }, async () => {
+      for (const field of ["parentRunId", "parentMessageId", "parentConversationId"] as const) {
+        const missing = await executeHostedDurableChildFork({
+          ...input,
+          [field]: undefined,
+          executionOptions: { toolCallId: `missing-${field}` },
+        });
+        assertEquals(missing.status, "missing_context");
+        assertEquals([resolutions, reads, writes, admissions], [0, 0, 0, 0]);
+      }
+      for (const target of ["context", "reference", "run-project"] as const) {
+        const directReference = target === "reference";
+        let targetProjectId = target === "context" ? "other-project" : PROJECT_ID;
+        const crossProject = await executeHostedDurableChildFork({
+          ...input,
+          forkInput: {
+            ...input.forkInput,
+            ...(directReference ? { project_reference: "other" } : {}),
+          },
+          executionOptions: { toolCallId: `cross-project-${target}` },
+          ...(target === "run-project" ? { runProjectId: "other-project" } : {}),
+          getProjectId: () => targetProjectId,
+          resolveProjectReference: () =>
+            Promise.resolve({ projectId: "other-project", slug: "other" }),
+          onRequestedProjectId: (projectId) => {
+            targetProjectId = projectId;
+          },
+        });
+        assertEquals(crossProject.status, admitted ? "completed" : "setup_failed");
+        assertEquals([resolutions, reads, writes, admissions], [0, 0, 0, 1]);
+        assertEquals(receipts, [undefined]);
+        receipts.length = 0;
+        admissions = 0;
+      }
       const cancelled = new AbortController();
       cancelled.abort();
       await assertRejects(() =>

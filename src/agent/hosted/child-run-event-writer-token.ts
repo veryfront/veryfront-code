@@ -200,6 +200,7 @@ function createParentToolStartBarrier(timeoutMs: number) {
 }
 
 type CapabilityState = {
+  projectId?: string;
   parentToolStartBarrier?: ReturnType<typeof createParentToolStartBarrier>;
   inheritedExecution?: boolean;
   inheritedAdmitter?: InheritedRunAdmitter;
@@ -518,6 +519,7 @@ export function createHostedRunEventWriterCapabilityForRequest(
   return token
     ? createHostedRunEventWriterCapability({
       ...input,
+      projectId: candidateState?.projectId,
       runEventAppendToken: token,
       fetch: input.fetch ?? candidateState?.fetch,
     })
@@ -547,6 +549,8 @@ export async function runWithVerifiedHostedRunEventWriterRequest<T>(
  * The returned frozen object does not expose or serialize the credential.
  */
 export function createHostedRunEventWriterCapability(input: {
+  /** Host-verified project owning this run and its accepted-input evidence. */
+  projectId?: string;
   /** Whether this generation executes an attached local callback. */
   inheritedExecution?: boolean;
   /** Trusted Veryfront API base URL used for child-capability exchange. */
@@ -570,6 +574,7 @@ export function createHostedRunEventWriterCapability(input: {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
   const state: CapabilityState = {
+    projectId: input.projectId,
     inheritedExecution: input.inheritedExecution,
     apiUrl: input.apiUrl,
     resolveApiUrl: createVeryfrontApiRequestUrlResolver(input.apiUrl),
@@ -840,6 +845,17 @@ export function hostedAcceptedTaskInputReference(
     throw new Error("Unverified accepted task input receipt");
   }
   return objectFreeze({ event_id: state.eventId });
+}
+
+/** Only a same-project exact-parent capability can resolve accepted input. */
+export function hostedRunCanResolveAcceptedChildInput(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  projectId: string,
+): boolean {
+  const state = capability && getWeakMapValue(capabilityState, capability);
+  return !!state?.acceptedChildEvidence && state.runId === parentRunId &&
+    state.projectId === projectId && !!state.canonicalRunId;
 }
 
 export function hostedAcceptedChildEvidenceFromCapability(
