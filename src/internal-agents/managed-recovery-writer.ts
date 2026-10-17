@@ -6,7 +6,6 @@ import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   everyPrivateArray,
   filterPrivateArray,
-  flatMapPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   somePrivateArray,
@@ -106,16 +105,22 @@ export async function createManagedRecoveryWriter(input: {
   let initialHistoryMessageDigests = input.restoredSnapshot?.initialHistoryMessageDigests;
   let initialHistoryProviderReplayCheckpoints = input.restoredSnapshot
     ?.initialHistoryProviderReplayCheckpoints;
-  const historicalToolCallIds = createPrivateSet<string>();
-  const restoredMessages = input.restoredSnapshot?.messages ?? [];
-  for (let messageIndex = 0; messageIndex < restoredMessages.length; messageIndex++) {
-    const message = restoredMessages[messageIndex]!;
-    if (!somePrivateArray(initialHistoryMessageIds ?? [], (id) => id === message.id)) continue;
-    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-      const part = message.parts[partIndex]!;
-      if ("toolCallId" in part) historicalToolCallIds.add(part.toolCallId);
+  // Provider IDs are scoped to one model message; private occurrences authorize effects.
+  const occurrenceByMessageCall = createPrivateMap<string, string>();
+  const occurrencesByToolId = createPrivateMap<string, string[]>();
+  const currentOccurrenceByToolId = createPrivateMap<string, string>();
+  const assignedOccurrences = createPrivateSet<string>();
+  const pendingAnnouncements = createPrivateMap<string, Deferred<void>>();
+  const announcementFor = (id: string) => {
+    let pending = pendingAnnouncements.get(id);
+    if (!pending) {
+      pending = deferred<void>();
+      pendingAnnouncements.set(id, pending);
     }
-  }
+    return pending;
+  };
+  const messageCallKey = (messageId: string, toolCallId: string) =>
+    `${messageId.length}:${messageId}${toolCallId}`;
   let signal: AbortSignal | undefined;
   const admissions = createPrivateMap<string, Deferred<AgentRunToolCallAdmissionReceipt>>();
   const results = createPrivateMap<
@@ -126,6 +131,7 @@ export async function createManagedRecoveryWriter(input: {
     failure ??= { error };
     for (const pending of admissions.values()) pending.reject(failure.error);
     for (const pending of results.values()) pending.reject(failure.error);
+    for (const pending of pendingAnnouncements.values()) pending.reject(failure.error);
   };
   const assertNotFailed = () => {
     if (failure) throw failure.error;
@@ -140,7 +146,10 @@ export async function createManagedRecoveryWriter(input: {
   const priorBoundaries = input.restoredSnapshot?.toolBoundaries ?? [];
   for (let index = 0; index < priorBoundaries.length; index++) {
     const boundary = priorBoundaries[index]!;
-    restoredBoundaries.set(boundary.admissionReceipt.toolCallId, boundary);
+    restoredBoundaries.set(
+      messageCallKey(boundary.modelMessageId, boundary.admissionReceipt.toolCallId),
+      boundary,
+    );
   }
 
   const admissionFor = (id: string) => {
@@ -220,7 +229,7 @@ export async function createManagedRecoveryWriter(input: {
   };
   const admitToolCall: AdmitExecutorToolCall = async (call, callSignal) => {
     callSignal.throwIfAborted();
-    const receipt = await wait(admissionFor(call.toolCallId).promise);
+    const receipt = await wait(admissionFor(call.occurrenceId).promise);
     callSignal.throwIfAborted();
     await active();
     if (
@@ -236,7 +245,7 @@ export async function createManagedRecoveryWriter(input: {
   const executeTool: RecoveryToolExecutionPolicy = async (_execution, operation) => {
     const occurrence = getCurrentToolCallOccurrenceIdentity();
     if (!occurrence) throw new Error("Recovery tool lacks its original occurrence");
-    const receipt = await wait(admissionFor(occurrence.toolCallId).promise);
+    const receipt = await wait(admissionFor(occurrence.occurrenceId).promise);
     if (
       receipt.occurrenceId !== occurrence.occurrenceId ||
       receipt.toolCallId !== occurrence.toolCallId ||
@@ -302,14 +311,6 @@ export async function createManagedRecoveryWriter(input: {
           )
         ) return;
         if (
-          event.type === "TOOL_CALL_START" && typeof event.toolCallId === "string" &&
-          historicalToolCallIds.has(event.toolCallId)
-        ) {
-          const error = new Error("Current recovery tool collides with immutable incoming history");
-          fail(error);
-          throw error;
-        }
-        if (
           observedToolResult && (event.type !== "TOOL_CALL_START" || occurrenceId !== undefined)
         ) {
           throw new Error("Recovery observation cannot carry local tool admission");
@@ -329,10 +330,17 @@ export async function createManagedRecoveryWriter(input: {
           ) {
             throw new Error("Recovery tool start acknowledgement is foreign");
           }
-          admissionFor(tool.toolCallId).resolve(tool);
+          const announced = occurrencesByToolId.get(tool.toolCallId) ?? [];
+          pushPrivateArray(announced, occurrenceId);
+          occurrencesByToolId.set(tool.toolCallId, announced);
+          currentOccurrenceByToolId.set(tool.toolCallId, occurrenceId);
+          pendingAnnouncements.get(tool.toolCallId)?.resolve();
+          pendingAnnouncements.delete(tool.toolCallId);
+          admissionFor(occurrenceId).resolve(tool);
         }
         if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
-          resultFor(event.toolCallId).resolve(receipt);
+          const occurrence = currentOccurrenceByToolId.get(event.toolCallId);
+          if (occurrence) resultFor(occurrence).resolve(receipt);
         }
       } catch (error) {
         fail(error);
@@ -357,13 +365,6 @@ export async function createManagedRecoveryWriter(input: {
             state.replayRequired = true;
             const checkpoint = captureProviderReplayCheckpoint(state, metadata);
             if (checkpoint) pushPrivateArray(initialHistoryProviderReplayCheckpoints, checkpoint);
-          }
-          for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-            const message = messages[messageIndex]!;
-            for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-              const part = message.parts[partIndex]!;
-              if ("toolCallId" in part) historicalToolCallIds.add(part.toolCallId);
-            }
           }
         }
         const history = createPrivateSet(initialHistoryMessageIds);
@@ -395,25 +396,46 @@ export async function createManagedRecoveryWriter(input: {
               !("args" in part || "input" in part) ||
               ("providerExecuted" in part && part.providerExecuted === true)
             ) continue;
-            const prior = restoredBoundaries.get(part.toolCallId);
+            const key = messageCallKey(message.id, part.toolCallId);
+            const prior = restoredBoundaries.get(key);
             if (prior) {
               pushPrivateArray(toolBoundaries, prior);
               continue;
             }
-            const receipt = await wait(admissionFor(part.toolCallId).promise);
+            let occurrence = occurrenceByMessageCall.get(key);
+            while (!occurrence) {
+              const announced = announcementFor(part.toolCallId);
+              for (const candidate of occurrencesByToolId.get(part.toolCallId) ?? []) {
+                if (!assignedOccurrences.has(candidate)) {
+                  occurrence = candidate;
+                  assignedOccurrences.add(candidate);
+                  occurrenceByMessageCall.set(key, candidate);
+                  break;
+                }
+              }
+              if (!occurrence) await wait(announced.promise);
+            }
+            const receipt = await wait(admissionFor(occurrence).promise);
             const base = {
               modelMessageId: message.id,
               toolName: part.toolName,
               admissionReceipt: receipt,
               input: "args" in part ? part.args : part.input,
             };
-            const result = filterPrivateArray(
-              flatMapPrivateArray(messages, (candidate) => candidate.parts),
-              (candidate) =>
-                candidate.type === "tool-result" && candidate.toolCallId === part.toolCallId,
-            )[0];
+            // Only this assistant turn's results may acknowledge this occurrence.
+            let result: (typeof message.parts)[number] | undefined;
+            for (let resultIndex = messageIndex; resultIndex < messages.length; resultIndex++) {
+              const candidate = messages[resultIndex]!;
+              if (resultIndex > messageIndex && candidate.role === "assistant") break;
+              result = filterPrivateArray(candidate.parts, (candidatePart) =>
+                candidatePart.type === "tool-result" &&
+                candidatePart.toolCallId === part.toolCallId)[0];
+              if (result) {
+                break;
+              }
+            }
             if (result?.type === "tool-result") {
-              const acknowledged = await wait(resultFor(part.toolCallId).promise);
+              const acknowledged = await wait(resultFor(occurrence).promise);
               pushPrivateArray(toolBoundaries, {
                 ...base,
                 kind: "acknowledged-receipt",

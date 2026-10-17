@@ -12,6 +12,23 @@ const identity = {
   threadId: "77777777-7777-4777-8777-777777777777",
   sourceHash: "a".repeat(64),
 };
+
+it("execution settings remain immutable across reopened owner homes", async () => {
+  const directory = await makeTempDir();
+  try {
+    const home = await DurableRunHome.open({ directory, identity });
+    await home.assertExecutionBinding("b".repeat(64), false);
+    const replacement = await DurableRunHome.open({ directory, identity });
+    await replacement.assertExecutionBinding("b".repeat(64), true);
+    await assertRejects(() => replacement.assertExecutionBinding("c".repeat(64), false));
+    await replacement.assertExecutionBinding("b".repeat(64), true);
+    assertEquals(await replacement.read(), []);
+    await Deno.remove(`${directory}/execution-binding.json`);
+    await assertRejects(() => replacement.assertExecutionBinding("b".repeat(64), true));
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
 it("durable home survives reopening and rejects a foreign identity", async () => {
   const directory = await makeTempDir();
   try {

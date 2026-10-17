@@ -1,3 +1,4 @@
+import type { TrustedSkillLoadResultRef } from "./skill-policy-enforcement.ts";
 import type { SkillDelegationOverrides } from "./skill-delegation-overrides.ts";
 import {
   isValidRuntimeSkillModel,
@@ -40,6 +41,7 @@ export interface AgentPauseCheckpoint {
   activeSkillDelegationOverrides?: SkillDelegationOverrides;
   /** Skill load results that were runtime-trusted when the checkpoint was written. */
   trustedSkillLoadResultIds?: string[];
+  trustedSkillLoadResultRefs?: TrustedSkillLoadResultRef[];
   toolExposureCheckpoint?: { version: 1 | 2; loadedToolNames: string[] };
 }
 
@@ -121,6 +123,13 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
       maxSteps: v.number().int().positive().max(MAX_RUNTIME_SKILL_STEPS).optional(),
     }).strict().optional(),
     trustedSkillLoadResultIds: v.array(v.string().min(1)).optional(),
+    trustedSkillLoadResultRefs: v.array(
+      v.object({
+        messageId: v.string().min(1),
+        partIndex: v.number().int().nonnegative(),
+        toolCallId: v.string().min(1),
+      }).strict(),
+    ).optional(),
     toolExposureCheckpoint: v.object({
       version: v.union([v.literal(1), v.literal(2)]),
       loadedToolNames: v.array(v.string().min(1)),

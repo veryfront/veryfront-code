@@ -207,6 +207,8 @@ import {
   enforceSkillPolicy,
   getProviderObservedSkillBodies,
   getTrustedSkillLoadResultIds,
+  getTrustedSkillLoadResultRefs,
+  hasAmbiguousTrustedSkillLoadResultIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
@@ -5594,6 +5596,7 @@ export class AgentRuntime {
     restoreTrustedSkillLoadResultsFromPauseCheckpoint(
       currentMessages,
       checkpoint?.trustedSkillLoadResultIds,
+      checkpoint?.trustedSkillLoadResultRefs,
     );
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
@@ -5680,6 +5683,9 @@ export class AgentRuntime {
         // Omitted when empty so checkpoints without trusted loads keep the prior shape.
         ...(() => {
           const ids = getTrustedSkillLoadResultIds(currentMessages);
+          if (hasAmbiguousTrustedSkillLoadResultIds(currentMessages)) {
+            return { trustedSkillLoadResultRefs: getTrustedSkillLoadResultRefs(currentMessages) };
+          }
           return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
         })(),
         resumeToolCallExecuted,

@@ -18,6 +18,7 @@ import { getToolResultError } from "#veryfront/tool/result.ts";
 import {
   getSkillActivationResult,
   getTrustedSkillLoadResultIds,
+  getTrustedSkillLoadResultRefs,
   restoreTrustedSkillLoadResultsFromPauseCheckpoint,
 } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { readAttachedProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
@@ -196,6 +197,10 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         message.role === "assistant" && !historyIds.has(message.id) && !turnIds.has(message.id),
     )
   ) throw invalid();
+  const callKey = (messageId: string, toolCallId: string) =>
+    `${messageId.length}:${messageId}${toolCallId}`;
+  const latestCallKeys = createPrivateMap<string, string>();
+  const resultMessageIds = createPrivateMap<string, string>();
   const calls = createPrivateMap<string, {
     messageId: string;
     toolName: string;
@@ -214,15 +219,21 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
       const part = message.parts[partIndex]!;
       if (!("toolCallId" in part) || !("toolName" in part)) continue;
       if (part.type === "tool-result") {
+        const key = latestCallKeys.get(part.toolCallId);
         if (
-          (message.role !== "assistant" && message.role !== "tool") || results.has(part.toolCallId)
+          (message.role !== "assistant" && message.role !== "tool") || !key || results.has(key)
         ) throw invalid();
-        results.set(part.toolCallId, getToolResultPartSchema().parse(part));
+        results.set(key, getToolResultPartSchema().parse(part));
+        resultMessageIds.set(key, message.id);
         if ("providerExecuted" in part && part.providerExecuted === true) {
-          providerResults.set(part.toolCallId, part.toolName);
+          providerResults.set(key, part.toolName);
         }
       } else if ("args" in part || "input" in part) {
-        if (message.role !== "assistant" || calls.has(part.toolCallId)) throw invalid();
+        const key = callKey(message.id, part.toolCallId);
+        if (message.role !== "assistant" || calls.has(key)) throw invalid();
+        const preceding = latestCallKeys.get(part.toolCallId);
+        if (preceding && !results.has(preceding)) throw invalid();
+        latestCallKeys.set(part.toolCallId, key);
         if ("providerExecuted" in part && part.providerExecuted === true) {
           if (
             !historyIds.has(message.id) &&
@@ -231,9 +242,9 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
               (turn) => turn.messageId === message.id && turn.providerReplayCheckpoint,
             )
           ) throw invalid();
-          providerCalls.add(part.toolCallId);
+          providerCalls.add(key);
         }
-        calls.set(part.toolCallId, {
+        calls.set(key, {
           messageId: message.id,
           toolName: part.toolName,
           input: "args" in part ? part.args : part.input,
@@ -249,16 +260,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   const transcriptResults = copyPrivateMap(results);
   for (const [id, call] of calls) {
     if (!historyIds.has(call.messageId)) continue;
-    const resultMessage = filterPrivateArray(snapshot.messages, (message) =>
-      historyIds.has(message.id) &&
-      (message.role === "tool" || message.role === "assistant") &&
-      somePrivateArray(message.parts, (part) =>
-        part.type === "tool-result" && part.toolCallId === id && part.toolName === call.toolName))[
-        0
-      ];
-    if (!resultMessage || !results.has(id)) {
-      throw invalid();
-    }
+    if (!historyIds.has(resultMessageIds.get(id) ?? "") || !results.has(id)) throw invalid();
     calls.delete(id);
     results.delete(id);
     providerCalls.delete(id);
@@ -299,13 +301,14 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     publicToolCallIds.add(receipt.publicToolCallId);
     acknowledgedEventIds.add(receipt.startEventId);
     acknowledgedEventIds.add(receipt.admissionEventId);
-    const call = calls.get(receipt.toolCallId);
+    const key = callKey(boundary.modelMessageId, receipt.toolCallId);
+    const call = calls.get(key);
     if (
       !call || call.messageId !== boundary.modelMessageId || call.toolName !== boundary.toolName ||
       !isDeepStrictEqual(call.input, boundary.input) ||
-      coveredCalls.has(receipt.toolCallId)
+      coveredCalls.has(key)
     ) throw invalid();
-    coveredCalls.add(receipt.toolCallId);
+    coveredCalls.add(key);
     if (boundary.kind === "acknowledged-receipt") {
       if (
         boundary.result.toolCallId !== receipt.toolCallId ||
@@ -316,10 +319,10 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         boundary.acknowledgedExternalSequence <=
           (turnSequences.get(boundary.modelMessageId) ?? 0) ||
         boundary.acknowledgedExternalSequence > snapshot.acknowledgedExternalSequence ||
-        !isDeepStrictEqual(results.get(receipt.toolCallId), boundary.result)
+        !isDeepStrictEqual(results.get(key), boundary.result)
       ) throw invalid();
       acknowledgedEventIds.add(boundary.resultEventId);
-      results.delete(receipt.toolCallId);
+      results.delete(key);
     }
   }
   if (coveredCalls.size !== calls.size || results.size !== 0) throw invalid();
@@ -350,15 +353,36 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     if (!presentations.has(continuation.latestAssistantText)) throw invalid();
     const trustedIds = continuation.trustedSkillLoadResultIds ?? [];
     if (createPrivateSet(trustedIds).size !== trustedIds.length) throw invalid();
-    if (trustedIds.length) {
+    const trustedRefs = continuation.trustedSkillLoadResultRefs ?? [];
+    const refKey = (messageId: string, partIndex: number) =>
+      `${messageId.length}:${messageId}:${partIndex}`;
+    const trustedRefKeys = createPrivateSet(
+      mapPrivateArray(trustedRefs, (ref) => refKey(ref.messageId, ref.partIndex)),
+    );
+    if (trustedRefKeys.size !== trustedRefs.length) throw invalid();
+    if (trustedIds.length || trustedRefs.length) {
       // Reuse the runtime's own eligibility checks for unique successful skill
       // activation results instead of inventing a second result-shape policy.
-      restoreTrustedSkillLoadResultsFromPauseCheckpoint(snapshot.messages, trustedIds);
+      restoreTrustedSkillLoadResultsFromPauseCheckpoint(snapshot.messages, trustedIds, trustedRefs);
       const eligibleIds = createPrivateSet(getTrustedSkillLoadResultIds(snapshot.messages));
       if (somePrivateArray(trustedIds, (id) => !eligibleIds.has(id))) throw invalid();
+      const eligibleRefs = getTrustedSkillLoadResultRefs(snapshot.messages);
+      if (
+        somePrivateArray(
+          trustedRefs,
+          (ref) =>
+            !somePrivateArray(
+              eligibleRefs,
+              (eligible) =>
+                eligible.messageId === ref.messageId && eligible.partIndex === ref.partIndex &&
+                eligible.toolCallId === ref.toolCallId,
+            ),
+        )
+      ) throw invalid();
     }
     const trustedIdSet = createPrivateSet(trustedIds);
     const overridesAtResult = createPrivateMap<string, SkillDelegationOverrides | undefined>();
+    const overrideCallKeys = createPrivateMap<string, string>();
     let activeOverrides: SkillDelegationOverrides | undefined;
     let reachedCurrentRun = false;
     for (let messageIndex = 0; messageIndex < snapshot.messages.length; messageIndex++) {
@@ -371,9 +395,17 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
       }
       for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
         const part = message.parts[partIndex]!;
-        if (part.type !== "tool-result" || !("toolCallId" in part) || !("result" in part)) continue;
-        overridesAtResult.set(part.toolCallId, activeOverrides);
-        if (trustedIdSet.has(part.toolCallId)) {
+        if (!("toolCallId" in part)) continue;
+        if ("args" in part || "input" in part) {
+          overrideCallKeys.set(part.toolCallId, callKey(message.id, part.toolCallId));
+        }
+        if (part.type !== "tool-result" || !("result" in part)) continue;
+        const key = overrideCallKeys.get(part.toolCallId);
+        if (!key) throw invalid();
+        overridesAtResult.set(key, activeOverrides);
+        if (
+          trustedIdSet.has(part.toolCallId) || trustedRefKeys.has(refKey(message.id, partIndex))
+        ) {
           activeOverrides = extractSkillDelegationOverrides(getSkillActivationResult(part.result));
         }
       }
@@ -384,13 +416,47 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         reachedCurrentRun ? activeOverrides : undefined,
       )
     ) throw invalid();
-    const responseCallIds = createPrivateSet<string>();
+    const responseCallKeys = createPrivateSet<string>();
     for (let entryIndex = 0; entryIndex < continuation.toolCalls.length; entryIndex++) {
       const entry = continuation.toolCalls[entryIndex]!;
-      const call = transcriptCalls.get(entry.id);
-      const result = transcriptResults.get(entry.id);
+      // Native response bookkeeping accumulates calls in execution order. The
+      // provider may reuse an ID in another model turn, never within one turn.
+      let key: string | undefined;
+      for (const [candidateKey, candidate] of transcriptCalls) {
+        if (
+          candidateKey === callKey(candidate.messageId, entry.id) &&
+          !historyIds.has(candidate.messageId) && !responseCallKeys.has(candidateKey)
+        ) {
+          key = candidateKey;
+          break;
+        }
+      }
+      if (!key) {
+        // Native checkpoints may also retain sealed incoming-history bookkeeping.
+        // Never fall back to history after consuming a current-run occurrence.
+        let hasCurrentCall = false;
+        for (const [candidateKey, candidate] of transcriptCalls) {
+          if (
+            candidateKey === callKey(candidate.messageId, entry.id) &&
+            !historyIds.has(candidate.messageId)
+          ) hasCurrentCall = true;
+        }
+        if (!hasCurrentCall) {
+          for (const [candidateKey, candidate] of transcriptCalls) {
+            if (
+              candidateKey === callKey(candidate.messageId, entry.id) &&
+              !responseCallKeys.has(candidateKey)
+            ) {
+              key = candidateKey;
+              break;
+            }
+          }
+        }
+      }
+      const call = key ? transcriptCalls.get(key) : undefined;
+      const result = key ? transcriptResults.get(key) : undefined;
       if (
-        responseCallIds.has(entry.id) || !call || entry.name !== call.toolName ||
+        !key || !call || entry.name !== call.toolName ||
         entry.inputText !== call.inputText
       ) throw invalid();
       if (!isDeepStrictEqual(entry.args, call.input)) {
@@ -402,12 +468,12 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
             applySkillDelegationOverridesToToolInput(
               call.toolName,
               input.data.args,
-              overridesAtResult.has(entry.id) ? overridesAtResult.get(entry.id) : activeOverrides,
+              key && overridesAtResult.has(key) ? overridesAtResult.get(key) : activeOverrides,
             ),
           )
         ) throw invalid();
       }
-      responseCallIds.add(entry.id);
+      responseCallKeys.add(key);
       if (!result) {
         if (
           (entry.status !== "pending" && entry.status !== "executing") ||

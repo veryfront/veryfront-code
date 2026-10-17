@@ -5,6 +5,8 @@ import {
 } from "./control-plane-auth.ts";
 import type { AgentRunSessionManager } from "./session-manager.ts";
 import type { InternalAgentStreamRequest, RuntimeRunAgentInput } from "./schema.ts";
+import { recoverySuffixPayloadHash } from "./recovery-suffix.ts";
+import { assertManagedRecoveryAdmissionSize } from "./managed-recovery-admission-size.ts";
 
 // Object identity connects the exact signed request to the sanitized runtime input.
 // Neither forwarded props nor a copied claims/input object can carry this authority.
@@ -21,6 +23,7 @@ export function assertManagedRecoveryExecutionBinding(
   if (!claims) return;
   const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
   if (!admission) return;
+  assertManagedRecoveryAdmissionSize(input, admission);
   // Admission binds the immutable source definition, not a request-scoped
   // replacement's prompt, model or tools. Never restore against an override.
   if (input.agentConfig !== undefined) {
@@ -70,6 +73,24 @@ export function getManagedRecoveryInputClaims(
 export type ManagedRecoveryRunSession = Awaited<
   ReturnType<AgentRunSessionManager["startManagedRecoveryRun"]>
 >;
+
+/** A replacement must preserve the first admitted request's execution semantics. */
+export async function assertManagedRecoveryRequestBinding(
+  input: InternalAgentStreamRequest,
+  session: ManagedRecoveryRunSession,
+): Promise<void> {
+  session.signal.throwIfAborted();
+  const requestHash = recoverySuffixPayloadHash({
+    context: input.context,
+    tools: input.tools,
+    ...(input.state !== undefined ? { state: input.state } : {}),
+    ...(input.forwardedProps !== undefined ? { forwardedProps: input.forwardedProps } : {}),
+    ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
+    ...(input.resumeToolCall !== undefined ? { resumeToolCall: input.resumeToolCall } : {}),
+  });
+  await session.owner.assertExecutionBinding(requestHash);
+  session.signal.throwIfAborted();
+}
 const sessionsByInput = createPrivateWeakStore<
   RuntimeRunAgentInput,
   { session: ManagedRecoveryRunSession; consumed: boolean; onConsumed: () => void }

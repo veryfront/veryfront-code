@@ -44,6 +44,7 @@ const sameGeneration = (
 export class RecoverySessionOwner {
   private previousGenerations: RecoveryAdmission["generation"][] = [];
   private executionRequired = false;
+  private executionHome: DurableRunHome | undefined;
   private constructor(
     private admission: RecoveryAdmission,
     private validateCurrentOwnership: () => Promise<unknown>,
@@ -65,6 +66,7 @@ export class RecoverySessionOwner {
       directory: input.directory,
       identity: admission.identity,
     });
+    owner.executionHome = home;
     const records = await home.read();
     const predecessors = mapPrivateArray(
       records,
@@ -121,6 +123,13 @@ export class RecoverySessionOwner {
 
   get requiresRestoredSnapshot(): boolean {
     return this.executionRequired;
+  }
+
+  async assertExecutionBinding(requestHash: string): Promise<void> {
+    if (!this.executionHome) throw new Error("Recovery execution storage is unavailable");
+    await this.assertCurrentOwnership();
+    await this.executionHome.assertExecutionBinding(requestHash, this.executionRequired);
+    await this.assertCurrentOwnership();
   }
 
   /** Validate a journal occupant without treating its older cursor as a restore point. */

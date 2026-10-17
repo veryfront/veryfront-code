@@ -1,6 +1,7 @@
 import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
 import {
   assertManagedRecoveryExecutionBinding,
+  assertManagedRecoveryRequestBinding,
   bindManagedRecoveryInput,
   bindManagedRecoveryRunSession,
   type ManagedRecoveryRunSession,
@@ -1580,6 +1581,29 @@ export class AgentStreamHandler extends BaseHandler {
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
+      // Reserve cancellation ownership before source preparation can await tenant data.
+      const reservedRecovery = verifiedClaims &&
+          getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
+        ? await this.deps.sessionManager.startManagedRecoveryRun({
+          runId: payload.runId,
+          threadId: payload.threadId,
+          servingIdentity: ctx.projectId
+            ? {
+              projectId: ctx.projectId,
+              spanAttributes: buildServingSpanAttributes(ctx),
+            }
+            : undefined,
+          claims: verifiedClaims,
+        })
+        : undefined;
+      if (reservedRecovery) {
+        pendingRecovery = { runId: payload.runId, session: reservedRecovery };
+      }
+      const assertRecoveryActive = () => reservedRecovery?.signal.throwIfAborted();
+      assertRecoveryActive();
+      if (reservedRecovery) await assertManagedRecoveryRequestBinding(payload, reservedRecovery);
+      assertRecoveryActive();
+
       const createDiscoveredAgentExecution = (
         projectScopedContext: HandlerContext,
         envVarsForAgent: Record<string, string>,
@@ -1587,25 +1611,9 @@ export class AgentStreamHandler extends BaseHandler {
         sourceFingerprintOptions: SourceSnapshotFingerprintOptions,
       ) =>
       async () => {
-        // Reserve durable ownership before discovery can evaluate tenant modules.
-        const reservedRecovery = verifiedClaims &&
-            getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
-          ? await this.deps.sessionManager.startManagedRecoveryRun({
-            runId: payload.runId,
-            threadId: payload.threadId,
-            servingIdentity: ctx.projectId
-              ? {
-                projectId: ctx.projectId,
-                spanAttributes: buildServingSpanAttributes(ctx),
-              }
-              : undefined,
-            claims: verifiedClaims,
-          })
-          : undefined;
-        if (reservedRecovery) {
-          pendingRecovery = { runId: payload.runId, session: reservedRecovery };
-        }
+        assertRecoveryActive();
         await this.deps.ensureProjectDiscovery(projectScopedContext);
+        assertRecoveryActive();
         if (requestSourceFingerprint !== undefined) {
           const discoverySourceFingerprint = await requireAgentSourceSnapshotFingerprint(
             projectScopedContext,
@@ -1615,6 +1623,7 @@ export class AgentStreamHandler extends BaseHandler {
           assertDiscoveredSourceFingerprint(requestSourceFingerprint, discoverySourceFingerprint);
         }
 
+        assertRecoveryActive();
         const agent = this.deps.getAgent(payload.agentId);
         if (!agent) {
           logger.warn("Internal agent stream request referenced unknown agent", {
@@ -1683,6 +1692,7 @@ export class AgentStreamHandler extends BaseHandler {
             ? { token: terminalToken, runId: payload.runId }
             : null,
         });
+        assertRecoveryActive();
         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
           agent: platformRuntimeAgent,
           token: projectRuntimeToken || null,
@@ -1755,6 +1765,7 @@ export class AgentStreamHandler extends BaseHandler {
           }
           return await runWithProjectEnv(agentEnv, runAgentStream);
         };
+        assertRecoveryActive();
         let response = await executeStream();
         if (isSuccessfulAgentEventStream(response)) {
           response = setResponseHeaders(response, [
@@ -1790,6 +1801,7 @@ export class AgentStreamHandler extends BaseHandler {
           payload.agentSource,
           () =>
             runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+              assertRecoveryActive();
               if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
               // Resolved before the config load because hosted evaluation binds
               // config to the same environment the run will execute with.
@@ -1813,6 +1825,7 @@ export class AgentStreamHandler extends BaseHandler {
                 sourceAuthToken,
                 req.signal,
               );
+              assertRecoveryActive();
               const guardedSourceConfig = payload.agentSource.type === "branch"
                 ? await resolveGuardedAgentSourceConfig(
                   requestScopedContext,
@@ -1820,11 +1833,13 @@ export class AgentStreamHandler extends BaseHandler {
                   envVarsForAgent,
                 )
                 : undefined;
+              assertRecoveryActive();
               const sourceConfig = guardedSourceConfig?.config ?? await resolveAgentSourceConfig(
                 requestScopedContext,
                 payload.agentSource,
                 envVarsForAgent,
               );
+              assertRecoveryActive();
               const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);
               const requestSourceFingerprint = payload.agentSource.type === "branch"
                 ? await requireAgentSourceSnapshotFingerprint(
@@ -1865,6 +1880,7 @@ export class AgentStreamHandler extends BaseHandler {
                   : sourceScopedContext.requestContext,
               };
               const executeInAgentSourceContext = async () => {
+                assertRecoveryActive();
                 if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
                 const sourceIntegrationPolicy = (
                   this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy

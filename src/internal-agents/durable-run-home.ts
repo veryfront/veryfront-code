@@ -136,7 +136,17 @@ export class DurableRunHome {
     for (let index = 0; index < names.length; index++) {
       const name = names[index]!;
       if (apply(regexTest, recordPattern, [name])) pushPrivateArray(records, name);
-      else if (name !== "identity.json") throw invalid();
+      else if (name === "execution-binding.json") {
+        const binding: unknown = privateJsonParse(await readBounded(join(this.directory, name)));
+        if (
+          !binding || typeof binding !== "object" || !("version" in binding) ||
+          binding.version !== 1 || !("identity" in binding) || !("requestHash" in binding) ||
+          typeof binding.requestHash !== "string" ||
+          !apply(regexTest, /^[a-f0-9]{64}$/, [binding.requestHash]) ||
+          objectKeys(binding).length !== 3 ||
+          privateJsonStringify(binding.identity) !== privateJsonStringify(this.identity)
+        ) throw invalid();
+      } else if (name !== "identity.json") throw invalid();
     }
     apply(sort, records, [
       (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
@@ -169,6 +179,21 @@ export class DurableRunHome {
       pushPrivateArray(result, { sequence: index + 1, value: snapshotDurableValue(body.value) });
     }
     return result;
+  }
+
+  /** Bind request-scoped execution settings once, across every owner generation. */
+  async assertExecutionBinding(requestHash: string, requireExisting: boolean): Promise<void> {
+    if (!apply(regexTest, /^[a-f0-9]{64}$/, [requestHash])) throw invalid();
+    const manifest = privateJsonStringify({ version: 1, identity: this.identity, requestHash });
+    const path = join(this.directory, "execution-binding.json");
+    if (!requireExisting) {
+      try {
+        await publish(this.directory, "execution-binding.json", manifest);
+      } catch (error) {
+        if (!isExists(error)) throw error;
+      }
+    }
+    if (await readBounded(path) !== manifest) throw invalid();
   }
 
   async append(input: { sequence: number; value: unknown }): Promise<void> {

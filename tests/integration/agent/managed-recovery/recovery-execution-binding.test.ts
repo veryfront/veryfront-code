@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-session-owner.ts";
 import {
   createControlPlaneSignature,
   createCtx,
@@ -8,6 +9,7 @@ import {
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   assertManagedRecoveryExecutionBinding,
+  assertManagedRecoveryRequestBinding,
   bindManagedRecoveryInput,
 } from "#veryfront/internal-agents/managed-recovery-input.ts";
 import {
@@ -86,6 +88,60 @@ it("signed recovery execution binds immutable source, agent and conversation bef
     assertManagedRecoveryExecutionBinding(overriddenInput, undefined);
     assertThrows(() => assertManagedRecoveryExecutionBinding(overriddenInput, claims));
     assertManagedRecoveryExecutionBinding(input, claims);
+    const directory = await Deno.makeTempDir();
+    try {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory,
+        awaitRetiredPreviousOwner: async () => {},
+        validateCurrentOwnership: async () => ({
+          version: 1,
+          identity: {
+            projectId,
+            canonicalRunId: admission.identity.canonicalRunId,
+            publicRunId: input.runId,
+            agentId: input.agentId,
+            threadId,
+          },
+          generation: admission.generation,
+          acknowledgedEventId: 0,
+          acknowledgedExternalSequence: 0,
+          leaseRemainingMs: 10_000,
+        }),
+      });
+      const session = { owner, signal: new AbortController().signal, settle: () => {} };
+      const boundInput = { ...input, forwardedProps: { a: 1, b: 2 } };
+      await assertManagedRecoveryRequestBinding(boundInput, session);
+      await assertManagedRecoveryRequestBinding({
+        ...input,
+        forwardedProps: { b: 2, a: 1 },
+      }, session);
+      for (
+        const overrides of [
+          { context: [{ type: "text", text: "Different runtime context" }] },
+          { state: { changed: true } },
+          { forwardedProps: { a: 1, b: 3 } },
+          { tools: [{ name: "different_tool" }] },
+          { allowDelegation: false },
+          { resumeToolCall: { id: "pending", name: "different_tool", input: {} } },
+        ]
+      ) {
+        const replacement = getInternalAgentStreamRequestSchema().parse({
+          ...boundInput,
+          ...overrides,
+        });
+        await assertRejects(() => assertManagedRecoveryRequestBinding(replacement, session));
+        await assertManagedRecoveryRequestBinding(boundInput, session);
+      }
+      const oversized = getInternalAgentStreamRequestSchema().parse({
+        ...input,
+        messages: [{ id: "large", role: "user", content: "x".repeat(240_000) }],
+      });
+      assertManagedRecoveryExecutionBinding(oversized, undefined);
+      assertThrows(() => assertManagedRecoveryExecutionBinding(oversized, claims));
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
     bindManagedRecoveryInput(toRuntimeRunAgentInput(input), claims);
     // Shared-source execution resolves its source environment independently of
     // the requesting project's runtime environment.
