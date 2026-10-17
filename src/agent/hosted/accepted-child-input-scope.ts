@@ -1,3 +1,7 @@
+import {
+  createPrivateReadableStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
 import type { HostedAcceptedChildEvidence } from "./accepted-child-evidence.ts";
 import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { HostedAcceptedTaskInputEvent } from "./accepted-task-input.ts";
@@ -17,7 +21,13 @@ type Scope = { active: boolean; resolver: HostedChildTaskInputResolver };
 const storage = createPrivateAsyncLocalStorage<Scope | undefined>();
 const freeze = Object.freeze;
 const NativeResponse = Response;
-const NativeReadableStream = ReadableStream;
+const apply = Reflect.apply;
+const responseBody = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")!.get!;
+const responseStatusText = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "statusText")!
+  .get!;
+const responseHeaders = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")!.get!;
+const hasInstance = Function.prototype[Symbol.hasInstance];
 /** Application-owned deterministic receipt selection, scoped to one active parent execution. */
 export async function withHostedChildTaskInputResolver<T>(
   resolver: HostedChildTaskInputResolver | undefined,
@@ -28,9 +38,12 @@ export async function withHostedChildTaskInputResolver<T>(
   let streaming = false;
   try {
     const result = await storage.run(scope, operation);
-    if (result instanceof NativeResponse && result.body) {
-      const reader = result.body.getReader();
-      const body = new NativeReadableStream<Uint8Array>({
+    const resultBody = apply(hasInstance, NativeResponse, [result])
+      ? apply(responseBody, result, []) as ReadableStream<Uint8Array> | null
+      : null;
+    if (resultBody) {
+      const reader = getPrivateStreamReader(resultBody);
+      const body = createPrivateReadableStream<Uint8Array>({
         async pull(controller) {
           try {
             const chunk = await storage.run(scope, () => reader.read());
@@ -50,11 +63,13 @@ export async function withHostedChildTaskInputResolver<T>(
           await reader.cancel(reason);
         },
       });
-      const response = new NativeResponse(body, {
-        status: result.status,
-        statusText: result.statusText,
-        headers: result.headers,
-      });
+      const responseInit = {
+        __proto__: null,
+        status: apply(responseStatus, result, []) as number,
+        statusText: apply(responseStatusText, result, []) as string,
+        headers: apply(responseHeaders, result, []) as Headers,
+      };
+      const response = new NativeResponse(body, responseInit);
       streaming = true;
       return response as T;
     }

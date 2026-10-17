@@ -441,3 +441,106 @@ it("keeps native root-bound ingress independent of mutable regexp test", async (
     taskInput,
   );
 });
+
+it("keeps response bytes and lifecycle private from tenant stream and response hooks", async () => {
+  const originalResponse = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("later-tenant-secret"));
+        controller.close();
+      },
+    }),
+    {
+      status: 202,
+      statusText: "Accepted",
+      headers: [["x-evidence", "private"], ["set-cookie", "a=1"], ["set-cookie", "b=2"]],
+    },
+  );
+  const patches: {
+    target: object;
+    key: PropertyKey;
+    descriptor: PropertyDescriptor | undefined;
+  }[] = [];
+  const hooks: string[] = [];
+  const poison = (target: object, key: PropertyKey, getter = false) => {
+    patches.push({ target, key, descriptor: Object.getOwnPropertyDescriptor(target, key) });
+    const hook = () => {
+      hooks.push(String(key));
+      throw new Error("tenant response hook");
+    };
+    Object.defineProperty(target, key, {
+      configurable: true,
+      ...(getter ? { get: hook } : { value: hook }),
+    });
+  };
+  let response: Response | undefined;
+  let error: unknown;
+  try {
+    poison(Response.prototype, "body", true);
+    poison(Response.prototype, "status", true);
+    poison(Response.prototype, "statusText", true);
+    poison(Response.prototype, "headers", true);
+    poison(ReadableStream.prototype, "getReader");
+    poison(ReadableStreamDefaultReader.prototype, "read");
+    poison(ReadableStreamDefaultReader.prototype, "cancel");
+    poison(ReadableStreamDefaultController.prototype, "enqueue");
+    poison(ReadableStreamDefaultController.prototype, "close");
+    poison(ReadableStreamDefaultController.prototype, "error");
+    poison(Headers.prototype, Symbol.iterator);
+    poison(Object.prototype, "start", true);
+    response = await withHostedChildTaskInputResolver(
+      async () => undefined,
+      async () => originalResponse,
+    );
+  } catch (caught) {
+    error = caught;
+  } finally {
+    for (let index = patches.length - 1; index >= 0; index--) {
+      const patch = patches[index]!;
+      if (patch.descriptor) Object.defineProperty(patch.target, patch.key, patch.descriptor);
+      else Reflect.deleteProperty(patch.target, patch.key);
+    }
+  }
+  assertEquals(error, undefined);
+  assertEquals(hooks, []);
+  assertEquals(response?.status, 202);
+  assertEquals(response?.statusText, "Accepted");
+  assertEquals(response?.headers.get("x-evidence"), "private");
+  assertEquals(response?.headers.getSetCookie(), ["a=1", "b=2"]);
+  assertEquals(await response?.text(), "later-tenant-secret");
+});
+
+it("cancels the actual response reader despite a replaced native cancel method", async () => {
+  let reason: unknown;
+  const response = await withHostedChildTaskInputResolver(
+    async () => undefined,
+    async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          cancel(value) {
+            reason = value;
+          },
+        }),
+      ),
+  );
+  const body = response.body!;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    ReadableStreamDefaultReader.prototype,
+    "cancel",
+  )!;
+  let intercepted = false;
+  try {
+    Object.defineProperty(ReadableStreamDefaultReader.prototype, "cancel", {
+      configurable: true,
+      value: () => {
+        intercepted = true;
+        return Promise.resolve();
+      },
+    });
+    await body.cancel("stop");
+  } finally {
+    Object.defineProperty(ReadableStreamDefaultReader.prototype, "cancel", descriptor);
+  }
+  assertEquals(intercepted, false);
+  assertEquals(reason, "stop");
+});
