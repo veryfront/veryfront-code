@@ -70,6 +70,7 @@ import {
 } from "../service/auth.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const RegExpExec = RegExp.prototype.exec;
 const ObjectCreate = Object.create;
 const JsonParse = JSON.parse;
 const NumberIsFinite = Number.isFinite;
@@ -1027,7 +1028,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (writerVerification?.verified && writerVerification.rootRunId !== undefined) {
     if (
       typeof writerVerification.rootRunId !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(writerVerification.rootRunId) ||
+      !IntrinsicReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [
+        writerVerification.rootRunId,
+      ]) ||
       (verifiedTaskInput && verifiedTaskInput.rootRunId !== writerVerification.rootRunId)
     ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
     verifiedRequest.serverResolvedRootRunId = writerVerification.rootRunId;

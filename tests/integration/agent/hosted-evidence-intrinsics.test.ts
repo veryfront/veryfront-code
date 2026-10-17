@@ -1,3 +1,5 @@
+import { parseRuntimeAgentRunInvocationHostedChatRequestFromRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   getHostedChildTaskInputResolver,
@@ -337,4 +339,105 @@ it("isolates resolver scopes when tenant code replaces async context methods", a
   assertEquals(error, undefined);
   assertEquals(injectedReads, 0);
   assertEquals(legitimateCalls, 2);
+});
+
+it("keeps native root-bound ingress independent of mutable regexp test", async () => {
+  const projectId = "10000000-1000-4000-8000-100000000005";
+  const userId = "10000000-1000-4000-8000-100000000004";
+  const source = { type: "release" as const, releaseId: "release-42" };
+  const taskInput = {
+    version: 1 as const,
+    projectId,
+    rootRunId: "run_root",
+    runId: "run_child",
+    payload: { intakeId: "accepted" },
+  };
+  const body = {
+    run: {
+      agentServiceId: "runtime-provider",
+      agentId: "child",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_child",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: userId,
+      project: { projectId, projectSlug: "synthetic-project", runtimeTargetKind: "main_branch" },
+      parentRunId: "run_root",
+    },
+    messages: [],
+    tools: [],
+    context: [],
+    agentSource: source,
+    taskInput,
+  };
+  const request = new Request("https://agent.example.com/api/control-plane/runs/run_child/stream", {
+    method: "POST",
+    headers: { "X-Veryfront-Run-Event-Token": "synthetic-writer-token" },
+    body: JSON.stringify(body),
+  });
+  const invalidRequest = new Request(
+    "https://agent.example.com/api/control-plane/runs/run_child/stream",
+    {
+      method: "POST",
+      headers: { "X-Veryfront-Run-Event-Token": "synthetic-writer-token" },
+      body: JSON.stringify({ ...body, taskInput: undefined }),
+    },
+  );
+  let invalidResult:
+    | Awaited<ReturnType<typeof parseRuntimeAgentRunInvocationHostedChatRequestFromRequest>>
+    | undefined;
+  const digest = await computeHash(encodeHostedTaskInput(taskInput));
+  const original = Object.getOwnPropertyDescriptor(RegExp.prototype, "test")!;
+  let result:
+    | Awaited<ReturnType<typeof parseRuntimeAgentRunInvocationHostedChatRequestFromRequest>>
+    | undefined;
+  try {
+    Object.defineProperty(RegExp.prototype, "test", {
+      configurable: true,
+      value: function (this: RegExp, value: string) {
+        if (this.source === "^[a-zA-Z0-9_-]{1,128}$") throw new Error("tenant regexp test");
+        return Reflect.apply(original.value, this, [value]);
+      },
+    });
+    result = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(request, {
+      authenticate: async () => ({ userId, authToken: "synthetic-user-token" }),
+      verifyProjectAccess: async () => ({ success: true as const }),
+      runtimeSource: source,
+      verifyRunEventAppendToken: async () => ({
+        verified: true,
+        rootRunId: "run_root",
+        taskInputRootRunId: "run_root",
+        taskInputSha256: digest,
+      }),
+    });
+    Object.defineProperty(RegExp.prototype, "test", {
+      configurable: true,
+      value: function (this: RegExp, value: string) {
+        return this.source === "^[a-zA-Z0-9_-]{1,128}$"
+          ? true
+          : Reflect.apply(original.value, this, [value]);
+      },
+    });
+    invalidResult = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      invalidRequest,
+      {
+        authenticate: async () => ({ userId, authToken: "synthetic-user-token" }),
+        verifyProjectAccess: async () => ({ success: true as const }),
+        runtimeSource: source,
+        verifyRunEventAppendToken: async () => ({ verified: true, rootRunId: "bad/root" }),
+      },
+    );
+  } finally {
+    Object.defineProperty(RegExp.prototype, "test", original);
+  }
+  assertEquals(invalidResult instanceof Response && invalidResult.status, 403);
+  assertEquals(result instanceof Response, false);
+  assertEquals(
+    result && !(result instanceof Response) && result.serverResolvedRootRunId,
+    "run_root",
+  );
+  assertEquals(
+    result && !(result instanceof Response) && result.serverResolvedTaskInput,
+    taskInput,
+  );
 });
