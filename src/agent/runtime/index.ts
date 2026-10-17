@@ -6725,6 +6725,18 @@ export class AgentRuntime {
         deferCompletion: streamedBatchCompletionDeferred,
       });
       if (this.#persistRecoveryBoundary) {
+        // Recovery snapshots require an authenticated admission for every local
+        // call in this turn, including calls interrupted before input finalized.
+        // Announce them before waiting for persistence so both retry and terminal
+        // paths can acknowledge the matching error without an admission cycle.
+        for (const toolCall of streamedToolCalls) {
+          if (
+            toolCall.providerExecuted !== true && isStreamedToolCallIncomplete(toolCall) &&
+            !finalToolResults.has(toolCall.id)
+          ) {
+            announceStreamedToolCallInput(controller, encoder, toolCall);
+          }
+        }
         await this.#persistRecoveryBoundary(
           createRecoveryBoundary(
             currentMessages,
