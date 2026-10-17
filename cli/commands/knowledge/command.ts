@@ -372,7 +372,7 @@ function resolveOkfCompanionReferenceCandidates(documentPath: string, reference:
   const path = withoutQuery?.trim();
   if (!path) return [];
 
-  const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  const documentDir = dirname(documentPath).replaceAll("\\", "/");
   // Prefer OKF document-relative references, then fall back to bundle-root paths
   // for legacy fixtures that used root paths without a leading slash.
   const rawPaths = path.startsWith("/")
@@ -382,7 +382,7 @@ function resolveOkfCompanionReferenceCandidates(documentPath: string, reference:
     : [join(documentDir, path), path];
   const candidates: string[] = [];
   for (const rawPath of rawPaths) {
-    const normalized = normalize(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+    const normalized = normalize(rawPath).replaceAll("\\", "/").replace(/^\/+/, "");
     if (
       !normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") ||
       normalized.split("/").includes("..")
@@ -588,7 +588,7 @@ function deriveOkfBundleRemotePath(relativePath: string, knowledgePath: string):
     relativePath,
     "OKF bundle relative path",
   );
-  return `${prefix}/${normalizedRelative}`.replace(/\\/g, "/");
+  return `${prefix}/${normalizedRelative}`.replaceAll("\\", "/");
 }
 
 function buildOkfBundleUploadMetadata(knowledgePath: string): Record<string, unknown> {
