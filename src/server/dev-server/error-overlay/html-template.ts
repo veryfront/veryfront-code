@@ -1,3 +1,4 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
@@ -18,7 +19,9 @@ const WS_MAX_RECONNECT_ATTEMPTS = 10;
 function jsonForScript(value: unknown): string {
   const json = JSON.stringify(value);
   // JSON.stringify(undefined) returns undefined (not a string)
-  return json === undefined ? "undefined" : json.replaceAll("<", SCRIPT_LESS_THAN_ESCAPE);
+  return json === undefined
+    ? "undefined"
+    : replacePrivateRegExp(/</g, json, SCRIPT_LESS_THAN_ESCAPE);
 }
 
 export function generateRuntimeScript(): string {

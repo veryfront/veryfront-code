@@ -8,6 +8,7 @@
  * @module server/handlers/preview/markdown-html-generator
  */
 
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { escapeHtml } from "veryfront/utils/html-escape";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 
@@ -40,11 +41,10 @@ interface MarkdownHtmlOptions {
  */
 function detectTheme(req: Request, url: URL): "light" | "dark" | null {
   const colorModeParam = url.searchParams.get("color_mode")?.toLowerCase();
-  const clientHint = req.headers
-    .get("Sec-CH-Prefers-Color-Scheme")
-    ?.replaceAll('"', "")
-    .trim()
-    .toLowerCase();
+  const rawClientHint = req.headers.get("Sec-CH-Prefers-Color-Scheme");
+  const clientHint = rawClientHint === null
+    ? undefined
+    : replacePrivateRegExp(/"/g, rawClientHint, "").trim().toLowerCase();
 
   if (colorModeParam === "light" || colorModeParam === "dark") {
     return colorModeParam;
@@ -83,7 +83,11 @@ function buildStudioScript(
   };
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
-  const safeJson = JSON.stringify(bridgeConfig).replaceAll("<", SCRIPT_LESS_THAN_ESCAPE);
+  const safeJson = replacePrivateRegExp(
+    /</g,
+    JSON.stringify(bridgeConfig),
+    SCRIPT_LESS_THAN_ESCAPE,
+  );
   return `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
   <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
 }

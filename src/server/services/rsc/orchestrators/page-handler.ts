@@ -1,3 +1,4 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
 import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
@@ -27,12 +28,11 @@ const SCRIPT_ESCAPES = {
  * See VULN-INJ-1 in the security audit.
  */
 function jsonForScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replaceAll("<", SCRIPT_ESCAPES.lessThan)
-    .replaceAll(">", SCRIPT_ESCAPES.greaterThan)
-    .replaceAll("&", SCRIPT_ESCAPES.ampersand)
-    .replaceAll("\u2028", SCRIPT_ESCAPES.lineSeparator)
-    .replaceAll("\u2029", SCRIPT_ESCAPES.paragraphSeparator);
+  let escaped = replacePrivateRegExp(/</g, JSON.stringify(value), SCRIPT_ESCAPES.lessThan);
+  escaped = replacePrivateRegExp(/>/g, escaped, SCRIPT_ESCAPES.greaterThan);
+  escaped = replacePrivateRegExp(/&/g, escaped, SCRIPT_ESCAPES.ampersand);
+  escaped = replacePrivateRegExp(/\u2028/g, escaped, SCRIPT_ESCAPES.lineSeparator);
+  return replacePrivateRegExp(/\u2029/g, escaped, SCRIPT_ESCAPES.paragraphSeparator);
 }
 
 export class PageHandler {

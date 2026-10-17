@@ -1,3 +1,4 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { escapeHTML } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
 import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
@@ -99,7 +100,9 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
           url: window.location.href,
           errors: [{
             type: '${errorType}',
-            message: ${JSON.stringify(errorMessage).replaceAll("<", SCRIPT_LESS_THAN_ESCAPE)}
+            message: ${
+    replacePrivateRegExp(/</g, JSON.stringify(errorMessage), SCRIPT_LESS_THAN_ESCAPE)
+  }
           }]
         }, vfStudioTargetOrigin());
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }
