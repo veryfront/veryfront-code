@@ -254,3 +254,11 @@ Control-plane checkpoint consumers import `AgentPauseCheckpoint`,
 `veryfront/agent/pause-checkpoint`. Configure the schema validator before parsing,
 as with the other Veryfront schemas. This entrypoint exposes the native
 continuation parser and type; private host pause capabilities stay in the runtime.
+
+Native control-plane consumers validate version-one recovery snapshot data with
+`parseManagedRecoverySnapshotV1` from `veryfront/runtime/managed-recovery-snapshot`.
+Configure the schema validator before parsing. The parser checks source and run
+bindings, actual acknowledgement cursors, provider replay state, tool receipts and
+captured continuation consistency. Parsing grants no execution authority. The
+control plane must separately verify current generation ownership and derive
+acknowledgement cursors from its committed rows.
