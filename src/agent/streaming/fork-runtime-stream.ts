@@ -1,7 +1,7 @@
 import { assertPreparedMessageBudget } from "../../chat/message-prep-budget.ts";
 import { estimateOverhead } from "../../chat/message-prep.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "../runtime/message-adapter.ts";
-import type { RuntimeStateResolver } from "../types.ts";
+import type { RuntimeReasoningOption, RuntimeStateResolver } from "../types.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { canonicalPlatformHostTools } from "../platform-host-tools.ts";
@@ -49,7 +49,6 @@ import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import { AGENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
-import type { RuntimeReasoningOption } from "../types.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   commitForkRuntimeStep,
@@ -353,6 +352,61 @@ function getForkRuntimeAuthorizationToolNames(
   });
 }
 
+function createForkRuntimeConfig(
+  input: RunAgentRuntimeForkStepInput,
+  validateStartupBudget: RuntimeStateResolver,
+) {
+  return {
+    model: input.model,
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: input.parallelToolCalls }),
+    system: input.system,
+    ...(input.bootstrapSkill === undefined ? {} : {
+      bootstrapSkill: input.bootstrapSkill,
+      // Runtime state is resolved again after startup loading and before inference.
+      resolveRuntimeState: validateStartupBudget,
+    }),
+    tools: input.runtimeTools,
+    providerTools: input.providerToolNames ?? [],
+    maxSteps: 1,
+    ...(input.providerOptions || input.reasoning
+      ? {
+        resolveModelTransport: () => ({
+          providerOptions: input.providerOptions,
+          reasoning: input.reasoning,
+        }),
+      }
+      : {}),
+    __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
+      input.forkToolNames,
+      input.runtimeTools,
+    ),
+    ...(input.sourceIntegrationPolicy
+      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
+  };
+}
+
+function resolveForkToolContext(
+  input: RunAgentRuntimeForkStepInput,
+  dependencyContext: ReturnType<typeof hostedPlatformDependencyRuntimeContext>,
+  taskInput: ReturnType<typeof readHostedTaskInputAuthority>,
+) {
+  if (taskInput) {
+    return {
+      ...dependencyContext,
+      projectId: taskInput.projectId,
+      runId: taskInput.runId,
+      rootRunId: taskInput.rootRunId,
+      taskInput,
+    };
+  }
+  if (dependencyContext !== null && dependencyContext !== undefined) return dependencyContext;
+  return input.projectId ? { projectId: input.projectId } : undefined;
+}
+
 /** Run agent runtime fork step. */
 export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInput): Promise<{
   stream: ReadableStream<Uint8Array>;
@@ -397,37 +451,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       );
       return undefined;
     };
-    const runtimeConfig = {
-      model: input.model,
-      ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-      ...(input.parallelToolCalls === undefined
-        ? {}
-        : { parallelToolCalls: input.parallelToolCalls }),
-      system: input.system,
-      ...(input.bootstrapSkill === undefined ? {} : {
-        bootstrapSkill: input.bootstrapSkill,
-        // Runtime state is resolved again after startup loading and before inference.
-        resolveRuntimeState: validateStartupBudget,
-      }),
-      tools: input.runtimeTools,
-      providerTools: input.providerToolNames ?? [],
-      maxSteps: 1,
-      ...(input.providerOptions || input.reasoning
-        ? {
-          resolveModelTransport: () => ({
-            providerOptions: input.providerOptions,
-            reasoning: input.reasoning,
-          }),
-        }
-        : {}),
-      __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
-        input.forkToolNames,
-        input.runtimeTools,
-      ),
-      ...(input.sourceIntegrationPolicy
-        ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
-        : {}),
-    };
+    const runtimeConfig = createForkRuntimeConfig(input, validateStartupBudget);
     const resolveModelRuntime = input.resolveModelRuntime ??
       createHostedChildInferenceModelResolver(input);
     const dependencyContext = hostedPlatformDependencyRuntimeContext(input, input.projectId);
@@ -445,15 +469,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     );
 
     const taskInput = readHostedTaskInputAuthority(input, input.projectId);
-    const toolContext = taskInput
-      ? {
-        ...dependencyContext,
-        projectId: taskInput.projectId,
-        runId: taskInput.runId,
-        rootRunId: taskInput.rootRunId,
-        taskInput,
-      }
-      : dependencyContext ?? (input.projectId ? { projectId: input.projectId } : undefined);
+    const toolContext = resolveForkToolContext(input, dependencyContext, taskInput);
     stream = await runWithVeryfrontCloudContextAsync(
       {
         apiBaseUrl: input.apiUrl,
@@ -619,6 +635,84 @@ function requireForkStartupSkillState(
   return state;
 }
 
+function validateRetainedForkStartupSkill(
+  input: StartAgentRuntimeForkInput,
+  expected: ForkStartupSkillState | undefined,
+  readMessages: () => readonly AgentMessage[],
+): void {
+  if (expected && input.bootstrapSkill !== undefined) {
+    requireForkStartupSkillState(readMessages(), input.bootstrapSkill, expected);
+  }
+}
+
+function updateForkStartupSkillState(
+  input: StartAgentRuntimeForkInput,
+  expected: ForkStartupSkillState | undefined,
+  readMessages: () => readonly AgentMessage[],
+): ForkStartupSkillState | undefined {
+  if (input.bootstrapSkill !== undefined) {
+    return requireForkStartupSkillState(readMessages(), input.bootstrapSkill, expected);
+  }
+  return expected;
+}
+
+function createForkRuntimeStepInput(
+  input: StartAgentRuntimeForkInput,
+  prepared: ForkRuntimeStepPreparation,
+  stepCount: number,
+  effectiveForkToolNames: string[],
+): RunAgentRuntimeForkStepInput {
+  return inheritForkExecutionAuthority({
+    apiUrl: input.apiUrl,
+    authToken: input.authToken,
+    projectId: input.projectId,
+    model: input.model,
+    resolveModelRuntime: input.createModelRuntimeResolver?.(),
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: input.parallelToolCalls }),
+    // Later steps hydrate activation from the real loader result in currentMessages.
+    ...(input.bootstrapSkill !== undefined && stepCount === 0
+      ? { bootstrapSkill: input.bootstrapSkill }
+      : {}),
+    messages: prepared.messages,
+    system: prepared.system,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    forkToolNames: effectiveForkToolNames,
+    ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
+    runtimeTools: input.runtimeTools,
+    ...(input.sourceIntegrationPolicy
+      ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
+    ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+  }, input);
+}
+
+function assertForkRuntimePrompt(input: StartAgentRuntimeForkInput): void {
+  if (!input.initialMessages?.length && typeof input.prompt !== "string") {
+    throw INVALID_ARGUMENT.create({
+      detail: "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
+    });
+  }
+}
+
+function createForkStepResponseInput(
+  input: StartAgentRuntimeForkInput,
+  responsePromise: Promise<AgentResponse>,
+  progress: ReturnType<typeof createForkRuntimeProgress>,
+  streamedStepState: ReturnType<typeof createStreamedStepState>,
+): Parameters<typeof resolveForkStepResponse>[0] {
+  return {
+    responsePromise,
+    responseTimeoutMs: input.responseTimeoutMs ?? DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    currentMessages: progress.currentMessages,
+    streamedStepState,
+  };
+}
+
 /** Starts agent runtime fork. */
 export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRuntimeStreamResult {
   const stepsDeferred = createForkRuntimeDeferred<readonly ForkRuntimeStep[]>();
@@ -633,11 +727,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
 
   return {
     fullStream: (async function* (): AsyncGenerator<ForkPart> {
-      if (!input.initialMessages?.length && typeof input.prompt !== "string") {
-        throw INVALID_ARGUMENT.create({
-          detail: "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
-        });
-      }
+      assertForkRuntimePrompt(input);
 
       const progress = createForkRuntimeProgress(createInitialForkRuntimeMessages({
         initialMessages: input.initialMessages,
@@ -648,26 +738,18 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
 
       try {
         while (progress.steps.length < getMaxForkRuntimeStepCount(input)) {
-          if (startupSkillState && input.bootstrapSkill !== undefined) {
-            requireForkStartupSkillState(
-              progress.currentMessages,
-              input.bootstrapSkill,
-              startupSkillState,
-            );
-          }
+          validateRetainedForkStartupSkill(
+            input,
+            startupSkillState,
+            () => progress.currentMessages,
+          );
           const prepared = await prepareForkRuntimeStep({
             prepareStep: input.prepareStep,
             messages: progress.currentMessages,
             buildInstructions: input.buildInstructions,
             forkToolNames: input.forkToolNames,
           });
-          if (startupSkillState && input.bootstrapSkill !== undefined) {
-            requireForkStartupSkillState(
-              prepared.messages,
-              input.bootstrapSkill,
-              startupSkillState,
-            );
-          }
+          validateRetainedForkStartupSkill(input, startupSkillState, () => prepared.messages);
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
           // If the step preparer returned a live forkToolNames (pinned ∪ activated),
@@ -677,32 +759,14 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const effectiveForkToolNames: string[] = [
             ...(prepared.forkToolNames ?? input.forkToolNames),
           ];
-          const { stream, responsePromise } = await runStep(inheritForkExecutionAuthority({
-            apiUrl: input.apiUrl,
-            authToken: input.authToken,
-            projectId: input.projectId,
-            model: input.model,
-            resolveModelRuntime: input.createModelRuntimeResolver?.(),
-            ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-            ...(input.parallelToolCalls === undefined
-              ? {}
-              : { parallelToolCalls: input.parallelToolCalls }),
-            // Later steps hydrate activation from the real loader result in currentMessages.
-            ...(input.bootstrapSkill !== undefined && progress.steps.length === 0
-              ? { bootstrapSkill: input.bootstrapSkill }
-              : {}),
-            messages: prepared.messages,
-            system: prepared.system,
-            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            forkToolNames: effectiveForkToolNames,
-            ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
-            runtimeTools: input.runtimeTools,
-            ...(input.sourceIntegrationPolicy
-              ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
-              : {}),
-            ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
-            ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-          }, input));
+          const { stream, responsePromise } = await runStep(
+            createForkRuntimeStepInput(
+              input,
+              prepared,
+              progress.steps.length,
+              effectiveForkToolNames,
+            ),
+          );
 
           for await (const event of streamDataStreamEvents(stream)) {
             const parts = mapAgUiRuntimeEventToForkParts(event, state);
@@ -712,21 +776,15 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             }
           }
 
-          const response = await resolveForkStepResponse({
-            responsePromise,
-            responseTimeoutMs: input.responseTimeoutMs ?? DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
-            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            currentMessages: progress.currentMessages,
-            streamedStepState,
-          });
+          const response = await resolveForkStepResponse(
+            createForkStepResponseInput(input, responsePromise, progress, streamedStepState),
+          );
           const step = commitForkRuntimeStep(progress, response);
-          if (input.bootstrapSkill !== undefined) {
-            startupSkillState = requireForkStartupSkillState(
-              progress.currentMessages,
-              input.bootstrapSkill,
-              startupSkillState,
-            );
-          }
+          startupSkillState = updateForkStartupSkillState(
+            input,
+            startupSkillState,
+            () => progress.currentMessages,
+          );
           for (const recoveredPart of buildRecoveredStepParts(step, state)) {
             yield recoveredPart;
           }
