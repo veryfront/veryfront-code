@@ -311,7 +311,14 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     const trustedIdSet = new Set(trustedIds);
     const overridesAtResult = new Map<string, SkillDelegationOverrides | undefined>();
     let activeOverrides: SkillDelegationOverrides | undefined;
+    let reachedCurrentRun = false;
     for (const message of snapshot.messages) {
+      if (!historyIds.has(message.id) && !reachedCurrentRun) {
+        // Native hydration restores history capabilities, never its delegation
+        // policy. Only activations executed during this run may set that policy.
+        activeOverrides = undefined;
+        reachedCurrentRun = true;
+      }
       for (const part of message.parts) {
         if (part.type !== "tool-result" || !("toolCallId" in part) || !("result" in part)) continue;
         overridesAtResult.set(part.toolCallId, activeOverrides);
@@ -320,6 +327,12 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
         }
       }
     }
+    if (
+      !isDeepStrictEqual(
+        continuation.activeSkillDelegationOverrides,
+        reachedCurrentRun ? activeOverrides : undefined,
+      )
+    ) throw invalid();
     const responseCallIds = new Set<string>();
     for (const entry of continuation.toolCalls) {
       const call = transcriptCalls.get(entry.id);

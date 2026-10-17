@@ -598,6 +598,18 @@ function continuationFixture() {
   };
 }
 
+it("continuation cannot invent delegation policy without a current trusted activation", () => {
+  const value = continuationFixture();
+  for (const activeSkillDelegationOverrides of [{}, { model: "openai/gpt-5.4", maxSteps: 20 }]) {
+    assertThrows(() =>
+      parseRecoverySnapshot({
+        ...value,
+        runtimeContinuation: { ...value.runtimeContinuation, activeSkillDelegationOverrides },
+      })
+    );
+  }
+});
+
 it("continuation response bookkeeping cannot contradict acknowledged tool facts", () => {
   const value = continuationFixture();
   assertEquals(parseRecoverySnapshot(value).runtimeContinuation?.toolCalls.length, 1);
@@ -767,7 +779,12 @@ it("continuation presentation text matches native assistant and interrupted reco
 
 it("continuation bookkeeping supports sealed history and native skill reference lists", () => {
   const value = continuationFixture();
-  const result = { skillId: "synthetic", instructions: "Use the synthetic checklist." };
+  const result = {
+    skillId: "synthetic",
+    instructions: "Use the synthetic checklist.",
+    model: "openai/gpt-5.4",
+    maxSteps: 20,
+  };
   const messages = [
     {
       id: "history-call",
@@ -815,6 +832,15 @@ it("continuation bookkeeping supports sealed history and native skill reference 
   assertEquals(parseRecoverySnapshot(history).runtimeContinuation?.trustedSkillLoadResultIds, [
     "skill-call",
   ]);
+  assertThrows(() =>
+    parseRecoverySnapshot({
+      ...history,
+      runtimeContinuation: {
+        ...history.runtimeContinuation,
+        activeSkillDelegationOverrides: { model: "openai/gpt-5.4", maxSteps: 20 },
+      },
+    })
+  );
   for (const field of ["trustedSkillLoadResultIds", "runtimeGeneratedMessageIds"]) {
     assertThrows(() =>
       parseRecoverySnapshot({
@@ -897,7 +923,8 @@ it("real native pause writer retains consistent optimized and failed tool summar
   }
 });
 
-it("real native skill delegation overrides preserve original calls and effective response inputs", async () => {
+for (const resetPolicy of [false, true]) {
+it(`real native skill delegation preserves effective inputs and ${resetPolicy ? "resets" : "retains"} active policy`, async () => {
   const delegatedInputs: unknown[] = [];
   const hostTools = createToolsFromHostDefinitions(markTrustedHostToolSet(
     {
@@ -906,9 +933,9 @@ it("real native skill delegation overrides preserve original calls and effective
         skillsDir: "/skills",
         projectSkillLoader: {
           listProjectSkillReferences: () => Promise.resolve([]),
-          loadProjectSkill: () =>
+          loadProjectSkill: ({ skillId }) =>
             Promise.resolve({
-              instructions:
+              instructions: skillId === "plain" ? "Use the plain policy." :
                 "---\nname: review\ndescription: Synthetic delegation policy\nmodel: openai/gpt-5.4\nthinking: false\nmax-steps: 20\n---\nUse the synthetic delegation policy.",
             }),
           loadProjectSkillReference: () => Promise.resolve(null),
@@ -924,6 +951,7 @@ it("real native skill delegation overrides preserve original calls and effective
   const model = scriptedModel([
     { toolCalls: [{ id: "load-1", name: "load_skill", input: { load: { skillId: "review" } } }] },
     { toolCalls: [{ id: "invoke-1", name: "invoke_agent", input: { prompt: "synthetic" } }] },
+    ...(resetPolicy ? [{ toolCalls: [{ id: "load-2", name: "load_skill", input: { load: { skillId: "plain" } } }] }] : []),
     { text: "Complete" },
   ], { only: "stream" });
   let saved: unknown;
@@ -931,7 +959,7 @@ it("real native skill delegation overrides preserve original calls and effective
     model: "veryfront-cloud/openai/gpt-5.4",
     system: "Synthetic delegation proof",
     skills: false,
-    maxSteps: 3,
+    maxSteps: 4,
     tools: {
       ...hostTools,
       invoke_agent: tool({
@@ -956,7 +984,7 @@ it("real native skill delegation overrides preserve original calls and effective
     manualPause: {
       load: () => Promise.resolve(null),
       acknowledge: (checkpoint) => {
-        if (checkpoint.nextStep !== 2) return Promise.resolve(false);
+        if (checkpoint.nextStep !== (resetPolicy ? 3 : 2)) return Promise.resolve(false);
         saved = structuredClone(checkpoint);
         return Promise.resolve(true);
       },
@@ -1021,6 +1049,19 @@ it("real native skill delegation overrides preserve original calls and effective
   assertEquals(boundaries[1]?.input, { prompt: "synthetic" });
   const parsed = parseRecoverySnapshot(snapshot);
   assertEquals(parsed.runtimeContinuation?.toolCalls[1]?.args, delegatedInputs[0]);
+  for (
+    const activeSkillDelegationOverrides of [undefined, {}, { model: "foreign" }, {
+      ...continuation.activeSkillDelegationOverrides,
+      maxSteps: 21,
+    }]
+  ) {
+    assertThrows(() =>
+      parseRecoverySnapshot({
+        ...snapshot,
+        runtimeContinuation: { ...continuation, activeSkillDelegationOverrides },
+      })
+    );
+  }
   const originalEntry = continuation.toolCalls[1]!;
   for (
     const change of [{ prompt: "foreign" }, { model: "foreign" }, { thinking: 42 }, {
@@ -1041,3 +1082,5 @@ it("real native skill delegation overrides preserve original calls and effective
     );
   }
 });
+
+}
