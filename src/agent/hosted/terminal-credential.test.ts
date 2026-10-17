@@ -811,3 +811,60 @@ describe("authenticated accepted child evidence readers", () => {
     );
   });
 });
+
+it("verifies signed task input before returning every terminal workflow receipt", async () => {
+  const taskInput: HostedTaskInput = {
+    version: 1,
+    projectId: "project-1",
+    rootRunId: "root-run",
+    runId: "child-run",
+    payload: { record: "accepted" },
+  };
+  const proof = {
+    verified: true as const,
+    rootRunId: "root-run",
+    taskInputRootRunId: "root-run",
+    taskInputSha256: await computeHash(encodeHostedTaskInput(taskInput)),
+  };
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    const response = () =>
+      inheritedExecutionResponse({ status, output: { saved: true }, taskInput });
+    const result = await acceptWorkflowInheritedRunAdmission(response(), {
+      ...inheritedBinding(),
+      verifyRunEventAppendToken: async () => proof,
+    });
+    assertEquals("terminalReceipt" in result && result.terminalReceipt.status, status);
+    assertEquals(hostedInheritedTaskInput(result as { runId: string }, "project-1"), undefined);
+    for (
+      const invalid of [
+        { ...proof, taskInputSha256: "wrong" },
+        { ...proof, rootRunId: "foreign" },
+        { ...proof, taskInputRootRunId: "foreign" },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(response(), {
+            ...inheritedBinding(),
+            verifyRunEventAppendToken: async () => invalid,
+          }),
+        Error,
+        "signed binding mismatch",
+      );
+    }
+    await assertRejects(
+      () => acceptWorkflowInheritedRunAdmission(response(), inheritedBinding()),
+      Error,
+      "signed binding mismatch",
+    );
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(inheritedExecutionResponse({ status, output: null }), {
+          ...inheritedBinding(),
+          verifyRunEventAppendToken: async () => proof,
+        }),
+      Error,
+      "signed binding mismatch",
+    );
+  }
+});

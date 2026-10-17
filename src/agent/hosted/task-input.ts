@@ -1,8 +1,9 @@
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
-const keys = Object.keys, entries = Object.entries, descriptors = Object.getOwnPropertyDescriptors;
+const keys = Object.keys, descriptors = Object.getOwnPropertyDescriptors;
 const prototype = Object.getPrototypeOf,
   plainPrototype = Object.prototype,
   symbols = Object.getOwnPropertySymbols;
@@ -15,8 +16,7 @@ const ArraySome = Array.prototype.some;
 const NativeError = Error;
 const apply = Reflect.apply,
   sort = Array.prototype.sort,
-  join = Array.prototype.join,
-  map = Array.prototype.map;
+  join = Array.prototype.join;
 const trustedInputs = new WeakSet<object>();
 const weakHas = WeakSet.prototype.has, weakAdd = WeakSet.prototype.add;
 const encoder = new PrivateTextEncoder();
@@ -66,17 +66,19 @@ function assertJson(value: unknown, depth = 0, budget = { remaining: 16_384 }): 
     (value.length > 16_384 || keys(value).length !== value.length ||
       apply(ArraySome, keys(value), [(key: string, index: number) => key !== `${index}`]))
   ) throw invalid();
-  for (const [key, descriptor] of entries(descriptors(value))) {
-    if (isArray(value) && key === "length") continue;
+  const properties = descriptors(value);
+  forEachPrivateArray(keys(properties), (key) => {
+    if (isArray(value) && key === "length") return;
+    const descriptor = properties[key]!;
     if (descriptor.get || descriptor.set || !descriptor.enumerable) throw invalid();
     assertJson(descriptor.value, depth + 1, budget);
-  }
+  });
   if (symbols(value).length) throw invalid();
 }
 
 function freezeJson(value: unknown): void {
   if (value && typeof value === "object") {
-    for (const child of values(value)) freezeJson(child);
+    forEachPrivateArray(values(value), freezeJson);
     freeze(value);
   }
 }
@@ -97,9 +99,9 @@ export function resolveHostedTaskInput(
   ) {
     throw invalid();
   }
-  for (const key of ["projectId", "rootRunId", "runId"] as const) {
+  forEachPrivateArray(["projectId", "rootRunId", "runId"] as const, (key) => {
     if (typeof scope[key] !== "string" || !scope[key] || input[key] !== scope[key]) throw invalid();
-  }
+  });
   if (!input.payload || typeof input.payload !== "object" || isArray(input.payload)) {
     throw invalid();
   }
@@ -117,11 +119,11 @@ export function resolveHostedTaskInput(
 export function encodeHostedTaskInput(input: HostedTaskInput): string {
   function canonical(value: HostedTaskInputValue): HostedTaskInputValue {
     if (!value || typeof value !== "object") return value;
-    if (isArray(value)) return apply(map, value, [canonical]) as HostedTaskInputValue[];
+    if (isArray(value)) return mapPrivateArray(value, canonical);
     const result: Record<string, HostedTaskInputValue> = create(null);
-    for (const key of sortedKeys(value)) {
+    forEachPrivateArray(sortedKeys(value), (key) => {
       result[key] = canonical((value as Record<string, HostedTaskInputValue>)[key]!);
-    }
+    });
     return result;
   }
   return privateJsonStringify(canonical(input));
@@ -155,14 +157,14 @@ export function getVerifiedHostedTaskInput(context: unknown): HostedTaskInput | 
   if (
     !input.value || typeof input.value !== "object" || !apply(weakHas, trustedInputs, [input.value])
   ) throw invalid();
-  const scope: HostedTaskInputScope = {};
-  for (const key of ["projectId", "rootRunId", "runId"] as const) {
+  const scope: HostedTaskInputScope = create(null);
+  forEachPrivateArray(["projectId", "rootRunId", "runId"] as const, (key) => {
     const property = properties[key];
     if (!property || property.get || property.set || typeof property.value !== "string") {
       throw invalid();
     }
     scope[key] = property.value;
-  }
+  });
   return resolveHostedTaskInput(input.value, scope);
 }
 

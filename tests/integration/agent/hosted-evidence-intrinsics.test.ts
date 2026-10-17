@@ -1,4 +1,8 @@
 import {
+  encodeHostedTaskInput,
+  resolveHostedTaskInput,
+} from "#veryfront/agent/hosted/task-input.ts";
+import {
   type HostedAcceptedTaskInputEvent,
   snapshotHostedAcceptedTaskInputEvent,
 } from "#veryfront/agent/hosted/accepted-task-input.ts";
@@ -158,4 +162,111 @@ it("rejects malformed receipts despite permissive tenant replacements", () => {
   }
   assertEquals(rejected, true);
   assertThrows(() => snapshotHostedAcceptedTaskInputEvent(invalid));
+});
+
+it("does not skip or replace parent evidence when tenant code poisons array traversal", async () => {
+  const canonical = "11111111-1111-4111-8111-111111111111";
+  const owner = {
+    projectId: "project-1",
+    authToken: "synthetic-parent-token",
+    durableRootRun: { runId: "parent" },
+  } as ParsedHostedChatRequest;
+  registerHostedTerminalCredential(
+    owner,
+    `header.${
+      btoa(
+        JSON.stringify({
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          runId: "parent",
+          canonicalRunId: canonical,
+          dispatchNonce: "dispatch",
+        }),
+      )
+    }.signature`,
+  );
+  const valid = {
+    run_id: canonical,
+    event_type: "TOOL_CALL_RESULT",
+    event_id: 1,
+    payload: { result: "accepted" },
+  };
+  const responses = [
+    Response.json({ data: [{ ...valid, run_id: "foreign" }], page_info: { next: null } }),
+    Response.json({ data: [valid], page_info: { next: null } }),
+  ];
+  let index = 0;
+  const evidence = hostedAcceptedChildEvidence(owner, "project-1", undefined, {
+    apiUrl: "https://api.example/v1",
+    fetch: () => Promise.resolve(responses[index++]!),
+  });
+  const iterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  const map = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;
+  let rejected = false;
+  let rows: Awaited<ReturnType<typeof evidence.readParentToolResults>> | undefined;
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* () {},
+    });
+    Object.defineProperty(Array.prototype, "map", { configurable: true, value: () => [] });
+    try {
+      await evidence.readParentToolResults();
+    } catch (error) {
+      rejected = error instanceof Error &&
+        error.message === "Parent receipt evidence has wrong scope";
+    }
+    rows = await evidence.readParentToolResults();
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, iterator);
+    Object.defineProperty(Array.prototype, "map", map);
+  }
+  assertEquals(rejected, true);
+  assertEquals(rows, [valid]);
+  assertEquals(Object.isFrozen(rows), true);
+  assertEquals(Object.isFrozen(rows![0]), true);
+});
+
+it("validates, freezes and hashes task input with poisoned array iteration and species", () => {
+  const scope = { projectId: "project-a", rootRunId: "root-a", runId: "child-a" };
+  const binding = () => ({
+    version: 1 as const,
+    ...scope,
+    payload: { intakeId: "intake-a", nested: { path: "artifact" } },
+  });
+  const original = {
+    ...binding(),
+    payload: { ...binding().payload, list: [{ value: "first" }, "second"] },
+  };
+  const expected = encodeHostedTaskInput(original);
+  const iterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  const species = Object.getOwnPropertyDescriptor(Array, Symbol.species)!;
+  let snapshot: ReturnType<typeof resolveHostedTaskInput>;
+  let encoded: string | undefined;
+  let rejected = false;
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* () {},
+    });
+    Object.defineProperty(Array, Symbol.species, {
+      configurable: true,
+      get() {
+        throw new Error("tenant species");
+      },
+    });
+    snapshot = resolveHostedTaskInput(original, scope);
+    encoded = encodeHostedTaskInput(snapshot!);
+    try {
+      resolveHostedTaskInput({ ...original, runId: "foreign" }, scope);
+    } catch {
+      rejected = true;
+    }
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, iterator);
+    Object.defineProperty(Array, Symbol.species, species);
+  }
+  assertEquals(encoded, expected);
+  assertEquals(Object.isFrozen(snapshot!.payload.nested), true);
+  assertEquals(rejected, true);
 });

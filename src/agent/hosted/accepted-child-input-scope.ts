@@ -87,3 +87,9 @@ export function getHostedChildTaskInputResolver(): HostedChildTaskInputResolver 
     );
   };
 }
+
+/** @internal Give scheduled framework execution its own lifetime before acknowledging the request. */
+export function runWithHostedChildTaskInputExecution<T>(operation: () => Promise<T>): Promise<T> {
+  const scope = storage.getStore();
+  return withHostedChildTaskInputResolver(scope?.active ? scope.resolver : undefined, operation);
+}

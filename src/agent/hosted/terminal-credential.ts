@@ -1,3 +1,4 @@
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { authorizeHostedTaskInput } from "./task-input.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -54,6 +55,11 @@ import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts"
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
+const evidenceFreeze = Object.freeze;
+const evidenceIsArray = Array.isArray;
+const evidenceSafeInteger = Number.isSafeInteger;
+const evidenceEncodeURIComponent = encodeURIComponent;
+const evidenceRegExpExec = RegExp.prototype.exec;
 const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
@@ -407,6 +413,40 @@ async function normalizeInheritedExecutionResponse(
 
 export type InheritedRunResult = { readonly terminalReceipt: InheritedTerminalReceipt };
 
+async function verifyInheritedTaskInputBinding(
+  response: Response,
+  binding: {
+    projectId: string;
+    agentId?: string;
+    verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+  },
+  eventToken: string | null,
+  runId: string,
+) {
+  const taskInput = admittedInputs.get(response);
+  const verification = eventToken
+    ? await binding.verifyRunEventAppendToken?.({
+      token: eventToken,
+      projectId: binding.projectId,
+      runId,
+      ...(binding.agentId ? { agentId: binding.agentId } : {}),
+    })
+    : undefined;
+  if (
+    taskInput ||
+    (verification && typeof verification === "object" &&
+      (verification.taskInputSha256 !== undefined || verification.taskInputRootRunId !== undefined))
+  ) {
+    if (
+      !taskInput || !verification || typeof verification !== "object" ||
+      verification.verified !== true || verification.taskInputRootRunId !== taskInput.rootRunId ||
+      (verification.rootRunId !== undefined && verification.rootRunId !== taskInput.rootRunId) ||
+      verification.taskInputSha256 !== await computeHash(encodeHostedTaskInput(taskInput))
+    ) throw new Error("Inherited task input signed binding mismatch");
+  }
+  return verification;
+}
+
 /** Read a terminal workflow child without restoring an earlier execution capability. */
 export async function acceptWorkflowInheritedRunAdmission(
   response: Response,
@@ -437,6 +477,16 @@ export async function acceptWorkflowInheritedRunAdmission(
     (row.error !== undefined &&
       (typeof row.error?.code !== "string" || typeof row.error?.message !== "string"))
   ) throw new Error("Inherited child resource binding mismatch");
+  const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
+  const terminalToken = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
+  const taskInput = admittedInputs.get(response);
+  if (taskInput && !terminalToken) throw new Error("Inherited task input signed binding mismatch");
+  await verifyInheritedTaskInputBinding(
+    response,
+    binding,
+    eventToken,
+    terminalToken ? terminalRoutingRunId(terminalToken) : row.id,
+  );
   return {
     terminalReceipt: {
       status: row.status,
@@ -492,24 +542,7 @@ export async function acceptInheritedRunAdmission(
     !Number.isSafeInteger(externalCursor) || externalCursor < 0
   ) throw new Error("Inherited child resource binding mismatch");
   const taskInput = admittedInputs.get(response);
-  const verification = await binding.verifyRunEventAppendToken?.({
-    token: eventToken,
-    projectId: binding.projectId,
-    runId,
-    ...(binding.agentId ? { agentId: binding.agentId } : {}),
-  });
-  if (
-    taskInput ||
-    (verification && typeof verification === "object" &&
-      (verification.taskInputSha256 !== undefined || verification.taskInputRootRunId !== undefined))
-  ) {
-    if (
-      !taskInput || !verification || typeof verification !== "object" ||
-      verification.verified !== true || verification.taskInputRootRunId !== taskInput.rootRunId ||
-      (verification.rootRunId !== undefined && verification.rootRunId !== taskInput.rootRunId) ||
-      verification.taskInputSha256 !== await computeHash(encodeHostedTaskInput(taskInput))
-    ) throw new Error("Inherited task input signed binding mismatch");
-  }
+  const verification = await verifyInheritedTaskInputBinding(response, binding, eventToken, runId);
   if (taskInput) authorizeHostedTaskInput(taskInput);
   const run = {
     runId,
@@ -807,34 +840,38 @@ export function hostedAcceptedChildEvidence(
     if (body.truncated) throw new Error("Accepted receipt read exceeds byte budget");
     return privateJsonParse(body.text);
   }
-  return Object.freeze({
+  return evidenceFreeze({
     async readParentToolResults() {
       const page = await read(
         `/runs/${
-          encodeURIComponent(canonical)
+          evidenceEncodeURIComponent(canonical)
         }/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
       ) as { data?: unknown; page_info?: { next?: unknown } };
-      if (!Array.isArray(page.data) || page.data.length > 100 || page.page_info?.next !== null) {
+      if (!evidenceIsArray(page.data) || page.data.length > 100 || page.page_info?.next !== null) {
         throw new Error("Parent receipt evidence is incomplete");
       }
-      for (const row of page.data) {
+      forEachPrivateArray(page.data, (row) => {
         if (
           !row || typeof row !== "object" || row.run_id !== canonical ||
-          row.event_type !== "TOOL_CALL_RESULT" || !Number.isSafeInteger(row.event_id) ||
+          row.event_type !== "TOOL_CALL_RESULT" || !evidenceSafeInteger(row.event_id) ||
           row.event_id <= 0
         ) throw new Error("Parent receipt evidence has wrong scope");
-      }
-      return Object.freeze(page.data.map((row) => Object.freeze(row)));
+      });
+      return evidenceFreeze(mapPrivateArray(page.data, (row) => evidenceFreeze(row)));
     },
     async readCommittedVersion(path: string, versionId: string) {
       if (
         typeof path !== "string" || !path || path.length > 512 || typeof versionId !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(versionId)
+        !apply(
+          evidenceRegExpExec,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+          [versionId],
+        )
       ) throw new Error("Invalid accepted artifact reference");
       const value = await read(
-        `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(path)}/versions/${
-          encodeURIComponent(versionId)
-        }`,
+        `/projects/${evidenceEncodeURIComponent(projectId)}/files/${
+          evidenceEncodeURIComponent(path)
+        }/versions/${evidenceEncodeURIComponent(versionId)}`,
       ) as { path?: unknown; id?: unknown; content?: unknown };
       if (value.path !== path || value.id !== versionId || typeof value.content !== "string") {
         throw new Error("Historical artifact identity mismatch");
