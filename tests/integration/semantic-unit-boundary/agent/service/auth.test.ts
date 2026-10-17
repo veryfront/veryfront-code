@@ -2785,3 +2785,73 @@ it("reads inherited parent evidence when only the signed terminal token carries 
   );
   assertEquals(invalidReads, 0);
 });
+
+it("verifies terminal evidence with captured scope and routing intrinsics", async () => {
+  const projectId = "project-fixture", runId = "run-fixture";
+  const canonicalRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let scopes = ["agent-runs:terminal:complete"];
+  const claims = () => ({
+    sub: "server-fixture",
+    actorType: "service_account",
+    tokenUse: "run_event_writer",
+    writerPurpose: "current_run_terminal",
+    serviceAccountId: "server-fixture",
+    userId: "server-fixture",
+    projectId,
+    runId,
+    canonicalRunId,
+    dispatchNonce: "nonce-fixture",
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    scopes,
+  });
+  const token = `header.${btoa(JSON.stringify(claims()))}.signature`;
+  const invalidToken = `header.${
+    btoa(JSON.stringify({ ...claims(), canonicalRunId: "invalid" }))
+  }.signature`;
+  const auth = createHostedServiceAuth({
+    authProvider: { verifyWithPublicKey: () => Promise.resolve(claims()) },
+    getConfig: () => ({
+      VERYFRONT_API_URL: "https://api.example.test",
+      OAUTH_PUBLIC_KEY: "fixture-key",
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: "server-fixture",
+    }),
+  });
+  const { terminalRoute } = await import("#veryfront/agent/conversation/terminal-route.ts");
+  const targets = [
+    [Array, "isArray"],
+    [Array.prototype, "every"],
+    [Array.prototype, "includes"],
+    [globalThis, "Set"],
+    [RegExp.prototype, "test"],
+  ] as const;
+  for (let index = 0; index < targets.length * 2; index++) {
+    const [target, key] = targets[index % targets.length]!;
+    const original = Object.getOwnPropertyDescriptor(target, key)!;
+    let valid = false, invalid = true, invalidRouteRejected = false, route: string | undefined;
+    try {
+      Object.defineProperty(target, key, {
+        ...original,
+        value: () => {
+          if (index < targets.length) throw new Error("Tenant intrinsic hook");
+          return true;
+        },
+      });
+      valid = await auth.verifyRunTerminalToken!({ token, projectId, runId });
+      scopes = ["agent-runs:terminal:complete", "agent-runs:terminal:complete"];
+      invalid = await auth.verifyRunTerminalToken!({ token, projectId, runId });
+      route = terminalRoute(token, runId).id;
+      try {
+        terminalRoute(invalidToken, runId);
+      } catch {
+        invalidRouteRejected = true;
+      }
+    } finally {
+      Object.defineProperty(target, key, original);
+      scopes = ["agent-runs:terminal:complete"];
+    }
+    assertEquals(valid, true, `valid terminal proof under poisoned ${key}`);
+    assertEquals(invalid, false, `duplicate scopes under poisoned ${key}`);
+    assertEquals(route, canonicalRunId);
+    assertEquals(invalidRouteRejected, true, `malformed route under poisoned ${key}`);
+  }
+});

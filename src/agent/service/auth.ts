@@ -378,11 +378,7 @@ const RUN_RESUME_SCOPES = [
 ] as const;
 
 function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(scopes) &&
-    scopes.length === expected.length &&
-    scopes.every((value): value is string => typeof value === "string") &&
-    new Set(scopes).size === scopes.length &&
-    expected.every((requiredScope) => scopes.includes(requiredScope));
+  return hasExactCancellationScopes(scopes, expected, "Token scopes");
 }
 
 function hasExactCancellationScopes(
