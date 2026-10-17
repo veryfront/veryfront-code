@@ -5659,7 +5659,10 @@ describe("internal-agents/run-stream", () => {
     completion.resolve();
     await completion.promise;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const next = sessionManager.startRun({ runId: "after-producer-settlement", threadId: input.threadId });
+    const next = sessionManager.startRun({
+      runId: "after-producer-settlement",
+      threadId: input.threadId,
+    });
     sessionManager.completeRun("after-producer-settlement", next);
   });
 
@@ -5683,12 +5686,13 @@ describe("internal-agents/run-stream", () => {
     const response = await createRuntimeAgentStreamResponse(input, agent, {
       sessionManager,
       createRuntime: () => ({
-        stream: async () => new ReadableStream<Uint8Array>({
-          cancel() {
-            cancellationStarted.resolve();
-            return completion.promise;
-          },
-        }),
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              cancellationStarted.resolve();
+              return completion.promise;
+            },
+          }),
       }),
     });
     const reader = response.body?.getReader();
@@ -5702,7 +5706,10 @@ describe("internal-agents/run-stream", () => {
     completion.resolve();
     await completion.promise;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const next = sessionManager.startRun({ runId: "after-producer-settlement", threadId: input.threadId });
+    const next = sessionManager.startRun({
+      runId: "after-producer-settlement",
+      threadId: input.threadId,
+    });
     sessionManager.completeRun("after-producer-settlement", next);
   });
 
