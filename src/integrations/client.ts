@@ -711,13 +711,12 @@ export async function createIntegrationClient(
           signal: options.abortSignal,
           mutation: true,
         }),
-        (item) =>
-          typeof item.id === "string" && item.id.toLowerCase() === connectionId.toLowerCase() &&
-          item.status === "deleted" && typeof item.provider_revoked === "boolean",
+        // The acknowledgement names no connection: ok confirms the delete of this one.
+        (item) => item.ok === true && typeof item.provider_revoked === "boolean",
         true,
       );
       return Object.freeze({
-        id: deletion.id as string,
+        id: connectionId,
         status: "deleted" as const,
         providerRevoked: deletion.provider_revoked as boolean,
       });

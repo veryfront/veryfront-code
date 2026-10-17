@@ -94,8 +94,8 @@ describe("project-env/fetcher", () => {
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
 
-      assertEquals(url.pathname, "/projects/my-project/environment-variables");
-      assertEquals(url.searchParams.get("environment_id"), "env-123");
+      assertEquals(url.pathname, "/projects/my-project/environments/env-123/variables");
+      assertEquals(url.searchParams.get("environment_id"), null);
       assertEquals(url.searchParams.get("limit"), "100");
       assertEquals(req.headers.get("authorization"), "Bearer test-token");
 
@@ -114,6 +114,45 @@ describe("project-env/fetcher", () => {
         API_KEY: "sk-123",
         DATABASE_URL: "postgres://localhost/db",
       });
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("reads the legacy variable list when the API has no environment variable route", async () => {
+    const requests: string[] = [];
+    const { server, port } = createMockServer((req: Request) => {
+      const url = new URL(req.url);
+      requests.push(`${url.pathname}${url.search}`);
+      assertEquals(req.headers.get("authorization"), "Bearer test-token");
+      if (url.pathname === "/projects/my-project/environments/env-123/variables") {
+        return Response.json({ code: "not_found" }, { status: 404 });
+      }
+      return Response.json({ data: [{ key: "API_KEY", value: "sk-123" }] });
+    });
+
+    try {
+      assertEquals(await fetchFromMockApi(port), { API_KEY: "sk-123" });
+      assertEquals(requests, [
+        "/projects/my-project/environments/env-123/variables?limit=100",
+        "/projects/my-project/environment-variables?environment_id=env-123&limit=100",
+      ]);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("denies an environment that neither variable route finds", async () => {
+    let requestCount = 0;
+    const { server, port } = createMockServer(() => {
+      requestCount++;
+      return Response.json({ code: "not_found" }, { status: 404 });
+    });
+
+    try {
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals((error as { slug?: string }).slug, "permission-denied");
+      assertEquals(requestCount, 2);
     } finally {
       await server.shutdown();
     }
@@ -307,7 +346,7 @@ describe("project-env/fetcher", () => {
 
     try {
       await assertRejects(() => fetchFromMockApi(port));
-      assertEquals(paths, ["/projects/my-project/environment-variables"]);
+      assertEquals(paths, ["/projects/my-project/environments/env-123/variables"]);
     } finally {
       await server.shutdown();
     }
@@ -319,8 +358,7 @@ describe("project-env/fetcher", () => {
       const url = new URL(req.url);
       paths.push(url.pathname);
 
-      if (url.pathname === "/projects/my-project/environment-variables") {
-        assertEquals(url.searchParams.get("environment_id"), "env-123");
+      if (url.pathname === "/projects/my-project/environments/env-123/variables") {
         assertEquals(req.headers.get("authorization"), "Bearer test-token");
         return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
       }
@@ -342,7 +380,7 @@ describe("project-env/fetcher", () => {
 
       assertEquals(result, { API_KEY: "plaintext-value" });
       assertEquals(paths, [
-        "/projects/my-project/environment-variables",
+        "/projects/my-project/environments/env-123/variables",
         "/internal/project-environment-variables",
       ]);
     } finally {
@@ -383,7 +421,7 @@ describe("project-env/fetcher", () => {
       const url = new URL(req.url);
       paths.push(url.pathname);
 
-      if (url.pathname === "/projects/my-project/environment-variables") {
+      if (url.pathname === "/projects/my-project/environments/env-123/variables") {
         assertEquals(req.headers.get("authorization"), "Bearer test-token");
         return Response.json({ data: [] });
       }
@@ -408,7 +446,7 @@ describe("project-env/fetcher", () => {
       );
 
       assertEquals(paths, [
-        "/projects/my-project/environment-variables",
+        "/projects/my-project/environments/env-123/variables",
         "/internal/project-environment-variables",
       ]);
     } finally {
@@ -421,7 +459,7 @@ describe("project-env/fetcher", () => {
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
       paths.push(url.pathname);
-      if (url.pathname === "/projects/my-project/environment-variables") {
+      if (url.pathname === "/projects/my-project/environments/env-123/variables") {
         return Response.json({ data: [] });
       }
       if (url.pathname === "/internal/project-environment-variables") {
@@ -441,7 +479,7 @@ describe("project-env/fetcher", () => {
         })
       );
       assertEquals(paths, [
-        "/projects/my-project/environment-variables",
+        "/projects/my-project/environments/env-123/variables",
         "/internal/project-environment-variables",
       ]);
     } finally {
@@ -453,7 +491,10 @@ describe("project-env/fetcher", () => {
     let requestCount = 0;
     const { server, port } = createMockServer((req: Request) => {
       requestCount++;
-      assertEquals(new URL(req.url).pathname, "/projects/my-project/environment-variables");
+      assertEquals(
+        new URL(req.url).pathname,
+        "/projects/my-project/environments/env-123/variables",
+      );
       assertEquals(req.headers.get("authorization"), "Bearer test-token");
       return new Response(null, { status: 403 });
     });
@@ -498,7 +539,7 @@ describe("project-env/fetcher", () => {
         const error = await assertion;
         assertInstanceOf(error, Error);
         assertEquals(error.message, "management timeout");
-        assertEquals(paths, ["/projects/my-project/environment-variables"]);
+        assertEquals(paths, ["/projects/my-project/environments/env-123/variables"]);
       },
     );
   });
@@ -511,7 +552,7 @@ describe("project-env/fetcher", () => {
       ((input: string | URL | Request, init?: RequestInit) => {
         const path = new URL(input instanceof Request ? input.url : input).pathname;
         paths.push(path);
-        if (path === "/projects/my-project/environment-variables") {
+        if (path === "/projects/my-project/environments/env-123/variables") {
           return Promise.resolve(Response.json({ data: [] }));
         }
         internalRequestStarted.resolve();
@@ -536,7 +577,7 @@ describe("project-env/fetcher", () => {
         controller.abort(new Error("internal timeout"));
         await assertion;
         assertEquals(paths, [
-          "/projects/my-project/environment-variables",
+          "/projects/my-project/environments/env-123/variables",
           "/internal/project-environment-variables",
         ]);
       },
@@ -546,7 +587,7 @@ describe("project-env/fetcher", () => {
   it("rejects masked values without exposing the tenant-defined key", async () => {
     const tenantDefinedKey = "TENANT_PRIVATE_INVENTORY_KEY";
     const { server, port } = createMockServer((req: Request) => {
-      if (new URL(req.url).pathname === "/projects/my-project/environment-variables") {
+      if (new URL(req.url).pathname === "/projects/my-project/environments/env-123/variables") {
         return Response.json({ data: [] });
       }
       return Response.json({ data: [{ key: tenantDefinedKey, value: "********" }] });

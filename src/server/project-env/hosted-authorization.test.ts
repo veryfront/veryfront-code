@@ -55,7 +55,7 @@ describe("hosted project environment authorization", () => {
       "VERYFRONT_API_INTERNAL_USER and VERYFRONT_API_INTERNAL_PASS must be set in hosted proxy mode",
     );
     assertEquals(urls.length, 1);
-    assertEquals(new URL(urls[0]!).pathname, "/projects/my-project/environment-variables");
+    assertEquals(new URL(urls[0]!).pathname, "/projects/my-project/environments/env-123/variables");
   });
 
   it("uses the internal endpoint after project authorization", async () => {

@@ -1181,7 +1181,8 @@ describe("canonical connection methods", () => {
     const requests: Array<{ method?: string; path: string; query: string }> = [];
     await withConnectionFetch((url, init) => {
       requests.push({ method: init?.method, path: url.pathname, query: url.search });
-      return Response.json({ id: connectionId, status: "deleted", provider_revoked: false });
+      // The acknowledgement carries ok and provider_revoked only.
+      return Response.json({ ok: true, provider_revoked: false });
     }, async () => {
       const client = await createIntegrationClient(context);
       assertEquals(await client.deleteConnection("github", connectionId, "project"), {
@@ -1223,6 +1224,14 @@ describe("canonical connection methods", () => {
       () => new Response("{", { headers: { "content-type": "application/json" } }),
     ],
     ["an unexpected success body", () => Response.json({ id: connectionId, status: "pending" })],
+    [
+      "an acknowledgement without provider revocation",
+      () => Response.json({ ok: true }),
+    ],
+    [
+      "a deletion without the acknowledgement",
+      () => Response.json({ id: connectionId, status: "deleted", provider_revoked: true }),
+    ],
     ["a 502 response", () => Response.json({ code: "bad_gateway" }, { status: 502 })],
     ["a 408 response", () => Response.json({ code: "timeout" }, { status: 408 })],
   ];

@@ -587,28 +587,20 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
   description: "Move or rename a file in a remote Veryfront project.",
   inputSchema: remoteMoveFileInput,
   execute: async (input) => {
-    const apiPath = `${buildProjectApiPath(input.project, "files/move")}${
-      getBranchParam(
-        input.branch,
-      )
-    }`;
-    const result = await apiRequest<{ source_path: string; destination_path: string }>(
-      "POST",
-      apiPath,
-      {
-        body: {
-          source_path: input.source_path,
-          destination_path: input.destination_path,
-        },
-      },
-    );
+    // The move route names the file as one encoded path segment.
+    const apiPath = `${
+      buildProjectApiPath(input.project, `files/${encodeURIComponent(input.source_path)}/move`)
+    }${getBranchParam(input.branch)}`;
+    const result = await apiRequest<{ path?: string }>("POST", apiPath, {
+      body: { destination_path: input.destination_path },
+    });
 
     if (!result.ok) return { success: false, error: result.error };
 
     return {
       success: true,
-      source_path: result.data?.source_path ?? input.source_path,
-      destination_path: result.data?.destination_path ?? input.destination_path,
+      source_path: input.source_path,
+      destination_path: result.data?.path ?? input.destination_path,
     };
   },
 };
