@@ -26,6 +26,25 @@ export function isAnthropicProviderToolResultBlock(block: Record<string, unknown
   return typeof block.type === "string" && ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type);
 }
 
+function isRawAssistantBlockArray(value: unknown): boolean {
+  return isArray(value) && everyPrivateArray(
+    value,
+    (block) => block !== null && typeof block === "object" && !isArray(block),
+  );
+}
+
+function appendTrailingProviderResults(
+  grouped: Record<string, unknown>[][][],
+  pendingResults: Record<string, unknown>[][],
+): boolean {
+  if (pendingResults.length > 0) {
+    const finalGroup = grouped.length > 0 ? grouped[grouped.length - 1] : undefined;
+    if (!finalGroup) return false;
+    appendPrivateArray(finalGroup, pendingResults);
+  }
+  return true;
+}
+
 /** Group raw Anthropic responses around the assistant anchors they project. */
 export function groupAnthropicRawAssistantMessagesByAnchor(
   rawAssistantMessages: unknown,
@@ -37,15 +56,7 @@ export function groupAnthropicRawAssistantMessagesByAnchor(
   for (let index = 0; index < rawAssistantMessages.length; index++) {
     if (!hasOwn(rawAssistantMessages, index)) return undefined;
     const rawAssistantMessage = rawAssistantMessages[index];
-    if (
-      !isArray(rawAssistantMessage) ||
-      !everyPrivateArray(
-        rawAssistantMessage,
-        (block) => block !== null && typeof block === "object" && !isArray(block),
-      )
-    ) {
-      return undefined;
-    }
+    if (!isRawAssistantBlockArray(rawAssistantMessage)) return undefined;
     const blocks = rawAssistantMessage as Record<string, unknown>[];
     if (blocks.length > 0 && everyPrivateArray(blocks, isAnthropicProviderToolResultBlock)) {
       pushPrivateArray(pendingResults, blocks);
@@ -55,12 +66,25 @@ export function groupAnthropicRawAssistantMessagesByAnchor(
     pushPrivateArray(grouped, concatPrivateArrays(pendingResults, [blocks]));
     pendingResults = [];
   }
-  if (pendingResults.length > 0) {
-    const finalGroup = grouped.length > 0 ? grouped[grouped.length - 1] : undefined;
-    if (!finalGroup) return undefined;
-    appendPrivateArray(finalGroup, pendingResults);
-  }
+  if (!appendTrailingProviderResults(grouped, pendingResults)) return undefined;
   return grouped.length === anchorCount ? grouped : undefined;
+}
+
+function collectRawAssistantToolCallIds(rawAssistantMessage: unknown[], ids: Set<string>): void {
+  for (let blockIndex = 0; blockIndex < rawAssistantMessage.length; blockIndex++) {
+    if (!hasOwn(rawAssistantMessage, blockIndex)) continue;
+    const block = rawAssistantMessage[blockIndex];
+    if (
+      block !== null &&
+      typeof block === "object" &&
+      !isArray(block) &&
+      ((block as Record<string, unknown>).type === "server_tool_use" ||
+        (block as Record<string, unknown>).type === "mcp_tool_use") &&
+      typeof (block as Record<string, unknown>).id === "string"
+    ) {
+      ids.add((block as Record<string, unknown>).id as string);
+    }
+  }
 }
 
 /** Collect provider-executed tool call IDs from raw Anthropic responses. */
@@ -73,20 +97,7 @@ export function collectAnthropicProviderToolCallIds(
     if (!hasOwn(rawAssistantMessages, index)) continue;
     const rawAssistantMessage = rawAssistantMessages[index];
     if (!isArray(rawAssistantMessage)) continue;
-    for (let blockIndex = 0; blockIndex < rawAssistantMessage.length; blockIndex++) {
-      if (!hasOwn(rawAssistantMessage, blockIndex)) continue;
-      const block = rawAssistantMessage[blockIndex];
-      if (
-        block !== null &&
-        typeof block === "object" &&
-        !isArray(block) &&
-        ((block as Record<string, unknown>).type === "server_tool_use" ||
-          (block as Record<string, unknown>).type === "mcp_tool_use") &&
-        typeof (block as Record<string, unknown>).id === "string"
-      ) {
-        ids.add((block as Record<string, unknown>).id as string);
-      }
-    }
+    collectRawAssistantToolCallIds(rawAssistantMessage, ids);
   }
   return ids;
 }
