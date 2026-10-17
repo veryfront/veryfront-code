@@ -1,0 +1,22 @@
+name: Request Codex review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  request-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request Codex review
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `<!-- automated-review-request: ${context.payload.pull_request.head.sha} -->\n@codex review`,
+            });
