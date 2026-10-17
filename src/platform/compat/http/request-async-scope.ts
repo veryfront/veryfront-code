@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 // Captured at module evaluation so project code cannot replace them later.
 const requestDispatchStorage = new AsyncLocalStorage<true>();
+const runInHostContext = AsyncLocalStorage.snapshot();
 const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 const IntrinsicReflectApply = Reflect.apply;
 
@@ -14,8 +15,10 @@ const IntrinsicReflectApply = Reflect.apply;
  * logger, trace and run-event stores, including a mandatory run-event sink
  * whose writer capability was already revoked.
  *
- * `run()` restores the caller's context when the callback returns, so anything
- * a request enters stays inside that request and the server loop stays clean.
+ * A dynamic import can also leave Deno's server loop with the importing task's
+ * context. Restore the trusted module-initialization context before entering a
+ * request so inherited stores cannot cross that boundary. Stores installed by
+ * the handler itself remain available for its complete asynchronous lifetime.
  */
 export function scopeRequestAsyncContext<Info, R>(
   handler: (request: Request, info?: Info) => R,
@@ -23,8 +26,10 @@ export function scopeRequestAsyncContext<Info, R>(
   // Keep both parameters declared: Deno.serve() passes no request to a
   // handler whose declared arity is zero.
   return (request: Request, info?: Info) =>
-    IntrinsicReflectApply(AsyncLocalStorageRun, requestDispatchStorage, [
-      true,
-      () => handler(request, info),
-    ]) as R;
+    runInHostContext(() =>
+      IntrinsicReflectApply(AsyncLocalStorageRun, requestDispatchStorage, [
+        true,
+        () => handler(request, info),
+      ]) as R
+    );
 }
