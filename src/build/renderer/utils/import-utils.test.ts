@@ -303,10 +303,14 @@ describe("build/renderer/utils/import-utils", () => {
       }
     });
 
-    it("ignores class words inside extends strings, comments and regexes", () => {
+    it("ignores class words inside extends strings, comments and regexes", async () => {
       for (
         const expression of [
           'registry["class"]',
+          String.raw`registry["\"class"]`,
+          String.raw`registry['\'class']`,
+          "registry[`class`]",
+          "registry.class",
           'registry[/* class */ "Base"]',
           "/class/.constructor",
         ]
@@ -314,6 +318,15 @@ describe("build/renderer/utils/import-utils", () => {
         const source =
           `export class Foo extends ${expression} {} /"/.test("x"); const child = import("./child.mdx");`;
         assertEquals(extractImports(source), ["./child.mdx"]);
+        assertEquals(
+          await processImports(
+            source,
+            "/project/page.ts",
+            "/project",
+            () => Promise.resolve("./resolved.mdx"),
+          ),
+          source.replace("./child.mdx", "./resolved.mdx"),
+        );
       }
     });
 

@@ -12,6 +12,13 @@ import {
   STATIC_IMPORT_PATTERN,
 } from "../../../modules/loader-shared/patterns.ts";
 
+function assertNoImports(source: string, pattern: RegExp): void {
+  const match = source.matchAll(pattern).next();
+  if (!match.done) {
+    throw new Error(`Malformed fixture unexpectedly matched an import: ${match.value[0]}`);
+  }
+}
+
 for (const size of [800, 3_200, 6_400]) {
   const source = "const values = [" + "{},".repeat(size) + ']; import("./child.mdx")';
   Deno.bench({
@@ -52,7 +59,7 @@ for (const size of [1_000, 10_000, 30_000]) {
           PROJECT_ALIAS_IMPORT_PATTERN,
         ]
       ) {
-        [...source.matchAll(pattern)];
+        assertNoImports(source, pattern);
       }
     },
   });
@@ -66,7 +73,7 @@ for (const size of [26, 128, 1_024]) {
     group: "malformed multiline imports",
     baseline: size === 26,
     fn() {
-      [...source.matchAll(multilinePattern)];
+      assertNoImports(source, multilinePattern);
     },
   });
 }
