@@ -514,9 +514,8 @@ export async function createManagedRecoveryWriter(input: {
           // These cursor placeholders validate transcript semantics before the
           // first durable publication. The API assigns the actual cursor.
           const restoredSequence = input.restoredSnapshot?.acknowledgedExternalSequence ?? 0;
-          const validationSequence = (restoredSequence > externalSequence
-            ? restoredSequence
-            : externalSequence) + 1;
+          const validationSequence =
+            (restoredSequence > externalSequence ? restoredSequence : externalSequence) + 1;
           parseRecoverySnapshot({
             ...checkpoint.snapshot,
             acknowledgedEventId: 1,
