@@ -1065,12 +1065,14 @@ describe("module-fetcher", () => {
     });
 
     it("retries alone when the leading render hits its own deadline", async () => {
+      const sourceRead = Promise.withResolvers<void>();
       let expired = false;
       const project = createProjectAdapter("deadline", {
         onRead: (path) => {
           if (path === "/virtual/page.ts" && !expired) {
             expired = true;
             leader.transformDeadline = 0;
+            sourceRead.resolve();
           }
         },
       });
@@ -1082,11 +1084,12 @@ describe("module-fetcher", () => {
       const follower = await newRender(project.adapter, "p-deadline", dirs);
 
       // Expire the leader when its entry source returns, before nested imports
-      // are admitted. The follower retains its own deadline without depending
-      // on elapsed wall-clock time or CI scheduling.
-
+      // are admitted. Wait for that source read before starting the follower:
+      // asynchronous identity preparation can otherwise reverse flight ownership.
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
@@ -1097,6 +1100,7 @@ describe("module-fetcher", () => {
           leaderResult.reason instanceof TransformTreeTimeoutError,
       );
       assertEquals(followerResult.status, "fulfilled");
+      assertEquals(project.reads.filter((path) => path === "/virtual/page.ts").length, 2);
     });
 
     it("counts shared modules toward each joined render's graph limit", async () => {
