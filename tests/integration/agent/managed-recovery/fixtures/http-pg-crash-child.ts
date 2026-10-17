@@ -2,13 +2,16 @@
 const signingKey = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
 if (!("publicKey" in signingKey)) throw new Error("Ed25519 did not generate a key pair");
 const publicDer = await crypto.subtle.exportKey("spki", signingKey.publicKey);
-const publicBase64 = btoa(String.fromCharCode(...new Uint8Array(publicDer)));
+const publicBase64 = btoa(String.fromCodePoint(...new Uint8Array(publicDer)));
 const publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${
   publicBase64.match(/.{1,64}/g)?.join("\n")
 }\n-----END PUBLIC KEY-----`;
 Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
 const encode = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  btoa(String.fromCodePoint(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll(
+    "=",
+    "",
+  );
 const utf8 = new TextEncoder();
 /** Real SDK child for the API loopback HTTP/PostgreSQL crash integration test. */
 await import("#veryfront/schemas/_test-setup.ts");
