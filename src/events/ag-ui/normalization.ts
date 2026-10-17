@@ -436,6 +436,40 @@ interface ExpansionResult {
   readonly state: AgUiNormalizationState;
 }
 
+function subagentRunIdField(
+  subagentRunId: string | undefined,
+): { readonly subagentRunId?: string } {
+  return subagentRunId === undefined ? {} : { subagentRunId };
+}
+
+/** Emits the chunk's payload event, or folds its extension fields into the previous command. */
+function appendChunkPayload<TEvent extends AgUiEvent>(
+  event: AgUiEventOf<"TEXT_MESSAGE_CHUNK" | "TOOL_CALL_CHUNK" | "REASONING_MESSAGE_CHUNK">,
+  producerOccurrence: AgUiProducerOccurrence,
+  commands: AgUiNormalizationCommand[],
+  knownFields: ReadonlySet<string>,
+  payload: (delta: string) => TEvent,
+): void {
+  if (
+    event.delta !== undefined || event.rawEvent !== undefined ||
+    (commands.length === 0 && hasChunkPayloadFields(event, knownFields))
+  ) {
+    commands.push(
+      expandedCommand(
+        producerOccurrence,
+        commands.length,
+        withChunkPayloadFields(
+          event,
+          payload(event.delta === undefined ? "" : event.delta),
+          knownFields,
+        ),
+      ),
+    );
+    return;
+  }
+  mergeExtensionFieldsIntoLastExpandedCommand(commands, event, knownFields);
+}
+
 function appendTextChunkPayload(
   event: AgUiEventOf<"TEXT_MESSAGE_CHUNK">,
   producerOccurrence: AgUiProducerOccurrence,
@@ -443,31 +477,12 @@ function appendTextChunkPayload(
   pending: Extract<AgUiPendingStream, { readonly kind: "text" }>,
   lane: string | undefined,
 ): void {
-  let emittedPayload = false;
-  if (
-    event.delta !== undefined || event.rawEvent !== undefined ||
-    (commands.length === 0 && hasChunkPayloadFields(event, TEXT_MESSAGE_CHUNK_FIELDS))
-  ) {
-    const content: AgUiEventOf<"TEXT_MESSAGE_CONTENT"> = {
-      type: "TEXT_MESSAGE_CONTENT",
-      messageId: pending.messageId,
-      delta: event.delta === undefined ? "" : event.delta,
-      ...((lane ?? pending.subagentRunId) === undefined
-        ? {}
-        : { subagentRunId: lane ?? pending.subagentRunId }),
-    };
-    commands.push(
-      expandedCommand(
-        producerOccurrence,
-        commands.length,
-        withChunkPayloadFields(event, content, TEXT_MESSAGE_CHUNK_FIELDS),
-      ),
-    );
-    emittedPayload = true;
-  }
-  if (!emittedPayload) {
-    mergeExtensionFieldsIntoLastExpandedCommand(commands, event, TEXT_MESSAGE_CHUNK_FIELDS);
-  }
+  appendChunkPayload(event, producerOccurrence, commands, TEXT_MESSAGE_CHUNK_FIELDS, (delta) => ({
+    type: "TEXT_MESSAGE_CONTENT",
+    messageId: pending.messageId,
+    delta,
+    ...subagentRunIdField(lane ?? pending.subagentRunId),
+  }));
 }
 
 function validateOpenTextChunk(
@@ -527,24 +542,91 @@ function appendTextChunkStart(
   );
 }
 
-function prepareMessageChunk(
+type MessageChunkKind = "text" | "reasoning";
+type MessagePendingStream<K extends MessageChunkKind> = Extract<
+  AgUiPendingStream,
+  { readonly kind: K }
+>;
+
+interface MessageChunkHandlers<K extends MessageChunkKind> {
+  readonly validateOpen?: (open: MessagePendingStream<K>) => ExpansionResult | undefined;
+  readonly createPending: (
+    messageId: string,
+    lane: string | undefined,
+  ) => { readonly pending: MessagePendingStream<K> } | {
+    readonly rejection: AgUiMissingFactRequirementCommand;
+  };
+  readonly appendStart: (
+    commands: AgUiNormalizationCommand[],
+    pending: MessagePendingStream<K>,
+  ) => void;
+  readonly appendPayload: (
+    commands: AgUiNormalizationCommand[],
+    pending: MessagePendingStream<K>,
+  ) => void;
+}
+
+function continuesOpenMessageStream<K extends MessageChunkKind>(
+  open: AgUiPendingStream | undefined,
+  kind: K,
+  messageId: string | undefined,
+): open is MessagePendingStream<K> {
+  if (open === undefined || open.kind === "tool" || open.kind !== kind) return false;
+  return messageId === undefined || messageId === open.messageId;
+}
+
+/** Continues the lane's open message stream, or closes it and opens a new pending stream. */
+function expandMessageChunk<K extends MessageChunkKind>(
   event: AgUiEventOf<"TEXT_MESSAGE_CHUNK" | "REASONING_MESSAGE_CHUNK">,
-  kind: "text" | "reasoning",
+  kind: K,
   producerOccurrence: AgUiProducerOccurrence,
   state: AgUiNormalizationState,
-) {
+  handlers: MessageChunkHandlers<K>,
+): ExpansionResult {
   const messageId = event.messageId;
-  const lane = laneTag(event);
-  const resolved = resolveLane(state, kind, messageId, lane, producerOccurrence, event.type);
-  if (!resolved.success) return resolved;
-  return {
-    success: true as const,
+  const resolved = resolveLane(
+    state,
+    kind,
     messageId,
-    lane,
-    resolved,
-    open: findPendingByLane(state, resolved.lane),
-    commands: [] as AgUiNormalizationCommand[],
-  };
+    laneTag(event),
+    producerOccurrence,
+    event.type,
+  );
+  if (!resolved.success) return { commands: [resolved.command], state };
+  const open = findPendingByLane(state, resolved.lane);
+  const commands: AgUiNormalizationCommand[] = [];
+
+  if (continuesOpenMessageStream(open, kind, messageId)) {
+    const conflict = handlers.validateOpen?.(open);
+    if (conflict) return conflict;
+    handlers.appendPayload(commands, open);
+    return { commands, state };
+  }
+
+  let nextState = state;
+  if (open) {
+    commands.push(closePendingStream(open, producerOccurrence, commands.length));
+    nextState = removeLane(nextState, resolved.lane);
+  }
+  if (messageId === undefined) {
+    return {
+      commands: [
+        missingRequirement(
+          producerOccurrence,
+          "unambiguous-shorthand-context",
+          `First ${event.type} in an invocation lane must carry messageId.`,
+        ),
+      ],
+      state: nextState,
+    };
+  }
+  const created = handlers.createPending(messageId, resolved.lane);
+  if ("rejection" in created) return { commands: [created.rejection], state: nextState };
+  const { pending } = created;
+  nextState = setPendingStream(nextState, pending);
+  handlers.appendStart(commands, pending);
+  handlers.appendPayload(commands, pending);
+  return { commands, state: nextState };
 }
 
 function expandTextChunk(
@@ -552,61 +634,36 @@ function expandTextChunk(
   producerOccurrence: AgUiProducerOccurrence,
   state: AgUiNormalizationState,
 ): ExpansionResult {
-  const prepared = prepareMessageChunk(event, "text", producerOccurrence, state);
-  if (!prepared.success) return { commands: [prepared.command], state };
-  const { messageId, lane, resolved, open, commands } = prepared;
-  let nextState = state;
-  let pending: NonNullable<typeof open>;
-
-  if (open?.kind === "text" && (messageId === undefined || messageId === open.messageId)) {
-    const conflict = validateOpenTextChunk(event, open, producerOccurrence, state);
-    if (conflict) return conflict;
-    pending = open;
-  } else {
-    if (open) {
-      commands.push(closePendingStream(open, producerOccurrence, commands.length));
-      nextState = removeLane(nextState, resolved.lane);
-    }
-    if (messageId === undefined) {
-      return {
-        commands: [
-          missingRequirement(
-            producerOccurrence,
-            "unambiguous-shorthand-context",
-            "First TEXT_MESSAGE_CHUNK in an invocation lane must carry messageId.",
-          ),
-        ],
-        state: nextState,
-      };
-    }
-    const role = event.role ?? "assistant";
-    if (role !== "developer" && role !== "system" && role !== "assistant" && role !== "user") {
-      return {
-        commands: [
-          missingRequirement(
+  const lane = laneTag(event);
+  return expandMessageChunk(event, "text", producerOccurrence, state, {
+    validateOpen: (open) => validateOpenTextChunk(event, open, producerOccurrence, state),
+    createPending: (messageId, resolvedLane) => {
+      const role = event.role ?? "assistant";
+      if (role !== "developer" && role !== "system" && role !== "assistant" && role !== "user") {
+        return {
+          rejection: missingRequirement(
             producerOccurrence,
             "conflicting-shorthand-context",
             `TEXT_MESSAGE_CHUNK role ${role} is not a text message role.`,
           ),
-        ],
-        state: nextState,
+        };
+      }
+      return {
+        pending: {
+          kind: "text",
+          lane: resolvedLane,
+          messageId,
+          role,
+          name: event.name,
+          subagentRunId: lane,
+        },
       };
-    }
-    pending = {
-      kind: "text",
-      lane: resolved.lane,
-      messageId,
-      role,
-      name: event.name,
-      subagentRunId: lane,
-    };
-    nextState = setPendingStream(nextState, pending);
-    appendTextChunkStart(event, producerOccurrence, commands, pending);
-  }
-
-  appendTextChunkPayload(event, producerOccurrence, commands, pending, lane);
-
-  return { commands, state: nextState };
+    },
+    appendStart: (commands, pending) =>
+      appendTextChunkStart(event, producerOccurrence, commands, pending),
+    appendPayload: (commands, pending) =>
+      appendTextChunkPayload(event, producerOccurrence, commands, pending, lane),
+  });
 }
 
 function appendToolChunkPayload(
@@ -616,31 +673,12 @@ function appendToolChunkPayload(
   pending: Extract<AgUiPendingStream, { readonly kind: "tool" }>,
   lane: string | undefined,
 ): void {
-  let emittedPayload = false;
-  if (
-    event.delta !== undefined || event.rawEvent !== undefined ||
-    (commands.length === 0 && hasChunkPayloadFields(event, TOOL_CALL_CHUNK_FIELDS))
-  ) {
-    const args: AgUiEventOf<"TOOL_CALL_ARGS"> = {
-      type: "TOOL_CALL_ARGS",
-      toolCallId: pending.toolCallId,
-      delta: event.delta === undefined ? "" : event.delta,
-      ...((lane ?? pending.subagentRunId) === undefined
-        ? {}
-        : { subagentRunId: lane ?? pending.subagentRunId }),
-    };
-    commands.push(
-      expandedCommand(
-        producerOccurrence,
-        commands.length,
-        withChunkPayloadFields(event, args, TOOL_CALL_CHUNK_FIELDS),
-      ),
-    );
-    emittedPayload = true;
-  }
-  if (!emittedPayload) {
-    mergeExtensionFieldsIntoLastExpandedCommand(commands, event, TOOL_CALL_CHUNK_FIELDS);
-  }
+  appendChunkPayload(event, producerOccurrence, commands, TOOL_CALL_CHUNK_FIELDS, (delta) => ({
+    type: "TOOL_CALL_ARGS",
+    toolCallId: pending.toolCallId,
+    delta,
+    ...subagentRunIdField(lane ?? pending.subagentRunId),
+  }));
 }
 
 function validateOpenToolChunk(
@@ -753,31 +791,39 @@ function appendReasoningChunkPayload(
   pending: Extract<AgUiPendingStream, { readonly kind: "reasoning" }>,
   lane: string | undefined,
 ): void {
-  let emittedPayload = false;
-  if (
-    event.delta !== undefined || event.rawEvent !== undefined ||
-    (commands.length === 0 && hasChunkPayloadFields(event, REASONING_MESSAGE_CHUNK_FIELDS))
-  ) {
-    const content: AgUiEventOf<"REASONING_MESSAGE_CONTENT"> = {
+  appendChunkPayload(
+    event,
+    producerOccurrence,
+    commands,
+    REASONING_MESSAGE_CHUNK_FIELDS,
+    (delta) => ({
       type: "REASONING_MESSAGE_CONTENT",
       messageId: pending.messageId,
-      delta: event.delta === undefined ? "" : event.delta,
-      ...((lane ?? pending.subagentRunId) === undefined
-        ? {}
-        : { subagentRunId: lane ?? pending.subagentRunId }),
-    };
-    commands.push(
-      expandedCommand(
-        producerOccurrence,
-        commands.length,
-        withChunkPayloadFields(event, content, REASONING_MESSAGE_CHUNK_FIELDS),
-      ),
-    );
-    emittedPayload = true;
-  }
-  if (!emittedPayload) {
-    mergeExtensionFieldsIntoLastExpandedCommand(commands, event, REASONING_MESSAGE_CHUNK_FIELDS);
-  }
+      delta,
+      ...subagentRunIdField(lane ?? pending.subagentRunId),
+    }),
+  );
+}
+
+function appendReasoningChunkStart(
+  event: AgUiEventOf<"REASONING_MESSAGE_CHUNK">,
+  producerOccurrence: AgUiProducerOccurrence,
+  commands: AgUiNormalizationCommand[],
+  pending: Extract<AgUiPendingStream, { readonly kind: "reasoning" }>,
+): void {
+  const start: AgUiEventOf<"REASONING_MESSAGE_START"> = {
+    type: "REASONING_MESSAGE_START",
+    messageId: pending.messageId,
+    role: "reasoning",
+    ...(pending.subagentRunId === undefined ? {} : { subagentRunId: pending.subagentRunId }),
+  };
+  commands.push(
+    expandedCommand(
+      producerOccurrence,
+      commands.length,
+      withChunkStartFields(event, start),
+    ),
+  );
 }
 
 function expandReasoningChunk(
@@ -785,55 +831,16 @@ function expandReasoningChunk(
   producerOccurrence: AgUiProducerOccurrence,
   state: AgUiNormalizationState,
 ): ExpansionResult {
-  const prepared = prepareMessageChunk(event, "reasoning", producerOccurrence, state);
-  if (!prepared.success) return { commands: [prepared.command], state };
-  const { messageId, lane, resolved, open, commands } = prepared;
-  let nextState = state;
-  let pending: NonNullable<typeof open>;
-  if (open?.kind === "reasoning" && (messageId === undefined || messageId === open.messageId)) {
-    pending = open;
-  } else {
-    if (open) {
-      commands.push(closePendingStream(open, producerOccurrence, commands.length));
-      nextState = removeLane(nextState, resolved.lane);
-    }
-    if (messageId === undefined) {
-      return {
-        commands: [
-          missingRequirement(
-            producerOccurrence,
-            "unambiguous-shorthand-context",
-            "First REASONING_MESSAGE_CHUNK in an invocation lane must carry messageId.",
-          ),
-        ],
-        state: nextState,
-      };
-    }
-    pending = {
-      kind: "reasoning",
-      lane: resolved.lane,
-      messageId,
-      subagentRunId: lane,
-    };
-    nextState = setPendingStream(nextState, pending);
-    const start: AgUiEventOf<"REASONING_MESSAGE_START"> = {
-      type: "REASONING_MESSAGE_START",
-      messageId,
-      role: "reasoning",
-      ...(pending.subagentRunId === undefined ? {} : { subagentRunId: pending.subagentRunId }),
-    };
-    commands.push(
-      expandedCommand(
-        producerOccurrence,
-        commands.length,
-        withChunkStartFields(event, start),
-      ),
-    );
-  }
-
-  appendReasoningChunkPayload(event, producerOccurrence, commands, pending, lane);
-
-  return { commands, state: nextState };
+  const lane = laneTag(event);
+  return expandMessageChunk(event, "reasoning", producerOccurrence, state, {
+    createPending: (messageId, resolvedLane) => ({
+      pending: { kind: "reasoning", lane: resolvedLane, messageId, subagentRunId: lane },
+    }),
+    appendStart: (commands, pending) =>
+      appendReasoningChunkStart(event, producerOccurrence, commands, pending),
+    appendPayload: (commands, pending) =>
+      appendReasoningChunkPayload(event, producerOccurrence, commands, pending, lane),
+  });
 }
 
 function closeAllStreams(
