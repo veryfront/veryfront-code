@@ -2711,7 +2711,7 @@ jobs:
 
   component-contracts:
     name: Component publication contracts
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2735,7 +2735,7 @@ jobs:
           ((needs.version-check.outputs.is_stable == 'true' &&
             needs.version-check.outputs.stable_release_requested == 'false') ||
            needs.quality-gate-registry.result == 'success') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
