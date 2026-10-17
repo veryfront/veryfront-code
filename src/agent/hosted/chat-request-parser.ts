@@ -210,6 +210,10 @@ export type ParsedHostedChatRequest = {
 
 /** Options accepted by parse hosted chat request. */
 export type ParseHostedChatRequestOptions = {
+  /** Verify the exact project and run before reading terminal identity claims. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   authenticate: (request: Request) => Promise<HostedChatRequestPrincipal | Response>;
   verifyProjectAccess?: (input: {
     projectId: string;
@@ -312,6 +316,7 @@ async function withVerifiedRunEventAppendToken(
     "runtimeTargetKind" | "runtimeTargetEnvironmentId"
   >,
   bindInferenceTokenHeader = false,
+  verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"],
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
   if (!token) {
@@ -488,6 +493,7 @@ async function withVerifiedRunEventAppendToken(
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
     token,
     verifyRunEventAppendToken,
+    verifyRunTerminalToken,
   );
   registerHostedAgentPauseCredential(
     verifiedRequest,
@@ -897,6 +903,7 @@ export async function parseHostedChatRequestFromRequest(
     false,
     undefined,
     true,
+    options.verifyRunTerminalToken,
   );
 }
 
@@ -1017,6 +1024,8 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       runtimeTargetKind: chatRequest.data.context.runtimeTargetKind,
       runtimeTargetEnvironmentId: chatRequest.data.context.runtimeTargetEnvironmentId,
     },
+    false,
+    options.verifyRunTerminalToken,
   );
   if (verifiedRequest instanceof Response) {
     return verifiedRequest;

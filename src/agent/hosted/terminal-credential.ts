@@ -81,6 +81,7 @@ const credentials = createPrivateWeakStore<
   {
     token: string;
     verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
     taskInput?: HostedTaskInput;
     rootRunId?: string;
     renewalToken?: string;
@@ -116,12 +117,14 @@ export function registerHostedTerminalCredential(
   token: string | undefined,
   eventToken?: string,
   verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+  verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"],
 ): void {
   if (!token || token.length > 16384 || !request.projectId || !request.durableRootRun?.runId) {
     return;
   }
   credentials.set(request, {
     verifyRunEventAppendToken,
+    verifyRunTerminalToken,
     token,
     projectId: request.projectId,
     agentId: request.agentId,
@@ -350,6 +353,7 @@ export function hostedInheritedRunAdmitter(
       apiUrl: transport.apiUrl,
       fetch: send,
       verifyRunEventAppendToken: parent.verifyRunEventAppendToken,
+      verifyRunTerminalToken: parent.verifyRunTerminalToken,
     }, request);
   };
 }
@@ -467,6 +471,7 @@ export async function acceptWorkflowInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
     verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
   },
   dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection | InheritedRunResult> {
@@ -517,6 +522,7 @@ export async function acceptInheritedRunAdmission(
     apiUrl: string;
     fetch: typeof globalThis.fetch;
     verifyRunEventAppendToken?: ParseHostedChatRequestOptions["verifyRunEventAppendToken"];
+    verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"];
   },
   dependencyParent?: HostedPlatformDependencyOwner,
 ): Promise<ConversationRunProjection> {
@@ -579,6 +585,7 @@ export async function acceptInheritedRunAdmission(
     token,
     agentId: binding.agentId,
     verifyRunEventAppendToken: binding.verifyRunEventAppendToken,
+    verifyRunTerminalToken: binding.verifyRunTerminalToken,
     ...(verification && typeof verification === "object" && verification.verified === true &&
         typeof verification.rootRunId === "string"
       ? { rootRunId: verification.rootRunId }
@@ -861,7 +868,16 @@ export function hostedAcceptedChildEvidence(
       projectExecutionAttempt?: { canonicalRunId?: unknown };
     };
     const worker = claims.workerGeneration;
-    const canonical = worker?.canonicalRunId ?? claims.projectExecutionAttempt?.canonicalRunId;
+    let canonical = worker?.canonicalRunId ?? claims.projectExecutionAttempt?.canonicalRunId;
+    if (
+      canonical === undefined && await authority!.verifyRunTerminalToken?.({
+          token: authority!.token,
+          projectId,
+          runId: authority!.runId,
+        }) === true
+    ) {
+      canonical = terminalRoute(authority!.token, authority!.runId).id;
+    }
     if (
       claims.projectId !== projectId || claims.runId !== authority!.runId ||
       (worker && (worker.projectId !== projectId || worker.runId !== authority!.runId)) ||

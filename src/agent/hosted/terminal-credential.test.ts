@@ -894,17 +894,18 @@ it("retains the verified agent binding when inherited evidence authority transfe
       JSON.stringify({
         projectId: "project-1",
         runId: "child-run",
-        workerGeneration: {
-          projectId: "project-1",
-          runId: "child-run",
-          canonicalRunId: inheritedChildId,
-        },
       }),
     )
   }.signature`;
   let verifications = 0;
+  let terminalVerifications = 0;
   const binding = {
     ...inheritedBinding(),
+    verifyRunTerminalToken: (input: { token: string; projectId: string; runId: string }) => {
+      assertEquals(input, { token: inheritedToken, projectId: "project-1", runId: "child-run" });
+      terminalVerifications++;
+      return Promise.resolve(true);
+    },
     verifyRunEventAppendToken: (
       input: { token: string; projectId: string; runId: string; agentId?: string },
     ) => {
@@ -936,4 +937,5 @@ it("retains the verified agent binding when inherited evidence authority transfe
     [],
   );
   assertEquals(verifications, 2);
+  assertEquals(terminalVerifications, 1);
 });

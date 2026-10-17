@@ -430,6 +430,10 @@ export type HostedServiceAuthOptions = {
 
 /** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
+  /** Verify exact-run terminal identity without granting event append authority. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
   verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
   /** Verify the API's signed exact-run resume bearer; ordinary user tokens are insufficient. */
@@ -891,6 +895,61 @@ export function createHostedServiceAuth(
     }
   }
 
+  async function verifyRunTerminalToken(
+    input: { token: string; projectId: string; runId: string },
+  ): Promise<boolean> {
+    try {
+      if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
+      const config = options.getConfig();
+      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
+      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      const serverId = readOwnDataProperty(
+        config,
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+        "Service config",
+        false,
+      );
+      if (
+        typeof publicKey !== "string" || !publicKey || typeof serverId !== "string" || !serverId
+      ) return false;
+      const token = readOwnDataProperty(input, "token", "Terminal request");
+      const projectId = readOwnDataProperty(input, "projectId", "Terminal request");
+      const runId = readOwnDataProperty(input, "runId", "Terminal request");
+      if (
+        typeof token !== "string" || !token || typeof projectId !== "string" || !projectId ||
+        typeof runId !== "string" || !runId
+      ) return false;
+      const provider = await getAuthProvider(options);
+      if (!provider || !isSafeHostedJwtVerificationEnvironment(provider)) return false;
+      const claims = await provider.verifyWithPublicKey(token, publicKey, {
+        algorithms: ["RS256"],
+      });
+      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
+      const read = (key: string) => readOwnDataProperty(claims, key, "Terminal claims", false);
+      const scopes = read("scopes");
+      const exp = read("exp");
+      const canonicalRunId = read("canonicalRunId");
+      const dispatchNonce = read("dispatchNonce");
+      return read("actorType") === "service_account" &&
+        read("tokenUse") === RUN_EVENT_WRITER_TOKEN_USE &&
+        read("writerPurpose") === "current_run_terminal" && read("serviceAccountId") === serverId &&
+        read("userId") === serverId && read("projectId") === projectId &&
+        read("runId") === runId &&
+        typeof canonicalRunId === "string" &&
+        ReflectApply(
+            RegExpExec,
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            [canonicalRunId],
+          ) !== null &&
+        typeof dispatchNonce === "string" && !!dispatchNonce &&
+        typeof exp === "number" && NumberIsFinite(exp) && exp * 1000 > DateNow() &&
+        read("scope") === undefined && (hasExactScopes(scopes, ["agent-runs:terminal:complete"]) ||
+          hasExactScopes(scopes, ["agent-runs:terminal:complete", "agent-runs:terminal:cancel"]));
+    } catch {
+      return false;
+    }
+  }
+
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
   ): Promise<HostedServiceRunEventAppendTokenResult> {
@@ -1114,6 +1173,7 @@ export function createHostedServiceAuth(
   }
 
   return {
+    verifyRunTerminalToken,
     verifyRunCancellationToken,
     verifyRunResumeToken,
     authenticateRequest,
