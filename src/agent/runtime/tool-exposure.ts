@@ -250,7 +250,7 @@ export function isSupportedToolExposureCheckpointVersion(
   return value === 1 || value === 2;
 }
 
-function schemaArrayLength(value: object, keyCount: number): number | null {
+function schemaArrayLength(value: unknown, keyCount: number): number | null {
   const lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
     value,
     "length",
@@ -289,7 +289,7 @@ function snapshotSchemaDescriptions(
   };
 
   function visitSchemaProperty(
-    value: object,
+    value: unknown,
     depth: number,
     key: PropertyKey,
     isArray: boolean,
