@@ -1,7 +1,7 @@
 name: Request Codex review
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -18,5 +18,5 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: context.payload.pull_request.number,
-              body: "@codex review",
+              body: `<!-- automated-review-request: ${context.payload.pull_request.head.sha} -->\n@codex review`,
             });

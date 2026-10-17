@@ -1,0 +1,50 @@
+name: Automated review gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: [Automated review wakeup]
+    types: [completed]
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: "*/10 * * * *"
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+# Serialize status writes so older event runs cannot overwrite newer results.
+concurrency:
+  group: automated-review-status
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: publish automated review status
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+       github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+       github.event.comment.user.id == 199175422 &&
+       github.event.comment.user.type == 'Bot')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load the trusted status producer
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { data } = await github.rest.repos.getContent({
+              ...context.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const source = Buffer.from(data.content, "base64").toString("utf8");
+            const { reconcileReviewEvent } = await import(
+              `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
+            );
+            await reconcileReviewEvent({ github, context });
