@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -11,7 +12,7 @@ export const getRecoveryCheckpointSidecarSchema = defineSchema((v) =>
   v.object({
     snapshot_event_index: v.number().int().min(0).max(99),
     pending_model_turn_message_ids: v.array(v.string().min(1).max(256)).max(100).refine(
-      (ids) => new Set(ids).size === ids.length,
+      (ids) => createPrivateSet(ids).size === ids.length,
       "Pending model message identities must be unique",
     ),
     snapshot: getRecoverySnapshotSchema().omit({
@@ -25,7 +26,7 @@ export const getRecoveryCheckpointSidecarSchema = defineSchema((v) =>
           acknowledgedExternalSequence: v.number().int().min(1).max(Number.MAX_SAFE_INTEGER)
             .optional(),
         }),
-      ).max(100),
+      ),
     }).strict(),
   }).strict()
 );

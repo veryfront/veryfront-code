@@ -200,6 +200,7 @@ it("boot configuration is disabled by default and rejects partial or invalid imm
 
 it("canonical writer uses original credential, independent DB cursor and exact replay row acknowledgement", async () => {
   const previous = Deno.env.get(envKey);
+  const originalMap = Array.prototype.map;
   try {
     const value = admission();
     const claims = await signed(value);
@@ -232,13 +233,31 @@ it("canonical writer uses original credential, independent DB cursor and exact r
           latest_event_id: 93,
           latest_external_event_sequence: 18,
           appended_count: replay ? 0 : 1,
+          model_call_captures: [{
+            event_id: "capture-1",
+            project_id: identity.projectId,
+            run_id: identity.canonicalRunId,
+            model_call_id: "99999999-9999-4999-8999-999999999999",
+          }],
           ...(missingRows ? {} : { acknowledged_event_ids: [replay ? 42 : 92] }),
         });
       },
     );
     const append = await transport.createEventAppender(claims);
+    Array.prototype.map = function (...args) {
+      return this[0] && typeof this[0] === "object" && "event_id" in this[0]
+        ? []
+        : Reflect.apply(originalMap, this, args);
+    };
     const accepted = await append({ type: "MESSAGES_SNAPSHOT", messages: [] });
+    Array.prototype.map = originalMap;
     assertEquals(accepted.eventId, 92);
+    assertEquals(accepted.modelCaptures, [{
+      eventId: "capture-1",
+      projectId: identity.projectId,
+      runId: identity.canonicalRunId,
+      modelCallId: "99999999-9999-4999-8999-999999999999",
+    }]);
     assertEquals(bodies[0], {
       expected_previous_external_event_sequence: 17,
       events: [{ type: "MESSAGES_SNAPSHOT", messages: [] }],
@@ -252,6 +271,7 @@ it("canonical writer uses original credential, independent DB cursor and exact r
     await assertRejects(() => transport.createEventAppender(claims));
     await assertRejects(() => transport.createEventAppender({ ...claims }));
   } finally {
+    Array.prototype.map = originalMap;
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);
   }

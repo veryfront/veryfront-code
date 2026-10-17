@@ -1,3 +1,4 @@
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import { isAbsolute, join } from "node:path";
 import { lstatSync } from "node:fs";
 import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
@@ -19,8 +20,9 @@ export function readManagedRecoveryBootConfig(
   const projectId = read("VERYFRONT_MANAGED_RECOVERY_SOURCE_PROJECT_ID");
   const environmentId = read("VERYFRONT_MANAGED_RECOVERY_SOURCE_ENVIRONMENT_ID");
   const releaseId = read("VERYFRONT_MANAGED_RECOVERY_SOURCE_RELEASE_ID");
-  const configured = [directory, projectId, environmentId, releaseId].some((value) =>
-    value !== undefined
+  const configured = somePrivateArray(
+    [directory, projectId, environmentId, releaseId],
+    (value) => value !== undefined,
   );
   if (enabled !== "true" && !configured) return undefined;
   const sourceBinding = getRecoverySourceBindingSchema().parse({
@@ -63,7 +65,8 @@ export function getBootManagedRecoveryFactory(): ManagedRecoveryOwnerFactory | u
           directory: join(config.directory, `${identity.canonicalRunId}.snapshot`),
           identity,
         });
-        const stored = (await home.read()).at(-1);
+        const records = await home.read();
+        const stored = records[records.length - 1];
         return stored ? parseRecoverySnapshot(stored.value) : undefined;
       },
     });

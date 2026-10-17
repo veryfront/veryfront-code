@@ -94,7 +94,8 @@ export const getRecoverySnapshotSchema = defineSchema((v) =>
     acknowledgedExternalSequence: v.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     // Runtime credentials and enumerable private metadata are not checkpoint fields.
     messages: v.array(getRecoveryMessageSchema()).max(1_000),
-    modelTurns: v.array(getRecoveryModelTurnSchema()).max(100),
+    // Accumulated turns are bounded by serialized checkpoint/record bytes and message grammar.
+    modelTurns: v.array(getRecoveryModelTurnSchema()),
     toolExposureCheckpoint: getExecutorToolExposureCheckpointSchema(),
     toolBoundaries: v.array(getToolBoundarySchema()).max(1_000),
   }).strict()

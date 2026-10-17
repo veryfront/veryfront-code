@@ -1,3 +1,15 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  createPrivateTextDecoder,
+  encodePrivateText,
+  privateTextStartsWith,
+} from "#veryfront/security/private-text.ts";
+import {
+  privateByteLength,
+  privateByteSubarray,
+  PrivateUint8Array,
+} from "#veryfront/security/private-bytes.ts";
 import { constants } from "node:fs";
 import { link, lstat, mkdir, open, opendir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -11,8 +23,17 @@ import {
   snapshotDurableValue,
 } from "./durable-run-home-schema.ts";
 
-const encoder = new TextEncoder();
-const recordName = (sequence: number) => `${String(sequence).padStart(10, "0")}.json`;
+const apply = Reflect.apply;
+const sort = Array.prototype.sort;
+const regexTest = RegExp.prototype.test;
+const objectKeys = Object.keys;
+const safeInteger = Number.isSafeInteger;
+const nativeString = String;
+const padStart = String.prototype.padStart;
+const recordPattern = /^\d{10}\.json$/;
+const byteLength = (text: string) => privateByteLength(encodePrivateText(text));
+const recordName = (sequence: number) =>
+  `${apply(padStart, nativeString(sequence), [10, "0"])}.json`;
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const invalid = () => new Error("Durable run home is invalid or conflicts with this run");
 function isExists(error: unknown): boolean {
@@ -33,7 +54,7 @@ async function readBounded(path: string): Promise<string> {
   try {
     const info = await file.stat();
     if (!info.isFile() || info.size > MAX_DURABLE_RECORD_BYTES) throw invalid();
-    const bytes = new Uint8Array(info.size + 1);
+    const bytes = new PrivateUint8Array(info.size + 1);
     let count = 0;
     while (count < bytes.length) {
       const result = await file.read(bytes, count, bytes.length - count, null);
@@ -41,7 +62,9 @@ async function readBounded(path: string): Promise<string> {
       count += result.bytesRead;
     }
     if (count !== info.size) throw invalid();
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, count));
+    return createPrivateTextDecoder("utf-8", { fatal: true }).decode(
+      privateByteSubarray(bytes, 0, count),
+    );
   } finally {
     await file.close();
   }
@@ -49,7 +72,7 @@ async function readBounded(path: string): Promise<string> {
 
 /** Publish complete immutable bytes exclusively; a crash before link leaves an ignored temporary. */
 async function publish(directory: string, name: string, text: string): Promise<void> {
-  if (encoder.encode(text).length > MAX_DURABLE_RECORD_BYTES) throw invalid();
+  if (byteLength(text) > MAX_DURABLE_RECORD_BYTES) throw invalid();
   const temporary = join(directory, `.pending-${randomUUID()}`);
   const file = await open(temporary, "wx", 0o600);
   try {
@@ -87,7 +110,7 @@ export class DurableRunHome {
     const info = await lstat(input.directory);
     if (!info.isDirectory() || info.isSymbolicLink()) throw invalid();
     await syncDirectory(dirname(input.directory));
-    const manifest = JSON.stringify({ version: 1, identity });
+    const manifest = privateJsonStringify({ version: 1, identity });
     try {
       await publish(input.directory, "identity.json", manifest);
     } catch (error) {
@@ -105,52 +128,52 @@ export class DurableRunHome {
     const directory = await opendir(this.directory);
     for await (const entry of directory) {
       // Pending publications may belong to a live writer; ignore without retaining them.
-      if (entry.name.startsWith(".pending-")) continue;
+      if (privateTextStartsWith(entry.name, ".pending-")) continue;
       if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
-      names.push(entry.name);
+      pushPrivateArray(names, entry.name);
     }
-    const records = names.filter((name) => /^\d{10}\.json$/.test(name)).sort((left, right) =>
-      left < right ? -1 : left > right ? 1 : 0
-    );
-    if (
-      names.some((name) =>
-        name !== "identity.json" && !name.startsWith(".pending-") && !records.includes(name)
-      )
-    ) {
-      throw invalid();
+    const records: string[] = [];
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index]!;
+      if (apply(regexTest, recordPattern, [name])) pushPrivateArray(records, name);
+      else if (name !== "identity.json") throw invalid();
     }
+    apply(sort, records, [
+      (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+    ]);
     if (records.length > MAX_DURABLE_RECORDS) throw invalid();
     const result: DurableRunRecord[] = [];
     let totalBytes = 0;
-    for (const [index, name] of records.entries()) {
+    for (let index = 0; index < records.length; index++) {
+      const name = records[index]!;
       if (name !== recordName(index + 1)) throw invalid();
       const text = await readBounded(join(this.directory, name));
-      totalBytes += encoder.encode(text).length;
+      totalBytes += byteLength(text);
       if (totalBytes > MAX_DURABLE_HOME_BYTES) throw invalid();
-      const raw: unknown = JSON.parse(text);
+      const raw: unknown = privateJsonParse(text);
       if (
         !raw || typeof raw !== "object" || !("body" in raw) || !("checksum" in raw) ||
         typeof raw.body !== "string" || typeof raw.checksum !== "string" ||
-        Object.keys(raw).length !== 2 || digest(raw.body) !== raw.checksum
+        objectKeys(raw).length !== 2 || digest(raw.body) !== raw.checksum
       ) throw invalid();
-      const body: unknown = JSON.parse(raw.body);
+      const body: unknown = privateJsonParse(raw.body);
       if (
         !body || typeof body !== "object" || !("identity" in body) || !("sequence" in body) ||
         !("value" in body) || !("version" in body) || body.version !== 1 ||
-        Object.keys(body).length !== 4 || body.sequence !== index + 1 ||
-        JSON.stringify(getDurableRunIdentitySchema().parse(body.identity)) !==
-          JSON.stringify(this.identity)
+        objectKeys(body).length !== 4 || body.sequence !== index + 1 ||
+        privateJsonStringify(getDurableRunIdentitySchema().parse(body.identity)) !==
+          privateJsonStringify(this.identity)
       ) {
         throw invalid();
       }
-      result.push({ sequence: index + 1, value: snapshotDurableValue(body.value) });
+      pushPrivateArray(result, { sequence: index + 1, value: snapshotDurableValue(body.value) });
     }
     return result;
   }
 
   async append(input: { sequence: number; value: unknown }): Promise<void> {
     if (
-      !Number.isSafeInteger(input.sequence) || input.sequence < 1 ||
+      !safeInteger(input.sequence) || input.sequence < 1 ||
       input.sequence > MAX_DURABLE_RECORDS
     ) {
       throw invalid();
@@ -159,24 +182,27 @@ export class DurableRunHome {
     const records = await this.read();
     const previous = records[input.sequence - 1];
     if (previous) {
-      if (JSON.stringify(previous.value) !== JSON.stringify(value)) throw invalid();
+      if (privateJsonStringify(previous.value) !== privateJsonStringify(value)) throw invalid();
       await syncDirectory(this.directory);
       return;
     }
     if (input.sequence !== records.length + 1) throw invalid();
-    const body = JSON.stringify({
+    const body = privateJsonStringify({
       version: 1,
       identity: this.identity,
       sequence: input.sequence,
       value,
     });
-    const text = JSON.stringify({ body, checksum: digest(body) });
-    const total = records.reduce((sum, record) =>
-      sum + encoder.encode(JSON.stringify({
-        body: JSON.stringify({ version: 1, identity: this.identity, ...record }),
-        checksum: "0".repeat(64),
-      })).length, 0);
-    if (total + encoder.encode(text).length > MAX_DURABLE_HOME_BYTES) throw invalid();
+    const text = privateJsonStringify({ body, checksum: digest(body) });
+    let total = 0;
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
+      total += byteLength(privateJsonStringify({
+        body: privateJsonStringify({ version: 1, identity: this.identity, ...record }),
+        checksum: "0000000000000000000000000000000000000000000000000000000000000000",
+      }));
+    }
+    if (total + byteLength(text) > MAX_DURABLE_HOME_BYTES) throw invalid();
     try {
       await publish(this.directory, recordName(input.sequence), text);
     } catch (error) {

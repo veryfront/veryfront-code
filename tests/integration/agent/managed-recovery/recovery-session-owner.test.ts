@@ -379,3 +379,46 @@ it("dispatch expiry gates acquisition while continuing ownership requires fresh 
     supersededOwner: true,
   });
 });
+
+it("poisoned some cannot grant a snapshot an unadmitted predecessor generation", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const originalSome = Array.prototype.some;
+  try {
+    const first = admission();
+    await RecoverySessionOwner.acquire({
+      claims: await signed(first),
+      directory,
+      validateCurrentOwnership: async () => receipt(first),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    const next = admission(1);
+    const owner = await RecoverySessionOwner.acquire({
+      claims: await signed(next),
+      directory,
+      validateCurrentOwnership: async () => ({ ...receipt(next), acknowledgedEventId: 10 }),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    const snapshot = {
+      version: 1,
+      binding: { identity, sourceBinding: next.sourceBinding, generation: admission(9).generation },
+      acknowledgedEventId: 1,
+      acknowledgedExternalSequence: 0,
+      messages: [],
+      modelTurns: [],
+      toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+      toolBoundaries: [],
+    };
+    Array.prototype.some = () => true;
+    await assertRejects(
+      () => owner.validatePredecessorSnapshot(snapshot),
+      Error,
+      "not from an admitted predecessor",
+    );
+  } finally {
+    Array.prototype.some = originalSome;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

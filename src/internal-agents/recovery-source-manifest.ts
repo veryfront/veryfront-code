@@ -1,8 +1,16 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
+const isArray = Array.isArray;
+const apply = Reflect.apply;
+const sort = Array.prototype.sort;
+const byteLength = Buffer.byteLength;
+const bufferCompare = Buffer.compare;
+const bufferFrom = Buffer.from;
 const MAX_RELEASE_FILES = 10_000;
 const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
 const getReleaseFileSchema = defineSchema((v) =>
@@ -26,19 +34,19 @@ export function createRecoverySourceManifest(value: unknown): {
   fileCount: number;
   totalBytes: number;
 } {
-  if (!Array.isArray(value) || value.length > MAX_RELEASE_FILES) {
+  if (!isArray(value) || value.length > MAX_RELEASE_FILES) {
     throw new Error("Immutable recovery release listing exceeds its bound");
   }
-  const paths = new Set<string>();
+  const paths = createPrivateSet<string>();
   let totalBytes = 0;
-  const files = value.map((entry) => {
+  const files = mapPrivateArray(value, (entry) => {
     const file = getReleaseFileSchema().parse(entry);
     if (paths.has(file.path)) throw new Error("Duplicate immutable recovery release path");
-    if (Buffer.byteLength(file.path, "utf8") > 1_024) {
+    if (byteLength(file.path, "utf8") > 1_024) {
       throw new Error("Immutable recovery release path exceeds its bound");
     }
     paths.add(file.path);
-    const byteSize = Buffer.byteLength(file.content, "utf8");
+    const byteSize = byteLength(file.content, "utf8");
     if (byteSize > 8 * 1024 * 1024) {
       throw new Error("Immutable recovery source file exceeds its bound");
     }
@@ -48,9 +56,10 @@ export function createRecoverySourceManifest(value: unknown): {
     }
     return { path: file.path, type: file.entityType, contentHash: hash(file.content), byteSize };
   });
-  files.sort((first, second) =>
-    Buffer.compare(Buffer.from(first.path, "utf8"), Buffer.from(second.path, "utf8"))
-  );
+  apply(sort, files, [
+    (first: typeof files[number], second: typeof files[number]) =>
+      bufferCompare(bufferFrom(first.path, "utf8"), bufferFrom(second.path, "utf8")),
+  ]);
   return {
     version: 1,
     hash: hash(privateJsonStringify({ version: 1, files })),

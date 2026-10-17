@@ -231,3 +231,96 @@ it("special record files reject without waiting for a writer", async () => {
     await Deno.remove(directory, { recursive: true });
   }
 });
+
+it("durable publication ignores poisoned JSON and array hooks and never exposes private records", async () => {
+  const directory = await makeTempDir();
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const reduce = Array.prototype.reduce;
+  const filter = Array.prototype.filter;
+  const some = Array.prototype.some;
+  const entries = Array.prototype.entries;
+  const push = Array.prototype.push;
+  let exposed = false;
+  try {
+    const home = await DurableRunHome.open({ directory, identity });
+    JSON.stringify = () => {
+      exposed = true;
+      return '"forged"';
+    };
+    JSON.parse = () => {
+      exposed = true;
+      return {};
+    };
+    Array.prototype.reduce = function (...args) {
+      exposed = true;
+      return Reflect.apply(reduce, this, args);
+    };
+    Array.prototype.filter = function (...args) {
+      exposed = true;
+      return Reflect.apply(filter, this, args);
+    };
+    Array.prototype.some = function (...args) {
+      exposed = true;
+      return Reflect.apply(some, this, args);
+    };
+    Array.prototype.entries = function () {
+      exposed = true;
+      return Reflect.apply(entries, this, []);
+    };
+    Array.prototype.push = function (...args) {
+      exposed = true;
+      return Reflect.apply(push, this, args);
+    };
+    await home.append({ sequence: 1, value: { privateJournal: "synthetic" } });
+    const records = await home.read();
+    JSON.stringify = stringify;
+    JSON.parse = parse;
+    Array.prototype.reduce = reduce;
+    Array.prototype.filter = filter;
+    Array.prototype.some = some;
+    Array.prototype.entries = entries;
+    Array.prototype.push = push;
+    assertEquals(records[0]?.value, { privateJournal: "synthetic" });
+    assertEquals(exposed, false);
+  } finally {
+    JSON.stringify = stringify;
+    JSON.parse = parse;
+    Array.prototype.reduce = reduce;
+    Array.prototype.filter = filter;
+    Array.prototype.some = some;
+    Array.prototype.entries = entries;
+    Array.prototype.push = push;
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+it("poisoned reduce cannot bypass the actual 64 MiB durable home limit", async () => {
+  const { createHash } = await import("node:crypto");
+  const directory = await makeTempDir();
+  const originalReduce = Array.prototype.reduce;
+  try {
+    const home = await DurableRunHome.open({ directory, identity });
+    const value = "x".repeat(1_000_000);
+    // Seed complete immutable disk records without quadratic test setup appends.
+    for (let sequence = 1; sequence <= 67; sequence++) {
+      const body = JSON.stringify({ version: 1, identity, sequence, value });
+      const text = JSON.stringify({
+        body,
+        checksum: createHash("sha256").update(body).digest("hex"),
+      });
+      await Deno.writeTextFile(`${directory}/${String(sequence).padStart(10, "0")}.json`, text);
+    }
+    Array.prototype.reduce = () => 0;
+    await assertRejects(() => home.append({ sequence: 68, value }));
+    Array.prototype.reduce = originalReduce;
+    assertEquals((await home.read()).length, 67);
+    assertEquals(
+      await Deno.stat(`${directory}/0000000068.json`).then(() => true, () => false),
+      false,
+    );
+  } finally {
+    Array.prototype.reduce = originalReduce;
+    await Deno.remove(directory, { recursive: true });
+  }
+});

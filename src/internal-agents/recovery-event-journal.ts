@@ -1,3 +1,5 @@
+import { slicePrivateArray } from "#veryfront/security/private-array.ts";
+const safeInteger = Number.isSafeInteger;
 import { getConversationRunEventSchema } from "#veryfront/agent/conversation/run-events.ts";
 import { snapshotDurableValue } from "./durable-run-home-schema.ts";
 import { DurableRunHome, type DurableRunRecord } from "./durable-run-home.ts";
@@ -14,13 +16,13 @@ export class RecoveryEventJournal {
   }
 
   async suffix(afterSequence: number): Promise<DurableRunRecord[]> {
-    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) {
+    if (!safeInteger(afterSequence) || afterSequence < 0) {
       throw new Error("Invalid recovery event cursor");
     }
     const records = await this.home.read();
     if (afterSequence > records.length) {
       throw new Error("Recovery event cursor is ahead of durable output");
     }
-    return records.slice(afterSequence);
+    return slicePrivateArray(records, afterSequence);
   }
 }

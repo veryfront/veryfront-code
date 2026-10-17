@@ -1,3 +1,5 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { readAttachedProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -173,7 +175,7 @@ export async function createManagedRecoveryWriter(input: {
       await active();
       if (
         recoveryCheckpoint &&
-        new TextEncoder().encode(privateJsonStringify(recoveryCheckpoint)).byteLength >
+        privateByteLength(encodePrivateText(privateJsonStringify(recoveryCheckpoint))) >
           MAX_RECOVERY_CHECKPOINT_BYTES
       ) {
         throw new Error("Recovery safe boundary exceeds its bound");

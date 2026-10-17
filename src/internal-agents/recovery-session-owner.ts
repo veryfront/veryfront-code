@@ -1,3 +1,4 @@
+import { mapPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -65,9 +66,12 @@ export class RecoverySessionOwner {
       identity: admission.identity,
     });
     const records = await home.read();
-    const predecessors = records.map((record) => getStoredOwnerSchema().parse(record.value));
-    owner.previousGenerations = predecessors.map((record) => record.generation);
-    const stored = predecessors.at(-1);
+    const predecessors = mapPrivateArray(
+      records,
+      (record) => getStoredOwnerSchema().parse(record.value),
+    );
+    owner.previousGenerations = mapPrivateArray(predecessors, (record) => record.generation);
+    const stored = predecessors[predecessors.length - 1];
     if (stored) {
       // API pre-stream redispatch issues a fresh nonce without necessarily increasing
       // transportRecoveryAttempt. Only its live full-generation receipt permits replacement.
@@ -91,7 +95,8 @@ export class RecoverySessionOwner {
     // A concurrent duplicate cannot retire an owner admitted after that observation.
     // Failed admissions may have left earlier owners unretired. Every targeted join
     // must be idempotent, and none of those obligations disappears on a crash.
-    for (const predecessor of predecessors) {
+    for (let index = 0; index < predecessors.length; index++) {
+      const predecessor = predecessors[index]!;
       await input.awaitRetiredPreviousOwner(predecessor.generation);
       await owner.assertCurrentOwnership();
     }
@@ -122,8 +127,9 @@ export class RecoverySessionOwner {
   async validatePredecessorSnapshot(value: unknown): Promise<RecoverySnapshot> {
     const snapshot = parseRecoverySnapshot(value);
     if (
-      !this.previousGenerations.some((generation) =>
-        sameGeneration(generation, snapshot.binding.generation)
+      !somePrivateArray(
+        this.previousGenerations,
+        (generation) => sameGeneration(generation, snapshot.binding.generation),
       )
     ) throw new Error("Recovery snapshot is not from an admitted predecessor");
     const receipt = await this.assertCurrentOwnership();

@@ -6,7 +6,7 @@ import {
   type AdmitExecutorToolCall,
   bindToolCallAdmissionOwner,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
-import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   privateByteLength,
   PrivateUint8Array,
@@ -38,6 +38,7 @@ import {
 import { MAX_RECOVERY_SUFFIX_PAGE_BYTES } from "./recovery-suffix.ts";
 import { createRecoverySourceManifest } from "./recovery-source-manifest.ts";
 
+const byteLength = Buffer.byteLength;
 const NativeURL = URL;
 const parseJson = JSON.parse;
 const apply = Reflect.apply;
@@ -325,12 +326,14 @@ export function createManagedRecoveryHttpTransport(
             : {}),
           externalSequence: externalCursor,
           toolAdmissions: acknowledgement.tool_call_admissions ?? [],
-          modelCaptures: acknowledgement.model_call_captures?.map((capture) => ({
-            eventId: capture.event_id,
-            projectId: capture.project_id,
-            runId: capture.run_id,
-            modelCallId: capture.model_call_id,
-          })),
+          modelCaptures: acknowledgement.model_call_captures
+            ? mapPrivateArray(acknowledgement.model_call_captures, (capture) => ({
+              eventId: capture.event_id,
+              projectId: capture.project_id,
+              runId: capture.run_id,
+              modelCallId: capture.model_call_id,
+            }))
+            : undefined,
         };
       };
     },
@@ -355,9 +358,9 @@ export function createManagedRecoveryHttpTransport(
         },
       );
       const manifest = getManifestSchema().parse(await readBoundedJson(response, 96 * 1024 * 1024));
-      const files = manifest.files.map((file) => {
+      const files = mapPrivateArray(manifest.files, (file) => {
         if (
-          Buffer.byteLength(file.content, "utf8") !== file.byte_size ||
+          byteLength(file.content, "utf8") !== file.byte_size ||
           createHash("sha256").update(file.content, "utf8").digest("hex") !== file.content_hash
         ) {
           throw new Error("Managed recovery release file integrity failed");

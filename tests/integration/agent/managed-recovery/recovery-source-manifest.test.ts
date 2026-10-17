@@ -36,3 +36,23 @@ it("release manifest rejects duplicate, incomplete, aliased or excessive listing
   assertThrows(() => createRecoverySourceManifest([{ ...file, version_id: "untrusted-metadata" }]));
   assertThrows(() => createRecoverySourceManifest(Array.from({ length: 10001 }, () => file)));
 });
+
+it("mutable array hooks cannot forge a pinned source manifest", () => {
+  const files = [{ path: "a.ts", entityType: "function", content: "secret-source" }];
+  const expected = createRecoverySourceManifest(files);
+  const map = Array.prototype.map;
+  const sort = Array.prototype.sort;
+  try {
+    Array.prototype.map = function (...args) {
+      return this === files ? [] : Reflect.apply(map, this, args);
+    };
+    Array.prototype.sort = function () {
+      return this;
+    };
+    assertEquals(createRecoverySourceManifest(files), expected);
+    assertThrows(() => createRecoverySourceManifest([files[0], files[0]]));
+  } finally {
+    Array.prototype.map = map;
+    Array.prototype.sort = sort;
+  }
+});

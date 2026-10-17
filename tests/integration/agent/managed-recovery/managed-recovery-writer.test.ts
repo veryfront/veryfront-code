@@ -1439,3 +1439,162 @@ for (const maxSteps of [1]) {
     }
   });
 }
+
+it("managed runtime preserves more than 100 acknowledged model turns across native continuations", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let cursor = 0;
+    let largestCheckpoint = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async (_event, _occurrenceId, checkpoint) => {
+        const eventId = ++cursor;
+        if (checkpoint) {
+          largestCheckpoint = Math.max(
+            largestCheckpoint,
+            new TextEncoder().encode(JSON.stringify(checkpoint)).length,
+          );
+        }
+        return {
+          eventId,
+          externalSequence: cursor,
+          toolAdmissions: [],
+          ...(checkpoint
+            ? {
+              recoveryCheckpoint: {
+                snapshot_event_id: eventId,
+                snapshot_external_sequence: cursor,
+                checkpoint_event_id: eventId + 10000,
+              },
+            }
+            : {}),
+        };
+      },
+    });
+    writer.bindSignal(new AbortController().signal);
+    const model = scriptedModel([{ text: "Done" }], { only: "stream", repeatLastTurn: true });
+    let initial = true;
+    let messages: import("#veryfront/agent").AgentMessage[] = [{
+      id: "synthetic-user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    }];
+    const { AgentRuntime } = await import("#veryfront/agent/runtime/index.ts");
+    const createRuntime = () =>
+      new AgentRuntime("native-turn-proof", {
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic",
+        maxSteps: 102,
+        skills: false,
+      }, {
+        resolveModelRuntime: () => model,
+        persistRecoveryBoundary: async (boundary) => {
+          // Persist the initial and every completed native turn. Re-enter the same
+          // managed run with its actual transcript; no synthetic snapshot/turns.
+          if (initial || boundary.runtimeContinuation?.completed) {
+            await writer.persistBoundary(boundary);
+            initial = false;
+            messages = boundary.messages;
+          }
+        },
+      });
+    for (let turn = 0; turn < 101; turn++) {
+      if (turn > 0) {
+        messages.push({
+          id: `synthetic-user-${turn}`,
+          role: "user",
+          parts: [{ type: "text", text: "Continue" }],
+        });
+      }
+      await new Response(await createRuntime().stream(messages, { runId: identity.publicRunId }))
+        .text();
+    }
+    const home = await DurableRunHome.open({
+      directory: `${directory}/${identity.canonicalRunId}.snapshot`,
+      identity,
+    });
+    const { parseRecoverySnapshot } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    const records = await home.read();
+    const snapshot = parseRecoverySnapshot(records[records.length - 1]!.value);
+    assertEquals(model.callCount, 101);
+    assertEquals(snapshot.modelTurns.length, 101);
+    assertEquals(snapshot.runtimeContinuation?.completed, true);
+    assertEquals(largestCheckpoint <= 192 * 1024, true);
+    console.info({
+      modelCalls: model.callCount,
+      persistedModelTurns: snapshot.modelTurns.length,
+      largestCheckpointBytes: largestCheckpoint,
+    });
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("checkpoint byte guard rejects oversized native continuation despite poisoned TextEncoder", async () => {
+  const { assertRejects } = await import("#veryfront/testing/assert.ts");
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const encode = TextEncoder.prototype.encode;
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let appends = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async () => {
+        appends++;
+        throw new Error("Oversized checkpoint must not reach transport");
+      },
+    });
+    const initial = await captureInitialNativeRecoveryBoundary();
+    if (!initial.runtimeContinuation) throw new Error("Expected native continuation");
+    const message = {
+      id: "large-user",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "x".repeat(192 * 1024) }],
+    };
+    const boundary = {
+      ...initial,
+      messages: [message],
+      runtimeContinuation: { ...initial.runtimeContinuation, messages: [message] },
+    };
+    TextEncoder.prototype.encode = () => new Uint8Array();
+    await assertRejects(
+      () => writer.persistBoundary(boundary),
+      Error,
+      "safe boundary exceeds its bound",
+    );
+    TextEncoder.prototype.encode = encode;
+    assertEquals(appends, 0);
+  } finally {
+    TextEncoder.prototype.encode = encode;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
