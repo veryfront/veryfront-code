@@ -25,7 +25,8 @@ export function hasCompletedRequest(comment, reactions, headSha) {
   return isCurrentRequest(comment, headSha) &&
     reactions.some((reaction) =>
       reaction.content === "+1" && reaction.user?.login === CODEX_LOGIN &&
-      reaction.user?.id === CODEX_ID && reaction.user?.type === "Bot"
+      reaction.user?.id === CODEX_ID &&
+      ["Bot", "User"].includes(reaction.user?.type)
     );
 }
 

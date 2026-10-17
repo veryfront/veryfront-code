@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
   pull-requests: read
   statuses: write
 
@@ -22,6 +23,7 @@ permissions:
 concurrency:
   group: automated-review-status
   cancel-in-progress: false
+  queue: max
 
 jobs:
   review:

@@ -120,7 +120,22 @@ describe("automated review completion", () => {
       body: `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
     };
     const reaction = { user: reviewer, content: "+1" };
-    assertEquals(hasCompletedRequest(request, [reaction], HEAD), true);
+    for (const type of ["Bot", "User"]) {
+      assertEquals(
+        hasCompletedRequest(request, [{
+          ...reaction,
+          user: { ...reviewer, type },
+        }], HEAD),
+        true,
+      );
+    }
+    assertEquals(
+      hasCompletedRequest(request, [{
+        ...reaction,
+        user: { ...reviewer, type: "Organization" },
+      }], HEAD),
+      false,
+    );
     assertEquals(hasCompletedRequest(request, [reaction], NEXT), false);
     assertEquals(
       hasCompletedRequest(request, [{ ...reaction, content: "eyes" }], HEAD),

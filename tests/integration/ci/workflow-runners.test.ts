@@ -436,6 +436,12 @@ describe("required status contexts", () => {
     );
     const permissions = asRecord(workflow.permissions, "permissions");
     assertEquals(permissions.statuses, "write");
+    assertEquals(permissions.issues, "read");
+    assertEquals(workflow.concurrency, {
+      group: "automated-review-status",
+      "cancel-in-progress": false,
+      queue: "max",
+    });
     const triggers = asRecord(workflow.on, "triggers");
     assertEquals(triggers.merge_group, { types: ["checks_requested"] });
     const source = await Deno.readTextFile(
