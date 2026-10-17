@@ -6,6 +6,13 @@ import {
   type AdmitExecutorToolCall,
   bindToolCallAdmissionOwner,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  privateByteLength,
+  PrivateUint8Array,
+  setPrivateBytes,
+} from "#veryfront/security/private-bytes.ts";
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isPrivateConversationRunEvent } from "#veryfront/agent/conversation/private-run-event.ts";
 import { readRecoveryAppendAcknowledgement } from "./recovery-append-acknowledgement.ts";
@@ -33,7 +40,9 @@ import { createRecoverySourceManifest } from "./recovery-source-manifest.ts";
 
 const NativeURL = URL;
 const parseJson = JSON.parse;
-const NativeTextDecoder = TextDecoder;
+const apply = Reflect.apply;
+const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 const timeout = AbortSignal.timeout.bind(AbortSignal);
 const privateCredentials = createPrivateWeakStore<
   object,
@@ -103,28 +112,30 @@ const getManifestSchema = defineSchema((v) =>
 );
 
 async function readBoundedJson(response: Response, maximum: number): Promise<unknown> {
-  if (!response.ok || !response.body) {
-    if (response.body) await cancelPrivateStream(response.body).catch(() => {});
+  const body: ReadableStream<Uint8Array> | null = apply(responseBody, response, []);
+  if (!apply(responseOk, response, []) || !body) {
+    if (body) await cancelPrivateStream(body).catch(() => {});
     throw new Error("Managed recovery authority request failed");
   }
-  const reader = getPrivateStreamReader(response.body);
+  const reader = getPrivateStreamReader(body);
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
       const result = await reader.read();
       if (result.done) break;
-      size += result.value.byteLength;
+      size += privateByteLength(result.value);
       if (size > maximum) throw new Error("Managed recovery authority response exceeds its bound");
-      chunks.push(result.value);
+      pushPrivateArray(chunks, result.value);
     }
-    const bytes = new Uint8Array(size);
+    const bytes = new PrivateUint8Array(size);
     let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
+    for (let index = 0; index < chunks.length; index++) {
+      const chunk = chunks[index]!;
+      setPrivateBytes(bytes, chunk, offset);
+      offset += privateByteLength(chunk);
     }
-    return parseJson(new NativeTextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return parseJson(createPrivateTextDecoder("utf-8", { fatal: true }).decode(bytes));
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock();

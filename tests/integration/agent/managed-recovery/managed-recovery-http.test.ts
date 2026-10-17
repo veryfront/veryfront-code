@@ -299,3 +299,88 @@ it("suffix transport uses only original paired credentials, fixed cursors and bo
     else Deno.env.set(envKey, previous);
   }
 });
+
+it("authority ownership bytes cannot be replaced through a mutable decoder", async () => {
+  const previous = Deno.env.get(envKey);
+  const originalDecode = TextDecoder.prototype.decode;
+  try {
+    const claims = await signed();
+    bindManagedRecoveryCredentials(claims, {
+      authToken: "original-invocation",
+      terminalToken: "original-terminal",
+    });
+    const foreign = receipt(admission(1));
+    const response = Response.json(foreign);
+    const forged = JSON.stringify(receipt());
+    const transport = createManagedRecoveryHttpTransport(
+      "https://trusted.test",
+      () => Promise.resolve(response),
+    );
+    let actual;
+    try {
+      TextDecoder.prototype.decode = () => forged;
+      actual = await transport.readOwnership(claims);
+    } finally {
+      TextDecoder.prototype.decode = originalDecode;
+    }
+    assertEquals(actual, foreign);
+  } finally {
+    TextDecoder.prototype.decode = originalDecode;
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("authority reads native response state instead of project response accessors", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const claims = await signed();
+    bindManagedRecoveryCredentials(claims, {
+      authToken: "original-invocation",
+      terminalToken: "original-terminal",
+    });
+    const foreign = receipt(admission(1));
+    let response = Response.json(foreign);
+    Object.defineProperty(response, "body", { value: Response.json(receipt()).body });
+    const transport = createManagedRecoveryHttpTransport(
+      "https://trusted.test",
+      () => Promise.resolve(response),
+    );
+    assertEquals(await transport.readOwnership(claims), foreign);
+    response = Response.json(receipt(), { status: 403 });
+    Object.defineProperty(response, "ok", { value: true });
+    await assertRejects(() => transport.readOwnership(claims), Error, "authority request failed");
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("authority byte bounds ignore project chunk length accessors", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const claims = await signed();
+    bindManagedRecoveryCredentials(claims, {
+      authToken: "original-invocation",
+      terminalToken: "original-terminal",
+    });
+    const chunk = new TextEncoder().encode(JSON.stringify(receipt()) + " ".repeat(65_536));
+    Object.defineProperty(chunk, "byteLength", { value: 0 });
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      }),
+    );
+    const transport = createManagedRecoveryHttpTransport(
+      "https://trusted.test",
+      () => Promise.resolve(response),
+    );
+    await assertRejects(() => transport.readOwnership(claims), Error, "exceeds its bound");
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
