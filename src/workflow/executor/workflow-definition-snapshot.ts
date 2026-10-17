@@ -326,15 +326,13 @@ function inspectExactRecord(
   }
 
   const fields = new MapConstructor<string, unknown>();
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
+  const captureField = (key: PropertyKey): void => {
     if (
       typeof key !== "string" ||
       !(reflectApply(setHas, allowedKeys, [key]) as boolean)
     ) {
-      fail(
-        `${label} contains unsupported field ${typeof key === "string" ? `"${key}"` : "symbol"}`,
-      );
+      const fieldName = typeof key === "string" ? `"${key}"` : "symbol";
+      fail(`${label} contains unsupported field ${fieldName}`);
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
@@ -346,6 +344,10 @@ function inspectExactRecord(
       fail(`${label} field "${key}" must be an own data property`);
     }
     reflectApply(mapSet, fields, [key, descriptor.value]);
+  };
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    captureField(key);
   }
   for (let index = 0; index < requiredKeys.length; index++) {
     const key = requiredKeys[index]!;
@@ -384,14 +386,17 @@ function inspectDenseArrayValues(value: unknown, label: string): unknown[] {
   if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
     fail(`${label} cannot contain more than ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} entries`);
   }
-  let unsupportedKey = false;
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    if (key !== "length" && typeof key !== "string") unsupportedKey = true;
-  }
-  if (keys.length !== length + 1 || unsupportedKey) {
-    fail(`${label} must be dense and contain no custom properties`);
-  }
+  const assertDenseKeys = (): void => {
+    let unsupportedKey = false;
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      if (key !== "length" && typeof key !== "string") unsupportedKey = true;
+    }
+    if (keys.length !== length + 1 || unsupportedKey) {
+      fail(`${label} must be dense and contain no custom properties`);
+    }
+  };
+  assertDenseKeys();
 
   const values: unknown[] = [];
   for (let index = 0; index < length; index++) {
@@ -540,7 +545,109 @@ function inspectStaticValue(
   weakSetAddValue(state.active, value);
   addBudget(state.budget, label);
 
-  try {
+  const inspectMapEntries = (size: unknown): void => {
+    if (!numberIsSafeInteger(size) || (size as number) < 0) {
+      fail(`${label} has invalid Map size`);
+    }
+    if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
+      fail(`${label} Map contains too many entries`);
+    }
+    assertNoOwnFields(value, label);
+    const iterator = reflectApply(mapEntries, value, []) as IterableIterator<[
+      unknown,
+      unknown,
+    ]>;
+    let index = 0;
+    while (true) {
+      const next = reflectApply(mapIteratorNext, iterator, []) as IteratorResult<[
+        unknown,
+        unknown,
+      ]>;
+      if (next.done) break;
+      inspectStaticValue(next.value[0], `${label} Map key ${index}`, state, depth + 1);
+      inspectStaticValue(next.value[1], `${label} Map value ${index}`, state, depth + 1);
+      index++;
+    }
+  };
+  const inspectSetEntries = (size: unknown): void => {
+    if (!numberIsSafeInteger(size) || (size as number) < 0) {
+      fail(`${label} has invalid Set size`);
+    }
+    if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
+      fail(`${label} Set contains too many entries`);
+    }
+    assertNoOwnFields(value, label);
+    const iterator = reflectApply(setValues, value, []) as IterableIterator<unknown>;
+    let index = 0;
+    while (true) {
+      const next = reflectApply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
+      if (next.done) break;
+      inspectStaticValue(next.value, `${label} Set value ${index}`, state, depth + 1);
+      index++;
+    }
+  };
+  const inspectTypedArray = (length: number): void => {
+    if (!numberIsSafeInteger(length) || length < 0) {
+      fail(`${label} has invalid typed-array length`);
+    }
+    if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
+      fail(`${label} typed array contains too many entries`);
+    }
+    const byteLength = callGetter(typedArrayByteLengthGetter, value) as number;
+    const buffer = callGetter(typedArrayBufferGetter, value) as object;
+    if (isSharedArrayBuffer(buffer)) fail(`${label} must not view shared memory`);
+    let keys: PropertyKey[];
+    try {
+      keys = reflectOwnKeys(value);
+    } catch (cause) {
+      fail(`${label} could not be inspected`, cause);
+    }
+    if (keys.length !== length) fail(`${label} typed array must not contain custom properties`);
+    for (let index = 0; index < length; index++) {
+      const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
+      if (!descriptor || !hasDescriptorValue(descriptor)) {
+        fail(`${label} typed-array entry ${index} is not canonical`);
+      }
+    }
+    addBudget(state.budget, label, 0, byteLength);
+  };
+  const inspectRegExp = (source: unknown): void => {
+    const keys = reflectOwnKeys(value);
+    if (keys.length !== 1 || keys[0] !== "lastIndex") {
+      fail(`${label} RegExp must not contain custom properties`);
+    }
+    const lastIndex = objectGetOwnPropertyDescriptor(value, "lastIndex");
+    if (!lastIndex || !hasDescriptorValue(lastIndex) || lastIndex.value !== 0) {
+      fail(`${label} RegExp lastIndex must be zero`);
+    }
+    addBudget(state.budget, label, 0, StringConstructor(source).length * 2);
+  };
+  const inspectPlainRecord = (): void => {
+    assertPlainStructuralRecord(value, label);
+    let keys: PropertyKey[];
+    try {
+      keys = reflectOwnKeys(value);
+    } catch (cause) {
+      fail(`${label} could not be inspected`, cause);
+    }
+    if (keys.length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
+      fail(`${label} record contains too many fields`);
+    }
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      if (typeof key !== "string") fail(`${label} must not contain symbol keys`);
+      if (key.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS) {
+        fail(`${label} contains an overlong record key`);
+      }
+      const descriptor = objectGetOwnPropertyDescriptor(value, key);
+      if (!descriptor || !hasDescriptorValue(descriptor) || descriptor.enumerable !== true) {
+        fail(`${label} field "${key}" must be an enumerable own data property`);
+      }
+      addBudget(state.budget, label, 0, key.length * 2);
+      inspectStaticValue(descriptor.value, `${label}.${key}`, state, depth + 1);
+    }
+  };
+  const inspectObject = (): void => {
     if (arrayIsArray(value)) {
       const entries = inspectDenseArrayValues(value, label);
       for (let index = 0; index < entries.length; index++) {
@@ -565,50 +672,13 @@ function inspectStaticValue(
 
     const mapSize = tryGetter(mapSizeGetter, value);
     if (mapSize.matched) {
-      const size = mapSize.value;
-      if (!numberIsSafeInteger(size) || (size as number) < 0) {
-        fail(`${label} has invalid Map size`);
-      }
-      if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
-        fail(`${label} Map contains too many entries`);
-      }
-      assertNoOwnFields(value, label);
-      const iterator = reflectApply(mapEntries, value, []) as IterableIterator<[
-        unknown,
-        unknown,
-      ]>;
-      let index = 0;
-      while (true) {
-        const next = reflectApply(mapIteratorNext, iterator, []) as IteratorResult<[
-          unknown,
-          unknown,
-        ]>;
-        if (next.done) break;
-        inspectStaticValue(next.value[0], `${label} Map key ${index}`, state, depth + 1);
-        inspectStaticValue(next.value[1], `${label} Map value ${index}`, state, depth + 1);
-        index++;
-      }
+      inspectMapEntries(mapSize.value);
       return;
     }
 
     const setSize = tryGetter(setSizeGetter, value);
     if (setSize.matched) {
-      const size = setSize.value;
-      if (!numberIsSafeInteger(size) || (size as number) < 0) {
-        fail(`${label} has invalid Set size`);
-      }
-      if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
-        fail(`${label} Set contains too many entries`);
-      }
-      assertNoOwnFields(value, label);
-      const iterator = reflectApply(setValues, value, []) as IterableIterator<unknown>;
-      let index = 0;
-      while (true) {
-        const next = reflectApply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
-        if (next.done) break;
-        inspectStaticValue(next.value, `${label} Set value ${index}`, state, depth + 1);
-        index++;
-      }
+      inspectSetEntries(setSize.value);
       return;
     }
 
@@ -633,70 +703,20 @@ function inspectStaticValue(
 
     const typedLength = tryGetter(typedArrayLengthGetter, value);
     if (typedLength.matched) {
-      const length = typedLength.value as number;
-      if (!numberIsSafeInteger(length) || length < 0) {
-        fail(`${label} has invalid typed-array length`);
-      }
-      if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
-        fail(`${label} typed array contains too many entries`);
-      }
-      const byteLength = callGetter(typedArrayByteLengthGetter, value) as number;
-      const buffer = callGetter(typedArrayBufferGetter, value) as object;
-      if (isSharedArrayBuffer(buffer)) fail(`${label} must not view shared memory`);
-      let keys: PropertyKey[];
-      try {
-        keys = reflectOwnKeys(value);
-      } catch (cause) {
-        fail(`${label} could not be inspected`, cause);
-      }
-      if (keys.length !== length) fail(`${label} typed array must not contain custom properties`);
-      for (let index = 0; index < length; index++) {
-        const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
-        if (!descriptor || !hasDescriptorValue(descriptor)) {
-          fail(`${label} typed-array entry ${index} is not canonical`);
-        }
-      }
-      addBudget(state.budget, label, 0, byteLength);
+      inspectTypedArray(typedLength.value as number);
       return;
     }
 
     const regexp = tryGetter(regexpSourceGetter, value);
     if (regexp.matched) {
-      const keys = reflectOwnKeys(value);
-      if (keys.length !== 1 || keys[0] !== "lastIndex") {
-        fail(`${label} RegExp must not contain custom properties`);
-      }
-      const lastIndex = objectGetOwnPropertyDescriptor(value, "lastIndex");
-      if (!lastIndex || !hasDescriptorValue(lastIndex) || lastIndex.value !== 0) {
-        fail(`${label} RegExp lastIndex must be zero`);
-      }
-      addBudget(state.budget, label, 0, StringConstructor(regexp.value).length * 2);
+      inspectRegExp(regexp.value);
       return;
     }
 
-    assertPlainStructuralRecord(value, label);
-    let keys: PropertyKey[];
-    try {
-      keys = reflectOwnKeys(value);
-    } catch (cause) {
-      fail(`${label} could not be inspected`, cause);
-    }
-    if (keys.length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
-      fail(`${label} record contains too many fields`);
-    }
-    for (let index = 0; index < keys.length; index++) {
-      const key = keys[index]!;
-      if (typeof key !== "string") fail(`${label} must not contain symbol keys`);
-      if (key.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS) {
-        fail(`${label} contains an overlong record key`);
-      }
-      const descriptor = objectGetOwnPropertyDescriptor(value, key);
-      if (!descriptor || !hasDescriptorValue(descriptor) || descriptor.enumerable !== true) {
-        fail(`${label} field "${key}" must be an enumerable own data property`);
-      }
-      addBudget(state.budget, label, 0, key.length * 2);
-      inspectStaticValue(descriptor.value, `${label}.${key}`, state, depth + 1);
-    }
+    inspectPlainRecord();
+  };
+  try {
+    inspectObject();
   } finally {
     weakSetDeleteValue(state.active, value);
   }
@@ -705,14 +725,7 @@ function inspectStaticValue(
 function freezeStaticSnapshot<T>(value: T, seen = new NativeWeakSet<object>()): T {
   if (typeof value !== "object" || value === null || weakSetHasValue(seen, value)) return value;
   weakSetAddValue(seen, value);
-  if (arrayIsArray(value)) {
-    for (let index = 0; index < value.length; index++) {
-      freezeStaticSnapshot(value[index], seen);
-    }
-    return objectFreeze(value);
-  }
-  const mapSize = tryGetter(mapSizeGetter, value);
-  if (mapSize.matched) {
+  const freezeMapEntries = (): void => {
     const iterator = reflectApply(mapEntries, value, []) as IterableIterator<[
       unknown,
       unknown,
@@ -726,16 +739,29 @@ function freezeStaticSnapshot<T>(value: T, seen = new NativeWeakSet<object>()): 
       freezeStaticSnapshot(next.value[0], seen);
       freezeStaticSnapshot(next.value[1], seen);
     }
-    return objectFreeze(value);
-  }
-  const setSize = tryGetter(setSizeGetter, value);
-  if (setSize.matched) {
+  };
+  const freezeSetEntries = (): void => {
     const iterator = reflectApply(setValues, value, []) as IterableIterator<unknown>;
     while (true) {
       const next = reflectApply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
       if (next.done) break;
       freezeStaticSnapshot(next.value, seen);
     }
+  };
+  if (arrayIsArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      freezeStaticSnapshot(value[index], seen);
+    }
+    return objectFreeze(value);
+  }
+  const mapSize = tryGetter(mapSizeGetter, value);
+  if (mapSize.matched) {
+    freezeMapEntries();
+    return objectFreeze(value);
+  }
+  const setSize = tryGetter(setSizeGetter, value);
+  if (setSize.matched) {
+    freezeSetEntries();
     return objectFreeze(value);
   }
   if (tryGetter(typedArrayLengthGetter, value).matched) return value;
@@ -918,101 +944,78 @@ function captureNodeConfig(
   const staticValue = <T>(input: T, field: string): T =>
     captureStaticValueWithBudget(input, `${label} ${field}`, state.staticBudget);
 
-  switch (type) {
-    case "step": {
-      const agent = fields.get("agent");
-      const tool = fields.get("tool");
-      if ((agent === undefined) === (tool === undefined)) {
-        fail(`${label} step must configure exactly one of agent or tool`);
-      }
-      if (
-        agent !== undefined && typeof agent !== "string" &&
-        (typeof agent !== "object" || agent === null || isProxyWithoutHooks(agent))
-      ) {
-        fail(`${label} agent must be an ID or non-Proxy collaborator object`);
-      }
-      if (
-        tool !== undefined && typeof tool !== "string" &&
-        (typeof tool !== "object" || tool === null || isProxyWithoutHooks(tool))
-      ) {
-        fail(`${label} tool must be an ID or non-Proxy collaborator object`);
-      }
-      if (typeof agent === "string") {
-        assertString(agent, `${label} agent ID`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
-      }
-      if (typeof tool === "string") {
-        assertString(tool, `${label} tool ID`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
-      }
-      const input = fields.get("input");
-      if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return objectFreeze({
-        type: "step" as const,
-        ...common,
-        agent,
-        tool,
-        input: typeof input === "function" || input === undefined
-          ? input
-          : staticValue(input, "input"),
-      }) as WorkflowNodeConfig;
+  const captureStepConfig = (): WorkflowNodeConfig => {
+    const agent = fields.get("agent");
+    const tool = fields.get("tool");
+    if ((agent === undefined) === (tool === undefined)) {
+      fail(`${label} step must configure exactly one of agent or tool`);
     }
-    case "parallel": {
-      const strategy = fields.get("strategy");
-      if (
-        strategy !== undefined &&
-        !setHasValue(PARALLEL_STRATEGIES, strategy as string)
-      ) {
-        fail(`${label} parallel strategy is invalid`);
-      }
-      return objectFreeze({
-        type: "parallel" as const,
-        ...common,
-        strategy,
-        nodes: captureNodeList(fields.get("nodes"), `${label} parallel children`, state, depth + 1),
-      }) as WorkflowNodeConfig;
+    if (
+      agent !== undefined && typeof agent !== "string" &&
+      (typeof agent !== "object" || agent === null || isProxyWithoutHooks(agent))
+    ) {
+      fail(`${label} agent must be an ID or non-Proxy collaborator object`);
     }
-    case "branch": {
-      const condition = fields.get("condition");
-      assertFunction(condition, `${label} branch condition`);
-      return objectFreeze({
-        type: "branch" as const,
-        ...common,
-        condition,
-        then: captureNodeList(
-          fields.get("then"),
-          `${label} then branch`,
-          state,
-          depth + 1,
-          true,
-        ),
-        else: fields.get("else") === undefined ? undefined : captureNodeList(
-          fields.get("else"),
-          `${label} else branch`,
-          state,
-          depth + 1,
-          true,
-        ),
-      }) as WorkflowNodeConfig;
+    if (
+      tool !== undefined && typeof tool !== "string" &&
+      (typeof tool !== "object" || tool === null || isProxyWithoutHooks(tool))
+    ) {
+      fail(`${label} tool must be an ID or non-Proxy collaborator object`);
     }
-    case "wait": {
-      const waitType = fields.get("waitType");
-      if (waitType !== "approval" && waitType !== "event" && waitType !== "child_run") {
-        fail(`${label} waitType is invalid`);
-      }
-      const message = fields.get("message");
-      if (message !== undefined) assertString(message, `${label} message`);
-      const eventName = fields.get("eventName");
-      if (eventName !== undefined) {
-        assertString(eventName, `${label} eventName`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
-      }
-      if (waitType === "event" && eventName === undefined) {
-        fail(`${label} event wait requires eventName`);
-      }
-      const runIds = fields.get("runIds");
-      if (waitType === "child_run") {
-        if (typeof runIds === "function") assertFunction(runIds, `${label} runIds builder`);
-        else if (!Array.isArray(runIds)) fail(`${label} child-run wait requires runIds`);
-      }
-      const configuredWaitKind = fields.get(INTERNAL_WAIT_KIND_FIELD);
+    if (typeof agent === "string") {
+      assertString(agent, `${label} agent ID`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
+    }
+    if (typeof tool === "string") {
+      assertString(tool, `${label} tool ID`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
+    }
+    const input = fields.get("input");
+    if (typeof input === "function") assertFunction(input, `${label} input builder`);
+    return objectFreeze({
+      type: "step" as const,
+      ...common,
+      agent,
+      tool,
+      input: typeof input === "function" || input === undefined
+        ? input
+        : staticValue(input, "input"),
+    }) as WorkflowNodeConfig;
+  };
+  const captureParallelConfig = (): WorkflowNodeConfig => {
+    const strategy = fields.get("strategy");
+    if (
+      strategy !== undefined &&
+      !setHasValue(PARALLEL_STRATEGIES, strategy as string)
+    ) {
+      fail(`${label} parallel strategy is invalid`);
+    }
+    return objectFreeze({
+      type: "parallel" as const,
+      ...common,
+      strategy,
+      nodes: captureNodeList(fields.get("nodes"), `${label} parallel children`, state, depth + 1),
+    }) as WorkflowNodeConfig;
+  };
+  const captureWaitConfig = (): WorkflowNodeConfig => {
+    const waitType = fields.get("waitType");
+    if (waitType !== "approval" && waitType !== "event" && waitType !== "child_run") {
+      fail(`${label} waitType is invalid`);
+    }
+    const message = fields.get("message");
+    if (message !== undefined) assertString(message, `${label} message`);
+    const eventName = fields.get("eventName");
+    if (eventName !== undefined) {
+      assertString(eventName, `${label} eventName`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
+    }
+    if (waitType === "event" && eventName === undefined) {
+      fail(`${label} event wait requires eventName`);
+    }
+    const runIds = fields.get("runIds");
+    if (waitType === "child_run") {
+      if (typeof runIds === "function") assertFunction(runIds, `${label} runIds builder`);
+      else if (!Array.isArray(runIds)) fail(`${label} child-run wait requires runIds`);
+    }
+    const configuredWaitKind = fields.get(INTERNAL_WAIT_KIND_FIELD);
+    const assertConfiguredWaitKind = (): void => {
       if (
         configuredWaitKind !== undefined &&
         configuredWaitKind !== "delay" && configuredWaitKind !== "event"
@@ -1031,12 +1034,15 @@ function captureNodeConfig(
       ) {
         fail(`${label} delay marker requires the reserved delay event name`);
       }
-      const payload = fields.get("payload");
-      if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
-      // Carried by reference, like a definition-level inputSchema: a schema is a
-      // live object, not durable state, and is only consulted while the
-      // definition that declared it is registered.
-      const responseSchema = fields.get("responseSchema");
+    };
+    assertConfiguredWaitKind();
+    const payload = fields.get("payload");
+    if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
+    // Carried by reference, like a definition-level inputSchema: a schema is a
+    // live object, not durable state, and is only consulted while the
+    // definition that declared it is registered.
+    const responseSchema = fields.get("responseSchema");
+    const assertResponseSchema = (): void => {
       if (
         responseSchema !== undefined &&
         (typeof responseSchema !== "object" || responseSchema === null ||
@@ -1044,6 +1050,9 @@ function captureNodeConfig(
       ) {
         fail(`${label} responseSchema must be a schema`);
       }
+    };
+    assertResponseSchema();
+    const freezeWaitConfig = (): WorkflowNodeConfig => {
       return objectFreeze({
         type: "wait" as const,
         ...common,
@@ -1069,109 +1078,147 @@ function captureNodeConfig(
           }
           : {}),
       }) as WorkflowNodeConfig;
+    };
+    return freezeWaitConfig();
+  };
+  const captureSubWorkflowConfig = (): WorkflowNodeConfig => {
+    const workflow = fields.get("workflow");
+    if (typeof workflow !== "string" && (typeof workflow !== "object" || workflow === null)) {
+      fail(`${label} sub-workflow must be an ID or definition`);
     }
-    case "subWorkflow": {
-      const workflow = fields.get("workflow");
-      if (typeof workflow !== "string" && (typeof workflow !== "object" || workflow === null)) {
-        fail(`${label} sub-workflow must be an ID or definition`);
-      }
-      if (typeof workflow === "string") {
-        assertString(
-          workflow,
-          `${label} sub-workflow ID`,
-          MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
-          true,
-        );
-      }
-      const input = fields.get("input");
-      const output = fields.get("output");
-      assertOptionalFunction(output, `${label} output`);
-      if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return objectFreeze({
-        type: "subWorkflow" as const,
-        ...common,
-        workflow: typeof workflow === "string"
-          ? workflow
-          : captureDefinition(workflow as WorkflowDefinition, state, depth + 1, true),
-        input: typeof input === "function" || input === undefined
-          ? input
-          : staticValue(input, "input"),
-        output,
-      }) as WorkflowNodeConfig;
-    }
-    case "map": {
-      const items = fields.get("items");
-      if (items === undefined) fail(`${label} map items are required`);
-      if (typeof items !== "function" && !arrayIsArray(items)) {
-        fail(`${label} map items must be an array or builder function`);
-      }
-      if (typeof items === "function") assertFunction(items, `${label} map items builder`);
-      const processor = fields.get("processor");
-      if (typeof processor !== "object" || processor === null || isProxyWithoutHooks(processor)) {
-        fail(`${label} map processor must be a node or workflow definition`);
-      }
-      const processorFields = inspectExactRecord(
-        processor,
-        `${label} map processor`,
-        MAP_PROCESSOR_KEYS,
+    if (typeof workflow === "string") {
+      assertString(
+        workflow,
+        `${label} sub-workflow ID`,
+        MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+        true,
       );
-      const capturedProcessor = processorFields.has("steps")
-        ? captureDefinition(processor as WorkflowDefinition, state, depth + 1, true)
-        : captureNode(processor, `${label} processor`, state, depth + 1);
-      const concurrency = fields.get("concurrency");
-      if (
-        concurrency !== undefined &&
-        (!numberIsSafeInteger(concurrency) || (concurrency as number) < 1)
-      ) {
-        fail(`${label} map concurrency must be a positive safe integer`);
-      }
+    }
+    const input = fields.get("input");
+    const output = fields.get("output");
+    assertOptionalFunction(output, `${label} output`);
+    if (typeof input === "function") assertFunction(input, `${label} input builder`);
+    return objectFreeze({
+      type: "subWorkflow" as const,
+      ...common,
+      workflow: typeof workflow === "string"
+        ? workflow
+        : captureDefinition(workflow as WorkflowDefinition, state, depth + 1, true),
+      input: typeof input === "function" || input === undefined
+        ? input
+        : staticValue(input, "input"),
+      output,
+    }) as WorkflowNodeConfig;
+  };
+  const captureMapConfig = (): WorkflowNodeConfig => {
+    const items = fields.get("items");
+    if (items === undefined) fail(`${label} map items are required`);
+    if (typeof items !== "function" && !arrayIsArray(items)) {
+      fail(`${label} map items must be an array or builder function`);
+    }
+    if (typeof items === "function") assertFunction(items, `${label} map items builder`);
+    const processor = fields.get("processor");
+    if (typeof processor !== "object" || processor === null || isProxyWithoutHooks(processor)) {
+      fail(`${label} map processor must be a node or workflow definition`);
+    }
+    const processorFields = inspectExactRecord(
+      processor,
+      `${label} map processor`,
+      MAP_PROCESSOR_KEYS,
+    );
+    const capturedProcessor = processorFields.has("steps")
+      ? captureDefinition(processor as WorkflowDefinition, state, depth + 1, true)
+      : captureNode(processor, `${label} processor`, state, depth + 1);
+    const concurrency = fields.get("concurrency");
+    if (
+      concurrency !== undefined &&
+      (!numberIsSafeInteger(concurrency) || (concurrency as number) < 1)
+    ) {
+      fail(`${label} map concurrency must be a positive safe integer`);
+    }
+    return objectFreeze({
+      type: "map" as const,
+      ...common,
+      items: typeof items === "function" ? items : staticValue(items, "items"),
+      processor: capturedProcessor,
+      concurrency,
+    }) as WorkflowNodeConfig;
+  };
+  const captureLoopConfig = (): WorkflowNodeConfig => {
+    const condition = fields.get("while");
+    assertFunction(condition, `${label} loop while`);
+    const steps = fields.get("steps");
+    if (typeof steps !== "function" && !arrayIsArray(steps)) {
+      fail(`${label} loop steps must be an array or builder function`);
+    }
+    if (typeof steps === "function") assertFunction(steps, `${label} loop steps builder`);
+    const maxIterations = fields.get("maxIterations");
+    if (
+      !numberIsSafeInteger(maxIterations) || (maxIterations as number) < 1 ||
+      (maxIterations as number) > 100
+    ) {
+      fail(`${label} loop maxIterations must be an integer between 1 and 100`);
+    }
+    const onMaxIterations = fields.get("onMaxIterations");
+    const onComplete = fields.get("onComplete");
+    assertOptionalFunction(onMaxIterations, `${label} onMaxIterations`);
+    assertOptionalFunction(onComplete, `${label} onComplete`);
+    const iterationTimeout = fields.get("iterationTimeout");
+    if (iterationTimeout !== undefined) {
+      assertDurationValue(iterationTimeout, `${label} iterationTimeout`, true);
+    }
+    const delay = fields.get("delay");
+    if (delay !== undefined) assertDurationValue(delay, `${label} delay`, false);
+    return objectFreeze({
+      type: "loop" as const,
+      ...common,
+      while: condition,
+      steps: typeof steps === "function"
+        ? steps
+        : captureNodeList(steps, `${label} loop steps`, state, depth + 1, true),
+      maxIterations,
+      onMaxIterations,
+      onComplete,
+      iterationTimeout,
+      delay,
+    }) as WorkflowNodeConfig;
+  };
+  switch (type) {
+    case "step":
+      return captureStepConfig();
+    case "parallel":
+      return captureParallelConfig();
+    case "branch": {
+      const condition = fields.get("condition");
+      assertFunction(condition, `${label} branch condition`);
       return objectFreeze({
-        type: "map" as const,
+        type: "branch" as const,
         ...common,
-        items: typeof items === "function" ? items : staticValue(items, "items"),
-        processor: capturedProcessor,
-        concurrency,
+        condition,
+        then: captureNodeList(
+          fields.get("then"),
+          `${label} then branch`,
+          state,
+          depth + 1,
+          true,
+        ),
+        else: fields.get("else") === undefined ? undefined : captureNodeList(
+          fields.get("else"),
+          `${label} else branch`,
+          state,
+          depth + 1,
+          true,
+        ),
       }) as WorkflowNodeConfig;
     }
-    case "loop": {
-      const condition = fields.get("while");
-      assertFunction(condition, `${label} loop while`);
-      const steps = fields.get("steps");
-      if (typeof steps !== "function" && !arrayIsArray(steps)) {
-        fail(`${label} loop steps must be an array or builder function`);
-      }
-      if (typeof steps === "function") assertFunction(steps, `${label} loop steps builder`);
-      const maxIterations = fields.get("maxIterations");
-      if (
-        !numberIsSafeInteger(maxIterations) || (maxIterations as number) < 1 ||
-        (maxIterations as number) > 100
-      ) {
-        fail(`${label} loop maxIterations must be an integer between 1 and 100`);
-      }
-      const onMaxIterations = fields.get("onMaxIterations");
-      const onComplete = fields.get("onComplete");
-      assertOptionalFunction(onMaxIterations, `${label} onMaxIterations`);
-      assertOptionalFunction(onComplete, `${label} onComplete`);
-      const iterationTimeout = fields.get("iterationTimeout");
-      if (iterationTimeout !== undefined) {
-        assertDurationValue(iterationTimeout, `${label} iterationTimeout`, true);
-      }
-      const delay = fields.get("delay");
-      if (delay !== undefined) assertDurationValue(delay, `${label} delay`, false);
-      return objectFreeze({
-        type: "loop" as const,
-        ...common,
-        while: condition,
-        steps: typeof steps === "function"
-          ? steps
-          : captureNodeList(steps, `${label} loop steps`, state, depth + 1, true),
-        maxIterations,
-        onMaxIterations,
-        onComplete,
-        iterationTimeout,
-        delay,
-      }) as WorkflowNodeConfig;
-    }
+    case "wait":
+      return captureWaitConfig();
+    case "subWorkflow":
+      return captureSubWorkflowConfig();
+    case "map":
+      return captureMapConfig();
+    case "loop":
+      return captureLoopConfig();
   }
   return fail(`${label} has unsupported config type`);
 }
@@ -1213,6 +1260,16 @@ function validateDependencyGraph(nodes: readonly WorkflowNode[], label: string):
   const byId = new MapConstructor<string, WorkflowNode>();
   const dependents = new MapConstructor<string, string[]>();
   const indegree = new MapConstructor<string, number>();
+  const registerDependencies = (node: WorkflowNode): void => {
+    const dependencies = objectHasOwn(node, "dependsOn") ? node.dependsOn ?? [] : [];
+    for (let dependencyIndex = 0; dependencyIndex < dependencies.length; dependencyIndex++) {
+      const dependency = dependencies[dependencyIndex]!;
+      const targets = mapGetValue(dependents, dependency);
+      if (!targets) fail(`${label} node "${node.id}" depends on unknown node "${dependency}"`);
+      appendArrayValue(targets, node.id);
+      mapSetValue(indegree, node.id, (mapGetValue(indegree, node.id) ?? 0) + 1);
+    }
+  };
   for (let index = 0; index < nodes.length; index++) {
     const node = nodes[index]!;
     if (mapHasKey(byId, node.id)) fail(`${label} has duplicate node ID "${node.id}"`);
@@ -1222,14 +1279,7 @@ function validateDependencyGraph(nodes: readonly WorkflowNode[], label: string):
   }
   for (let index = 0; index < nodes.length; index++) {
     const node = nodes[index]!;
-    const dependencies = objectHasOwn(node, "dependsOn") ? node.dependsOn ?? [] : [];
-    for (let dependencyIndex = 0; dependencyIndex < dependencies.length; dependencyIndex++) {
-      const dependency = dependencies[dependencyIndex]!;
-      const targets = mapGetValue(dependents, dependency);
-      if (!targets) fail(`${label} node "${node.id}" depends on unknown node "${dependency}"`);
-      appendArrayValue(targets, node.id);
-      mapSetValue(indegree, node.id, (mapGetValue(indegree, node.id) ?? 0) + 1);
-    }
+    registerDependencies(node);
   }
   const queue: string[] = [];
   reflectApply(mapForEach, indegree, [
@@ -1336,7 +1386,7 @@ function captureDefinition<TInput, TOutput>(
       allowEmptySteps,
       "step",
     );
-    return objectFreeze({
+    const definitionHeader = () => ({
       id,
       ...(fields.has("description") ? { description } : {}),
       ...(fields.has("version") ? { version } : {}),
@@ -1347,6 +1397,9 @@ function captureDefinition<TInput, TOutput>(
       ...(fields.has("retry") ? { retry } : {}),
       ...(fields.has("timeout") ? { timeout } : {}),
       ...(fields.has("introspect") ? { introspect } : {}),
+    });
+    return objectFreeze({
+      ...definitionHeader(),
       steps,
       ...(fields.has("onError") ? { onError } : {}),
       ...(fields.has("onComplete") ? { onComplete } : {}),

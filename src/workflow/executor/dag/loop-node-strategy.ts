@@ -89,6 +89,54 @@ function isPersistedLoopState(value: unknown): value is PersistedLoopState {
     ArrayIsArray(state.completedNodeIds);
 }
 
+function persistedCompositeNodeFields(state: NodeState) {
+  return {
+    ...(state._subWorkflowOwnerPath !== undefined
+      ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
+      : {}),
+    ...(state._loopOutputRetry !== undefined ? { _loopOutputRetry: state._loopOutputRetry } : {}),
+    ...(state._subWorkflowInputParsed !== undefined
+      ? { _subWorkflowInputParsed: state._subWorkflowInputParsed }
+      : {}),
+    ...(state._subWorkflowCompletedChildIds !== undefined
+      ? { _subWorkflowCompletedChildIds: [...state._subWorkflowCompletedChildIds] }
+      : {}),
+    ...(state._subWorkflowContext !== undefined
+      ? { _subWorkflowContext: state._subWorkflowContext }
+      : {}),
+    ...(state._subWorkflowContextWaits !== undefined
+      ? {
+        _subWorkflowContextWaits: state._subWorkflowContextWaits.map((wait) => ({ ...wait })),
+      }
+      : {}),
+    ...(state._activeCompositeChildIds !== undefined
+      ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
+      : {}),
+    ...(state._completedCompositeChildIds !== undefined
+      ? { _completedCompositeChildIds: [...state._completedCompositeChildIds] }
+      : {}),
+  };
+}
+
+function persistedNodeState(state: NodeState): PersistedNodeState {
+  return {
+    nodeId: state.nodeId,
+    status: state.status,
+    attempt: state.attempt,
+    ...(state._stepInputRecorded !== undefined
+      ? { _stepInputRecorded: state._stepInputRecorded }
+      : {}),
+    ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
+    ...(state._branchSelected !== undefined ? { _branchSelected: state._branchSelected } : {}),
+    ...persistedCompositeNodeFields(state),
+    ...(state.input !== undefined ? { input: state.input } : {}),
+    ...(state.output !== undefined ? { output: state.output } : {}),
+    ...(state.error !== undefined ? { error: state.error } : {}),
+    ...(state.startedAt ? { startedAt: state.startedAt.toISOString() } : {}),
+    ...(state.completedAt ? { completedAt: state.completedAt.toISOString() } : {}),
+  };
+}
+
 /**
  * @internal Encode child node states so the context holds nothing JSON rewrites.
  *
@@ -103,45 +151,7 @@ export function toPersistedNodeStates(
 ): Record<string, PersistedNodeState> {
   const persisted: Record<string, PersistedNodeState> = {};
   for (const [nodeId, state] of Object.entries(states)) {
-    persisted[nodeId] = {
-      nodeId: state.nodeId,
-      status: state.status,
-      attempt: state.attempt,
-      ...(state._stepInputRecorded !== undefined
-        ? { _stepInputRecorded: state._stepInputRecorded }
-        : {}),
-      ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
-      ...(state._branchSelected !== undefined ? { _branchSelected: state._branchSelected } : {}),
-      ...(state._subWorkflowOwnerPath !== undefined
-        ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
-        : {}),
-      ...(state._loopOutputRetry !== undefined ? { _loopOutputRetry: state._loopOutputRetry } : {}),
-      ...(state._subWorkflowInputParsed !== undefined
-        ? { _subWorkflowInputParsed: state._subWorkflowInputParsed }
-        : {}),
-      ...(state._subWorkflowCompletedChildIds !== undefined
-        ? { _subWorkflowCompletedChildIds: [...state._subWorkflowCompletedChildIds] }
-        : {}),
-      ...(state._subWorkflowContext !== undefined
-        ? { _subWorkflowContext: state._subWorkflowContext }
-        : {}),
-      ...(state._subWorkflowContextWaits !== undefined
-        ? {
-          _subWorkflowContextWaits: state._subWorkflowContextWaits.map((wait) => ({ ...wait })),
-        }
-        : {}),
-      ...(state._activeCompositeChildIds !== undefined
-        ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
-        : {}),
-      ...(state._completedCompositeChildIds !== undefined
-        ? { _completedCompositeChildIds: [...state._completedCompositeChildIds] }
-        : {}),
-      ...(state.input !== undefined ? { input: state.input } : {}),
-      ...(state.output !== undefined ? { output: state.output } : {}),
-      ...(state.error !== undefined ? { error: state.error } : {}),
-      ...(state.startedAt ? { startedAt: state.startedAt.toISOString() } : {}),
-      ...(state.completedAt ? { completedAt: state.completedAt.toISOString() } : {}),
-    };
+    persisted[nodeId] = persistedNodeState(state);
   }
   return persisted;
 }
@@ -238,15 +248,16 @@ export async function executeLoopNodeStrategy(
 
   // Output retry restores private children that were never published. Diff
   // against the last published iteration so success also removes old children.
-  let exposedIterationNodeStates: Record<string, NodeState> = outputRetryLoopState
-    ? Object.fromEntries(
+  let exposedIterationNodeStates: Record<string, NodeState> = {};
+  if (outputRetryLoopState) {
+    exposedIterationNodeStates = Object.fromEntries(
       (outputRetryLoopState.completedNodeIds ?? []).flatMap((id) =>
         nodeStates[id] ? [[id, nodeStates[id]]] : []
       ),
-    )
-    : resumeIterationNodeStates
-    ? { ...resumeIterationNodeStates }
-    : {};
+    );
+  } else if (resumeIterationNodeStates) {
+    exposedIterationNodeStates = { ...resumeIterationNodeStates };
+  }
 
   while (iteration < config.maxIterations) {
     runtime.abortSignal?.throwIfAborted();
@@ -312,11 +323,12 @@ export async function executeLoopNodeStrategy(
     // is not replayed as still pending.
     // An output-retry snapshot was never published, so the run's map can only
     // hold an earlier iteration's states under the same namespaced ids.
-    const iterationNodeStates = resumingIterationNodeStates
-      ? resumingOutputRetry
+    let iterationNodeStates: Record<string, NodeState> = {};
+    if (resumingIterationNodeStates) {
+      iterationNodeStates = resumingOutputRetry
         ? { ...resumingIterationNodeStates }
-        : reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
-      : {};
+        : reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates);
+    }
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
 
