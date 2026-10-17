@@ -63,6 +63,8 @@ export interface ExecutorProjectToolContext {
   projectId: string | null;
   userId?: string;
   projectSlug?: string;
+  /** Canonical branch scope captured from the trusted execution grant. */
+  branch?: string | null;
   execution: { kind: "canonical"; runId: string } | { kind: "ephemeral" };
 }
 
@@ -72,13 +74,16 @@ const getContextSchema = defineSchema((v) =>
     projectId: getExecutorToolIdSchema().nullable(),
     userId: getExecutorToolIdSchema().optional(),
     projectSlug: getExecutorToolIdSchema().optional(),
+    branch: getExecutorToolIdSchema().nullable().optional(),
     execution: v.discriminatedUnion("kind", [
       v.object({ kind: v.literal("canonical"), runId: getExecutorToolIdSchema() }).strict(),
       v.object({ kind: v.literal("ephemeral") }).strict(),
     ]),
   }).strict().refine(
-    (context) => context.projectId !== null || context.projectSlug === undefined,
-    "Projectless tool context cannot include a project slug",
+    (context) =>
+      context.projectId !== null ||
+      (context.projectSlug === undefined && context.branch == null),
+    "Projectless tool context cannot include project scope",
   )
 );
 
@@ -89,6 +94,7 @@ function captureContext(input: ExecutorProjectToolContext) {
     ...(context.projectId === null ? {} : { projectId: context.projectId }),
     ...(context.userId === undefined ? {} : { userId: context.userId }),
     ...(context.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
+    ...(context.branch === undefined ? {} : { branch: context.branch }),
     runIdBindsToolAuthorization: context.execution.kind === "canonical",
     ...(context.execution.kind === "canonical" ? { runId: context.execution.runId } : {}),
   });
@@ -332,6 +338,7 @@ export async function createExecutorProjectToolSource(
         "runIdBindsToolAuthorization",
         "userId",
         "projectSlug",
+        "branch",
       ] as const
     ) {
       const requested = callField(context, key);

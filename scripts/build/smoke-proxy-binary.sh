@@ -5,10 +5,12 @@ binary="${1:?usage: smoke-proxy-binary.sh <binary> [base_port]}"
 base_port="${2:-18080}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX")"
 proxy_pid=""
-max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-188743680}"
+# Pinned Deno 2.9.7 produced a 191,203,872-byte Linux proxy in CI.
+# Keep a 192 MiB ceiling around that runtime upgrade (previously 180 MiB).
+max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-201326592}"
 
 cleanup() {
-  if [ -n "$proxy_pid" ]; then
+  if [[ -n "$proxy_pid" ]]; then
     kill "$proxy_pid" 2>/dev/null || true
     wait "$proxy_pid" 2>/dev/null || true
   fi
@@ -17,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 actual_binary_bytes="$(wc -c < "$binary" | tr -d '[:space:]')"
-if [ "$actual_binary_bytes" -gt "$max_binary_bytes" ]; then
+if [[ "$actual_binary_bytes" -gt "$max_binary_bytes" ]]; then
   echo "proxy binary size ${actual_binary_bytes} exceeds ${max_binary_bytes} bytes" >&2
   exit 1
 fi
@@ -36,7 +38,7 @@ run_smoke() {
   for _ in {1..30}; do
     if curl --connect-timeout 1 --max-time 2 -fsS "http://127.0.0.1:${port}/_proxy/health" 2>/dev/null \
       | grep -Fq '"status":"ok"'; then
-      if [ -n "$expected_log" ]; then
+      if [[ -n "$expected_log" ]]; then
         if ! grep -Fq "$expected_log" "$log_file"; then
           sleep 1
           continue

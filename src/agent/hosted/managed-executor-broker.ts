@@ -80,6 +80,7 @@ import {
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { createExecutorHostedChatRuntimeAgent } from "#veryfront/agent/hosted/executor-agent-bridge.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 import {
   createEphemeralHostedExecutorModelBroker,
   createHostedExecutorModelBroker,
@@ -441,6 +442,12 @@ export function createManagedExecutorBroker(
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
         ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
         ...(runtimeObservationWriter ? { runtimeObservations: true } : {}),
+        ...(operationInput.model.runEventSink &&
+            getManagedToolResultFence(operationInput.model.runEventSink)
+          ? {
+            resultFence: getManagedToolResultFence(operationInput.model.runEventSink),
+          }
+          : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {
@@ -528,6 +535,7 @@ function snapshotTrustedRuntime(
     context: {
       agentId: installation.grant.agentId,
       projectId: execution.projectId,
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
       runId: execution.runId,
       ...(execution.userId === undefined ? {} : { userId: execution.userId }),
       ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),

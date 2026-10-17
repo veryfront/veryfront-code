@@ -41,14 +41,10 @@ it("reserved data writes remove every authority listing from the shared API cach
         // This path only receives a source prefix followed by one wildcard.
         assertEquals(pattern.endsWith("*"), true);
         const prefix = pattern.slice(0, -1);
-        let deleted = 0;
         for (const key of stored.keys()) {
-          if (key.startsWith(prefix)) {
-            stored.delete(key);
-            deleted++;
-          }
+          if (key.startsWith(prefix)) stored.delete(key);
         }
-        return Promise.resolve({ pattern, status: "deleted", deleted_count: deleted });
+        return Promise.resolve({ ok: true });
       }
       if (url.pathname.startsWith(entryPrefix)) {
         const key = decodeURIComponent(url.pathname.slice(entryPrefix.length));

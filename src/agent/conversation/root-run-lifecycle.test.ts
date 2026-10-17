@@ -16,6 +16,11 @@ import {
   createRuntimeObservationCaptureOptIn,
   getRuntimeObservationWriterScope,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { createDurableRunEventSink } from "#veryfront/agent/hosted/durable-run-event-sink.ts";
+import { sendSSE } from "#veryfront/agent/runtime/sse-utils.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { withRuntimeStreamOwnership } from "#veryfront/runtime/runtime-stream-ownership.ts";
+import { acknowledgeMirroredToolResult } from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -186,6 +191,48 @@ describe("agent/conversation-root-run-lifecycle", () => {
         assertEquals(context.privateDurableRunMirror, context.durableRunMirror);
         assertEquals(context.privateRuntimeObservationWriterCapability !== undefined, true);
         assertEquals(authorizationHeaders, ["Bearer run-event-service-token"]);
+
+        const mirror = context.durableRunMirror!;
+        const sink = createDurableRunEventSink({ mirror });
+        const encoder = new TextEncoder();
+        const stream = runWithMandatoryRunEventSink(
+          sink,
+          () =>
+            withRuntimeStreamOwnership(() =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  sendSSE(controller, encoder, { type: "message-start", messageId: "message-1" });
+                  sendSSE(controller, encoder, {
+                    type: "tool-output-available",
+                    toolCallId: "fresh-result",
+                    output: {},
+                  });
+                  controller.close();
+                },
+              })
+            ),
+        );
+        await stream.cancel();
+        let captureUnblocked = false;
+        const capture = Promise.resolve(sink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          messages: [{
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "fresh-result",
+              toolName: "reader",
+              output: { type: "json", value: {} },
+            }],
+          }],
+        })).then(() => {
+          captureUnblocked = true;
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        assertEquals(captureUnblocked, false);
+        acknowledgeMirroredToolResult(mirror, "fresh-result");
+        await capture;
+        assertEquals(captureUnblocked, true);
       } finally {
         context.durableRunMirror?.dispose();
       }

@@ -22,7 +22,7 @@ export function setJsonMode(enabled: boolean): void {
     if (!_jsonMode) _previousLogLevel = getEnv("LOG_LEVEL");
     setEnv("LOG_LEVEL", "ERROR");
     refreshLoggerConfig();
-  } else if (!enabled && _jsonMode) {
+  } else if (_jsonMode) {
     if (_previousLogLevel === undefined) deleteEnv("LOG_LEVEL");
     else if (_previousLogLevel !== null) setEnv("LOG_LEVEL", _previousLogLevel);
     refreshLoggerConfig();

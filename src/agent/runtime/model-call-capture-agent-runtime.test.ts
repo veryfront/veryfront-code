@@ -1,3 +1,8 @@
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { runWithToolResultSequence } from "#veryfront/runtime/tool-result-sequence.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -88,6 +93,83 @@ function providerStream<T>(chunks: readonly T[]): ReadableStream<T> {
 }
 
 describe("agent runtime model-call capture", () => {
+  it("assigns a producer position to provider-executed results forwarded by a runtime step", async () => {
+    const model = registerVeryfrontCloudTestModel(
+      {
+        provider: "veryfront-cloud",
+        modelId: "veryfront-cloud/openai/gpt-test",
+        specificationVersion: "v3",
+        doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+        doStream: () =>
+          Promise.resolve({
+            stream: providerStream([
+              {
+                type: "tool-input-start",
+                id: "search-1",
+                toolName: "web_search",
+                providerExecuted: true,
+              },
+              { type: "tool-input-delta", id: "search-1", delta: "{}" },
+              {
+                type: "tool-call",
+                toolCallId: "search-1",
+                toolName: "web_search",
+                input: "{}",
+                providerExecuted: true,
+              },
+              {
+                type: "tool-result",
+                toolCallId: "search-1",
+                toolName: "web_search",
+                result: { value: "found" },
+                providerExecuted: true,
+              },
+              { type: "finish", finishReason: "stop", usage: {} },
+            ]),
+          }),
+      } satisfies ModelRuntime,
+    );
+    const runtime = new AgentRuntime("provider-result-position", {
+      model: "veryfront-cloud/openai/gpt-test",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      providerTools: ["web_search"],
+    }, { resolveModelRuntime: () => model });
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "gpt-test",
+        modelId: "openai/gpt-test",
+        provider: "openai",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+        supportedProviderTools: ["web_search"],
+      }],
+    });
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    let body: string;
+    try {
+      body = await runWithToolResultSequence(
+        sessionId,
+        async () =>
+          readStreamBody(
+            await runtime.stream([{
+              id: "input",
+              role: "user",
+              parts: [{ type: "text", text: "Search" }],
+            }]),
+          ),
+      );
+    } finally {
+      __resetVeryfrontCloudCatalogForTests();
+    }
+    const events = body.split("\n\n").filter((line) => line.startsWith("data: ")).map((line) =>
+      JSON.parse(line.slice(6))
+    );
+    const result = events.find((event) => event.type === "tool-output-available");
+    assertEquals(result?.privateToolResultSequence, { sessionId, ordinal: 1 });
+  });
   it("preserves Veryfront Cloud facts through the streaming wrapper before dispatch", async () => {
     const order: string[] = [];
     let recordedModelCallId: string | undefined;

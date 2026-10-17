@@ -82,7 +82,7 @@ function createKnownFilesReader(
   isSymlink: boolean;
 }> {
   return async function* (directory: string) {
-    const prefix = directory.replace(/\/+$/, "") + "/";
+    const prefix = directory.replace(/(?<!\/)\/+$/, "") + "/";
     const entries = new Map<string, boolean>();
     for (const file of knownFiles) {
       if (!file.startsWith(prefix)) continue;

@@ -278,5 +278,5 @@ export async function getTableRowCount(
     `SELECT COUNT(*) as count FROM "${schema}"."${tableName}"`,
   );
 
-  return parseInt(result.rows[0]?.count ?? "0", 10);
+  return Number.parseInt(result.rows[0]?.count ?? "0", 10);
 }

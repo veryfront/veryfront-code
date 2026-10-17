@@ -91,7 +91,7 @@ function normalizeModuleBaseUrl(value: unknown): string {
       `Module server URL must contain at most ${MAX_MODULE_BASE_URL_LENGTH} control-free characters`,
     );
   }
-  return value.replace(/\/+$/, "");
+  return value.replace(/(?<!\/)\/+$/, "");
 }
 
 function readOwnReleaseAssetUrl(value: object, key: string): string | null {
@@ -115,7 +115,7 @@ function normalizeReleaseAssetModulePath(path: string): string {
   return String(path || "")
     .replace(/^\/?_vf_modules\//, "")
     .replace(/^\/+/, "")
-    .replace(/[?#].*$/, "");
+    .replace(/[?#].*$/s, "");
 }
 
 function resolveReleaseAssetModuleUrl(path: string): string | null {

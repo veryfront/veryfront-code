@@ -67,7 +67,7 @@ export async function resolveFrameworkFile(
 
   const pathWithoutPrefix = normalizedVfModulePath
     .replace(/^\/_vf_modules\//, "")
-    .replace(/\?.*$/, "")
+    .replace(/\?.*$/s, "")
     .replace(/\.js$/, "");
 
   const frameworkRelativePath = pathWithoutPrefix.startsWith("_veryfront/")

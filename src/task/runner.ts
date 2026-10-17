@@ -216,6 +216,9 @@ export interface RunTaskOptions {
   /** Cooperative cancellation propagated to the task context */
   signal?: AbortSignal;
 
+  /** @internal Called immediately before the admitted task code starts. */
+  onExecutionStarted?: () => void;
+
   /** 1-based attempt number exposed as `ctx.attempt`. Defaults to 1. */
   attempt?: number;
 
@@ -336,6 +339,7 @@ export async function runTask(
     projectId,
     environmentId,
     signal,
+    onExecutionStarted,
     attempt = 1,
     envAllowlist,
     debug = false,
@@ -413,6 +417,7 @@ export async function runTask(
 
     // Schema identity and input validation await; a cancel in that window must not start the task.
     signal?.throwIfAborted();
+    onExecutionStarted?.();
     let result = await task.definition.run(ctx);
     if (outputSchema !== undefined) {
       let check: Awaited<ReturnType<typeof checkDeclaredSchema>>;

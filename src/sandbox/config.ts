@@ -57,7 +57,7 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
 export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string {
   const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
     getHostEnv("VERYFRONT_API_URL");
-  if (url) return applyIntrinsic(stringReplace, url, [/\/+$/, ""]) as string;
+  if (url) return applyIntrinsic(stringReplace, url, [/(?<!\/)\/+$/, ""]) as string;
 
   // Fail closed: never silently default to the production API while attaching an
   // ambient auth token — a missing VERYFRONT_API_URL in staging/CI would

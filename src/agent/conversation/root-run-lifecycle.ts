@@ -22,6 +22,7 @@ import {
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getUuidSchema } from "#veryfront/schemas/common.ts";
+import { aliasToolResultMirrorBarrier } from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -148,7 +149,7 @@ function revokeRuntimeObservationWriterOnMirrorDispose(
   mirror: ConversationRunChunkMirror,
   capability: RuntimeObservationWriterCapability,
 ): ConversationRunChunkMirror {
-  return {
+  const wrapper: ConversationRunChunkMirror = {
     timing: mirror.timing,
     handleChunk: (chunk) => mirror.handleChunk(chunk),
     appendEvents: (events) => mirror.appendEvents(events),
@@ -171,6 +172,8 @@ function revokeRuntimeObservationWriterOnMirrorDispose(
       mirror.dispose();
     },
   };
+  aliasToolResultMirrorBarrier(mirror, wrapper);
+  return wrapper;
 }
 
 /** Context for prepare hosted conversation root run. */

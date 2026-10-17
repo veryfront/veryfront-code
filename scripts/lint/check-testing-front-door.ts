@@ -62,7 +62,7 @@ export interface FrontDoorRule {
 export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
   {
     group: "fetch-assignment",
-    pattern: /\bglobalThis\b(?:\s+as\s+[^)\n]*)?\)?\s*\.\s*fetch\s*=(?!=)/g,
+    pattern: /\bglobalThis\b(?:\s+as\s+[^\s)\n][^)\n]*)?\)?\s*\.\s*fetch\s*=(?!=)/g,
     // In a local declaration, `typeof globalThis.fetch` is a type query;
     // the following equals sign assigns the local binding, not the global.
     exemptMatch: (match, stripped) =>
@@ -94,7 +94,7 @@ export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
     // is assigned to, so the exemption can demand a harness call for that
     // specific DOM.
     pattern:
-      /(?:\b(?:const|let|var)\s+)?(?:([A-Za-z_$][\w$]*)\s*=\s*)?\bnew\s+JSDOM\s*\(/g,
+      /(?:\b(?:const|let|var)\s+)?(?:(?<![\w$])([A-Za-z_$][\w$]*)\s*=\s*)?\bnew\s+JSDOM\s*\(/g,
     // Constructing a JSDOM is the prescribed first half of the pattern; the
     // bypass is wiring its globals by hand. A construction is exempt only when
     // its DOM demonstrably reaches the shared harness: either the `new` sits

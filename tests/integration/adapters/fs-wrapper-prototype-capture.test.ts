@@ -168,6 +168,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     const originalAccessor = originalBridge.getCurrentRequestContext;
     let poisonedCalls = 0;
     let authorization = "";
+    let deleteRequests = 0;
     globalThis.__vf_multi_project_adapter = {
       ...originalBridge,
       getCurrentRequestContext: () => {
@@ -178,9 +179,8 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     installMockFetch(
       ((_input: RequestInfo | URL, init?: RequestInit) => {
         authorization = new Headers(init?.headers).get("authorization") ?? "";
-        return Promise.resolve(
-          Response.json({ pattern: "agent:*", status: "deleted", deleted_count: 1 }),
-        );
+        deleteRequests += 1;
+        return Promise.resolve(Response.json({ ok: true }));
       }) as typeof fetch,
     );
 
@@ -197,7 +197,9 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         () => cache.delByPattern("agent:*"),
       );
 
-      assertEquals(deleted, 1);
+      // The canonical delete acknowledgement carries no count.
+      assertEquals(deleted, 0);
+      assertEquals(deleteRequests, 1);
       assertEquals(authorization, "Bearer signed-user-token");
       assertEquals(poisonedCalls, 0);
     } finally {

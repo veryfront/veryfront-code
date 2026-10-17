@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type {
+  JsonSchema,
   JsonSchemaValidationFunction,
   JsonSchemaValidationResult,
 } from "veryfront/extensions/schema";
@@ -750,4 +751,51 @@ describe("SchemaValidator.compileJsonSchema", () => {
     if (result.success) return;
     assertEquals(result.errors.map((error) => error.keyword), ["veryfrontDataOnly"]);
   });
+});
+
+it("keeps instance byte budgets local to each compiled validator and cache entry", async () => {
+  const compile = createZodAdapter().compileJsonSchema;
+  assert(compile);
+  const schema = { type: "string" } satisfies JsonSchema;
+  const ordinary = compile(schema);
+  const options = {
+    instanceLimits: { maxStringBytes: 2 * 1024 * 1024, maxSerializedBytes: 3 * 1024 * 1024 },
+  };
+  const expanded = compile(schema, options);
+  assertEquals(compile(schema, options), expanded);
+  assertEquals(compile(schema), ordinary);
+  const large = "x".repeat(1_500_000);
+  assertEquals((await ordinary(large)).success, false);
+  assertEquals((await expanded(large)).success, true);
+  assertEquals((await ordinary(large)).success, false);
+  options.instanceLimits.maxStringBytes = 16 * 1024 * 1024;
+  assertEquals((await expanded("x".repeat(3 * 1024 * 1024))).success, false);
+  const exact = compile(schema, { instanceLimits: { maxStringBytes: 8, maxSerializedBytes: 10 } });
+  assertEquals((await exact("😀😀")).success, true);
+  assertEquals((await exact("😀😀a")).success, false);
+  const longerString = compile(schema, {
+    instanceLimits: { maxStringBytes: 9, maxSerializedBytes: 10 },
+  });
+  assertEquals((await longerString("😀😀a")).success, false);
+  const longerJson = compile(schema, {
+    instanceLimits: { maxStringBytes: 9, maxSerializedBytes: 11 },
+  });
+  assertEquals((await longerJson("😀😀a")).success, true);
+});
+
+it("rejects unbounded or inconsistent per-compilation instance budgets", () => {
+  const compile = createZodAdapter().compileJsonSchema;
+  assert(compile);
+  for (const value of [0, -1, Infinity, NaN, 1.5, 16 * 1024 * 1024 + 1]) {
+    for (
+      const limits of [
+        { maxStringBytes: value, maxSerializedBytes: 16 * 1024 * 1024 },
+        { maxStringBytes: 1, maxSerializedBytes: value },
+      ]
+    ) assertThrows(() => compile({ type: "string" }, { instanceLimits: limits }), RangeError);
+  }
+  assertThrows(() =>
+    compile({ type: "string" }, {
+      instanceLimits: { maxStringBytes: 2, maxSerializedBytes: 1 },
+    }), RangeError);
 });

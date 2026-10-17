@@ -90,7 +90,7 @@ export function sanitizeLoadErrorForResponse(message: string, projectDir?: strin
   let text = (message.split("\n")[0] ?? "").trim();
 
   if (projectDir) {
-    const root = projectDir.replace(/\/+$/, "");
+    const root = projectDir.replace(/(?<!\/)\/+$/, "");
     text = text.replaceAll(`file://${root}/`, "").replaceAll(`${root}/`, "");
   }
 

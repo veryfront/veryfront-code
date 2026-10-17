@@ -203,7 +203,7 @@ Deno.bench({
   baseline: true,
   fn() {
     const contentLength = "1024";
-    const bytes = parseInt(contentLength, 10);
+    const bytes = Number.parseInt(contentLength, 10);
     if (bytes > MAX_WORKER_BODY_BYTES) {
       throw new Error("too large");
     }
@@ -215,7 +215,7 @@ Deno.bench({
   group: "content-length",
   fn() {
     const contentLength = String(20 * 1024 * 1024);
-    const bytes = parseInt(contentLength, 10);
+    const bytes = Number.parseInt(contentLength, 10);
     if (bytes > MAX_WORKER_BODY_BYTES) {
       // rejected — fast path avoids buffering
     }
@@ -228,7 +228,7 @@ Deno.bench({
   fn() {
     const contentLength: string | null = null;
     if (contentLength) {
-      parseInt(contentLength, 10);
+      Number.parseInt(contentLength, 10);
     }
     // No header — skip fast path
   },

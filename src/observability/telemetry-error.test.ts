@@ -408,7 +408,7 @@ describe("observability/telemetry-error", () => {
       if (previous) {
         Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previous);
       } else {
-        delete ErrorWithStackFormatter.prepareStackTrace;
+        Reflect.deleteProperty(ErrorWithStackFormatter, "prepareStackTrace");
       }
     }
 
@@ -604,7 +604,7 @@ describe("observability/telemetry-error", () => {
       if (previousFormatter) {
         Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previousFormatter);
       } else {
-        delete ErrorWithStackFormatter.prepareStackTrace;
+        Reflect.deleteProperty(ErrorWithStackFormatter, "prepareStackTrace");
       }
       if (previousIsError) {
         Object.defineProperty(ErrorWithStackFormatter, "isError", previousIsError);

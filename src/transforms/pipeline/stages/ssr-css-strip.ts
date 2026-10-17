@@ -1766,7 +1766,7 @@ function generateCSSReExportStub(
   const clause = stripImportClauseComments(trimmed.slice("export".length, fromIndex)).trim();
 
   // Namespace re-export: export * as styles from "./X.module.css"
-  const nsMatch = clause.match(/^\*\s*as\s+(.+)$/);
+  const nsMatch = clause.match(/^\*\s*as\s+(\S.*)$/);
   const namespaceExportName = parseExportNameToken(nsMatch?.[1]);
   if (namespaceExportName !== undefined) {
     return `${

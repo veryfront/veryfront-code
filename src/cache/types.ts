@@ -146,7 +146,8 @@ export interface CacheBackend {
   /**
    * Delete all values matching a pattern.
    * @param pattern - Glob pattern (e.g., "user:*")
-   * @returns Number of deleted keys
+   * @returns Number of deleted keys, or 0 when the backend cannot count them (the API
+   * backend, whose delete acknowledgement carries no count). Use it for logs and stats only.
    */
   delByPattern?(pattern: string): Promise<number>;
 

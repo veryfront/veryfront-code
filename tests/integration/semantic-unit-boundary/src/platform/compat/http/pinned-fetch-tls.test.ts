@@ -136,7 +136,14 @@ async function readHeaders(connection) {
 
 async function readUntilEof(connection) {
   const buffer = new Uint8Array(1024);
-  while (await connection.read(buffer) !== null) {}
+  try {
+    while (await connection.read(buffer) !== null) {}
+  } catch (error) {
+    // An aborted node:https socket can close without TLS close_notify. The
+    // response and credential assertions precede this transport-closure probe.
+    if (!(error instanceof Deno.errors.UnexpectedEof) ||
+      !error.message.includes("without sending TLS close_notify")) throw error;
+  }
   return true;
 }
 

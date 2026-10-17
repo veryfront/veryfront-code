@@ -1,8 +1,10 @@
+import type { OkfBundleMetadata } from "../../sync/okf-companions.ts";
 import { computeContentDigest, type SyncFileSnapshot } from "../../sync/state.ts";
 
 export interface PushFileContent {
   path: string;
   content: string;
+  metadata?: OkfBundleMetadata;
 }
 
 export interface PushRemoteFile {
@@ -104,7 +106,11 @@ export async function planPushChanges(
     const baseline = options.baselineFiles[local.path];
 
     if (options.force) {
-      uploads.push({ path: local.path, content: local.content });
+      uploads.push({
+        path: local.path,
+        content: local.content,
+        ...(!remote && local.metadata ? { metadata: local.metadata, expectedAbsent: true } : {}),
+      });
       nextFiles[local.path] = { digest: localDigest };
       continue;
     }
@@ -122,7 +128,12 @@ export async function planPushChanges(
         conflicts.add(local.path);
         continue;
       }
-      uploads.push({ path: local.path, content: local.content, expectedAbsent: true });
+      uploads.push({
+        path: local.path,
+        content: local.content,
+        ...(local.metadata ? { metadata: local.metadata } : {}),
+        expectedAbsent: true,
+      });
       nextFiles[local.path] = { digest: localDigest };
       continue;
     }

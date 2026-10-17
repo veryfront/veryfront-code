@@ -254,3 +254,16 @@ it("keeps the markdown definition on a wrapped copy of the agent", () => {
 
   assertEquals(getRuntimeAgentMarkdownDefinition(wrapped), definition);
 });
+
+it("markdown runtime agents preserve optional startup hints separately from required tools", () => {
+  const runtime = createRuntimeAgentFromMarkdownDefinition({
+    id: "support",
+    name: "Support",
+    description: "Uses only authorized startup tools",
+    instructions: "Read before writing.",
+    bootstrapTools: ["read_state"],
+    optionalBootstrapTools: ["write_state"],
+  });
+  assertEquals(runtime.config.bootstrapTools, ["read_state"]);
+  assertEquals(runtime.config.optionalBootstrapTools, ["write_state"]);
+});

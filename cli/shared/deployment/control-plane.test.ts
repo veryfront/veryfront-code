@@ -279,11 +279,11 @@ describe("createHttpDeployControlPlane", () => {
     );
     assertEquals(requests, [
       {
-        path: "/projects/project-1/releases/release-1/versions",
+        path: "/projects/project-1/releases/release-1/files",
         params: { limit: "100" },
       },
       {
-        path: "/projects/project-1/releases/release-1/versions",
+        path: "/projects/project-1/releases/release-1/files",
         params: { limit: "100", cursor: "cursor-2" },
       },
     ]);

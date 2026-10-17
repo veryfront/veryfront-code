@@ -8,7 +8,7 @@
 
 /** Normalize separators and drop any trailing slash. */
 function normalizeDir(dir: string): string {
-  return dir.replace(/\\/g, "/").replace(/\/+$/, "");
+  return dir.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
 }
 
 /**

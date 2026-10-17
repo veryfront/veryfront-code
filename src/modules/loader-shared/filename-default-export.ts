@@ -11,7 +11,7 @@ function escapeRegex(value: string): string {
 }
 
 function getModuleIdentifier(normalizedPath: string): string | null {
-  const fileName = normalizedPath.replace(/\?.*$/, "").split("/").pop();
+  const fileName = normalizedPath.replace(/\?.*$/s, "").split("/").pop();
   const identifier = fileName?.replace(/\.(?:[cm]?[jt]sx?|mdx)$/i, "");
   if (!identifier || !IDENTIFIER_PATTERN.test(identifier)) return null;
   return identifier;
@@ -23,7 +23,7 @@ function findExportMatch(moduleCode: string, exportName: string): ExportMatch | 
   );
   if (declarationPattern.test(moduleCode)) return { localName: exportName, sourceClause: "" };
 
-  const exportListPattern = /\bexport\s*\{([^}]*)\}\s*(from\s*["'][^"']+["'])?\s*(?:;|$)/gm;
+  const exportListPattern = /\bexport\s*\{([^{}]*)\}\s*(from\s*["'][^"']+["'])?(?:\s*;|\s*$)/gm;
   let match: RegExpExecArray | null;
   while ((match = exportListPattern.exec(moduleCode)) !== null) {
     const specifiers = match[1]?.split(",") ?? [];

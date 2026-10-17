@@ -21,7 +21,7 @@ export function frameworkSourceKeyOf(modulePath: string): string | null {
  */
 export function canonicalizeContainedModulePath(modulePath: string): string | null {
   const candidate = modulePath
-    .replace(/\?.*$/, "")
+    .replace(/\?.*$/s, "")
     .replace(/^\/+/, "");
 
   if (

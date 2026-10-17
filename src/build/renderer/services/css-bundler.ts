@@ -39,7 +39,7 @@ function minifyCss(css: string): string {
   return css
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\s+/g, " ")
-    .replace(/\s*([{}:;,])\s*/g, "$1")
+    .replace(/(?:(?<!\s)\s+)?([{}:;,])\s*/g, "$1")
     .replace(/;}/g, "}")
     .replace(/url\(["']([^"']+)["']\)/g, "url($1)")
     .trim();
@@ -51,7 +51,7 @@ export function processCssImports(css: string, _fromPath: string): string {
 
 export function extractCssVariables(css: string): Record<string, string> {
   const variables: Record<string, string> = {};
-  const varRegex = /--([a-zA-Z0-9-]+):\s*([^;]+);/g;
+  const varRegex = /--([a-zA-Z0-9-]+):\s*([^\s;][^;]*);/g;
 
   let match: RegExpExecArray | null;
   while ((match = varRegex.exec(css)) !== null) {

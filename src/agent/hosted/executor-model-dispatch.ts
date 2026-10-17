@@ -6,6 +6,7 @@ import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallAssistantProviderMetadata,
   snapshotModelCallProviderOptions,
 } from "#veryfront/runtime/model-call-context-request.ts";
 import type {
@@ -27,6 +28,7 @@ import { executorModelJson, parseExecutorModelData } from "./executor-model-sche
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
 import { executorModelFailure } from "./executor-model-errors.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 import type { ExecutorSkillObservation } from "./executor-skill-observation.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
@@ -169,7 +171,16 @@ export function createHostedExecutorModelBroker(
     throw new TypeError("Hosted model capture receipts require a project scope");
   }
   const captureEnabled = input.modelCallCaptureReceipts === true;
+  const resultFence = getManagedToolResultFence(sink);
   return createScopedHostedModelBroker(input, async (request, context) => {
+    // The output stream is drained independently of model RPCs. Wait before
+    // entering its shared persistence queue, or the result would deadlock
+    // behind this context append.
+    await resultFence?.waitBeforeContext(
+      request.privateToolResultSequence,
+      context.signal,
+      context.deadline,
+    );
     const acknowledgement = await acknowledgePersistence(
       () => sink(createContextEvent(request, captureEnabled)),
       context.signal,
@@ -347,8 +358,8 @@ async function acknowledgePersistence<T>(
 
 /**
  * Match the existing durable projection: neutral messages/tools/controls and
- * validated system cache metadata. Provider options and assistant replay
- * metadata remain excluded. The request uses the existing ModelCallRequest
+ * validated system cache metadata. Exact capture retains assistant replay
+ * metadata; legacy observations and other provider options remain excluded. The request uses the existing ModelCallRequest
  * subset; toolChoice and userId are not durable event fields.
  * Provider-result assistant content cannot be represented by that contract and
  * refuses hosted dispatch. The broker's local call sequence is not a new
@@ -369,7 +380,7 @@ function createContextEvent(
         model: { id: call.model.modelId, ...(modelProvider ? { modelProvider } : {}) },
       }
       : {}),
-    messages: mapPrivateArray(options.prompt, projectMessage),
+    messages: mapPrivateArray(options.prompt, (message) => projectMessage(message, captureEnabled)),
     ...(options.tools ? { tools: mapPrivateArray(options.tools, (tool) => tool) } : {}),
     ...(request ? { request } : {}),
   };
@@ -398,7 +409,10 @@ function projectSystemOptions(
   return objectKeys(projected).length ? projected : undefined;
 }
 
-function projectMessage(message: ModelRuntimeCallOptions["prompt"][number]): ModelCallMessage {
+function projectMessage(
+  message: ModelRuntimeCallOptions["prompt"][number],
+  captureEnabled: boolean,
+): ModelCallMessage {
   switch (message.role) {
     case "system": {
       const providerOptions = projectSystemOptions(message.providerOptions);
@@ -415,6 +429,11 @@ function projectMessage(message: ModelRuntimeCallOptions["prompt"][number]): Mod
     case "assistant":
       return {
         role: "assistant",
+        ...(captureEnabled && message.providerMetadata !== undefined
+          ? {
+            providerMetadata: snapshotModelCallAssistantProviderMetadata(message.providerMetadata),
+          }
+          : {}),
         content: mapPrivateArray(message.content, (part) => {
           if (part.type === "text") return { type: "text", text: part.text };
           if (part.type === "tool-call") {

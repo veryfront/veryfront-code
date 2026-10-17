@@ -74,7 +74,9 @@ export function buildCoverageCommandArgs(
   profileDirs: string[],
   repositoryRoot = fromFileUrl(new URL("../../", import.meta.url)),
 ): string[] {
-  const sourceRoot = toFileUrl(repositoryRoot.replace(/[\\/]+$/, "") + "/").href
+  const sourceRoot = toFileUrl(
+    repositoryRoot.replace(/(?<![\\/])[\\/]+$/, "") + "/",
+  ).href
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [
     "coverage",
@@ -125,7 +127,7 @@ function validateProducerWorkspace(value: unknown): string {
   ) {
     throw new Error("Invalid LCOV producer workspace provenance.");
   }
-  const root = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  const root = value.replaceAll("\\", "/").replace(/(?<!\/)\/+$/, "");
   if (!root || /^[A-Za-z]:$/.test(root)) {
     throw new Error("Invalid LCOV producer workspace provenance.");
   }
@@ -324,7 +326,7 @@ function normalizeRelativeLcovPath(path: string): string {
 }
 
 function githubWorkspaceRoots(root: string): string[] {
-  const portable = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const portable = root.replaceAll("\\", "/").replace(/(?<!\/)\/+$/, "");
   const match = /^\/home\/runner\/(_?work)\/([^/]+)\/\2$/.exec(portable);
   if (!match?.[1] || !match[2]) return [];
   const alternate = match[1] === "_work" ? "work" : "_work";

@@ -503,7 +503,7 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
   );
   assertEquals(
     smoke.includes("PROXY_BINARY_MAX_BYTES") &&
-      smoke.includes("188743680"),
+      smoke.includes("201326592"),
     true,
     "compiled proxy smoke must enforce a defensible artifact size ceiling",
   );

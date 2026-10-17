@@ -1,0 +1,141 @@
+#!/usr/bin/env -S deno run --frozen -A
+/** Embed the dependency's official browser entry so parsing never reads host env. */
+import { fileURLToPath } from "node:url";
+import sourceIntegrity from "./yaml-source-integrity.json" with { type: "json" };
+const checkOnly = Deno.args.length === 1 && Deno.args[0] === "--check";
+if (Deno.args.length !== (checkOnly ? 1 : 0)) throw new TypeError("Usage: prebundle.ts [--check]");
+const root = new URL("../../../", import.meta.url);
+const resolved = new URL(import.meta.resolve("yaml"));
+if (resolved.protocol !== "file:") {
+  throw new TypeError("Expected a locally resolved frozen YAML package");
+}
+const packageRoot = new URL("../", resolved);
+async function captureSourceGraph(): Promise<
+  { digest: string; license: string; manifest: string }
+> {
+  const files = new Map<string, Uint8Array<ArrayBuffer>>();
+  const readFile = async (relative: string): Promise<void> => {
+    const url = new URL(relative, packageRoot);
+    if (!(await Deno.lstat(url)).isFile) {
+      throw new Error("YAML source inputs must be regular files");
+    }
+    files.set(relative, await Deno.readFile(url));
+  };
+  const walk = async (relative: string): Promise<void> => {
+    for await (const entry of Deno.readDir(new URL(relative, packageRoot))) {
+      const path = relative + entry.name;
+      if (entry.isDirectory) await walk(path + "/");
+      else if (entry.isFile) await readFile(path);
+      else throw new Error("YAML browser inputs must not contain symbolic links");
+    }
+  };
+  await readFile("package.json");
+  await readFile("LICENSE");
+  await walk("browser/");
+  const rows: string[] = [];
+  // Integrity rows use code-unit ordering, independent of the host locale.
+  const paths = [...files.keys()].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  for (const path of paths) {
+    const bytes = files.get(path)!;
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)).toHex();
+    rows.push(path + String.fromCharCode(0) + digest + String.fromCharCode(10));
+  }
+  if (files.size !== sourceIntegrity.sourceFileCount) {
+    throw new Error("YAML source file count differs from the qualified package");
+  }
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rows.join(""))),
+  ).toHex();
+  return {
+    digest,
+    license: new TextDecoder("utf-8", { fatal: true }).decode(files.get("LICENSE")!),
+    manifest: new TextDecoder("utf-8", { fatal: true }).decode(files.get("package.json")!),
+  };
+}
+const source = await captureSourceGraph();
+if (source.digest !== sourceIntegrity.sourceGraphSha256) {
+  throw new Error("YAML browser source differs from the qualified published archive");
+}
+const manifest = JSON.parse(source.manifest) as {
+  name: string;
+  version: string;
+  browser: Record<string, string>;
+};
+if (
+  manifest.name !== sourceIntegrity.package || manifest.version !== sourceIntegrity.version ||
+  manifest.browser["./dist/index.js"] !== "./browser/index.js"
+) {
+  throw new Error("The YAML package does not expose the qualified browser entry");
+}
+const lock = JSON.parse(await Deno.readTextFile(new URL("deno.lock", root))) as {
+  npm: Record<string, { integrity: string }>;
+};
+const identity = `${manifest.name}@${manifest.version}`;
+const integrity = lock.npm[identity]?.integrity;
+if (integrity !== sourceIntegrity.integrity) {
+  throw new Error("YAML repository lock does not match the qualified package integrity");
+}
+const entry = new URL("browser/index.js", packageRoot);
+const result = await new Deno.Command(Deno.execPath(), {
+  args: [
+    "bundle",
+    "--quiet",
+    "--minify",
+    "--platform=browser",
+    "--no-config",
+    "--no-lock",
+    "--no-remote",
+    "--no-npm",
+    fileURLToPath(entry),
+  ],
+  cwd: root,
+  stdout: "piped",
+  stderr: "piped",
+}).output();
+if (!result.success) {
+  throw new Error(new TextDecoder().decode(result.stderr).trim() || "YAML browser bundle failed");
+}
+const bundle = new TextDecoder("utf-8", { fatal: true }).decode(result.stdout);
+if (bundle.trim().length === 0 || result.stdout.length > 256 * 1024) {
+  throw new RangeError("YAML browser bundle must be nonempty and at most 256 KiB");
+}
+if (/node:process|process\.env|Deno\.env/.test(bundle)) {
+  throw new Error("YAML browser bundle must not access host environment variables");
+}
+const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", result.stdout)).toHex();
+if ((await captureSourceGraph()).digest !== source.digest) {
+  throw new Error("YAML source changed during bundling");
+}
+const license = source.license;
+if (license.includes("*/")) throw new Error("Unexpected license comment delimiter");
+const generated =
+  `// deno-fmt-ignore-file\n// deno-lint-ignore-file -- Verified generated upstream browser bundle.\n/**\n * Official ${identity} browser entry, bundled without algorithm changes.\n * Package integrity: ${integrity}\n * Browser source SHA-256: ${source.digest}
+ * Bundle SHA-256: ${digest}\n * Generated by extensions/ext-yaml/scripts/prebundle.ts.\n *\n${
+    license.split("\n").map((line) => line.length > 0 ? " * " + line.trimEnd() : " *").join("\n")
+  }\n */\n${bundle}`;
+const output = new URL("../src/yaml-runtime.generated.js", import.meta.url);
+if (checkOnly) {
+  if (await Deno.readTextFile(output) !== generated) {
+    throw new Error("YAML browser bundle is stale; run its prebundle generator");
+  }
+} else {
+  const temporary = await Deno.makeTempFile({
+    dir: fileURLToPath(new URL("../src/", import.meta.url)),
+    prefix: ".yaml-runtime-",
+    suffix: ".tmp",
+  });
+  try {
+    await Deno.writeTextFile(temporary, generated);
+    await Deno.rename(temporary, output);
+  } catch (error) {
+    try {
+      await Deno.remove(temporary);
+    } catch (cleanupError) {
+      if (!(cleanupError instanceof Deno.errors.NotFound)) {
+        throw new AggregateError([error, cleanupError], "YAML generation and cleanup failed");
+      }
+    }
+    throw error;
+  }
+  console.log(`YAML browser runtime ${identity}: ${result.stdout.length} bytes, sha256:${digest}`);
+}

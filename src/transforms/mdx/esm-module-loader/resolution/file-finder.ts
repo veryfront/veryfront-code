@@ -42,7 +42,7 @@ async function tryReadFile(
 }
 
 function stripTrailingSlashes(path: string): string {
-  return path.replace(/\/+$/, "");
+  return path.replace(/(?<!\/)\/+$/, "");
 }
 
 /** Framework modules are only resolved via the internal _veryfront/ prefix. */
@@ -65,7 +65,7 @@ export async function resolveModuleFile(
   const withoutVfModules = normalized.replace(/^_vf_modules\//, "");
   const isFramework = withoutVfModules.startsWith(FRAMEWORK_PREFIX);
   const rawPath = isFramework ? withoutVfModules.slice(FRAMEWORK_PREFIX.length) : withoutVfModules;
-  const filePathWithoutJs = rawPath.replace(/\?.*$/, "").replace(/\.js$/, "");
+  const filePathWithoutJs = rawPath.replace(/\?.*$/s, "").replace(/\.js$/, "");
 
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
   const filePathWithoutExt = hasKnownExt

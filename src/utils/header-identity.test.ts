@@ -22,6 +22,18 @@ describe("header identity encoding", () => {
     assertEquals(decodeIdentityHeaderValue(encodeIdentityHeaderValue(value)), value);
   });
 
+  for (const value of ["qa\nblue", "qa\u0000blue", "qa\u0085blue", " 日本語 ", " staging "]) {
+    it(`round-trips header-normalized or control values ${JSON.stringify(value)}`, () => {
+      const encoded = encodeIdentityHeaderValue(value);
+      assertEquals(
+        new Headers({ "x-environment-name": encoded }).get("x-environment-name"),
+        encoded,
+      );
+      assertEquals(decodeIdentityHeaderValue(encoded), value);
+      assertEquals(encoded.startsWith("vf-utf8:"), true);
+    });
+  }
+
   it("treats malformed encoded values as absent", () => {
     assertEquals(decodeIdentityHeaderValue("vf-utf8:%"), undefined);
   });

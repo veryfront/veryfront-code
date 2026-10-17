@@ -163,7 +163,9 @@ describe("proxy shutdown lifecycle", () => {
         },
       });
       Object.defineProperty(globalThis, "setTimeout", {
-        ...timerDescriptor,
+        configurable: timerDescriptor.configurable,
+        enumerable: timerDescriptor.enumerable,
+        writable: true,
         value: () => {
           throw new Error("poisoned setTimeout");
         },

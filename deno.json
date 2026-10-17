@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1277-rc",
+  "version": "0.1.1278",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -124,6 +124,7 @@
     "./runs": "./src/runs/index.ts",
     "./runs/target": "./src/runs/target/index.ts",
     "./events": "./src/events/index.ts",
+    "./events/canonical-v1": "./src/events/canonical-v1/index.ts",
     "./events/ag-ui": "./src/events/ag-ui/public.ts",
     "./run-events": "./src/run-events/index.ts",
     "./skill": "./src/skill/index.ts",
@@ -229,6 +230,7 @@
     "veryfront/conversations": "./src/conversations/index.ts",
     "veryfront/runs": "./src/runs/index.ts",
     "veryfront/events": "./src/events/index.ts",
+    "veryfront/events/canonical-v1": "./src/events/canonical-v1/index.ts",
     "veryfront/events/ag-ui": "./src/events/ag-ui/public.ts",
     "veryfront/eval": "./src/eval/index.ts",
     "veryfront/metrics": "./src/metrics/public.ts",
@@ -517,7 +519,7 @@
     "generate:force": "deno run -A scripts/build/run-generate.ts --force",
     "generate:dev-ui": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts",
     "generate:dev-ui:check": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts --check && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts --check",
-    "generate:manifests:check": "deno run -A scripts/build/generate-embedded-npm-packages.ts --check && deno run -A scripts/build/generate-templates-manifest.ts --check && deno task generate:dev-ui:check && deno run -A scripts/build/prebundle-hydration-runtime.ts --check && deno run -A scripts/build/prebundle-client-scripts.ts --check && deno run -A scripts/build/prebundle-bridge.ts --check && deno run -A scripts/build/prebundle-rsc-scripts.ts --check && deno run -A scripts/build/generate-core-skills.ts --check",
+    "generate:manifests:check": "deno run --frozen -A extensions/ext-yaml/scripts/prebundle.ts --check && deno run -A scripts/build/generate-embedded-npm-packages.ts --check && deno run -A scripts/build/generate-templates-manifest.ts --check && deno task generate:dev-ui:check && deno run -A scripts/build/prebundle-hydration-runtime.ts --check && deno run -A scripts/build/prebundle-client-scripts.ts --check && deno run -A scripts/build/prebundle-bridge.ts --check && deno run -A scripts/build/prebundle-rsc-scripts.ts --check && deno run -A scripts/build/generate-core-skills.ts --check",
     "start": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts",
     "start:headless": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts --headless",
     "proxy": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=proxy",
@@ -550,7 +552,7 @@
     "coverage:gate": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
     "coverage:ci:shard": "deno run --config=scripts/test.deno.json --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts shard",
     "coverage:ci:merge": "deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
-    "coverage:ci:integration-client": "rm -rf coverage/integration-client && VF_RUNS_CLI_COVERAGE_DIR=coverage/integration-client deno task test:file --coverage=coverage/integration-client tests/integration/integrations/ tests/integration/cli/integration/ tests/integration/cli/project/ && deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts report coverage/integration-client",
+    "coverage:ci:integration-client": "rm -rf coverage/integration-client && VF_RUNS_CLI_COVERAGE_DIR=coverage/integration-client deno task test:file --coverage=coverage/integration-client tests/integration/integrations/ tests/integration/cli/integration/ tests/integration/cli/project/ tests/integration/runs/ && deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts report coverage/integration-client",
     "coverage:ci:node-executor": "node scripts/test/coverage-node-executor.mjs",
     "coverage:ci": "deno task test:coverage:unit && deno task coverage:gate",
     "coverage:html": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --html",
@@ -723,7 +725,8 @@
     "exclude": [
       "dist/",
       "coverage/",
-      "src/runs/contract/runs-api.generated.ts"
+      "src/runs/contract/runs-api.generated.ts",
+      "src/events/canonical-v1/resources/payload-semantics.mjs"
     ],
     "useTabs": false,
     "lineWidth": 100,

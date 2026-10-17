@@ -245,3 +245,10 @@ describe("css-modules/naming", () => {
     }
   });
 });
+
+Deno.test("CSS module identity excludes the full query even when it contains line breaks", () => {
+  assertEquals(
+    normalizeCssModuleKey("/styles/view.module.css?" + "?".repeat(128) + "\ninvalid"),
+    "/styles/view.module.css",
+  );
+});

@@ -27,7 +27,12 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const getDirname = (p: string) => normalizePath(p).replace(/\/?[^/]+\/?$/, "");
+  const getDirname = (p: string) => {
+    const normalized = normalizePath(p);
+    const end = normalized.endsWith("/") ? normalized.length - 1 : normalized.length;
+    const slash = normalized.lastIndexOf("/", end - 1);
+    return slash <= 0 ? "" : normalized.slice(0, slash);
+  };
 
   const dirs: string[] = [];
   let current = normalizePath(segmentDir);

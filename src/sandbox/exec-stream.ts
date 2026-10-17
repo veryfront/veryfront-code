@@ -15,12 +15,19 @@ import type { CommandStreamEvent } from "./types.ts";
 function parseExecStreamLine(line: string): CommandStreamEvent | null {
   if (!line.trim()) return null;
 
+  let event: CommandStreamEvent & { exit_code?: unknown };
   try {
-    return JSON.parse(line) as CommandStreamEvent;
+    event = JSON.parse(line);
   } catch (_) {
     /* expected: truncated or malformed NDJSON line, skipped to keep streaming */
     return null;
   }
+  // The API's exit event spells the code exit_code; the public event type keeps exitCode.
+  if (event?.type === "exit" && typeof event.exit_code === "number") {
+    const { exit_code: exitCode, ...rest } = event;
+    return { ...rest, exitCode };
+  }
+  return event;
 }
 
 /**

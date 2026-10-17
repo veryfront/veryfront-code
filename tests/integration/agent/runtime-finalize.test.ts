@@ -664,7 +664,7 @@ describe("runtime finalize terminal control", () => {
             assertEquals(model.callCount, 2);
           },
           (_name, _count, input) => {
-            assertEquals(input, { status: "failed", error: recovered });
+            assertEquals(input, { input: { status: "failed", error: recovered } });
             return {
               content: [],
               structuredContent: {
@@ -715,12 +715,12 @@ describe("runtime finalize terminal control", () => {
           assertEquals(model.callCount, 1);
         },
         (_name, _count, input) => {
-          assertEquals(input, { status: "completed", output: canonical });
+          assertEquals(input, { input: { status: "completed", output: canonical } });
           return {
             content: [],
             structuredContent: {
               completed: true,
-              run: { run_id: "run-current", status: "completed", output: input.output },
+              run: { run_id: "run-current", status: "completed", output: canonical },
             },
           };
         },

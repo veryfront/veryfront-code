@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 /** Remove trailing slashes so hook routes contain one separator per segment. */
 export function normalizeWorkflowApiBase(apiBase: string): string {
-  return apiBase.replace(/\/+$/, "");
+  return apiBase.replace(/(?<!\/)\/+$/, "");
 }
 
 /** Encode an identifier that must remain one WHATWG URL path segment. */

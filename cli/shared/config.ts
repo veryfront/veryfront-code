@@ -901,7 +901,9 @@ export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
 export function formatApiError(data: ApiError, fallback: string): string {
   const message = data.message || data.detail || data.error || data.title || fallback;
-  return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
+  return data.suggestion
+    ? `${message.replace(/(?<![.?!])[.?!]+$/, "")}. ${data.suggestion}`
+    : message;
 }
 
 export function createApiClient(

@@ -126,7 +126,9 @@ export function createLocalScheduleTimeout(
     throw new TypeError("Local schedule timer chunk must be a positive safe integer.");
   }
 
-  const setTimer = options.setTimer ?? globalThis.setTimeout;
+  const defaultSetTimer = globalThis.setTimeout;
+  const setTimer = options.setTimer ??
+    ((callback: () => void, delayMs: number) => defaultSetTimer(callback, delayMs));
   const clearTimer = options.clearTimer ?? globalThis.clearTimeout;
   const controller = new AbortController();
   let remainingSeconds = timeoutSeconds;
@@ -340,7 +342,7 @@ export async function waitForRemoteScheduleRun(
   while (true) {
     const run = requireRemoteScheduleRun(await client.getRun(runId), runId);
     const observedAt = now();
-    const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : NaN;
+    const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : Number.NaN;
     if (executionStartedAtMs === undefined && Number.isFinite(parsedStartedAt)) {
       executionStartedAtMs = Math.min(parsedStartedAt, observedAt);
     } else if (run.status !== "pending" && executionStartedAtMs === undefined) {

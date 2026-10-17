@@ -126,7 +126,9 @@ export function DialogTitle({
         className,
       )}
       {...props}
-    />
+    >
+      {props.children}
+    </h2>
   );
 }
 

@@ -49,7 +49,7 @@ async function waitWithin<T>(
   label: string,
   timeoutMs = 1_000,
 ): Promise<T> {
-  let timeout: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,

@@ -88,6 +88,7 @@ describe("UNITS", () => {
       "hydration-runtime",
       "rsc-scripts",
       "templates-manifest",
+      "yaml-runtime",
     ]);
   });
 

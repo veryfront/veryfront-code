@@ -26,7 +26,7 @@ let checked = 0;
 async function checkFile(path: string): Promise<void> {
   const text = await Deno.readTextFile(path);
   // Match markdown links: [text](url) - requires [ before ]
-  const re = /\[[^\]]*\]\(([^)]+)\)/g;
+  const re = /\[[^\[\]]*\]\(([^()]+)\)/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     const href = match[1];

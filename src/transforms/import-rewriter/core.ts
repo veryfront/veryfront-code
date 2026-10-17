@@ -93,7 +93,7 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
     input.context.projectDir,
   );
   const moduleServerPathBase = input.context.moduleServerUrl?.includes("/_vf_modules")
-    ? input.context.moduleServerUrl.replace(/\/+$/, "")
+    ? input.context.moduleServerUrl.replace(/(?<!\/)\/+$/, "")
     : undefined;
   const moduleServerBase = moduleServerPathBase ?? "/_vf_modules";
   const relativeFilePath = projectRelativeFilePath ??

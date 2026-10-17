@@ -44,7 +44,7 @@ function extractMdxModuleDependencyPaths(code: string): string[] {
   while ((match = MDX_VFMOD_FILE_URL_PATTERN.exec(code)) !== null) {
     const rawPath = match[1];
     if (!rawPath) continue;
-    const cleanPath = rawPath.replace(/\?.*$/, "");
+    const cleanPath = rawPath.replace(/\?.*$/s, "");
     if (seen.has(cleanPath)) continue;
     seen.add(cleanPath);
     paths.push(cleanPath);

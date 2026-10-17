@@ -332,6 +332,7 @@ async function buildToolAssembly(
     allowedProviderToolNames: input.options.allowedProviderTools,
     toolLoading: input.options.toolLoading,
     bootstrapTools: input.options.bootstrapTools,
+    optionalBootstrapTools: input.options.optionalBootstrapTools,
     knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
     toolSchemaTarget: input.toolSchemaTarget,

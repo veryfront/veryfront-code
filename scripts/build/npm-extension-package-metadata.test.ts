@@ -789,6 +789,25 @@ describe("generated extension package entry points", () => {
 });
 
 describe("bareImportPackageNames", () => {
+  it("admits Unicode names, line comments and reserved export names", () => {
+    assertEquals(bareImportPackageNames([
+      'import { café } from "unicode-package";',
+      'import { // API',
+      '  client,',
+      '} from "line-comment-package";',
+      'export { client as import } from "reserved-export-package";',
+    ].join("\n")), ["line-comment-package", "reserved-export-package", "unicode-package"]);
+  });
+
+  it("keeps comment-bearing import and re-export clauses visible to dependency admission", () => {
+    assertEquals(bareImportPackageNames([
+      'import { /* API */ client } from "some-package";',
+      'import {/* "quoted" (API) */client} from "adjacent-package";',
+      'export { /* API */ client } from "exported-package";',
+      'import {client}from "compact-package";',
+    ].join("\n")), ["adjacent-package", "compact-package", "exported-package", "some-package"]);
+  });
+
   it("extracts bare specifiers from static, dynamic, side-effect, and require imports", () => {
     const source = [
       `import { z } from "zod";`,

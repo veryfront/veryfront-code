@@ -1,3 +1,5 @@
+import { normalizeConversationRunEvent } from "../agent/conversation/run-event-normalization.ts";
+import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -1507,14 +1509,16 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
-  it("refuses exact capture when assistant provider metadata is not represented", async () => {
+  it("captures assistant provider replay metadata before a continuation dispatch", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let sinkCalls = 0;
+    let capturedMessages: unknown;
     let dispatches = 0;
     const sink: AgentRunEventSink = (event) => {
       assertModelCallContextEvent(event);
       sinkCalls += 1;
+      capturedMessages = event.messages;
       return {
         eventId: "9007199254740993",
         projectId,
@@ -1539,25 +1543,182 @@ describe("runtime-bridge", () => {
       ),
     );
 
-    await assertRejects(
-      async () =>
-        await runWithMandatoryRunEventSink(
-          sink,
-          async () =>
-            await generateText({
-              model,
-              messages: [{
-                role: "assistant",
-                content: [{ type: "text", text: "Prior answer" }],
-                providerMetadata: {
-                  google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+    let publicMessages: unknown;
+    await runWithRunEventSink((event) => {
+      assertModelCallContextEvent(event);
+      publicMessages = event.messages;
+    }, () =>
+      runWithMandatoryRunEventSink(
+        sink,
+        async () =>
+          await generateText({
+            model,
+            messages: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Prior answer" }],
+              providerMetadata: {
+                google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+              },
+            }, { role: "user", content: "Continue" }],
+          }),
+      ));
+    assertEquals(publicMessages, [
+      { role: "assistant", content: [{ type: "text", text: "Prior answer" }] },
+      { role: "user", content: [{ type: "text", text: "Continue" }] },
+    ]);
+    assertEquals(sinkCalls, 1);
+    assertEquals(dispatches, 1);
+    assertEquals((capturedMessages as Array<{ providerMetadata?: unknown }>)[0]?.providerMetadata, {
+      google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+    });
+  });
+
+  it("retains Anthropic tool continuation metadata for exact streamed capture", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const providerMetadata = {
+      anthropic: {
+        rawAssistantMessages: [[
+          { type: "text", text: "Invoke child" },
+          {
+            type: "tool_use",
+            id: "child-call",
+            name: "invoke_agent",
+            input: { enabled: false, count: 0, value: null },
+          },
+        ]],
+      },
+    };
+    const contexts: AgentRunModelCallContextEvent[] = [];
+    const order: string[] = [];
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      const normalized = normalizeConversationRunEvent(event);
+      assertEquals(normalized, [event]);
+      contexts.push(event);
+      order.push("persist");
+      return { eventId: "1", projectId, runId: canonicalRunId, modelCallId: event.modelCallId! };
+    };
+    bindTestRuntimeObservationWriter({ sink, runId: canonicalRunId, canonicalRunId, projectId });
+    let dispatchedPrompt: unknown;
+    const model = registerVeryfrontCloudTestModel(createStreamModel(
+      "veryfront-cloud",
+      "veryfront-cloud/anthropic/claude-haiku-4-5",
+      async (options) => {
+        order.push("dispatch");
+        dispatchedPrompt = options.prompt;
+        return {
+          stream: readableStreamFrom([
+            { type: "text-delta", delta: "Child completed" },
+            { type: "finish", finishReason: "stop", usage: {} },
+          ]),
+        };
+      },
+    ));
+    await runWithMandatoryRunEventSink(sink, () =>
+      collectAsync(
+        streamText({
+          model,
+          messages: [
+            {
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "child-call",
+                toolName: "invoke_agent",
+                input: { enabled: false, count: 0, value: null },
+              }],
+              providerMetadata,
+            },
+            {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId: "child-call",
+                toolName: "invoke_agent",
+                output: {
+                  type: "json",
+                  value: { ok: true, enabled: false, count: 0, value: null },
                 },
-              }, { role: "user", content: "Continue" }],
-            }),
-        ),
-      DurableRunEventPersistenceError,
-      "Exact model call capture does not support these provider controls: assistant.providerMetadata",
+              }],
+            },
+          ],
+        }).fullStream,
+      ));
+    assertEquals(order, ["persist", "dispatch"]);
+    assertEquals(contexts[0]!.messages, dispatchedPrompt);
+    assertEquals(
+      (contexts[0]!.messages[0] as { providerMetadata?: unknown }).providerMetadata,
+      providerMetadata,
     );
+    const replay = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      { prompt: contexts[0]!.messages, maxOutputTokens: 64 },
+      false,
+      {
+        push() {},
+        drain() {
+          return [];
+        },
+      },
+    );
+    assertEquals(replay.messages[0], {
+      role: "assistant",
+      content: providerMetadata.anthropic.rawAssistantMessages[0]!,
+    });
+    providerMetadata.anthropic.rawAssistantMessages[0]![0]!.text = "Mutated";
+    assertEquals(JSON.stringify(contexts[0]).includes("Mutated"), false);
+  });
+
+  it("rejects unsafe assistant replay metadata before capture or dispatch", async () => {
+    let sinkCalls = 0;
+    let dispatches = 0;
+    const sink: AgentRunEventSink = () => {
+      sinkCalls += 1;
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "11111111-1111-4111-8111-111111111111",
+      canonicalRunId: "22222222-2222-4222-8222-222222222222",
+      projectId: "33333333-3333-4333-8333-333333333333",
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel("veryfront-cloud", "veryfront-cloud/anthropic/claude-test", async () => {
+        dispatches += 1;
+        return { content: [], finishReason: "stop", usage: {} };
+      }),
+    );
+    for (
+      const providerMetadata of [
+        { anthropic: { value: NaN } },
+        {
+          anthropic: { value: () => "unsafe" },
+        },
+        { anthropic: { value: 1n } },
+        null,
+        [],
+        "invalid",
+        0,
+      ]
+    ) {
+      await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(sink, () =>
+            generateText({
+              model,
+              messages: [
+                {
+                  role: "assistant",
+                  content: [{ type: "text", text: "Prior" }],
+                  providerMetadata: providerMetadata as unknown as Record<string, unknown>,
+                },
+                { role: "user", content: "Continue" },
+              ],
+            })),
+        TypeError,
+      );
+    }
     assertEquals(sinkCalls, 0);
     assertEquals(dispatches, 0);
   });

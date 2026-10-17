@@ -30,10 +30,10 @@ const DYNAMIC_ASSERT_KEY = /^\s*,\s*\{\s*assert(?=\s*:)/;
 const STATIC_WITH_CLAUSE = /^\s*with\s*(\{[^{}]*\})\s*$/;
 
 /** The options argument of a dynamic import, capturing the attribute object. */
-const DYNAMIC_WITH_ARGUMENT = /^\s*,\s*\{\s*with\s*:\s*(\{[^{}]*\})\s*,?\s*\}\s*$/;
+const DYNAMIC_WITH_ARGUMENT = /^\s*,\s*\{\s*with\s*:\s*(\{[^{}]*\})\s*(?:,\s*)?\}\s*$/;
 
 /** An attribute object declaring a JSON module type and nothing else. */
-const JSON_TYPE_ATTRIBUTE = /^\{\s*(["']?)type\1\s*:\s*(["'])json\2\s*,?\s*\}$/;
+const JSON_TYPE_ATTRIBUTE = /^\{\s*(["']?)type\1\s*:\s*(["'])json\2\s*(?:,\s*)?\}$/;
 
 /**
  * The range holding everything a specifier declares after its own text: the

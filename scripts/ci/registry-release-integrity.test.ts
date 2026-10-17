@@ -972,7 +972,7 @@ describe("registry full-metadata fallback", () => {
 
   it("retries a Corgi 404 with full metadata using the same deadline", async () => {
     const accepts: string[] = [];
-    let signal: AbortSignal | undefined;
+    let signal: AbortSignal | null | undefined;
     let canceled = 0;
     const metadata = await pollRegistryPackage({
       ...options,

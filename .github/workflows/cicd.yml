@@ -693,6 +693,8 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
@@ -2386,9 +2388,9 @@ jobs:
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
           RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
                 --output /tmp/deno.zip \
-            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
                 | sha256sum --check --strict \
             && unzip -q /tmp/deno.zip -d /usr/local/bin \
             && chmod 0755 /usr/local/bin/deno \
@@ -2522,9 +2524,9 @@ jobs:
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
           RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
                 --output /tmp/deno.zip \
-            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
                 | sha256sum --check --strict \
             && unzip -q /tmp/deno.zip -d /usr/local/bin \
             && chmod 0755 /usr/local/bin/deno \

@@ -82,7 +82,7 @@ function normalizePath(path: string): string {
 
 function toRelativeProjectPath(path: string, projectDir: string): string {
   const normalized = normalizePath(path);
-  const normalizedProjectDir = normalizePath(projectDir).replace(/\/+$/, "");
+  const normalizedProjectDir = normalizePath(projectDir).replace(/(?<!\/)\/+$/, "");
   if (normalized.startsWith(normalizedProjectDir)) {
     return normalized.slice(normalizedProjectDir.length).replace(/^\/+/, "");
   }
@@ -91,7 +91,7 @@ function toRelativeProjectPath(path: string, projectDir: string): string {
 
 function toDiagnosticProjectPath(path: string, projectDir: string): string {
   const normalized = normalizePath(path);
-  const normalizedProjectDir = normalizePath(projectDir).replace(/\/+$/, "");
+  const normalizedProjectDir = normalizePath(projectDir).replace(/(?<!\/)\/+$/, "");
   if (normalized === normalizedProjectDir) return ".";
   if (normalized.startsWith(`${normalizedProjectDir}/`)) {
     return normalized.slice(normalizedProjectDir.length + 1);

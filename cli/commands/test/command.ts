@@ -33,41 +33,45 @@ export function parseTestOutput(output: string, exitCode: number): TestResult {
   let durationMs = 0;
 
   for (const line of lines) {
-    const summaryMatch = line.match(/(\d+)\s+passed\s*\|\s*(\d+)\s+failed/);
+    const summaryMatch = line.match(/(?<!\d)(\d+)\s+passed\s*\|\s*(\d+)\s+failed/);
     if (summaryMatch) {
-      passed = parseInt(summaryMatch[1] ?? "0", 10);
-      failed = parseInt(summaryMatch[2] ?? "0", 10);
+      passed = Number.parseInt(summaryMatch[1] ?? "0", 10);
+      failed = Number.parseInt(summaryMatch[2] ?? "0", 10);
     }
 
-    const durationMatch = line.match(/\((\d+\.?\d*)s\)/);
+    const durationMatch = line.match(/\((\d+(?:\.\d*)?)s\)/);
     if (durationMatch) {
-      durationMs = Math.round(parseFloat(durationMatch[1] ?? "0") * 1000);
+      durationMs = Math.round(Number.parseFloat(durationMatch[1] ?? "0") * 1000);
     }
 
-    const skippedMatch = line.match(/(\d+)\s+ignored/);
+    const skippedMatch = line.match(/(?<!\d)(\d+)\s+ignored/);
     if (skippedMatch) {
-      skipped = parseInt(skippedMatch[1] ?? "0", 10);
+      skipped = Number.parseInt(skippedMatch[1] ?? "0", 10);
     }
   }
 
   const failures: TestResult["failures"] = [];
-  const failureRegex = /^(.*?)\s+\.\.\.\s+FAILED/;
+  const failureRegex = /(?<!\s)\s+\.\.\.\s+FAILED/;
   for (let i = 0; i < lines.length; i++) {
     const currentLine = lines[i];
     if (!currentLine) continue;
     const match = currentLine.match(failureRegex);
     if (match) {
-      const testName = (match[1] ?? "").trim();
+      const testName = currentLine.slice(0, match.index).trim();
       let error = "";
       let file = "";
       let line: number | undefined;
       for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
         const lineText = lines[j];
         if (!lineText) continue;
-        const fileLine = lineText.match(/at\s+(.*?):(\d+)/);
-        if (fileLine?.[1] && fileLine[2]) {
-          file = fileLine[1];
-          line = parseInt(fileLine[2], 10);
+        const frameStart = /at\s+/.exec(lineText);
+        if (frameStart) {
+          const location = lineText.slice(frameStart.index + frameStart[0].length);
+          const position = /:(\d+)/.exec(location);
+          if (position && position.index > 0) {
+            file = location.slice(0, position.index);
+            line = Number.parseInt(position[1]!, 10);
+          }
         }
         if (lineText.includes("Error:") || lineText.includes("assert")) {
           error = lineText.trim();

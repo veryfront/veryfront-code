@@ -282,6 +282,8 @@ describe("hosted HTTP resolver", () => {
   });
 
   it("refuses a resolution that outlives its deadline and releases the ingress permit", async () => {
+    using time = new FakeTime(1_000_000);
+    let readStarted = Promise.withResolvers<void>();
     let stalled = 0;
     let stall = true;
     const fake = fakeApi({
@@ -290,12 +292,16 @@ describe("hosted HTTP resolver", () => {
         stall
           ? new Promise((_resolve, reject) => {
             stalled++;
+            readStarted.resolve();
             readSignal.addEventListener("abort", () => reject(readSignal.reason), { once: true });
           })
           : Promise.resolve({ APP_MESSAGE: "hello" }),
     });
     const resolve = createHostedHttpResolver(options({ api: fake.api, resolutionTimeoutMs: 20 }));
-    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    const timedOut = assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    await readStarted.promise;
+    time.tick(20);
+    await timedOut;
     assertEquals(stalled, 1);
 
     let dispatches = 0;
@@ -315,11 +321,16 @@ describe("hosted HTTP resolver", () => {
       hostMode: "production" as const,
       proxyTrusted: true,
     };
-    const first = await ingress(new Request("https://app.example/page"), selection);
+    readStarted = Promise.withResolvers<void>();
+    const firstPending = ingress(new Request("https://app.example/page"), selection);
+    await readStarted.promise;
+    time.tick(20);
+    const first = await firstPending;
     assertEquals(first.status, 503);
     assertEquals(first.headers.get("cache-control"), "no-store");
     await first.body?.cancel();
     stall = false;
+    // Recovery has the same deadline; crypto scheduling must not advance the test clock.
     const second = await ingress(new Request("https://app.example/page"), selection);
     assertEquals(await second.text(), "isolated");
     assertEquals(dispatches, 1);
@@ -384,6 +395,8 @@ describe("hosted HTTP resolver", () => {
   });
 
   it("returns at the deadline even when an operation ignores its abort signal", async () => {
+    using time = new FakeTime(1_000_000);
+    let lookupStarted = Promise.withResolvers<void>();
     let ignore = true;
     let lookups = 0;
     const resolve = createHostedHttpResolver(options({
@@ -391,10 +404,14 @@ describe("hosted HTTP resolver", () => {
       // Never settles, even after abort, while `ignore` is set.
       lookupSourceImage: () => {
         lookups++;
+        lookupStarted.resolve();
         return ignore ? new Promise(() => {}) : Promise.resolve(record());
       },
     }));
-    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    const timedOut = assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    await lookupStarted.promise;
+    time.tick(20);
+    await timedOut;
 
     let dispatches = 0;
     const ingress = createHostedHttpIngress({
@@ -413,7 +430,11 @@ describe("hosted HTTP resolver", () => {
       hostMode: "production" as const,
       proxyTrusted: true,
     };
-    const first = await ingress(new Request("https://app.example/page"), selection);
+    lookupStarted = Promise.withResolvers<void>();
+    const firstPending = ingress(new Request("https://app.example/page"), selection);
+    await lookupStarted.promise;
+    time.tick(20);
+    const first = await firstPending;
     assertEquals(first.status, 503);
     await first.body?.cancel();
     ignore = false;

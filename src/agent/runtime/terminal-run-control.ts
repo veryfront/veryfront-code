@@ -432,37 +432,66 @@ export async function executeTerminalRunTool(
   name: string,
   input: Record<string, unknown>,
   context: ToolExecutionContext | undefined,
-  execute: () => Promise<unknown>,
+  execute: (args: Record<string, unknown>) => Promise<unknown>,
 ): Promise<unknown> {
   if (!isTerminalRunToolName(name)) {
-    return dispatchWithTerminalRunControl(context, execute);
+    return dispatchWithTerminalRunControl(context, () => execute(input));
   }
   const control = (context as ControlContext | undefined)?.[controlKey];
   if (!control || !context) throw new Error("finalize requires an active runtime execution");
   const action = name.replace(/^veryfront__/, "");
+  // The contract takes the outcome in `input`; the flat top-level fields are the
+  // deprecated shape. Either is accepted, and the contract shape is always sent.
+  const envelope = Object.hasOwn(input, "input");
+  if (envelope) {
+    if (Object.keys(input).some((key) => key !== "input" && key !== "idempotency_key")) {
+      throw new Error(`${action} accepts only input and idempotency_key, without a run ID`);
+    }
+    const value = input.input;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`${action} requires an input object`);
+    }
+  }
+  const request = (envelope ? input.input : input) as Record<string, unknown>;
+  if (envelope || action !== "finalize") validateIdempotencyKey(action, input.idempotency_key);
   if (action === "succeed_run" || action === "fail_run") {
     const field = action === "succeed_run" ? "output" : "error";
-    if (Object.keys(input).some((key) => key !== field && key !== "idempotency_key")) {
+    if (
+      Object.keys(request).some((key) => key !== field && (envelope || key !== "idempotency_key"))
+    ) {
       throw new Error(`${action} accepts only ${field}, without a run ID or status`);
     }
-    if (
-      input.idempotency_key !== undefined &&
-      (typeof input.idempotency_key !== "string" || input.idempotency_key.length < 1 ||
-        input.idempotency_key.length > 128)
-    ) {
-      throw new Error(`${action} requires an idempotency key of 1 to 128 characters`);
-    }
     const terminalInput: Record<string, unknown> = {
-      [field]: input[field],
+      [field]: request[field],
       status: action === "succeed_run" ? "completed" : "failed",
     };
     return control.fail(terminalInput, context, () => {
       // Output schema validation and JSON snapshotting happen before transport.
-      input[field] = terminalInput[field];
-      return execute();
+      request[field] = terminalInput[field];
+      return execute(terminalArguments(input, { [field]: terminalInput[field] }));
     });
   }
-  return control.fail(input, context, execute);
+  return control.fail(request, context, () => execute(terminalArguments(input, request)));
+}
+
+function validateIdempotencyKey(action: string, key: unknown): void {
+  if (
+    key !== undefined &&
+    (typeof key !== "string" || key.length < 1 || key.length > 128)
+  ) {
+    throw new Error(`${action} requires an idempotency key of 1 to 128 characters`);
+  }
+}
+
+/** The contract arguments: the validated outcome in `input`, beside an optional idempotency key. */
+function terminalArguments(
+  args: Record<string, unknown>,
+  request: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...(args.idempotency_key === undefined ? {} : { idempotency_key: args.idempotency_key }),
+    input: { ...request },
+  };
 }
 
 /** The API already committed this output; returning it must not start another model turn. */

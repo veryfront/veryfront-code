@@ -157,7 +157,7 @@ interface ReleaseFileVersion {
   data?: unknown;
 }
 
-interface ListReleaseVersionsResponse {
+interface ListReleaseFilesResponse {
   data: ReleaseFileVersion[];
   page_info?: {
     next?: string;
@@ -304,8 +304,8 @@ export function createHttpDeployControlPlane(
       do {
         const params: Record<string, string> = { limit: "100" };
         if (cursor) params.cursor = cursor;
-        const response = await client.get<ListReleaseVersionsResponse>(
-          `/projects/${reference}/releases/${releaseId}/versions`,
+        const response = await client.get<ListReleaseFilesResponse>(
+          `/projects/${reference}/releases/${releaseId}/files`,
           params,
         );
         for (const file of response.data) {

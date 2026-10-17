@@ -198,6 +198,8 @@ export type RuntimeAgentTargetSelectionInput = {
   runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
   runtimeTargetEnvironmentId?: string | null;
   executionEnvironmentId?: string | null;
+  sourceTargetEnvironmentId?: string | null;
+  sourceTargetBranchId?: string | null;
   runtimeTargetBranchId?: string | null;
 };
 
@@ -240,42 +242,35 @@ export function validateRuntimeAgentTargetSelection(
   }
 }
 
-/**
- * Binds the selected source snapshot to the runtime target whose identifiers
- * will be signed into the control-plane request.
- */
+/** Validate source identity independently of the process selected to execute it. */
 export function validateRuntimeAgentSourceTargetBinding(
   input: RuntimeAgentTargetSelectionInput & { agentSource: RuntimeAgentSourceContext },
   ctx: RefinementCtx,
 ) {
-  const kind = input.runtimeTargetKind ?? "main_branch";
-  const sourceType = input.agentSource.type;
-
-  if (sourceType === "environment" && kind !== "environment") {
+  if (
+    input.agentSource.type === "branch" && input.runtimeTargetKind === "environment" &&
+    input.sourceTargetBranchId === undefined
+  ) {
     ctx.addIssue({
       code: "custom",
-      message: "environment agent source requires an environment runtime target",
-      path: ["agentSource", "type"],
-    });
-  } else if (sourceType !== "environment" && kind === "environment") {
-    ctx.addIssue({
-      code: "custom",
-      message: "environment runtime target requires an environment agent source",
-      path: ["agentSource", "type"],
+      message:
+        "branch source requires an explicit source branch identifier on an environment target",
+      path: ["sourceTargetBranchId"],
     });
   }
-
-  if (sourceType === "release" && kind !== "main_branch") {
-    ctx.addIssue({
-      code: "custom",
-      message: "release agent source requires a main-branch runtime target",
-      path: ["agentSource", "type"],
-    });
+  if (input.agentSource.type === "environment") {
+    const environmentId =
+      input.sourceTargetEnvironmentId === undefined && input.runtimeTargetKind === "environment"
+        ? input.runtimeTargetEnvironmentId
+        : input.sourceTargetEnvironmentId;
+    if (!environmentId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "environment source requires its source environment identifier",
+        path: ["agentSource", "type"],
+      });
+    }
   }
-
-  // A project's default branch is platform metadata, not a framework literal.
-  // Hosted runtimes compare branch sources with the trusted default branch
-  // supplied by the proxy after body-bound control-plane verification.
 }
 
 export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
@@ -285,6 +280,8 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
     runtimeTargetKind: getRuntimeAgentTargetKindSchema().nullable().optional(),
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     executionEnvironmentId: v.string().uuid().optional(),
+    sourceTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    sourceTargetBranchId: v.string().uuid().nullable().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
     runtimeTargetBranchName: v.string().min(1).max(255).optional(),
     runtimeTargetEnvironmentName: v.string().min(1).max(255).optional(),
@@ -718,7 +715,7 @@ type DenyAllNormalization = { value: unknown; denyAll: boolean };
  * tool names are dropped from the allowlist with a warning, so they can never
  * re-grant the host tool.
  *
- * `bootstrapTools` and `bootstrapSkill` are dropped: both run through callable
+ * `bootstrapTools`, `optionalBootstrapTools`, and `bootstrapSkill` are dropped: these run through callable
  * tools (a startup skill is a synthetic `load_skill` call), which deny-all
  * forbids. Every other value passes through unchanged.
  */
@@ -752,6 +749,7 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // under a non-empty allowlist from re-adding them.
   const normalizedAgentConfig = copyOwnDataRecord(agentConfig, [
     "bootstrapTools",
+    "optionalBootstrapTools",
     "bootstrapSkill",
   ]);
   defineOwnData(normalizedAgentConfig, "tools", []);
@@ -1005,6 +1003,8 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   runtimeTargetEnvironmentId?: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
   executionEnvironmentId?: RuntimeAgentProjectContext["executionEnvironmentId"];
   runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
+  sourceTargetEnvironmentId?: RuntimeAgentProjectContext["sourceTargetEnvironmentId"];
+  sourceTargetBranchId?: RuntimeAgentProjectContext["sourceTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   sourceProject?: RuntimeAgentRunInvocation["sourceProject"];
@@ -1042,6 +1042,12 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     runtimeTargetKind: sourceProject.runtimeTargetKind ?? "main_branch",
     runtimeTargetEnvironmentId: sourceProject.runtimeTargetEnvironmentId ?? null,
     runtimeTargetBranchId: sourceProject.runtimeTargetBranchId ?? null,
+    ...(sourceProject.sourceTargetEnvironmentId !== undefined
+      ? { sourceTargetEnvironmentId: sourceProject.sourceTargetEnvironmentId }
+      : {}),
+    ...(sourceProject.sourceTargetBranchId !== undefined
+      ? { sourceTargetBranchId: sourceProject.sourceTargetBranchId }
+      : {}),
     ...(sourceProject.executionEnvironmentId
       ? { executionEnvironmentId: sourceProject.executionEnvironmentId }
       : {}),

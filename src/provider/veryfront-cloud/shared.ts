@@ -213,7 +213,7 @@ function joinUrl(base: string, path: string): string {
   const pathname = IntrinsicReflectApply(
     StringPrototypeReplace,
     readNativeURLString(url, URLPathnameGet),
-    [/\/+$/, ""],
+    [/(?<!\/)\/+$/, ""],
   ) as string;
   const normalizedPath = IntrinsicReflectApply(StringPrototypeReplace, path, [
     /^\/+/,

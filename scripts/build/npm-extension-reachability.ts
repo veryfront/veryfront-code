@@ -402,7 +402,7 @@ export async function pruneUnreachableExtensionDirectories(input: {
     );
     if (references === undefined) return { kind: "uncertain" };
     for (const specifier of references) {
-      let target = resolve(dirname(path), specifier.replace(/[?#].*$/, ""));
+      let target = resolve(dirname(path), specifier.replace(/[?#].*$/s, ""));
       if (!within(esmRoot, target)) return { kind: "uncertain" };
       if (path.endsWith(".d.ts") && target.endsWith(".js")) {
         const declaration = target.slice(0, -3) + ".d.ts";

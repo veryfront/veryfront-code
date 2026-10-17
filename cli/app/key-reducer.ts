@@ -182,7 +182,7 @@ function reduceNewProjectKey(state: AppState, key: string, env: KeyEnv): KeyResu
   }
 
   // A number both moves the cursor and confirms, matching the rendered hints.
-  const chosen = key >= "1" && key <= "2" ? parseInt(key, 10) - 1 : null;
+  const chosen = key >= "1" && key <= "2" ? Number.parseInt(key, 10) - 1 : null;
   if (chosen === null && !isEnter(key)) return none(state);
 
   const index = chosen ?? state.newProjectIndex;
@@ -206,7 +206,7 @@ function reduceAuthKey(state: AppState, key: string): KeyResult {
     return none({ ...state, authProviderIndex: next });
   }
 
-  const chosen = key >= "1" && key <= "3" ? parseInt(key, 10) - 1 : null;
+  const chosen = key >= "1" && key <= "3" ? Number.parseInt(key, 10) - 1 : null;
   if (chosen === null && !isEnter(key)) return none(state);
 
   const index = chosen ?? state.authProviderIndex;
@@ -262,7 +262,7 @@ function reduceDashboardKey(state: AppState, key: string): KeyResult {
   // Number shortcuts select within the active list and open the result, which
   // is what `[1]`-style markers in the rendered list promise.
   if (key >= "1" && key <= "9") {
-    const num = parseInt(key, 10);
+    const num = Number.parseInt(key, 10);
     const list = state[state.activeList];
     if (num > list.items.length) return none(state);
 

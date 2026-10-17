@@ -46,7 +46,7 @@ export function resolveExportEntry(entry: unknown): string | undefined {
 }
 
 export function toCjsDestructureBindings(bindings: string): string {
-  const inner = bindings.trim().replace(/^\{\s*/, "").replace(/\s*\}$/, "");
+  const inner = bindings.trim().replace(/^\{\s*/, "").trimEnd().replace(/\}$/, "");
   if (!inner) return "{}";
 
   const converted = inner

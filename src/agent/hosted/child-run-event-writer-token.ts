@@ -13,6 +13,7 @@ import {
   getCurrentToolCallAdmissionSource,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
 import { getToolCallAdmissionReceiptSchema } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { aliasToolResultMirrorBarrier } from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 import { PERMISSION_DENIED } from "#veryfront/errors";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
@@ -663,7 +664,7 @@ export function createHostedConversationRunChunkMirrorFromCapability(
       throw error;
     }
   };
-  return {
+  const wrapper: ConversationRunChunkMirror = {
     ...mirror,
     async handleChunk(chunk) {
       await mirror.handleChunk(chunk);
@@ -686,6 +687,8 @@ export function createHostedConversationRunChunkMirrorFromCapability(
       mirror.dispose();
     },
   };
+  if (mirrorInput.runtimeObservations) aliasToolResultMirrorBarrier(mirror, wrapper);
+  return wrapper;
 }
 
 /** Return a routing identifier only for the exact run bound to this capability. */

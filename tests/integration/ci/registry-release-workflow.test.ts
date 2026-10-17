@@ -1310,11 +1310,11 @@ printf '%064d  %s\n' 0 "$1"
     );
     assertStringIncludes(
       String(buildStep.run),
-      "0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip",
+      "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip",
     );
     assertStringIncludes(
       String(buildStep.run),
-      "https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip",
+      "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip",
     );
     assertStringIncludes(String(buildStep.run), 'build_context="$(mktemp -d)"');
     assertStringIncludes(String(buildStep.run), "RUN mkdir /registry && chown 1000:1000 /registry");

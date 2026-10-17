@@ -196,9 +196,9 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private commandHandler: ClientCommandHandler | null = null;
   private commandObservers = new Set<ClientCommandObserver>();
   private commandLedger = new Map<string, CommandLedgerEntry>();
-  private commandHandlerTimers = new Set<number>();
+  private commandHandlerTimers = new Set<ReturnType<typeof setTimeout>>();
   private closed = false;
-  private pingTimer: number | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: WebSocketPublisherConfig) {
     const runId = config.runId;
@@ -835,14 +835,14 @@ interface PendingInputOperation {
   readonly event: PendingInputRequestEvent;
   readonly resolve: (input: string) => void;
   readonly reject: (error: Error) => void;
-  readonly timeout: number | null;
+  readonly timeout: ReturnType<typeof setTimeout> | null;
 }
 
 interface PendingApprovalOperation {
   readonly event: Readonly<ApprovalRequestEvent>;
   readonly resolve: (approved: boolean) => void;
   readonly reject: (error: Error) => void;
-  readonly timeout: number | null;
+  readonly timeout: ReturnType<typeof setTimeout> | null;
 }
 
 const CONTROLLER_AUTHORITIES = new WeakMap<AgentControllerHandle, AgentControllerAuthority>();

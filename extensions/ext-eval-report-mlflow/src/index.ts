@@ -207,7 +207,7 @@ function normalizeHttpUri(
   label: string,
   trackingCredentialSource: TrackingCredentialSource = "environment",
 ): string {
-  const trimmed = uri.trim().replace(/\/+$/, "");
+  const trimmed = uri.trim().replace(/(?<!\/)\/+$/, "");
   try {
     const url = new URL(trimmed);
     if (url.username || url.password) {
@@ -327,7 +327,7 @@ function deriveArtifactsUriFromPort(
   url.pathname = "";
   url.search = "";
   url.hash = "";
-  return url.toString().replace(/\/+$/, "");
+  return url.toString().replace(/(?<!\/)\/+$/, "");
 }
 
 function resolveArtifactsUri(
@@ -858,7 +858,7 @@ function toMetricKey(value: string): string {
     .toLowerCase()
     .replace(/&/g, "and")
     .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "metric";
+    .replace(/^_+|(?<!_)_+$/g, "") || "metric";
 }
 
 function frameworkMetricSummaryMetrics(

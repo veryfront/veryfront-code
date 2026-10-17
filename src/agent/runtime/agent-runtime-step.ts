@@ -47,12 +47,16 @@ import {
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
-import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import {
+  getProviderToolProfile,
+  selectProviderCompatibleToolNames,
+} from "./provider-tool-compat.ts";
 import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
 const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
 const IntrinsicSet = Set;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetAdd = Set.prototype.add;
@@ -273,9 +277,12 @@ export async function prepareAgentRuntimeStep(
   input: PrepareAgentRuntimeStepInput,
 ): Promise<PreparedAgentRuntimeStep> {
   const trustedAllowedSkillIds = getTrustedAllowedSkillIds(input);
+  const hasTrustedBranch = input.toolContextBase !== undefined &&
+    ObjectHasOwn(input.toolContextBase, "branch");
+  const trustedBranch = input.toolContextBase?.branch;
   const runtimeState = await input.resolveRuntimeState(
     input.messages,
-    input.runtimeContext,
+    hasTrustedBranch ? { ...input.runtimeContext, branch: trustedBranch } : input.runtimeContext,
     input.mode,
     input.step,
     input.systemPrompt,
@@ -283,6 +290,9 @@ export async function prepareAgentRuntimeStep(
       resolveModelProviderOptionKey(input.effectiveModel ?? input.config.model, input.modelRuntime),
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  if (hasTrustedBranch) {
+    toolContext.branch = trustedBranch;
+  }
   if (input.toolContextBase?.abortSignal !== undefined) {
     toolContext.abortSignal = input.toolContextBase.abortSignal;
   }
@@ -305,6 +315,10 @@ export async function prepareAgentRuntimeStep(
   // model itself cannot call tools; the model still sees no tool schemas.
   const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
     input.config.bootstrapTools,
+  );
+  const optionalBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.config.optionalBootstrapTools,
+    "optionalBootstrapTools",
   );
   const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools ||
       configuredBootstrapNames.length > 0
@@ -440,6 +454,29 @@ export async function prepareAgentRuntimeStep(
     input.reservedToolSlots,
   );
   const toolLoadingMode = resolveRuntimeToolLoading(input.config).mode;
+  if (optionalBootstrapNames.length > 0) {
+    const candidates = [...bootstrapToolNames];
+    for (let index = 0; index < optionalBootstrapNames.length; index++) {
+      const name = optionalBootstrapNames[index]!;
+      if (
+        setHas(existingToolNames, name) &&
+        somePrivateArray(
+          tools,
+          (tool) => tool.name === name && !isRuntimeProviderSchemaHiddenTool(tool),
+        ) &&
+        !setHas(bootstrapToolNames, name)
+      ) candidates[candidates.length] = name;
+    }
+    const selected = selectProviderCompatibleToolNames(candidates, {
+      model: input.toolSchemaModel ?? input.effectiveModel ?? input.config.model,
+      wireSurface: input.wireSurface,
+      requiredToolNames: [...bootstrapToolNames],
+      reservedToolSlots: (input.reservedToolSlots ?? 0) + (toolLoadingMode === "deferred" ? 2 : 0),
+    });
+    for (const name of selected) {
+      IntrinsicReflectApply(IntrinsicSetAdd, bootstrapToolNames, [name]);
+    }
+  }
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
     mode: toolLoadingMode,
@@ -476,11 +513,19 @@ export async function prepareAgentRuntimeStep(
     ? flattenSystemInstructions(instructionsWithToolInventory)
     : instructionsWithToolInventory;
 
+  const runtimeContext = hasTrustedBranch || trustedAllowedSkillIds !== undefined
+    ? {
+      ...runtimeState.context,
+      ...(hasTrustedBranch ? { branch: trustedBranch } : {}),
+      ...(trustedAllowedSkillIds === undefined
+        ? {}
+        : { allowedSkillIds: [...trustedAllowedSkillIds] }),
+    }
+    : runtimeState.context;
+
   return {
     integrationToolDiscovery,
-    runtimeContext: trustedAllowedSkillIds === undefined
-      ? runtimeState.context
-      : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },
+    runtimeContext,
     systemPrompt,
     toolContext,
     tools: toolExposurePlan.visible,

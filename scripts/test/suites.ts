@@ -170,6 +170,8 @@ export const UNIT_CWD_FILES: readonly string[] = Object.freeze([
 export const UNIT_SERIAL_FILES: readonly string[] = Object.freeze([
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  // Native watcher delivery is measured against a fixed deadline. Keep file-writing peers out.
+  "src/platform/adapters/runtime/deno/filesystem-adapter.test.ts",
   "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ]);

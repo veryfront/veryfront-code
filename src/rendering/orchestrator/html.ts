@@ -249,7 +249,7 @@ function applyExplicitThemeToDocument(
       );
     } else {
       styleValue = styleValue
-        ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
+        ? `${styleValue.trimEnd().replace(/;?$/, ";")} color-scheme: ${colorScheme};`
         : `color-scheme: ${colorScheme};`;
     }
 

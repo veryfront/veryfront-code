@@ -1,14 +1,19 @@
+import { copyNativeResponse, readResponseValue, ResponseBodyGet } from "./native-response.ts";
+
+const NativeReadableStream = ReadableStream;
+
 /** Keep invocation resources alive until its response finishes or is cancelled. */
 export function withResponseCleanup(
   response: Response,
   cleanup: () => void,
   signal: AbortSignal,
 ): Response {
-  if (!response.body) {
+  const body = readResponseValue<ReadableStream<Uint8Array> | null>(response, ResponseBodyGet);
+  if (!body) {
     cleanup();
     return response;
   }
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   let finished = false;
   let cancellation: Promise<void> | undefined;
   const finish = () => {
@@ -33,8 +38,9 @@ export function withResponseCleanup(
   };
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
-  return new Response(
-    new ReadableStream<Uint8Array>({
+  return copyNativeResponse(
+    response,
+    new NativeReadableStream<Uint8Array>({
       async pull(controller) {
         try {
           if (finished) {
@@ -55,6 +61,5 @@ export function withResponseCleanup(
       },
       cancel,
     }, { highWaterMark: 0 }),
-    { status: response.status, statusText: response.statusText, headers: response.headers },
   );
 }

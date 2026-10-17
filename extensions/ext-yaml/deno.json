@@ -21,6 +21,8 @@
     "veryfront/extensions/parser": "../../src/extensions/parser/index.ts"
   },
   "tasks": {
+    "generate": "deno run --frozen -A scripts/prebundle.ts",
+    "generate:check": "deno run --frozen -A scripts/prebundle.ts --check",
     "test": "deno test --allow-all src/",
     "check": "deno check src/index.ts src/*.test.ts"
   }

@@ -110,7 +110,7 @@ interface PostHogError {
 
 /** POSTHOG_HOST may be a bare host such as us.posthog.com or a full origin. */
 function getPostHogHost(): string {
-  const host = (getEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST).replace(/\/+$/, "");
+  const host = (getEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST).replace(/(?<!\/)\/+$/, "");
   return /^https?:\/\//.test(host) ? host : `https://${host}`;
 }
 

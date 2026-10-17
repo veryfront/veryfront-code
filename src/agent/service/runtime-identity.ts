@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 
-const encodeRuntimeName = encodeURIComponent;
+// Identity may first be requested after tenant code has run in this process.
+const apply = Reflect.apply;
+const StringTrim = String.prototype.trim;
+const StringSlice = String.prototype.slice;
+const RegExpExec = RegExp.prototype.exec;
+const EncodeURIComponent = encodeURIComponent;
+const ObjectFreeze = Object.freeze;
+const NativeError = Error;
+const CONTROL_CHARACTERS = /\p{Cc}/u;
 
 export const RUNTIME_ID_HEADER = "x-veryfront-runtime-id";
 export const RUNTIME_NAME_HEADER = "x-veryfront-runtime-name";
@@ -20,24 +28,24 @@ export function resolveServiceRuntimeName(
   configured: string | undefined,
   readHostname: () => string = hostname,
 ): string {
-  const explicit = configured?.trim();
+  const explicit = configured === undefined ? undefined : apply(StringTrim, configured, []);
   if (explicit) {
-    if (explicit.length > 128 || /\p{Cc}/u.test(explicit)) {
-      throw new Error(
+    if (explicit.length > 128 || apply(RegExpExec, CONTROL_CHARACTERS, [explicit]) !== null) {
+      throw new NativeError(
         "VERYFRONT_RUNTIME_NAME must contain at most 128 UTF-16 code units without control characters.",
       );
     }
     try {
-      encodeRuntimeName(explicit);
+      EncodeURIComponent(explicit);
     } catch {
-      throw new Error("VERYFRONT_RUNTIME_NAME must contain valid Unicode.");
+      throw new NativeError("VERYFRONT_RUNTIME_NAME must contain valid Unicode.");
     }
     return explicit;
   }
   try {
-    const name = readHostname().trim().slice(0, 128);
-    if (name && !/\p{Cc}/u.test(name)) {
-      encodeRuntimeName(name);
+    const name = apply(StringSlice, apply(StringTrim, readHostname(), []), [0, 128]);
+    if (name && apply(RegExpExec, CONTROL_CHARACTERS, [name]) === null) {
+      EncodeURIComponent(name);
       return name;
     }
   } catch {
@@ -52,7 +60,7 @@ let processIdentity: ServiceRuntimeIdentity | undefined;
 export function initializeServiceRuntimeIdentity(
   environment?: Record<string, string | undefined>,
 ): ServiceRuntimeIdentity {
-  return processIdentity ??= Object.freeze({
+  return processIdentity ??= ObjectFreeze({
     id: randomUUID(),
     name: resolveServiceRuntimeName(
       environment === undefined

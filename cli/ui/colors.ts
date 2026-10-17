@@ -9,7 +9,7 @@ function computeColorLevel(envObj: Record<string, string>, stdoutTty: boolean): 
   if (forceColorRaw !== undefined) {
     if (forceColorRaw === "0") return "none";
 
-    const forceColor = parseInt(forceColorRaw, 10);
+    const forceColor = Number.parseInt(forceColorRaw, 10);
     if (Number.isNaN(forceColor)) return "16";
     if (forceColor >= 3) return "truecolor";
     if (forceColor >= 2) return "256";
@@ -112,9 +112,9 @@ export function setTestColorLevel(level: ColorLevel | null): void {
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const cleaned = hex.replace("#", "");
   return {
-    r: parseInt(cleaned.slice(0, 2), 16),
-    g: parseInt(cleaned.slice(2, 4), 16),
-    b: parseInt(cleaned.slice(4, 6), 16),
+    r: Number.parseInt(cleaned.slice(0, 2), 16),
+    g: Number.parseInt(cleaned.slice(2, 4), 16),
+    b: Number.parseInt(cleaned.slice(4, 6), 16),
   };
 }
 

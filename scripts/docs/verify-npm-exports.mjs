@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 /**
  * Verify that all documented exports resolve from the built npm package.
  *
@@ -76,7 +77,7 @@ const REQUIRED_EXPORTS = {
 let passed = 0;
 let failed = 0;
 
-const IMPORT_SPECIFIER_PATTERN = /(?:import|export)\s+(?:[^"';]+?\s+from\s+)?["']([^"']+)["']|import\(["']([^"']+)["']\)/g;
+const IMPORT_SPECIFIER_PATTERN = new RegExp(String.raw`\b(?:import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?["']([^"']+)["']|import\(["']([^"']+)["']\)`, "gu");
 
 function moduleSpecifiers(source) {
   const specifiers = [];

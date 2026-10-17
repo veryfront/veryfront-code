@@ -97,6 +97,8 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    sourceTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    sourceTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
     executionProject: getRuntimeAgentProjectContextSchema().optional(),

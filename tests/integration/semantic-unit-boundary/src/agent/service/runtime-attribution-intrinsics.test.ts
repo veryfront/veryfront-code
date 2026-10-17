@@ -6,7 +6,16 @@ import {
   createHostedAgentServiceRouteSet,
   type HostedAgentServiceRouteSetOptions,
 } from "#veryfront/agent/service/routes.ts";
-import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
+import {
+  deleteEnv,
+  getHostEnvExcludingEnvFile,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
+import {
+  getServiceRuntimeIdentity,
+  resolveServiceRuntimeName,
+  type ServiceRuntimeIdentity,
+} from "#veryfront/agent/service/runtime-identity.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
@@ -103,6 +112,70 @@ function createDefaultChatStartRequest(): Request {
     { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
   );
 }
+
+// This must precede route creation: no singleton prewarming may hide first-call poisoning.
+it("first service identity resolution survives prior project intrinsic replacement", () => {
+  const previousName = getHostEnvExcludingEnvFile("VERYFRONT_RUNTIME_NAME");
+  setEnv("VERYFRONT_RUNTIME_NAME", "  Trusted service 🚀  ");
+  const trim = String.prototype.trim;
+  const slice = String.prototype.slice;
+  const test = RegExp.prototype.test;
+  const exec = RegExp.prototype.exec;
+  const encode = globalThis.encodeURIComponent;
+  const freeze = Object.freeze;
+  const apply = Reflect.apply;
+  let poisonedCalls = 0;
+  const poison = () => {
+    poisonedCalls++;
+    throw new Error("project intrinsic invoked");
+  };
+  let identity: ServiceRuntimeIdentity | undefined;
+  let hostnameName: string | undefined;
+  let controlRejected = false;
+  let unicodeRejected = false;
+  try {
+    String.prototype.trim = () => {
+      poisonedCalls++;
+      return "forged-runtime";
+    };
+    String.prototype.slice = poison;
+    RegExp.prototype.test = poison;
+    RegExp.prototype.exec = poison;
+    globalThis.encodeURIComponent = poison;
+    Object.freeze = poison;
+    Reflect.apply = poison;
+    identity = getServiceRuntimeIdentity();
+    hostnameName = resolveServiceRuntimeName(undefined, () => "  trusted-host  ");
+    try {
+      resolveServiceRuntimeName("name\nforged");
+    } catch {
+      controlRejected = true;
+    }
+    try {
+      resolveServiceRuntimeName("bad\ud800");
+    } catch {
+      unicodeRejected = true;
+    }
+  } finally {
+    String.prototype.trim = trim;
+    String.prototype.slice = slice;
+    RegExp.prototype.test = test;
+    RegExp.prototype.exec = exec;
+    globalThis.encodeURIComponent = encode;
+    Object.freeze = freeze;
+    Reflect.apply = apply;
+    if (previousName === undefined) deleteEnv("VERYFRONT_RUNTIME_NAME");
+    else setEnv("VERYFRONT_RUNTIME_NAME", previousName);
+  }
+  assertEquals(poisonedCalls, 0);
+  assertEquals(identity?.name, "Trusted service 🚀");
+  assertEquals(identity?.mode, "service");
+  assertEquals(Object.isFrozen(identity), true);
+  assertEquals(getServiceRuntimeIdentity(), identity);
+  assertEquals(hostnameName, "trusted-host");
+  assertEquals(controlRejected, true);
+  assertEquals(unicodeRejected, true);
+});
 
 it("accepted service attribution preserves response body and multi-value headers", async () => {
   const nativeJson = Response.json;

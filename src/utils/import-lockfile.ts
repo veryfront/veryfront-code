@@ -1,3 +1,4 @@
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../modules/loader-shared/import-syntax.mjs";
 import { computeHash } from "./hash-utils.ts";
 import { generateUuid } from "./id.ts";
 import { serverLogger } from "./logger/index.ts";
@@ -1579,9 +1580,15 @@ export interface ParsedImport {
   type: "static" | "dynamic";
 }
 
-const IMPORT_REGEX = /import\s+(?:(?:[\w*\s{},]*)\s+from\s+)?['"]([^'"]+)['"]/g;
+const IMPORT_REGEX = new RegExp(
+  String.raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?['"]([^'"]+)['"]`,
+  "gu",
+);
 const DYNAMIC_IMPORT_REGEX = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-const EXPORT_FROM_REGEX = /export\s+(?:[\w*\s{},]*)\s+from\s+['"]([^'"]+)['"]/g;
+const EXPORT_FROM_REGEX = new RegExp(
+  String.raw`\bexport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"]([^'"]+)['"]`,
+  "gu",
+);
 
 export function extractImports(content: string): ParsedImport[] {
   const imports: ParsedImport[] = [];

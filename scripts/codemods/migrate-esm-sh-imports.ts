@@ -1104,7 +1104,7 @@ async function main(args: string[]): Promise<void> {
   // Traversal and writes use the resolved root, but the report keeps the
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
-  const trailingSeparators = Deno.build.os === "windows" ? /[/\\]+$/ : /\/+$/;
+  const trailingSeparators = Deno.build.os === "windows" ? /(?<![/\\])[/\\]+$/ : /(?<!\/)\/+$/;
   const displayRoot = projectDir === parsePath(projectDir).root
     ? projectDir
     : projectDir.replace(trailingSeparators, "") || projectDir;

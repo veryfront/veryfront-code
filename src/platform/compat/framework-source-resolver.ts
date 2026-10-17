@@ -37,7 +37,10 @@ export function isSafeFrameworkSourceKey(candidate: string): boolean {
 const FRAMEWORK_SOURCE_KEY_EXT_RE = /\.(?:src|tsx|ts|jsx|js|mjs|cjs|mdx|md|json)$/;
 
 function normalizeFrameworkSourceKey(candidate: string): string {
-  let normalized = candidate.replace(/\?.*$/, "").replace(/^\.\/src\//, "").replace(/\/+$/, "");
+  let normalized = candidate.replace(/\?.*$/s, "").replace(/^\.\/src\//, "").replace(
+    /(?<!\/)\/+$/,
+    "",
+  );
   while (FRAMEWORK_SOURCE_KEY_EXT_RE.test(normalized)) {
     normalized = normalized.replace(FRAMEWORK_SOURCE_KEY_EXT_RE, "");
   }

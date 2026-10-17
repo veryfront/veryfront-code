@@ -7,7 +7,7 @@ function normalizeWeakEtag(hash: string): string {
   if (!trimmed) return computeEtag("");
 
   const value = trimmed.startsWith("W/") ? trimmed.slice(2) : trimmed;
-  const unquoted = value.replace(/^"+|"+$/g, "").trim();
+  const unquoted = value.replace(/^"+|(?<!")"+$/g, "").trim();
 
   return `W/"${unquoted}"`;
 }

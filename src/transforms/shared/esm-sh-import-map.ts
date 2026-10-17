@@ -270,7 +270,7 @@ function isSimpleSemverSelector(value: string): boolean {
  * file path while admitting `1.2.3 - 2.0.0-alpha.beta` as a package range.
  */
 function isCompoundSemverRange(value: string): boolean {
-  const alternatives = value.split(/\s*\|\|\s*/);
+  const alternatives = value.split("||").map((part) => part.trim());
   if (alternatives.some((alternative) => alternative === "")) return false;
 
   const hasAlternatives = alternatives.length > 1;

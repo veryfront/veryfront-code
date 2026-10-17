@@ -30,6 +30,19 @@ describe("sandbox/exec-stream", () => {
     assertEquals(events.map((event) => event.type), ["stdout", "stderr", "exit"]);
   });
 
+  it("reads the contract exit_code of the exit event as exitCode", async () => {
+    const events = await collect(streamOf(
+      '{"type":"exit","exit_code":7}\n{"type":"exit","exit_code":0,"exitCode":0}\n',
+      '{"type":"exit","exitCode":3}\n',
+    ));
+
+    assertEquals(events, [
+      { type: "exit", exitCode: 7 },
+      { type: "exit", exitCode: 0 },
+      { type: "exit", exitCode: 3 },
+    ]);
+  });
+
   it("keeps streaming past a malformed line", async () => {
     const events = await collect(streamOf(
       '{"type":"stdout","data":"a"}\n',

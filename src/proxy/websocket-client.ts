@@ -78,7 +78,7 @@ export class UpstreamWebSocket {
   #stream: UpstreamWebSocketStream;
   #writer: WritableStreamDefaultWriter<string | Uint8Array> | null = null;
   #reader: ReadableStreamDefaultReader<string | Uint8Array> | null = null;
-  #readyState: number = WebSocket.CONNECTING;
+  #readyState: WebSocket["readyState"] = WebSocket.CONNECTING;
   #writes: Promise<void> = Promise.resolve();
   #opening: Promise<void>;
   #reading: Promise<void> = Promise.resolve();
@@ -102,7 +102,7 @@ export class UpstreamWebSocket {
     );
   }
 
-  get readyState(): number {
+  get readyState(): WebSocket["readyState"] {
     return this.#readyState;
   }
 

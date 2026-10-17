@@ -50,7 +50,8 @@
     "npm:remark-gfm@4.0.1": "4.0.1",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:source-map-support@0.5.21": "0.5.21",
-    "npm:unified@11.0.5": "11.0.5"
+    "npm:unified@11.0.5": "11.0.5",
+    "npm:yaml@2.9.0": "2.9.0"
   },
   "jsr": {
     "@david/code-block-writer@13.0.3": {
@@ -216,133 +217,237 @@
     },
     "@esbuild/aix-ppc64@0.28.1": {
       "integrity": "sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==",
-      "os": ["aix"],
-      "cpu": ["ppc64"]
+      "os": [
+        "aix"
+      ],
+      "cpu": [
+        "ppc64"
+      ]
     },
     "@esbuild/android-arm64@0.28.1": {
       "integrity": "sha512-34EGEbCIAgosYz6goLcopX6Mo7NyGv9tfwEM2/7Ce2VcVRk568iSvniGWcUXIy7wEDR1wzolcxcriFVrWYcwBg==",
-      "os": ["android"],
-      "cpu": ["arm64"]
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/android-arm@0.28.1": {
       "integrity": "sha512-0k2F129Xdio1TdJfzJ8sy1Q47vUD2NnwdhiAf7drUN1EBTfPf4hsFCtmMgu/6m8JSzsBrlmVjudMBQqOfG8usQ==",
-      "os": ["android"],
-      "cpu": ["arm"]
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "arm"
+      ]
     },
     "@esbuild/android-x64@0.28.1": {
       "integrity": "sha512-dbwY7ltSMDWsRatcRpCnES4F+im88OCUgGZjy52shC7GqHRE/cYlxNbB4Z4UpJswpcc4Qxd2oE/ufM0p61IKng==",
-      "os": ["android"],
-      "cpu": ["x64"]
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/darwin-arm64@0.28.1": {
       "integrity": "sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==",
-      "os": ["darwin"],
-      "cpu": ["arm64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/darwin-x64@0.28.1": {
       "integrity": "sha512-zfdzgK9ACBNZLI/CyHTOx81SyNbM6YXn7rxSgX97VjyiPl9W1i4Ka4fgKECEoFCKGpvBj5qArWIGgQjOwkgskQ==",
-      "os": ["darwin"],
-      "cpu": ["x64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/freebsd-arm64@0.28.1": {
       "integrity": "sha512-wG2EA8ENdEI0qhkSZMjfqrdY+ziCYCPMmtZjjIwOmXFjmyzEHn+UUxk5of+SYsjtfs3VpnlC7QLzSI5hY/rOAw==",
-      "os": ["freebsd"],
-      "cpu": ["arm64"]
+      "os": [
+        "freebsd"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/freebsd-x64@0.28.1": {
       "integrity": "sha512-i7dZ9vQgnvSCzi/rYCXNgtF/U+eKZNJBzu3eTQbRgHnM7tNSizLOkRFAl3qzVc/Op/u5YkHHa4pf/3DOYHthLQ==",
-      "os": ["freebsd"],
-      "cpu": ["x64"]
+      "os": [
+        "freebsd"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/linux-arm64@0.28.1": {
       "integrity": "sha512-yHs+0uc8+nvEAfAfxrWQKK5peSNzBc4PegcMO0EJ2hT71uA7vB8Ihg2e77R2P7SG5uYjPbHlLLmve4LLLRCf0g==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/linux-arm@0.28.1": {
       "integrity": "sha512-qVXBOHQS+d5Y722GwJzJUtOLlX7km3CraOaGormF1pDtPd2C/l1SHRPgjLunLGe51Sh5YYWKMFDyV4SxgMQYTQ==",
-      "os": ["linux"],
-      "cpu": ["arm"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm"
+      ]
     },
     "@esbuild/linux-ia32@0.28.1": {
       "integrity": "sha512-d1z4ZuP0ajrfz/FhGT4vv278rX8KnPPJx8i5+AtK7TYbx9Le9F1hyzurZpkEyjkGa9dUGhQow4C1NmeGvqxN2w==",
-      "os": ["linux"],
-      "cpu": ["ia32"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "ia32"
+      ]
     },
     "@esbuild/linux-loong64@0.28.1": {
       "integrity": "sha512-M5sRjUVZrkm1OAPR3dlOYzNmN+loZKGVi1VUQGrwuqLcbR6qeAz+famMhjASeH3YVKvZz+zT1jlh/keC3Rj/lg==",
-      "os": ["linux"],
-      "cpu": ["loong64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "loong64"
+      ]
     },
     "@esbuild/linux-mips64el@0.28.1": {
       "integrity": "sha512-mRObBZeHh2OxcBFPWE/FjylkRgZdYuiTR3vaTozquCGOH14iP9oN4x4Ge81CoIDYQrXmIxpFumJBu5MtZpnQJQ==",
-      "os": ["linux"],
-      "cpu": ["mips64el"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "mips64el"
+      ]
     },
     "@esbuild/linux-ppc64@0.28.1": {
       "integrity": "sha512-slScBsMAb3GFDcdrCgLwZtPYRoH2H/youv10QiZyRjmsP48fznoveWytSgCI/R0ZcUgpc0ZhIUEx6LHts8yrfQ==",
-      "os": ["linux"],
-      "cpu": ["ppc64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "ppc64"
+      ]
     },
     "@esbuild/linux-riscv64@0.28.1": {
       "integrity": "sha512-kw0owk1o0GFETUJyW0jc0G4Yzs0BHZn0JDZ8JRT088vjJYX777BAs1fDGxAC+q831qOs2DTC96mNsG2opdfyyQ==",
-      "os": ["linux"],
-      "cpu": ["riscv64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "riscv64"
+      ]
     },
     "@esbuild/linux-s390x@0.28.1": {
       "integrity": "sha512-/lAIjX8aYFRByhh6L5rYtPEDRqa9de/4V/juOXcta5frjvzXO4/sqEtyytse0g3zZFuWu5cDN0MkLz2qRDD2Ag==",
-      "os": ["linux"],
-      "cpu": ["s390x"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "s390x"
+      ]
     },
     "@esbuild/linux-x64@0.28.1": {
       "integrity": "sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/netbsd-arm64@0.28.1": {
       "integrity": "sha512-oks0DYbLwWMmaakTsCb+zL4E+aHRVLom9IJZOAthMQEPiQmydXHkziYEsGYRx0uNV/IjEKGAV941JzH02pflqw==",
-      "os": ["netbsd"],
-      "cpu": ["arm64"]
+      "os": [
+        "netbsd"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/netbsd-x64@0.28.1": {
       "integrity": "sha512-aeL6lAnN89Hz43Mlh1G8ARasbuoYvSITDEx0tHh5b7jJnHcssqgjy9Yx430GDpmCa6OyrKoS0aNRjKundRizGg==",
-      "os": ["netbsd"],
-      "cpu": ["x64"]
+      "os": [
+        "netbsd"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/openbsd-arm64@0.28.1": {
       "integrity": "sha512-MEFJe5C3R8pwXdZ5Y21oo6m7ePiS0d9pWucn99O/wvyJZChoIQKrQDxKrGeW8F5+T0okTHesAmDeiHDTIq0V/Q==",
-      "os": ["openbsd"],
-      "cpu": ["arm64"]
+      "os": [
+        "openbsd"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/openbsd-x64@0.28.1": {
       "integrity": "sha512-i/ZLIOafE0Z8cI/XANJAixoJL/uRAoS2xOA3rb0xN+KK0K177cMAsQYkzHtBrtMXAKuAc7HGgcWiZ/sRC1Nxgw==",
-      "os": ["openbsd"],
-      "cpu": ["x64"]
+      "os": [
+        "openbsd"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/openharmony-arm64@0.28.1": {
       "integrity": "sha512-ge+Z7EXFNt2BO1oAMsVpiQ8EwndV9i1xXerAeTIK7AtPs3bKFXQM7nlRxDSIUIMeueR1CNXxqztLzdNeReKBJg==",
-      "os": ["openharmony"],
-      "cpu": ["arm64"]
+      "os": [
+        "openharmony"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/sunos-x64@0.28.1": {
       "integrity": "sha512-BEjgtECkL3vY+SaSQ6nzVfiALUeFxpawyp8Jmf5PtYhf1Ug40N1h/hxlhts+f1FvSvarEigdxS3BlSMI2PJLcQ==",
-      "os": ["sunos"],
-      "cpu": ["x64"]
+      "os": [
+        "sunos"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@esbuild/win32-arm64@0.28.1": {
       "integrity": "sha512-lCv9eK/H6ZJWbE7bh2nw54CZ9M2nupBxJcTsdk/QQnWkdSjKGuxmmH8/GWrlT1eMmZfn4dGcCjRte397WqfQXA==",
-      "os": ["win32"],
-      "cpu": ["arm64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@esbuild/win32-ia32@0.28.1": {
       "integrity": "sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg==",
-      "os": ["win32"],
-      "cpu": ["ia32"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "ia32"
+      ]
     },
     "@esbuild/win32-x64@0.28.1": {
       "integrity": "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==",
-      "os": ["win32"],
-      "cpu": ["x64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@jridgewell/gen-mapping@0.3.13": {
       "integrity": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==",
@@ -366,23 +471,39 @@
     },
     "@kreuzberg/node-darwin-arm64@4.4.2": {
       "integrity": "sha512-eMFFh8MyfDrvKdmNxnLvt3eumvM4eXedDKB0rbmUtmNQfVzTJlvutnQvIZl47iIs8c0K5xuRk6rzM0cHWWew6A==",
-      "os": ["darwin"],
-      "cpu": ["arm64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@kreuzberg/node-linux-arm64-gnu@4.4.2": {
       "integrity": "sha512-4RB3vVN4zyIS+fauNgZUMC5me3ShvImJ2SqAYDEmvCFVY0N3rt25hbeGA8ZkeLeTR20KIE0/3oXenwC7c/4HYg==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@kreuzberg/node-linux-x64-gnu@4.4.2": {
       "integrity": "sha512-JxUfyxg/9eWUmBSEBV6+V/JJIgdcfUYFbA9+dviR8xewGhmNRlbAV+WJLnWbZ9ITX4KNNXU+ZHtZsXEBuM0cEQ==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@kreuzberg/node-win32-x64-msvc@4.4.2": {
       "integrity": "sha512-AJscpLNeK2keHNzYzrRbjDbCDmid1QVjT2tEV3w/JofArl1WhVtp/hjsVnDpWOE8hltq+ao/90Pqgip/rJHbcg==",
-      "os": ["win32"],
-      "cpu": ["x64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@kreuzberg/node@4.4.2": {
       "integrity": "sha512-8JT3Q9s1hxIHcCaASzZY53BhhNmM6peGtvm7XGu97dSN2eMavxh0O6l9cAWdzLdwQHXY6UZKtywJO7wZbI71+w==",
@@ -1605,6 +1726,10 @@
       ],
       "bin": true
     },
+    "yaml@2.9.0": {
+      "integrity": "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==",
+      "bin": true
+    },
     "zwitch@2.0.4": {
       "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A=="
     }
@@ -1619,6 +1744,7 @@
       "jsr:@std/testing@1.0.17",
       "jsr:@std/yaml@1.1.0",
       "npm:@babel/parser@7.29.2",
+      "npm:@babel/types@7.29.8",
       "npm:@kreuzberg/node@4.4.2",
       "npm:@kreuzberg/wasm@4.5.2",
       "npm:@types/mdast@4.0.3",
@@ -1644,6 +1770,275 @@
       "npm:remark-parse@11.0.0",
       "npm:source-map-support@0.5.21",
       "npm:unified@11.0.5"
-    ]
+    ],
+    "links": {
+      "jsr:@veryfront/cli@0.1.0": {},
+      "jsr:@veryfront/ext-auth-jwt@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:jose@5.9.6"
+        ]
+      },
+      "jsr:@veryfront/ext-blob-gcs@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-blob-s3@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@aws-sdk/client-s3@3.980.0",
+          "npm:@aws-sdk/lib-storage@3.980.0"
+        ]
+      },
+      "jsr:@veryfront/ext-bundler-esbuild@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:es-module-lexer@2.3.1",
+          "npm:esbuild@0.28.1"
+        ]
+      },
+      "jsr:@veryfront/ext-bundler-swc@0.1.0": {
+        "dependencies": [
+          "npm:@swc/wasm@1.16.1",
+          "npm:reflect-metadata@0.2.2"
+        ]
+      },
+      "jsr:@veryfront/ext-cache-redis@0.1.0": {
+        "dependencies": [
+          "npm:redis@5.11.0"
+        ]
+      },
+      "jsr:@veryfront/ext-content-mdx@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "jsr:@std/yaml@1.1.0",
+          "npm:@mdx-js/mdx@3.1.1",
+          "npm:@mdx-js/react@3.1.1",
+          "npm:@types/hast@3.0.3",
+          "npm:@types/mdast@4.0.3",
+          "npm:@types/unist@3.0.2",
+          "npm:acorn-jsx@5.3.2",
+          "npm:acorn@8.17.0",
+          "npm:github-slugger@2.0.0",
+          "npm:mdast-util-mdx@3.0.0",
+          "npm:mdast-util-to-string@4.0.0",
+          "npm:micromark-extension-mdx-expression@3.0.1",
+          "npm:micromark-extension-mdx-jsx@3.0.2",
+          "npm:micromark-extension-mdx-md@2.0.0",
+          "npm:micromark-extension-mdxjs-esm@3.0.0",
+          "npm:micromark-util-combine-extensions@2.0.1",
+          "npm:micromark-util-types@2.0.2",
+          "npm:micromark@4.0.2",
+          "npm:parse5@7.3.0",
+          "npm:rehype-highlight@7.0.2",
+          "npm:rehype-raw@7.0.0",
+          "npm:rehype-sanitize@6.0.0",
+          "npm:rehype-slug@6.0.0",
+          "npm:rehype-starry-night@2.2.0",
+          "npm:rehype-stringify@10.0.1",
+          "npm:remark-frontmatter@5.0.0",
+          "npm:remark-gfm@4.0.1",
+          "npm:remark-parse@11.0.0",
+          "npm:remark-rehype@11.1.2",
+          "npm:unified@11.0.5",
+          "npm:unist-util-visit@5.1.0",
+          "npm:vfile@6.0.3"
+        ]
+      },
+      "jsr:@veryfront/ext-css-lightning@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:browserslist@4.28.7",
+          "npm:lightningcss@1.29.2"
+        ]
+      },
+      "jsr:@veryfront/ext-css-purgecss@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:postcss-selector-parser@7.1.6",
+          "npm:postcss@8.5.29"
+        ]
+      },
+      "jsr:@veryfront/ext-css-tailwind@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@tailwindcss/forms@0.5.11",
+          "npm:daisyui@5.5.14",
+          "npm:postcss-selector-parser@7.1.6",
+          "npm:tailwind-scrollbar-hide@2.0.0",
+          "npm:tailwindcss-animate@1.0.7",
+          "npm:tailwindcss@4.2.2",
+          "npm:tw-animate-css@1.4.0"
+        ]
+      },
+      "jsr:@veryfront/ext-db-sqlite@0.1.0": {
+        "dependencies": [
+          "npm:@types/better-sqlite3@7.6.13",
+          "npm:better-sqlite3@13.0.3"
+        ]
+      },
+      "jsr:@veryfront/ext-dev-ui-react@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/fs@1.0.23",
+          "jsr:@std/path@1.1.4",
+          "jsr:@std/testing@1.0.17",
+          "npm:react-dom@19.2.4",
+          "npm:react@19.2.4"
+        ]
+      },
+      "jsr:@veryfront/ext-document-kreuzberg@0.1.0": {
+        "dependencies": [
+          "npm:@kreuzberg/node@4.4.2",
+          "npm:@kreuzberg/wasm@4.5.2",
+          "npm:jszip@3.10.1",
+          "npm:pdf-lib@1.17.1"
+        ]
+      },
+      "jsr:@veryfront/ext-eval-report-http@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-eval-report-mlflow@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-image-sharp@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:sharp@0.35.5"
+        ]
+      },
+      "jsr:@veryfront/ext-llm-anthropic@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-llm-google@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-llm-openai@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "jsr:@veryfront/ext-node-websocket-ws@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "npm:@types/ws@8.18.1",
+          "npm:ws@8.21.1"
+        ]
+      },
+      "jsr:@veryfront/ext-observability-opentelemetry@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@opentelemetry/api-logs@0.221.0",
+          "npm:@opentelemetry/api@1.9.1",
+          "npm:@opentelemetry/auto-instrumentations-node@0.79.0",
+          "npm:@opentelemetry/context-async-hooks@2.10.0",
+          "npm:@opentelemetry/core@2.10.0",
+          "npm:@opentelemetry/exporter-logs-otlp-http@0.221.0",
+          "npm:@opentelemetry/exporter-metrics-otlp-http@0.221.0",
+          "npm:@opentelemetry/exporter-trace-otlp-http@0.221.0",
+          "npm:@opentelemetry/otlp-transformer@0.221.0",
+          "npm:@opentelemetry/resources@2.10.0",
+          "npm:@opentelemetry/sdk-logs@0.221.0",
+          "npm:@opentelemetry/sdk-metrics@2.10.0",
+          "npm:@opentelemetry/sdk-node@0.221.0",
+          "npm:@opentelemetry/sdk-trace-base@2.10.0",
+          "npm:@opentelemetry/semantic-conventions@1.43.0",
+          "npm:gaxios@7.2.0",
+          "npm:gcp-metadata@8.1.2",
+          "npm:protobufjs@7.6.5"
+        ]
+      },
+      "jsr:@veryfront/ext-observability-sentry@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "npm:@sentry/deno@10.68.0",
+          "npm:@sentry/node@10.68.0"
+        ]
+      },
+      "jsr:@veryfront/ext-parser-babel@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@babel/generator@7.29.1",
+          "npm:@babel/parser@7.29.2",
+          "npm:@babel/traverse@7.29.0",
+          "npm:@babel/types@7.29.8"
+        ]
+      },
+      "jsr:@veryfront/ext-react-ssr@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19"
+        ]
+      },
+      "jsr:@veryfront/ext-redis@0.1.0": {
+        "dependencies": [
+          "npm:@redis/client@1.5.8",
+          "npm:redis@5.11.0"
+        ]
+      },
+      "jsr:@veryfront/ext-sandbox-shell-tools@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:ai@7.0.41",
+          "npm:brace-expansion@5.0.12",
+          "npm:zod@4.3.6"
+        ]
+      },
+      "jsr:@veryfront/ext-schema-zod@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:ajv-formats@3.0.1",
+          "npm:ajv@8.18.0",
+          "npm:zod@4.3.6"
+        ]
+      },
+      "jsr:@veryfront/ext-yaml@0.1.0": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:yaml@2.9.0"
+        ]
+      },
+      "jsr:@veryfront/react@0.1.0": {},
+      "jsr:veryfront@0.1.1278": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/async@1.2.0",
+          "jsr:@std/cli@1.0.28",
+          "jsr:@std/dotenv@0.225.6",
+          "jsr:@std/expect@1.0.18",
+          "jsr:@std/fmt@1.0.9",
+          "jsr:@std/fs@1.0.23",
+          "jsr:@std/path@1.1.4",
+          "jsr:@std/testing@1.0.17"
+        ]
+      }
+    }
   }
 }

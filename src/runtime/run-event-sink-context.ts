@@ -2,21 +2,23 @@ import type { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { AgentRunEventSink } from "./model-call-context.ts";
 
-const runEventSinkStorage = createPrivateAsyncLocalStorage<AgentRunEventSink>();
-const mandatoryRunEventSinkStorage = createPrivateAsyncLocalStorage<AgentRunEventSink>();
+const runEventSinkStorage = createPrivateAsyncLocalStorage<AgentRunEventSink | undefined>();
+const mandatoryRunEventSinkStorage = createPrivateAsyncLocalStorage<
+  AgentRunEventSink | undefined
+>();
 const storageRun = runEventSinkStorage.run;
 const storageGetStore = runEventSinkStorage.getStore;
 const apply = Reflect.apply;
 
 function getStoredSink(
-  storage: AsyncLocalStorage<AgentRunEventSink>,
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
 ): AgentRunEventSink | undefined {
   return apply(storageGetStore, storage, []) as AgentRunEventSink | undefined;
 }
 
 function runInSinkStorage<T>(
-  storage: AsyncLocalStorage<AgentRunEventSink>,
-  sink: AgentRunEventSink,
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
+  sink: AgentRunEventSink | undefined,
   operation: () => T,
 ): T {
   return apply(storageRun, storage, [sink, operation]) as T;
@@ -38,6 +40,15 @@ export function getActiveRunEventSinks(): {
   };
 }
 
+/** Start an independent host invocation without observers from its bootstrap task. */
+export function runWithoutRunEventSinks<T>(operation: () => T): T {
+  return runInSinkStorage(
+    mandatoryRunEventSinkStorage,
+    undefined,
+    () => runInSinkStorage(runEventSinkStorage, undefined, operation),
+  );
+}
+
 /** Scope an operation to a run event sink. */
 export function runWithRunEventSink<T>(sink: AgentRunEventSink, operation: () => T): T {
   return runInSinkStorage(runEventSinkStorage, sink, operation);
@@ -52,7 +63,7 @@ export function runWithMandatoryRunEventSink<T>(
 }
 
 function scopeAsyncIterableWithSinkStorage<T>(
-  storage: AsyncLocalStorage<AgentRunEventSink>,
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
   sink: AgentRunEventSink,
   source: AsyncIterable<T>,
 ): AsyncIterable<T> {

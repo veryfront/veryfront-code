@@ -197,6 +197,15 @@ export interface SchemaValidatorCoerce {
   date(): Schema<Date>;
 }
 
+/** Bounded instance budgets for one compiled JSON Schema validator. */
+export interface JsonSchemaCompilationOptions {
+  /** UTF-8 bytes in serialized JSON and in any individual decoded string. */
+  readonly instanceLimits?: {
+    readonly maxSerializedBytes: number;
+    readonly maxStringBytes: number;
+  };
+}
+
 /**
  * SchemaValidator contract interface.
  *
@@ -279,14 +288,18 @@ export interface SchemaValidator {
    * prototypes are rejected without invoking property getters, setters,
    * iterators, or serialization hooks. Proxy reflection traps necessarily run
    * during inspection and may throw before rejection. Successful validation
-   * returns the accepted snapshot rather than caller-owned state.
+   * returns the accepted snapshot rather than caller-owned state. Per-compilation
+   * instance budgets leave adapter defaults unchanged and must remain bounded.
    *
    * This capability is optional so existing third-party `SchemaValidator`
    * implementations remain source-compatible. Framework features that accept
    * raw JSON Schema fail clearly when the registered adapter does not provide
    * it.
    */
-  compileJsonSchema?<T = unknown>(schema: JsonSchema): JsonSchemaValidationFunction<T>;
+  compileJsonSchema?<T = unknown>(
+    schema: JsonSchema,
+    options?: JsonSchemaCompilationOptions,
+  ): JsonSchemaValidationFunction<T>;
 
   /**
    * Convert an opaque `Schema<T>` to a JSON Schema document.

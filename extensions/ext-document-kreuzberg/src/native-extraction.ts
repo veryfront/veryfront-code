@@ -70,7 +70,7 @@ function normalizePptxText(value: string): string {
 function cleanExtractedMarkdown(value: string): string {
   return value
     .replace(/!\[[^\]\n]*\]\(\s*\)/g, "")
-    .replace(/[ \t]+\n/g, "\n")
+    .replace(/(?<![ \t])[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -143,7 +143,7 @@ function normalizePptxMarkdownHeadings(markdown: string, xml: string): string {
 
   return cleanExtractedMarkdown(
     markdown.split("\n").map((line) => {
-      const heading = line.match(/^#{1,6}\s+(.+?)\s*$/);
+      const heading = line.trimEnd().match(/^#{1,6}\s+(\S.*)$/);
       if (!heading) return line;
 
       const text = heading[1] ?? "";

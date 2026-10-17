@@ -145,6 +145,40 @@ describe("proxy/control-plane-signature", () => {
     else Deno.env.set(PUBLIC_KEY_ENV, previousKey);
   });
 
+  for (const mutation of ["includes", "String"] as const) {
+    it(`rejects a signed invalid runtime kind after global ${mutation} changes`, async () => {
+      const body = createNestedTargetBody({ runtimeTargetKind: "invalid_kind" }, {
+        type: "release",
+      });
+      const { jws, publicKeyPem } = await mintJws("control-plane", { body });
+      Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+      const { req, url } = requestWith(
+        { "x-token": "t", "x-veryfront-control-plane-jws": jws },
+        CONTROL_PLANE_PATH,
+        "POST",
+        body,
+      );
+      const originalIncludes = Array.prototype.includes;
+      const originalString = globalThis.String;
+      let failure: unknown;
+      try {
+        if (mutation === "includes") Array.prototype.includes = () => true;
+        else globalThis.String = (() => "main_branch") as StringConstructor;
+        await resolveVerifiedControlPlaneBranchBinding(req, url, {
+          audience: "protected",
+          expectedProjectId: "proj-1",
+        });
+      } catch (error) {
+        failure = error;
+      } finally {
+        Array.prototype.includes = originalIncludes;
+        globalThis.String = originalString;
+      }
+      assertEquals(failure instanceof ControlPlaneBranchBindingError, true);
+      assertEquals((failure as Error | undefined)?.message, "Invalid control-plane runtime target");
+    });
+  }
+
   it("defaults an omitted nested runtime target kind to the main branch", async () => {
     assertEquals(
       await resolveNestedTarget(
@@ -200,6 +234,60 @@ describe("proxy/control-plane-signature", () => {
     });
   }
 
+  it("binds signed source selection independently from the execution target", async () => {
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "main_branch", sourceTargetBranchId: "selected-branch" },
+        { type: "branch", branch: "feature/source" },
+      )),
+      { branchId: "selected-branch", branchName: "feature/source" },
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: "selected-environment" },
+        { type: "environment", environmentName: "staging", releaseId: "selected-release" },
+      )),
+      {},
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: "execution-branch" },
+        { type: "release", releaseId: "selected-release" },
+      )),
+      {},
+    );
+    assertEquals(
+      await resolveNestedTarget(createNestedTargetBody(
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "execution-branch",
+          sourceTargetBranchId: null,
+        },
+        { type: "branch", branch: "trunk" },
+      )),
+      { defaultBranchName: "trunk" },
+    );
+  });
+
+  it("requires an explicit branch source selector on an environment execution", async () => {
+    const target = {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "execution-environment",
+    };
+    const source = { type: "branch", branch: "feature/source" };
+    await assertRejects(
+      () => resolveNestedTarget(createNestedTargetBody(target, source)),
+      ControlPlaneBranchBindingError,
+      "Invalid control-plane branch source",
+    );
+    assertEquals(
+      await resolveNestedTarget(
+        createNestedTargetBody({ ...target, sourceTargetBranchId: null }, source),
+      ),
+      { defaultBranchName: "feature/source" },
+    );
+  });
+
   it("rejects malformed or mismatched signed source projects", async () => {
     for (
       const sourceProject of [
@@ -241,13 +329,6 @@ describe("proxy/control-plane-signature", () => {
       createNestedTargetBody(
         { runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000006" },
         { type: "branch", branch: "trunk" },
-      ),
-      createNestedTargetBody(
-        {
-          runtimeTargetKind: "preview_branch",
-          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
-        },
-        { type: "release", releaseId: "release-1" },
       ),
     ];
 

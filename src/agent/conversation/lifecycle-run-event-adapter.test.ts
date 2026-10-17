@@ -42,6 +42,39 @@ function createCollector(overrides: {
 }
 
 describe("lifecycle run event adapter", () => {
+  it("rejects partial custom clocks before scheduling any work", () => {
+    const common = {
+      runId: "run-1",
+      attemptId: "attempt-1",
+      attemptIndex: 0,
+      messageId: "message-1",
+      onEvents: () => {},
+    };
+    let scheduled = 0;
+    assertThrows(
+      () =>
+        createLifecycleRunEventAdapter({
+          ...common,
+          setTimer: () => {
+            scheduled++;
+            return 1;
+          },
+        }),
+      TypeError,
+      "both setTimer and clearTimer",
+    );
+    assertThrows(
+      () =>
+        createLifecycleRunEventAdapter({
+          ...common,
+          clearTimer: () => {},
+        }),
+      TypeError,
+      "both setTimer and clearTimer",
+    );
+    assertEquals(scheduled, 0);
+  });
+
   it("emits balanced coalesced version 2 events with unique identity", () => {
     const { emitted, adapter } = createCollector();
     for (

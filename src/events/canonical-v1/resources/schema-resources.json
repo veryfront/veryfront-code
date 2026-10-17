@@ -1,0 +1,941 @@
+{
+  "version": "1",
+  "resources": {
+    "urn:veryfront:events:1:data:run.requested:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.requested:typed",
+      "title": "com.veryfront.run.requested (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRequested"
+    },
+    "urn:veryfront:events:1:data:run.requested:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.requested:public",
+      "title": "com.veryfront.run.requested (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRequestedPublicData"
+    },
+    "urn:veryfront:events:1:data:run.requested:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.requested:diagnostic",
+      "title": "com.veryfront.run.requested (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRequested"
+    },
+    "urn:veryfront:events:1:data:run.enqueued:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.enqueued:typed",
+      "title": "com.veryfront.run.enqueued (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunEnqueued"
+    },
+    "urn:veryfront:events:1:data:run.enqueued:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.enqueued:public",
+      "title": "com.veryfront.run.enqueued (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunEnqueuedPublicData"
+    },
+    "urn:veryfront:events:1:data:run.enqueued:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.enqueued:diagnostic",
+      "title": "com.veryfront.run.enqueued (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunEnqueued"
+    },
+    "urn:veryfront:events:1:data:run.started:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.started:typed",
+      "title": "com.veryfront.run.started (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_started"
+    },
+    "urn:veryfront:events:1:data:run.started:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.started:public",
+      "title": "com.veryfront.run.started (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_started"
+    },
+    "urn:veryfront:events:1:data:run.started:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.started:diagnostic",
+      "title": "com.veryfront.run.started (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_started"
+    },
+    "urn:veryfront:events:1:data:run.succeeded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.succeeded:typed",
+      "title": "com.veryfront.run.succeeded (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_succeeded"
+    },
+    "urn:veryfront:events:1:data:run.succeeded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.succeeded:public",
+      "title": "com.veryfront.run.succeeded (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_succeeded"
+    },
+    "urn:veryfront:events:1:data:run.succeeded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.succeeded:diagnostic",
+      "title": "com.veryfront.run.succeeded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_succeeded"
+    },
+    "urn:veryfront:events:1:data:run.failed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.failed:typed",
+      "title": "com.veryfront.run.failed (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_failed"
+    },
+    "urn:veryfront:events:1:data:run.failed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.failed:public",
+      "title": "com.veryfront.run.failed (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_failed"
+    },
+    "urn:veryfront:events:1:data:run.failed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.failed:diagnostic",
+      "title": "com.veryfront.run.failed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_failed"
+    },
+    "urn:veryfront:events:1:data:run.cancelled:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.cancelled:typed",
+      "title": "com.veryfront.run.cancelled (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_cancelled"
+    },
+    "urn:veryfront:events:1:data:run.cancelled:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.cancelled:public",
+      "title": "com.veryfront.run.cancelled (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_cancelled"
+    },
+    "urn:veryfront:events:1:data:run.cancelled:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.cancelled:diagnostic",
+      "title": "com.veryfront.run.cancelled (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_cancelled"
+    },
+    "urn:veryfront:events:1:data:run.paused:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.paused:typed",
+      "title": "com.veryfront.run.paused (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_paused"
+    },
+    "urn:veryfront:events:1:data:run.paused:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.paused:public",
+      "title": "com.veryfront.run.paused (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_paused"
+    },
+    "urn:veryfront:events:1:data:run.paused:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.paused:diagnostic",
+      "title": "com.veryfront.run.paused (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_paused"
+    },
+    "urn:veryfront:events:1:data:step.started:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.started:typed",
+      "title": "com.veryfront.step.started (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_started"
+    },
+    "urn:veryfront:events:1:data:step.started:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.started:public",
+      "title": "com.veryfront.step.started (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_started"
+    },
+    "urn:veryfront:events:1:data:step.started:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.started:diagnostic",
+      "title": "com.veryfront.step.started (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_started"
+    },
+    "urn:veryfront:events:1:data:step.succeeded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.succeeded:typed",
+      "title": "com.veryfront.step.succeeded (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_succeeded"
+    },
+    "urn:veryfront:events:1:data:step.succeeded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.succeeded:public",
+      "title": "com.veryfront.step.succeeded (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_succeeded"
+    },
+    "urn:veryfront:events:1:data:step.succeeded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.succeeded:diagnostic",
+      "title": "com.veryfront.step.succeeded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_succeeded"
+    },
+    "urn:veryfront:events:1:data:step.failed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.failed:typed",
+      "title": "com.veryfront.step.failed (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_failed"
+    },
+    "urn:veryfront:events:1:data:step.failed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.failed:public",
+      "title": "com.veryfront.step.failed (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_failed"
+    },
+    "urn:veryfront:events:1:data:step.failed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.failed:diagnostic",
+      "title": "com.veryfront.step.failed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_failed"
+    },
+    "urn:veryfront:events:1:data:step.cancelled:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.cancelled:typed",
+      "title": "com.veryfront.step.cancelled (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_cancelled"
+    },
+    "urn:veryfront:events:1:data:step.cancelled:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.cancelled:public",
+      "title": "com.veryfront.step.cancelled (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_cancelled"
+    },
+    "urn:veryfront:events:1:data:step.cancelled:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.cancelled:diagnostic",
+      "title": "com.veryfront.step.cancelled (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_cancelled"
+    },
+    "urn:veryfront:events:1:data:step.ended:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.ended:typed",
+      "title": "com.veryfront.step.ended (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_ended"
+    },
+    "urn:veryfront:events:1:data:step.ended:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.ended:public",
+      "title": "com.veryfront.step.ended (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_ended"
+    },
+    "urn:veryfront:events:1:data:step.ended:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:step.ended:diagnostic",
+      "title": "com.veryfront.step.ended (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/step_ended"
+    },
+    "urn:veryfront:events:1:data:tool-call.started:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.started:typed",
+      "title": "com.veryfront.tool-call.started (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_started"
+    },
+    "urn:veryfront:events:1:data:tool-call.started:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.started:public",
+      "title": "com.veryfront.tool-call.started (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_started"
+    },
+    "urn:veryfront:events:1:data:tool-call.started:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.started:diagnostic",
+      "title": "com.veryfront.tool-call.started (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_started"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:typed",
+      "title": "com.veryfront.tool-call.arguments.delta.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:public",
+      "title": "com.veryfront.tool-call.arguments.delta.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:diagnostic",
+      "title": "com.veryfront.tool-call.arguments.delta.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.ended:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.ended:typed",
+      "title": "com.veryfront.tool-call.arguments.ended (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_ended"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.ended:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.ended:public",
+      "title": "com.veryfront.tool-call.arguments.ended (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_ended"
+    },
+    "urn:veryfront:events:1:data:tool-call.arguments.ended:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.arguments.ended:diagnostic",
+      "title": "com.veryfront.tool-call.arguments.ended (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_arguments_ended"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.recorded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.recorded:typed",
+      "title": "com.veryfront.tool-call.result.recorded (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_result_recorded"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.recorded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.recorded:public",
+      "title": "com.veryfront.tool-call.result.recorded (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_result_recorded"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.recorded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.recorded:diagnostic",
+      "title": "com.veryfront.tool-call.result.recorded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_result_recorded"
+    },
+    "urn:veryfront:events:1:data:tool-call.status.reported:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.status.reported:typed",
+      "title": "com.veryfront.tool-call.status.reported (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_status_reported"
+    },
+    "urn:veryfront:events:1:data:tool-call.status.reported:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.status.reported:public",
+      "title": "com.veryfront.tool-call.status.reported (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_status_reported"
+    },
+    "urn:veryfront:events:1:data:tool-call.status.reported:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.status.reported:diagnostic",
+      "title": "com.veryfront.tool-call.status.reported (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/tool_call_status_reported"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.submitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.submitted:typed",
+      "title": "com.veryfront.tool-call.result.submitted (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultSubmitted"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.submitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.submitted:public",
+      "title": "com.veryfront.tool-call.result.submitted (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultSubmittedPublicData"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.submitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.submitted:diagnostic",
+      "title": "com.veryfront.tool-call.result.submitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultSubmitted"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.delivery.failed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:typed",
+      "title": "com.veryfront.tool-call.result.delivery.failed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultDeliveryFailed"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.delivery.failed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:public",
+      "title": "com.veryfront.tool-call.result.delivery.failed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultDeliveryFailedPublicData"
+    },
+    "urn:veryfront:events:1:data:tool-call.result.delivery.failed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:diagnostic",
+      "title": "com.veryfront.tool-call.result.delivery.failed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallResultDeliveryFailed"
+    },
+    "urn:veryfront:events:1:data:input-request.created:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.created:typed",
+      "title": "com.veryfront.input-request.created (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_created"
+    },
+    "urn:veryfront:events:1:data:input-request.created:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.created:public",
+      "title": "com.veryfront.input-request.created (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_created"
+    },
+    "urn:veryfront:events:1:data:input-request.created:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.created:diagnostic",
+      "title": "com.veryfront.input-request.created (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_created"
+    },
+    "urn:veryfront:events:1:data:input-request.updated:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.updated:typed",
+      "title": "com.veryfront.input-request.updated (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_updated"
+    },
+    "urn:veryfront:events:1:data:input-request.updated:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.updated:public",
+      "title": "com.veryfront.input-request.updated (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_updated"
+    },
+    "urn:veryfront:events:1:data:input-request.updated:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:input-request.updated:diagnostic",
+      "title": "com.veryfront.input-request.updated (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/input_request_updated"
+    },
+    "urn:veryfront:events:1:data:child-run.reported:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:child-run.reported:typed",
+      "title": "com.veryfront.child-run.reported (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/child_run_reported"
+    },
+    "urn:veryfront:events:1:data:child-run.reported:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:child-run.reported:public",
+      "title": "com.veryfront.child-run.reported (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/child_run_reported"
+    },
+    "urn:veryfront:events:1:data:child-run.reported:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:child-run.reported:diagnostic",
+      "title": "com.veryfront.child-run.reported (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/child_run_reported"
+    },
+    "urn:veryfront:events:1:data:message.text.started:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.started:typed",
+      "title": "com.veryfront.message.text.started (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_started"
+    },
+    "urn:veryfront:events:1:data:message.text.started:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.started:public",
+      "title": "com.veryfront.message.text.started (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_started"
+    },
+    "urn:veryfront:events:1:data:message.text.started:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.started:diagnostic",
+      "title": "com.veryfront.message.text.started (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_started"
+    },
+    "urn:veryfront:events:1:data:message.text.delta.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.delta.emitted:typed",
+      "title": "com.veryfront.message.text.delta.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.text.delta.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.delta.emitted:public",
+      "title": "com.veryfront.message.text.delta.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.text.delta.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.delta.emitted:diagnostic",
+      "title": "com.veryfront.message.text.delta.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.text.ended:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.ended:typed",
+      "title": "com.veryfront.message.text.ended (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_ended"
+    },
+    "urn:veryfront:events:1:data:message.text.ended:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.ended:public",
+      "title": "com.veryfront.message.text.ended (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_ended"
+    },
+    "urn:veryfront:events:1:data:message.text.ended:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.text.ended:diagnostic",
+      "title": "com.veryfront.message.text.ended (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_text_ended"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.started:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.started:typed",
+      "title": "com.veryfront.message.reasoning.started (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_started"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.started:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.started:public",
+      "title": "com.veryfront.message.reasoning.started (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_started"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.started:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.started:diagnostic",
+      "title": "com.veryfront.message.reasoning.started (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_started"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.delta.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:typed",
+      "title": "com.veryfront.message.reasoning.delta.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.delta.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:public",
+      "title": "com.veryfront.message.reasoning.delta.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.delta.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:diagnostic",
+      "title": "com.veryfront.message.reasoning.delta.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.ended:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.ended:typed",
+      "title": "com.veryfront.message.reasoning.ended (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_ended"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.ended:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.ended:public",
+      "title": "com.veryfront.message.reasoning.ended (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_ended"
+    },
+    "urn:veryfront:events:1:data:message.reasoning.ended:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.reasoning.ended:diagnostic",
+      "title": "com.veryfront.message.reasoning.ended (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_reasoning_ended"
+    },
+    "urn:veryfront:events:1:data:messages.snapshot.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:messages.snapshot.emitted:typed",
+      "title": "com.veryfront.messages.snapshot.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/messages_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:messages.snapshot.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:messages.snapshot.emitted:public",
+      "title": "com.veryfront.messages.snapshot.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/messages_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:messages.snapshot.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:messages.snapshot.emitted:diagnostic",
+      "title": "com.veryfront.messages.snapshot.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/messages_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.snapshot.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:typed",
+      "title": "com.veryfront.shared-state.snapshot.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.snapshot.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:public",
+      "title": "com.veryfront.shared-state.snapshot.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.snapshot.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:diagnostic",
+      "title": "com.veryfront.shared-state.snapshot.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_snapshot_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.delta.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.delta.emitted:typed",
+      "title": "com.veryfront.shared-state.delta.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.delta.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.delta.emitted:public",
+      "title": "com.veryfront.shared-state.delta.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:shared-state.delta.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:shared-state.delta.emitted:diagnostic",
+      "title": "com.veryfront.shared-state.delta.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/state_delta_emitted"
+    },
+    "urn:veryfront:events:1:data:message.url.referenced:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.url.referenced:typed",
+      "title": "com.veryfront.message.url.referenced (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_url_referenced"
+    },
+    "urn:veryfront:events:1:data:message.url.referenced:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.url.referenced:public",
+      "title": "com.veryfront.message.url.referenced (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_url_referenced"
+    },
+    "urn:veryfront:events:1:data:message.url.referenced:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.url.referenced:diagnostic",
+      "title": "com.veryfront.message.url.referenced (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_url_referenced"
+    },
+    "urn:veryfront:events:1:data:message.document.referenced:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.document.referenced:typed",
+      "title": "com.veryfront.message.document.referenced (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_document_referenced"
+    },
+    "urn:veryfront:events:1:data:message.document.referenced:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.document.referenced:public",
+      "title": "com.veryfront.message.document.referenced (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_document_referenced"
+    },
+    "urn:veryfront:events:1:data:message.document.referenced:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.document.referenced:diagnostic",
+      "title": "com.veryfront.message.document.referenced (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_document_referenced"
+    },
+    "urn:veryfront:events:1:data:message.file.attached:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.file.attached:typed",
+      "title": "com.veryfront.message.file.attached (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_file_attached"
+    },
+    "urn:veryfront:events:1:data:message.file.attached:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.file.attached:public",
+      "title": "com.veryfront.message.file.attached (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_file_attached"
+    },
+    "urn:veryfront:events:1:data:message.file.attached:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:message.file.attached:diagnostic",
+      "title": "com.veryfront.message.file.attached (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/message_file_attached"
+    },
+    "urn:veryfront:events:1:data:run.log.captured:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.log.captured:typed",
+      "title": "com.veryfront.run.log.captured (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_log_captured"
+    },
+    "urn:veryfront:events:1:data:run.log.captured:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.log.captured:public",
+      "title": "com.veryfront.run.log.captured (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_log_captured"
+    },
+    "urn:veryfront:events:1:data:run.log.captured:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.log.captured:diagnostic",
+      "title": "com.veryfront.run.log.captured (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/run_log_captured"
+    },
+    "urn:veryfront:events:1:data:stream.heartbeat.emitted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:stream.heartbeat.emitted:typed",
+      "title": "com.veryfront.stream.heartbeat.emitted (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/stream_heartbeat_emitted"
+    },
+    "urn:veryfront:events:1:data:stream.heartbeat.emitted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:stream.heartbeat.emitted:public",
+      "title": "com.veryfront.stream.heartbeat.emitted (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/stream_heartbeat_emitted"
+    },
+    "urn:veryfront:events:1:data:stream.heartbeat.emitted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:stream.heartbeat.emitted:diagnostic",
+      "title": "com.veryfront.stream.heartbeat.emitted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/stream_heartbeat_emitted"
+    },
+    "urn:veryfront:events:1:data:model-call.input.captured:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.input.captured:typed",
+      "title": "com.veryfront.model-call.input.captured (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ModelInputCaptured"
+    },
+    "urn:veryfront:events:1:data:model-call.input.captured:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.input.captured:public",
+      "title": "com.veryfront.model-call.input.captured (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ModelInputCapturedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:model-call.input.captured:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.input.captured:diagnostic",
+      "title": "com.veryfront.model-call.input.captured (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ModelInputCaptured"
+    },
+    "urn:veryfront:events:1:data:model-call.usage.recorded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.usage.recorded:typed",
+      "title": "com.veryfront.model-call.usage.recorded (typed)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/model_usage_recorded"
+    },
+    "urn:veryfront:events:1:data:model-call.usage.recorded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.usage.recorded:public",
+      "title": "com.veryfront.model-call.usage.recorded (public)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/model_usage_recorded"
+    },
+    "urn:veryfront:events:1:data:model-call.usage.recorded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:model-call.usage.recorded:diagnostic",
+      "title": "com.veryfront.model-call.usage.recorded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:public-payloads#/$defs/model_usage_recorded"
+    },
+    "urn:veryfront:events:1:data:run.authorization.sealed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.authorization.sealed:typed",
+      "title": "com.veryfront.run.authorization.sealed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunAuthorizationSealed"
+    },
+    "urn:veryfront:events:1:data:run.authorization.sealed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.authorization.sealed:public",
+      "title": "com.veryfront.run.authorization.sealed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunAuthorizationSealedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.authorization.sealed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.authorization.sealed:diagnostic",
+      "title": "com.veryfront.run.authorization.sealed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunAuthorizationSealed"
+    },
+    "urn:veryfront:events:1:data:run.runtime.owner.changed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.owner.changed:typed",
+      "title": "com.veryfront.run.runtime.owner.changed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeOwnerChanged"
+    },
+    "urn:veryfront:events:1:data:run.runtime.owner.changed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.owner.changed:public",
+      "title": "com.veryfront.run.runtime.owner.changed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeOwnerChangedPublicData"
+    },
+    "urn:veryfront:events:1:data:run.runtime.owner.changed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.owner.changed:diagnostic",
+      "title": "com.veryfront.run.runtime.owner.changed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeOwnerChanged"
+    },
+    "urn:veryfront:events:1:data:run.runtime.retry.recorded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.retry.recorded:typed",
+      "title": "com.veryfront.run.runtime.retry.recorded (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeRetryRecorded"
+    },
+    "urn:veryfront:events:1:data:run.runtime.retry.recorded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.retry.recorded:public",
+      "title": "com.veryfront.run.runtime.retry.recorded (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeRetryRecorded"
+    },
+    "urn:veryfront:events:1:data:run.runtime.retry.recorded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.runtime.retry.recorded:diagnostic",
+      "title": "com.veryfront.run.runtime.retry.recorded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunRuntimeRetryRecorded"
+    },
+    "urn:veryfront:events:1:data:run.context.compacted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.context.compacted:typed",
+      "title": "com.veryfront.run.context.compacted (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunContextCompacted"
+    },
+    "urn:veryfront:events:1:data:run.context.compacted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.context.compacted:public",
+      "title": "com.veryfront.run.context.compacted (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunContextCompactedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.context.compacted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.context.compacted:diagnostic",
+      "title": "com.veryfront.run.context.compacted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunContextCompacted"
+    },
+    "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:typed",
+      "title": "com.veryfront.run.tool.exposure.checkpointed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunToolExposureCheckpointed"
+    },
+    "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:public",
+      "title": "com.veryfront.run.tool.exposure.checkpointed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunToolExposureCheckpointedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:diagnostic",
+      "title": "com.veryfront.run.tool.exposure.checkpointed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunToolExposureCheckpointed"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.checkpointed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:typed",
+      "title": "com.veryfront.run.provider.replay.checkpointed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayCheckpointed"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.checkpointed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:public",
+      "title": "com.veryfront.run.provider.replay.checkpointed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayCheckpointedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.checkpointed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:diagnostic",
+      "title": "com.veryfront.run.provider.replay.checkpointed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayCheckpointed"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.required:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:typed",
+      "title": "com.veryfront.run.provider.replay.boundary.required (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRequired"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.required:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:public",
+      "title": "com.veryfront.run.provider.replay.boundary.required (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRequiredPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.required:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:diagnostic",
+      "title": "com.veryfront.run.provider.replay.boundary.required (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRequired"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:typed",
+      "title": "com.veryfront.run.provider.replay.boundary.recorded (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRecorded"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:public",
+      "title": "com.veryfront.run.provider.replay.boundary.recorded (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRecordedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:diagnostic",
+      "title": "com.veryfront.run.provider.replay.boundary.recorded (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunProviderReplayBoundaryRecorded"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.requested:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.requested:typed",
+      "title": "com.veryfront.run.dispatch.requested (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchRequested"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.requested:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.requested:public",
+      "title": "com.veryfront.run.dispatch.requested (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchRequestedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.requested:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.requested:diagnostic",
+      "title": "com.veryfront.run.dispatch.requested (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchRequested"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.accepted:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.accepted:typed",
+      "title": "com.veryfront.run.dispatch.accepted (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchAccepted"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.accepted:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.accepted:public",
+      "title": "com.veryfront.run.dispatch.accepted (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchAcceptedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.dispatch.accepted:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.dispatch.accepted:diagnostic",
+      "title": "com.veryfront.run.dispatch.accepted (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunDispatchAccepted"
+    },
+    "urn:veryfront:events:1:data:run.billing.mode.retained:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.mode.retained:typed",
+      "title": "com.veryfront.run.billing.mode.retained (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingModeRetained"
+    },
+    "urn:veryfront:events:1:data:run.billing.mode.retained:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.mode.retained:public",
+      "title": "com.veryfront.run.billing.mode.retained (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingModeRetainedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.billing.mode.retained:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.mode.retained:diagnostic",
+      "title": "com.veryfront.run.billing.mode.retained (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingModeRetained"
+    },
+    "urn:veryfront:events:1:data:run.billing.usage.retained:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.usage.retained:typed",
+      "title": "com.veryfront.run.billing.usage.retained (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingUsageRetained"
+    },
+    "urn:veryfront:events:1:data:run.billing.usage.retained:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.usage.retained:public",
+      "title": "com.veryfront.run.billing.usage.retained (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingUsageRetainedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.billing.usage.retained:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.billing.usage.retained:diagnostic",
+      "title": "com.veryfront.run.billing.usage.retained (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunBillingUsageRetained"
+    },
+    "urn:veryfront:events:1:data:tool-call.refused:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.refused:typed",
+      "title": "com.veryfront.tool-call.refused (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallRefused"
+    },
+    "urn:veryfront:events:1:data:tool-call.refused:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.refused:public",
+      "title": "com.veryfront.tool-call.refused (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallRefusedPublicData"
+    },
+    "urn:veryfront:events:1:data:tool-call.refused:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:tool-call.refused:diagnostic",
+      "title": "com.veryfront.tool-call.refused (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/ToolCallRefused"
+    },
+    "urn:veryfront:events:1:data:run.input.uploads.sealed:typed": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.input.uploads.sealed:typed",
+      "title": "com.veryfront.run.input.uploads.sealed (typed)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunInputUploadsSealed"
+    },
+    "urn:veryfront:events:1:data:run.input.uploads.sealed:public": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.input.uploads.sealed:public",
+      "title": "com.veryfront.run.input.uploads.sealed (public)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunInputUploadsSealedPublicTypeOnly"
+    },
+    "urn:veryfront:events:1:data:run.input.uploads.sealed:diagnostic": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:veryfront:events:1:data:run.input.uploads.sealed:diagnostic",
+      "title": "com.veryfront.run.input.uploads.sealed (diagnostic)",
+      "$ref": "urn:veryfront:events:1:control-payloads#/$defs/RunInputUploadsSealed"
+    }
+  }
+}

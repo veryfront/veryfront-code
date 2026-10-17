@@ -13,6 +13,8 @@ import {
   createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
 } from "#veryfront/agent/service/agent-worker-runtime-ownership-probe.ts";
 import { createExternalAgentWorkerClient } from "#veryfront/agent/service/external-worker-client.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import type { AgentWorkerRuntimeOwnershipProbeClaimInput } from "#veryfront/agent/service/agent-worker-runtime-ownership-probe.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
@@ -66,9 +68,9 @@ function credentials(suffix = "") {
 }
 
 function managedTestEmbedder(calls: string[] = []) {
-  const vector = Array.from({ length: 1536 }, () => 0.001);
+  const vector = Array.from({ length: 3072 }, () => 0.001);
   return {
-    model: "veryfront-cloud/openai/text-embedding-3-small",
+    model: "veryfront-cloud/google/gemini-embedding-001",
     async embed(_text: string): Promise<number[]> {
       throw new Error("probe should request document embedding through embedMany");
     },
@@ -81,12 +83,12 @@ function managedTestEmbedder(calls: string[] = []) {
 
 function overflowingTestEmbedder() {
   return {
-    model: "veryfront-cloud/openai/text-embedding-3-small",
+    model: "veryfront-cloud/google/gemini-embedding-001",
     async embed(_text: string): Promise<number[]> {
       throw new Error("probe should request document embedding through embedMany");
     },
     async embedMany(texts: string[]): Promise<number[][]> {
-      return texts.map(() => Array.from({ length: 1536 }, () => 1e300));
+      return texts.map(() => Array.from({ length: 3072 }, () => 1e300));
     },
   };
 }
@@ -280,9 +282,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
           chunks?: Array<{ vector?: unknown[] }>;
         };
         assertEquals(index.expected_version_id, "22222222-2222-4222-8222-222222222222");
-        assertEquals(index.model?.name, "text-embedding-3-small");
-        assertEquals(index.model?.dimension, 1536);
-        assertEquals(index.chunks?.[0]?.vector?.length, 1536);
+        assertEquals(index.model?.name, "gemini-embedding-001");
+        assertEquals(index.model?.dimension, 3072);
+        assertEquals(index.chunks?.[0]?.vector?.length, 3072);
         return Response.json({
           file_id: options.wrongIndexFile
             ? "99999999-9999-4999-8999-999999999999"
@@ -808,9 +810,9 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
         chunks?: Array<{ vector?: unknown[] }>;
       };
       assertEquals(index.expected_version_id, "22222222-2222-4222-8222-222222222222");
-      assertEquals(index.model?.name, "text-embedding-3-small");
-      assertEquals(index.model?.dimension, 1536);
-      assertEquals(index.chunks?.[0]?.vector?.length, 1536);
+      assertEquals(index.model?.name, "gemini-embedding-001");
+      assertEquals(index.model?.dimension, 3072);
+      assertEquals(index.chunks?.[0]?.vector?.length, 3072);
       return jsonResponse({
         file_id: "11111111-1111-4111-8111-111111111111",
         version_id: "22222222-2222-4222-8222-222222222222",
@@ -948,7 +950,7 @@ it("does not let replaced String model helpers validate a wrong embedder", async
   Object.defineProperty(String.prototype, "slice", {
     configurable: true,
     value(this: string, start?: number, end?: number) {
-      if (String(this) === "local/bad-model") return "openai/text-embedding-3-small";
+      if (String(this) === "local/bad-model") return "openai/gemini-embedding-001";
       return Reflect.apply(originalSlice, this, [start, end]);
     },
   });
@@ -2785,4 +2787,135 @@ it("logs default receipts with hashed identifiers only", async () => {
     assertEquals(field in receipt, false);
     assertEquals(typeof receipt[`${field}Hash`], "string");
   }
+});
+
+it("uses only issued inference authority for the shipped probe embedding transport", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(activation, (r) => receipts.push(r));
+  const sourceCalls: Request[] = [];
+  const gatewayCalls: Request[] = [];
+  const sourceFetch = claimProofFetch({ calls: sourceCalls });
+  await withMockFetch((input, init) => {
+    const request = new Request(input, init);
+    gatewayCalls.push(request);
+    return Promise.resolve(Response.json({ embedding: { values: Array(3072).fill(0.001) } }));
+  }, async () => {
+    const client = createExternalAgentWorkerClient({
+      apiUrl: "https://api.example.test",
+      authToken: "operator-must-not-be-used",
+      ownershipProbe: probe,
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        if (new URL(request.url).pathname.endsWith("/claim")) {
+          return Promise.resolve(
+            Response.json({
+              run: { ...run(), lease_expires_at: new Date(Date.now() + 30_000).toISOString() },
+              credentials: {
+                auth_token: "callback-only",
+                inference_token: "issued-inference-only",
+                run_event_token: "writer",
+                run_terminal_token: terminalToken(),
+              },
+            }),
+          );
+        }
+        return sourceFetch(input, init);
+      },
+    });
+    await client.claimRun({ workerId, leaseDurationSeconds: 30 });
+  });
+  assertEquals(gatewayCalls.length, 1, JSON.stringify(receipts));
+  assertEquals(gatewayCalls[0]?.headers.get("Authorization"), "Bearer issued-inference-only");
+  assert(sourceCalls.every((r) => !r.headers.get("Authorization")?.includes("issued-inference")));
+  assert(!JSON.stringify(receipts).includes("issued-inference-only"));
+});
+
+it("fails closed without a dedicated inference token instead of using callback or operator authority", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  let gatewayCalls = 0;
+  const probe = createAgentWorkerRuntimeOwnershipProbe(activation, (r) => receipts.push(r));
+  await withMockFetch(() => {
+    gatewayCalls++;
+    throw new Error("Inference must not be attempted");
+  }, () =>
+    probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch(),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+    }));
+  assertEquals(gatewayCalls, 0);
+  assertEquals(receipts[0]?.status, "error");
+});
+
+it("invalidates retained probe inference authority on inference-only renewal and completion", async () => {
+  const retained: AgentWorkerRuntimeOwnershipProbeClaimInput[] = [];
+  const client = createExternalAgentWorkerClient({
+    apiUrl: "https://api.example.test",
+    authToken: "operator",
+    ownershipProbe: {
+      afterClaim(input) {
+        retained.push(input);
+        return Promise.resolve();
+      },
+      afterRenew(input) {
+        retained.push(input);
+        return Promise.resolve();
+      },
+      afterLeaseLost() {
+        return Promise.resolve();
+      },
+      afterCancelled() {
+        return Promise.resolve();
+      },
+    },
+    fetch: (input, init) => {
+      const request = new Request(input, init);
+      const renewal = new URL(request.url).pathname.endsWith("/lease");
+      if (new URL(request.url).pathname.endsWith("/finalize")) {
+        return Promise.resolve(Response.json({ id: canonicalRunId, status: "completed" }));
+      }
+      return Promise.resolve(Response.json({
+        run: run(),
+        credentials: {
+          auth_token: "callback",
+          run_event_token: "unchanged-writer",
+          run_terminal_token: terminalToken(),
+          inference_token: renewal ? "inference-new" : "inference-old",
+        },
+      }));
+    },
+  });
+  await client.claimRun({ workerId, leaseDurationSeconds: 30 });
+  assertEquals(retained[0]?.credentials.inferenceToken, "inference-old");
+  retained[0]?.credentials.assertInferenceCredentialActive?.();
+  await client.renewLease({ workerId, runId: publicRunId, leaseDurationSeconds: 30 });
+  assertEquals(retained[1]?.credentials.inferenceToken, "inference-new");
+  await assertRejects(
+    async () => retained[0]?.credentials.assertInferenceCredentialActive?.(),
+    Error,
+    "inference authority",
+  );
+  retained[1]?.credentials.assertInferenceCredentialActive?.();
+  const stale = retained[0];
+  assert(stale);
+  let staleGatewayCalls = 0;
+  const staleReceipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const defaultProbe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (r) => staleReceipts.push(r),
+  );
+  await withMockFetch(() => {
+    staleGatewayCalls++;
+    throw new Error("Stale inference must not reach the gateway");
+  }, () => defaultProbe.afterClaim({ ...stale, fetch: claimProofFetch() }));
+  assertEquals(staleGatewayCalls, 0);
+  assertEquals(staleReceipts[0]?.status, "error");
+  await client.completeRun({ runId: publicRunId, status: "completed" });
+  await assertRejects(
+    async () => retained[1]?.credentials.assertInferenceCredentialActive?.(),
+    Error,
+    "inference authority",
+  );
 });

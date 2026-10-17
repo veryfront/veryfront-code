@@ -12,7 +12,7 @@ export function normalizeIndexedFilePath(file: ProjectFile): NormalizedIndexedPa
 
   const ext = file.type === "page" ? ".mdx" : ".tsx";
   return {
-    normalizedPath: file.path.replace(/\/+$/, "") + "/index" + ext,
+    normalizedPath: file.path.replace(/(?<!\/)\/+$/, "") + "/index" + ext,
     originalPath: file.path,
   };
 }

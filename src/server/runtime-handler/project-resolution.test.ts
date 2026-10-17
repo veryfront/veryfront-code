@@ -176,6 +176,17 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.environmentName, undefined);
     });
 
+    it("decodes trusted Unicode environment identity", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "vf-utf8:%E6%97%A5%E6%9C%AC%E8%AA%9E",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
+      assertEquals(headers.environmentName, "日本語");
+    });
+
     it("extracts environment identity only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: {

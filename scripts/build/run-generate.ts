@@ -45,6 +45,13 @@ export interface GeneratorUnit {
 
 export const UNITS: GeneratorUnit[] = [
   {
+    name: "yaml-runtime",
+    commands: [["deno", "run", "--frozen", "-A", "extensions/ext-yaml/scripts/prebundle.ts"]],
+    inputRoots: ["extensions/ext-yaml"],
+    inputFiles: ["deno.lock", "deno.json"],
+    outputs: ["extensions/ext-yaml/src/yaml-runtime.generated.js"],
+  },
+  {
     // The two lockfiles are the whole input: `deno compile` freezes each
     // lock's npm section into the binary compiled against it (full profile ->
     // deno.lock, proxy profile -> scripts/build/proxy-deno.lock), and the

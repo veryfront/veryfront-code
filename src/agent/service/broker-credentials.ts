@@ -9,7 +9,7 @@ export function containsBrokerCredential(
   for (const credential of credentials) {
     if (!credential) continue;
     if (containsString(value, credential)) return true;
-    const bearer = /^Bearer\s+(.+)$/i.exec(credential)?.[1];
+    const bearer = /^Bearer\s+(\S.*)$/i.exec(credential)?.[1];
     if (bearer && containsString(value, bearer)) return true;
   }
   return false;

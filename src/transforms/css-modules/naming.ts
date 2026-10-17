@@ -13,7 +13,7 @@ const CSS_MODULE_EXTENSION = ".module.css";
  */
 export function normalizeCssModuleKey(path: string): string {
   const withoutFilePrefix = path.startsWith("file://") ? path.slice("file://".length) : path;
-  const withoutQuery = withoutFilePrefix.replace(/[?#].*$/, "");
+  const withoutQuery = withoutFilePrefix.replace(/[?#].*$/s, "");
   const slashed = withoutQuery.replace(/\\/g, "/");
   const collapsed = slashed.replace(/\/{2,}/g, "/");
   if (collapsed.startsWith("/")) return collapsed;

@@ -120,7 +120,7 @@ export async function runDenoCheck(
   }
 
   const outputPromise = child.output();
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const result = await Promise.race([
     outputPromise.then((output) => ({ kind: "output" as const, output })),
     new Promise<{ kind: "timeout" }>((resolve) => {
@@ -190,7 +190,7 @@ function primaryDiagnosticTestFiles(output: string): Array<string | undefined> {
   const files: Array<string | undefined> = [];
   for (
     const match of output.matchAll(
-      /TS\d+ \[ERROR\]:[\s\S]*?^\s*at (file:\/\/.+?):\d+:\d+\s*$/gm,
+      /TS\d+ \[ERROR\]:(?:(?!TS\d+ \[ERROR\]:)[\s\S])*?^[^\S\n]*at (file:\/\/[^\r\n]+?):\d+:\d+[^\S\n]*$/gm,
     )
   ) {
     let pathname: string;

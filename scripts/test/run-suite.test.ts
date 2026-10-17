@@ -48,6 +48,7 @@ const UNIT_CWD_FILES = [
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  "src/platform/adapters/runtime/deno/filesystem-adapter.test.ts",
   "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
@@ -71,6 +72,37 @@ describe("child-run CPU measurement isolation", () => {
       assertEquals(
         buildDenoSuiteCommandArgs(suite, [summaryTest], {
           parallel: shouldRunDenoBatchInParallel(true, [summaryTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
+describe("native filesystem watcher measurement isolation", () => {
+  it("runs native watcher assertions alone without dropping unit or coverage ownership", async () => {
+    const watcherTest =
+      "src/platform/adapters/runtime/deno/filesystem-adapter.test.ts";
+    const files = ["src/a.test.ts", watcherTest, "src/b.test.ts"];
+    for (const limit of [50, null]) {
+      assertEquals(
+        partitionDenoSuiteFiles(files, limit),
+        files.map((file) => [file]),
+      );
+    }
+    const parallel = await planSuiteFiles({ suite: "unit:parallel" });
+    const serial = await planSuiteFiles({ suite: "unit:serial" });
+    const coverage = await planSuiteFiles({ suite: "coverage:unit" });
+    assertEquals(parallel.files.includes(watcherTest), false);
+    assertEquals(serial.files.filter((file) => file === watcherTest).length, 1);
+    assertEquals(
+      coverage.files.filter((file) => file === watcherTest).length,
+      1,
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [watcherTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [watcherTest]),
         }).includes("--parallel"),
         false,
       );
@@ -285,6 +317,18 @@ describe("suite planning parity", () => {
       assert(
         plan.files.includes(fixture),
         `${suite} must retain service attribution intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+        ),
+        `${suite} must retain response cleanup intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+        ),
+        `${suite} must retain header identity intrinsic coverage`,
       );
       assert(
         plan.files.includes(
@@ -1013,6 +1057,8 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
@@ -1053,6 +1099,8 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",

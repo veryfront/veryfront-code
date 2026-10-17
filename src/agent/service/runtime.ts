@@ -313,6 +313,7 @@ export function createAgentServiceRuntime<
       tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
       toolLoading: agentConfig.toolLoading,
       bootstrapTools: agentConfig.bootstrapTools,
+      optionalBootstrapTools: agentConfig.optionalBootstrapTools,
       bootstrapSkill: agentConfig.bootstrapSkill,
       toolResultContext: agentConfig.toolResultContext,
       knowledge: agentConfig.knowledge,

@@ -1,3 +1,4 @@
+import { rewriteWorkspacePackageVersion } from "../lib/workspace-package-version.ts";
 import { join } from "#std/path";
 
 type PrepareRcBuildVersionOptions = {
@@ -5,8 +6,7 @@ type PrepareRcBuildVersionOptions = {
   version: string;
 };
 
-const VERSION_CONSTANT_PATTERN =
-  /^export const VERSION = "([^"]+)";$/gm;
+const VERSION_CONSTANT_PATTERN = /^export const VERSION = "([^"]+)";$/gm;
 
 /** Inject the CI-generated RC version before npm build artifacts are created. */
 export async function prepareRcBuildVersion(
@@ -19,14 +19,19 @@ export async function prepareRcBuildVersion(
     "src/utils/version-constant.ts",
   );
   const manifestSource = await Deno.readTextFile(manifestPath);
-  const manifest = JSON.parse(manifestSource) as { version?: unknown };
+  const manifest = JSON.parse(manifestSource) as {
+    name?: unknown;
+    version?: unknown;
+  };
   const baseVersion = manifest.version;
 
   if (typeof baseVersion !== "string" || baseVersion.length === 0) {
     throw new Error("deno.json must define a non-empty string version");
   }
   if (!/^\d+\.\d+\.\d+-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/.test(baseVersion)) {
-    throw new Error(`deno.json version ${baseVersion} is not a prerelease version`);
+    throw new Error(
+      `deno.json version ${baseVersion} is not a prerelease version`,
+    );
   }
 
   const versionPrefix = `${baseVersion}.`;
@@ -50,12 +55,13 @@ export async function prepareRcBuildVersion(
   }
   if (versionConstantMatches[0][1] !== baseVersion) {
     throw new Error(
-      `src/utils/version-constant.ts version ${versionConstantMatches[0][1]} does not match deno.json version ${baseVersion}`,
+      `src/utils/version-constant.ts version ${
+        versionConstantMatches[0][1]
+      } does not match deno.json version ${baseVersion}`,
     );
   }
 
-  const manifestVersionPattern =
-    /^(\s*"version"\s*:\s*)"([^"]+)"(,?\s*)$/gm;
+  const manifestVersionPattern = /^([^\S\n]*"version"\s*:\s*)"([^"]+)"(,?[^\S\n]*)$/gm;
   const manifestVersionMatches = [...manifestSource.matchAll(
     manifestVersionPattern,
   )];
@@ -63,8 +69,21 @@ export async function prepareRcBuildVersion(
     manifestVersionMatches.length !== 1 ||
     manifestVersionMatches[0][2] !== baseVersion
   ) {
-    throw new Error("deno.json must contain exactly one matching version field");
+    throw new Error(
+      "deno.json must contain exactly one matching version field",
+    );
   }
+
+  if (typeof manifest.name !== "string" || manifest.name.length === 0) {
+    throw new Error("deno.json must define a non-empty package name");
+  }
+  const lockPath = join(rootDir, "scripts/deno.lock");
+  const lockSource = await Deno.readTextFile(lockPath);
+  const nextLockSource = rewriteWorkspacePackageVersion(
+    lockSource,
+    `jsr:${manifest.name}@${baseVersion}`,
+    `jsr:${manifest.name}@${options.version}`,
+  );
 
   const nextManifestSource = manifestSource.replace(
     manifestVersionPattern,
@@ -77,6 +96,9 @@ export async function prepareRcBuildVersion(
 
   await Deno.writeTextFile(manifestPath, nextManifestSource);
   await Deno.writeTextFile(versionConstantPath, nextVersionConstantSource);
+  if (nextLockSource !== lockSource) {
+    await Deno.writeTextFile(lockPath, nextLockSource);
+  }
 }
 
 if (import.meta.main) {

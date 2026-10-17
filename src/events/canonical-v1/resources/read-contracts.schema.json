@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:read-contracts",
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "run_id",
+        "storage",
+        "view",
+        "recorded_at",
+        "event_class",
+        "is_error",
+        "span_id",
+        "turn_id",
+        "unrecoverable_fields"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storage": {
+          "enum": [
+            "persisted",
+            "derived"
+          ]
+        },
+        "view": {
+          "enum": [
+            "public",
+            "diagnostic"
+          ]
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "fact",
+                "delta"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {},
+        "unrecoverable_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "canonical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "event",
+        "metadata"
+      ],
+      "properties": {
+        "kind": {
+          "const": "canonical"
+        },
+        "event": {
+          "$ref": "urn:veryfront:events:1:stored-envelope"
+        },
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/metadata"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "storage": {
+                  "const": "persisted"
+                },
+                "recorded_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "legacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reason",
+        "legacy",
+        "metadata"
+      ],
+      "properties": {
+        "kind": {
+          "const": "legacy"
+        },
+        "reason": {
+          "enum": [
+            "unknown_type",
+            "reserved_type",
+            "blocked_type",
+            "unclassified_outcome",
+            "malformed_payload",
+            "discriminator_conflict",
+            "unavailable_converter",
+            "derived_history",
+            "unprojectable_view",
+            "unclassified_request",
+            "unclassified_dispatch"
+          ]
+        },
+        "legacy": {
+          "type": "object",
+          "required": [
+            "event_type",
+            "payload"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "event_type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "payload": {}
+          }
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      }
+    },
+    "transient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "event",
+        "view"
+      ],
+      "properties": {
+        "kind": {
+          "const": "transient"
+        },
+        "event": {
+          "$ref": "urn:veryfront:events:1:live-envelope"
+        },
+        "view": {
+          "enum": [
+            "public",
+            "diagnostic"
+          ]
+        }
+      }
+    },
+    "member": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/canonical"
+        },
+        {
+          "$ref": "#/$defs/legacy"
+        }
+      ]
+    },
+    "streamMember": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/canonical"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/legacy"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "metadata": {
+                  "type": "object",
+                  "properties": {
+                    "storage": {
+                      "const": "persisted"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "$ref": "#/$defs/transient"
+        }
+      ]
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entries",
+        "next_cursor",
+        "has_more"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "revision",
+        "events"
+      ],
+      "properties": {
+        "version": {
+          "const": "1"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "meaning",
+              "profile",
+              "schemas"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "format": "ce-string"
+              },
+              "meaning": {
+                "type": "string",
+                "minLength": 1,
+                "format": "ce-string"
+              },
+              "profile": {
+                "enum": [
+                  "stored",
+                  "live"
+                ]
+              },
+              "schemas": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "public",
+                  "diagnostic"
+                ],
+                "properties": {
+                  "public": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "diagnostic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "format": "ce-string"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "format": "ce-string"
+        },
+        "event_ids": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "x-semantic-rules": [
+    "Metadata event_id equals canonical envelope decimal id; metadata run_id equals subject and runid; recorded_at equals recordedat.",
+    "has_more equals next_cursor is not null; continuation equals last returned entry event_id.",
+    "Legacy payload is authorized caller-visible payload, never raw private storage.",
+    "Derived members retain legacy read positions; they do not assert persisted row identity."
+  ]
+}

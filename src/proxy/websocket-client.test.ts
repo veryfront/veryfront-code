@@ -415,7 +415,7 @@ describe("upstream WebSocket client", () => {
       // Bound the handshake wait too: if connection setup regresses and the
       // socket errors or closes without ever opening, an unbounded `onopen`
       // await would wedge the worker before the frame timeout below is armed.
-      let openTimer: number | undefined;
+      let openTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         await new Promise<void>((resolve, reject) => {
           socket.onopen = () => resolve();
@@ -441,7 +441,7 @@ describe("upstream WebSocket client", () => {
       // never settles, and an unbounded await would wedge the test worker
       // instead of failing. The timer is always cleared so the bounded wait
       // does not itself leak an op.
-      let frameTimer: number | undefined;
+      let frameTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           collected,
@@ -476,7 +476,7 @@ describe("upstream WebSocket client", () => {
       // Bound the teardown wait the same way as the waits above: a close
       // handshake that never completes would wedge the worker after the
       // assertions already passed.
-      let closeTimer: number | undefined;
+      let closeTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         const closed = new Promise<void>((resolve, reject) => {
           socket.onclose = () => resolve();

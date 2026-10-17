@@ -1,3 +1,12 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  currentToolResultSequence,
+  runWithToolResultSequence,
+} from "#veryfront/runtime/tool-result-sequence.ts";
+import {
+  isPrimaryRuntimeStream,
+  withRuntimeStreamOwnership,
+} from "#veryfront/runtime/runtime-stream-ownership.ts";
 import { readProjectExecutionParent } from "#veryfront/server/handlers/request/project-run-parent.ts";
 import { createTimedAgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getPrivateRunEventAppendRequestByteLength } from "#veryfront/agent/conversation/run-event-limits.ts";
@@ -801,16 +810,23 @@ describe("private observation authority and sizing", () => {
 });
 
 describe("runtime model-call private intrinsics", () => {
-  it("refuses exact capture controls after project code replaces array helpers", async () => {
+  it("validates exact capture controls after project code replaces array helpers", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    let capturedEvent: Parameters<AgentRunEventSink>[0] | undefined;
+    const sink: AgentRunEventSink = (event) => {
+      capturedEvent = event;
+      if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+        throw new Error("Expected model context");
+      }
+      return ({
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      });
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -872,31 +888,35 @@ describe("runtime model-call private intrinsics", () => {
         DurableRunEventPersistenceError,
         "system.providerOptions",
       );
-      await assertRejects(
+      await runWithMandatoryRunEventSink(
+        sink,
         async () =>
-          await runWithMandatoryRunEventSink(
-            sink,
-            async () =>
-              await generateText({
-                model,
-                messages: [{
-                  role: "assistant",
-                  content: [{ type: "text", text: "Prior answer" }],
-                  providerMetadata: {
-                    google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
-                  },
-                }, { role: "user", content: "Continue" }],
-              }),
-          ),
-        DurableRunEventPersistenceError,
-        "assistant.providerMetadata",
+          await generateText({
+            model,
+            messages: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Prior answer" }],
+              providerMetadata: {
+                google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+              },
+            }, { role: "user", content: "Continue" }],
+          }),
       );
     } finally {
       Array.prototype.filter = arrayFilter;
       Array.prototype.join = arrayJoin;
       Array.prototype.some = arraySome;
     }
-    assertEquals(dispatches, 0);
+    assertEquals(dispatches, 1);
+    assertEquals(capturedEvent?.type, "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+    if (capturedEvent?.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+      throw new Error("Missing capture");
+    }
+    assertEquals(capturedEvent.messages[0], {
+      role: "assistant",
+      content: [{ type: "text", text: "Prior answer" }],
+      providerMetadata: { google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] } },
+    });
   });
 
   it("projects request controls after project code replaces array and string helpers", () => {
@@ -966,5 +986,29 @@ describe("runtime model-call private intrinsics", () => {
     assertEquals(openai?.seed, undefined);
     assertEquals(openai?.stopSequences, undefined);
     assertEquals(openai?.reasoning, { enabled: true, effort: "low" });
+  });
+});
+
+describe("hosted result ownership private contexts", () => {
+  it("retains producer and stream ownership after project code replaces async-context methods", () => {
+    const run = AsyncLocalStorage.prototype.run;
+    const getStore = AsyncLocalStorage.prototype.getStore;
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    try {
+      AsyncLocalStorage.prototype.getStore = () => undefined;
+      AsyncLocalStorage.prototype.run = () => {
+        throw new Error("project async-context replacement");
+      };
+      runWithToolResultSequence(sessionId, () =>
+        withRuntimeStreamOwnership(() => {
+          assertEquals(currentToolResultSequence(), { sessionId, ordinal: 0 });
+          assertEquals(isPrimaryRuntimeStream(), true);
+          withRuntimeStreamOwnership(() => assertEquals(isPrimaryRuntimeStream(), false));
+          assertEquals(isPrimaryRuntimeStream(), true);
+        }));
+    } finally {
+      AsyncLocalStorage.prototype.run = run;
+      AsyncLocalStorage.prototype.getStore = getStore;
+    }
   });
 });

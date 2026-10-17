@@ -178,7 +178,7 @@ export async function computeSourceDigest(files: SourceFile[]): Promise<string> 
 
 export function normalizeControlPlane(apiUrl: string): string {
   const url = new URL(apiUrl);
-  const pathname = url.pathname.replace(/\/+$/, "");
+  const pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   return `${url.origin}${pathname}`;
 }
 
@@ -237,7 +237,7 @@ function remoteMatchesGitHubRepository(remote: GitCommandResult | null): boolean
   } catch {
     return false;
   }
-  const normalizedPath = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  const normalizedPath = pathname.replace(/^\/+|(?<!\/)\/+$/g, "").replace(/\.git$/i, "");
   return hostname.toLowerCase() === serverHostname.toLowerCase() &&
     normalizedPath.toLowerCase() === repository.toLowerCase();
 }

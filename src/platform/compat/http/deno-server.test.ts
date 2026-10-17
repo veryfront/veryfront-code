@@ -411,7 +411,7 @@ describe("DenoHttpServer", () => {
         },
       );
       const port = await listening;
-      let timeoutId: number | undefined;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
       try {
         await server.close();

@@ -13,8 +13,9 @@ import extensionPackage from "../deno.json" with { type: "json" };
 import { exactTailwindVersion } from "./manifest-dependency.ts";
 import { loadPlugin } from "./plugin-loader.ts";
 import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
+import { TW_ANIMATE_CSS } from "../vendor/tw-animate-css.js";
 
-const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v5";
+const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v6";
 const apply = Reflect.apply;
 const arrayJoin = Array.prototype.join;
 const freeze = Object.freeze;
@@ -91,6 +92,7 @@ export class TailwindCSSProcessor implements CSSProcessor {
       `ext-css-tailwind@${extensionPackage.version}`,
       `tailwindcss@${tailwindVersion}`,
       `base=${sha256(tailwindBaseStylesheet)}`,
+      `tw-animate-css@1.4.0=${sha256(TW_ANIMATE_CSS)}`,
       `vendor=${sha256(JSON.stringify(vendorSources))}`,
       `default=${sha256(this.defaultStylesheet)}`,
       `plugins=${sha256(TAILWIND_PLUGIN_POLICY_IDENTITY)}`,
@@ -106,6 +108,13 @@ export class TailwindCSSProcessor implements CSSProcessor {
     const native = await compile(stylesheet, {
       base: "/",
       loadStylesheet: (id: string) => {
+        if (id === "tw-animate-css") {
+          return Promise.resolve({
+            content: TW_ANIMATE_CSS,
+            base: "/",
+            path: "/tw-animate-css/1.4.0/dist/tw-animate.css",
+          });
+        }
         if (id !== "tailwindcss") {
           throw IMPORT_RESOLUTION_ERROR.create({
             detail: `ext-css-tailwind cannot resolve stylesheet import "${id}"`,
