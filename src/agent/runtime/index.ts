@@ -2183,12 +2183,13 @@ function hasToolResultContextEnabled(
 }
 
 function createActiveToolResultContext(input: {
-  config: Pick<AgentConfig, "toolResultContext">;
+  config: Pick<AgentConfig, "tools" | "toolResultContext">;
   hasToolReplacements?: boolean;
   supportsToolCalling?: boolean;
 }): ToolResultContext | undefined {
   if (
-    input.supportsToolCalling === false || input.hasToolReplacements ||
+    input.config.tools === false || input.supportsToolCalling === false ||
+    input.hasToolReplacements ||
     !hasToolResultContextEnabled(input.config)
   ) {
     return undefined;
@@ -2955,7 +2956,7 @@ async function traceConfiguredToolExecution(input: {
   admittedTurn: AdmittedToolTurn;
   owner: Message[];
   prepareTerminalDispatch: () => Promise<void>;
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined;
   context: ToolExecutionContext;
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
@@ -3791,6 +3792,7 @@ export class AgentRuntime {
     toolReplacements: AgentGenerateToolReplacements | undefined,
     retainSkillLoaderTools: boolean | undefined,
   ): AgentGenerateToolReplacements | undefined {
+    if (this.config.tools === false) return undefined;
     if (toolReplacements === undefined) {
       return undefined;
     }

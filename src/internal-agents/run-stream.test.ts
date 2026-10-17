@@ -89,6 +89,13 @@ async function getAgentSystemText(system: unknown): Promise<string> {
   throw new Error("Expected agent system instructions");
 }
 
+function requireMergedToolMap(
+  tools: ReturnType<typeof buildMergedTools>,
+): Record<string, Tool | boolean> {
+  if (!tools || typeof tools !== "object") throw new Error("Expected a merged tool map");
+  return tools;
+}
+
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
   readonly events: Array<{ name: string; attrs?: Record<string, AttributeValue> }> = [];
@@ -424,7 +431,7 @@ describe("internal-agents/run-stream", () => {
           );
 
           assertEquals(
-            (mergedTools?.lookup_reference as Tool | undefined)?.description,
+            (requireMergedToolMap(mergedTools).lookup_reference as Tool | undefined)?.description,
             "Look up a reference code",
           );
           // The merged entry is the wait-for-tool-result wrapper: executing it
@@ -479,7 +486,7 @@ describe("internal-agents/run-stream", () => {
         sessionManager,
       );
 
-      const entry = mergedTools?.["number-generator"];
+      const entry = requireMergedToolMap(mergedTools)["number-generator"];
       assertEquals(typeof entry, "object");
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
       assertEquals(entry === projectTool, false);
@@ -523,7 +530,7 @@ describe("internal-agents/run-stream", () => {
         sessionManager,
       );
 
-      const entry = mergedTools?.["number-generator"];
+      const entry = requireMergedToolMap(mergedTools)["number-generator"];
       assertEquals(typeof entry, "object");
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
     } finally {
@@ -610,7 +617,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(Object.keys(mergedTools ?? {}), ["lookup_reference"]);
-    const lookupReference = mergedTools?.lookup_reference as Tool;
+    const lookupReference = requireMergedToolMap(mergedTools).lookup_reference as Tool;
     assertEquals(lookupReference.description, "Client lookup");
     assertEquals(lookupReference.inputSchemaJson, lookupReferenceSchema);
     // The wrapper parks on the caller's result instead of executing server-side.
@@ -725,7 +732,7 @@ describe("internal-agents/run-stream", () => {
         sessionManager,
       );
 
-      assertEquals(mergedTools?.["number-generator"], projectTool);
+      assertEquals(requireMergedToolMap(mergedTools)["number-generator"], projectTool);
     } finally {
       toolRegistryInternal.delete("number-generator");
     }
@@ -3160,6 +3167,62 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, []);
+  });
+
+  it("does not discover or advertise remote tools for a no-tools internal run", async () => {
+    let remoteListCalls = 0;
+    let capturedTools: Agent["config"]["tools"];
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: Agent["config"]["system"] | undefined;
+    const remoteSource: RemoteToolSource = {
+      id: "remote-fixture",
+      async listTools() {
+        remoteListCalls++;
+        return [{ name: "remote_lookup", description: "Lookup", parameters: { type: "object" } }];
+      },
+      async executeTool() {
+        throw new Error("No-tools agents must not execute remote tools");
+      },
+    };
+    const agent = {
+      id: "text-only",
+      config: {
+        id: "text-only",
+        model: "anthropic/claude-opus-4-6",
+        system: "Answer directly.",
+        tools: false,
+        __vfRemoteToolSources: [remoteSource],
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "text-only",
+      threadId: crypto.randomUUID(),
+      runId: "run_text_only",
+      messages: [],
+      tools: [{ name: "client_lookup", description: "Client lookup" }],
+      context: [],
+      forwardedProps: { runtimeOverrides: { toolAllowlist: ["remote_lookup"] } },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent, mergedTools) => {
+        capturedTools = mergedTools;
+        capturedAllowedRemoteTools = (
+          runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+        ).__vfAllowedRemoteTools;
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+        };
+      },
+    });
+
+    assertEquals(capturedTools, false);
+    assertEquals(capturedAllowedRemoteTools, []);
+    assertEquals(remoteListCalls, 0);
+    assertEquals((await getAgentSystemText(runtimeSystem)).includes("remote_lookup"), false);
   });
 
   it("caps providerTools to the toolAllowlist and explicit denials", async () => {

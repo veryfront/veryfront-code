@@ -24,6 +24,7 @@ export interface AgUiInjectedToolLike {
 export function buildExplicitAgUiSourceTools(
   agent: Agent,
 ): Exclude<Agent["config"]["tools"], true> {
+  if (agent.config.tools === false) return false;
   if (!agent.config.tools) return undefined;
   if (agent.config.tools !== true) return { ...agent.config.tools };
 
@@ -77,6 +78,7 @@ export function buildMergedAgUiTools(
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Agent["config"]["tools"] {
   const sourceTools = buildExplicitAgUiSourceTools(agent);
+  if (sourceTools === false) return false;
   const sourceToolNames = new Set(Object.keys(sourceTools ?? {}));
   const injectedTools = Object.fromEntries(
     tools

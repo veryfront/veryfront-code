@@ -10,6 +10,9 @@ import {
   inheritRuntimeAgentMarkdownDefinition,
 } from "./agent-markdown-adapter.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
+import { parseRuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
+import { createEphemeralAgent } from "../factory.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
 it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
@@ -22,6 +25,46 @@ it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", (
   });
 
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
+});
+
+it("Markdown no-tools survives parsing, adapter, rebuild and model generation", async () => {
+  registerSkill("visible-guide", {
+    id: "visible-guide",
+    metadata: { name: "visible-guide", description: "A visible guide" },
+    rootPath: "/test/skills/visible-guide",
+  });
+  const definition = parseRuntimeAgentMarkdownDefinition({
+    id: "quiet",
+    content: `---
+tools: false
+skills:
+  - visible-guide
+knowledge: true
+delegates:
+  - specialist
+---
+Answer directly.
+`,
+  });
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition(definition);
+  const model = scriptedModel([{ text: "done" }], {
+    modelId: "hosted/no-tools-markdown",
+    only: "generate",
+  });
+  const rebuilt = createEphemeralAgent({
+    ...runtimeAgent.config,
+    model: "hosted/no-tools-markdown",
+    resolveModelTransport: async () => ({ model }),
+  });
+
+  await rebuilt.generate({ input: "Summarize this text." });
+
+  assertEquals(runtimeAgent.config.tools, false);
+  assertEquals(rebuilt.config.tools, false);
+  assertEquals(rebuilt.config.skills, false);
+  assertEquals(rebuilt.config.delegates, undefined);
+  assertEquals(model.toolNames(0), []);
+  assertEquals(model.systemPrompts()[0]?.includes("visible-guide"), false);
 });
 
 it("createRuntimeAgentFromMarkdownDefinition removes denied provider-native tools", () => {

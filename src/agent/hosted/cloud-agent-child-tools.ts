@@ -325,6 +325,11 @@ export function resolveHostedChildToolNames(
     return undefined;
   }
 
+  if (agentConfig.tools === false) {
+    const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
+    return (agentConfig.providerTools ?? []).filter((name) => !deniedToolNames.has(name));
+  }
+
   const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
   const hasAuthorizedSkills = skillSelectorSnapshot === undefined ||
     skillSelectorSnapshot.allowedSkillIds.length > 0;
@@ -455,7 +460,7 @@ function providerOnlyToolNamesField(
   agentConfig: RuntimeAgentMarkdownDefinition,
 ): { providerOnlyToolNames?: string[] } {
   if (agentConfig.tools === true || !agentConfig.providerTools?.length) return {};
-  const callable = new Set(agentConfig.tools ?? []);
+  const callable = new Set(agentConfig.tools === false ? [] : agentConfig.tools ?? []);
   const providerOnly = agentConfig.providerTools.filter((name) => !callable.has(name));
   return providerOnly.length > 0 ? { providerOnlyToolNames: providerOnly } : {};
 }

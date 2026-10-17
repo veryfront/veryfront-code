@@ -450,7 +450,7 @@ async function executeRemoteToolFromSources(
 }
 
 export function resolveConfiguredTool(
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined,
   toolName: string,
   context?: ToolExecutionContext,
   options?: {
@@ -494,7 +494,7 @@ export function resolveConfiguredTool(
 export async function executeConfiguredTool(
   toolName: string,
   input: Record<string, unknown>,
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined,
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
@@ -507,6 +507,9 @@ export async function executeConfiguredTool(
     frameworkLocalTools?: Record<string, Tool>;
   },
 ): Promise<unknown> {
+  if (toolsConfig === false) {
+    throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is disabled for this agent` });
+  }
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
@@ -690,7 +693,7 @@ function isUnavailableOptionalRemoteTool(
  * @param options.includeSkillTools - When true, include skill tools for `tools: true` agents
  */
 export async function getAvailableTools(
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined,
   options?: {
     includeSkillTools?: boolean;
     includeIntegrationTools?: boolean;

@@ -501,6 +501,7 @@ export function buildMergedTools(
   availableForwardedToolNames?: string[],
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
+  if (agent.config.tools === false) return false;
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
   // A markdown `tools: true` + `deniedTools` agent fails closed on the
@@ -1433,7 +1434,9 @@ export async function createRuntimeAgentStreamResponse(
     const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
       ? sourceAllowedRemoteToolNames
       : undefined;
-    const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
+    const grantedRemoteToolNames = agent.config.tools === false
+      ? []
+      : forwardedAllowedRemoteToolNames === undefined
       ? sourceRemoteFilterBase
       : mergeRemoteToolNames(
         sourceAllowedRemoteToolNames,

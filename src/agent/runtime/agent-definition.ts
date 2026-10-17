@@ -91,7 +91,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
       v.array(v.string().min(1)),
       v.record(v.string().min(1), v.boolean()),
     ]).optional(),
-    tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    tools: v.union([v.boolean(), v.array(v.string().min(1))]).optional(),
     toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
     bootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
     optionalBootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
@@ -209,7 +209,8 @@ function parseCapabilitySelector(value: unknown, field: string): true | string[]
   return parseStringArray(value, field);
 }
 
-function parseToolSelector(value: unknown): { tools: true | string[]; deniedTools: string[] } {
+function parseToolSelector(value: unknown): { tools: boolean | string[]; deniedTools: string[] } {
+  if (value === false) return { tools: false, deniedTools: [] };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { tools: parseCapabilitySelector(value, "tools"), deniedTools: [] };
   }

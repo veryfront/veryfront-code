@@ -101,6 +101,9 @@ Research the question and cite every claim.
   so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
   schemas are deferred behind `veryfront__tool_search` until the agent searches for them.
+- `tools: false` - deny all Veryfront-callable tools, including skill, knowledge,
+  delegation, integration, and request-supplied tools. Explicit `providerTools`
+  remain separate provider-native capabilities.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
@@ -167,6 +170,8 @@ an empty answer.
 The `tools` selector controls both authorization and initial schema exposure:
 
 - Omit `tools` to expose no project tools.
+- Set `tools: false` to deny all Veryfront-callable tools, including framework
+  helpers and tools supplied by a run request.
 - Use an explicit map to expose only those selected schemas immediately.
 - Use `tools: true` to authorize every tool in the current scope while initially
   exposing only bootstrap tools and `veryfront__tool_search`.

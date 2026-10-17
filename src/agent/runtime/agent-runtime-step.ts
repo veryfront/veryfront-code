@@ -78,7 +78,7 @@ function collectToolNames(tools: readonly ToolDefinition[]): Set<string> {
 export type AgentRuntimeStepMode = "generate" | "stream";
 
 export type RuntimeStepToolLoader = (
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined,
   options?: {
     includeSkillTools?: boolean;
     includeIntegrationTools?: boolean;

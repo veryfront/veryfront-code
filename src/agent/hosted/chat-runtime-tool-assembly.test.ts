@@ -37,6 +37,7 @@ import {
   prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
+import { resolveHostedRuntimeRequestConfig } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
 
@@ -494,6 +495,46 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without 
 
   assertEquals(toolAssembly.localToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
   assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
+});
+
+Deno.test("hosted no-tools request does not restore essential callable tools", async () => {
+  const runtimeConfig = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: {
+      tools: false,
+      skills: ["plan"],
+      delegates: ["writer"],
+      providerTools: ["web_search"],
+    },
+    resolveModelId: (model) => model,
+  });
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: markTrustedHostToolSet({
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    }),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: runtimeConfig.requestedAllowedTools,
+    allowedProviderToolNames: runtimeConfig.requestedAllowedProviderTools,
+    includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(runtimeConfig.includeRuntimeEssentialToolsWhenEmpty, false);
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves only trusted skill loaders under canonical grants", async () => {
