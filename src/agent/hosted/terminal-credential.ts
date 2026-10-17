@@ -11,7 +11,10 @@ import {
   type HostedTaskInput,
   resolveHostedTaskInput,
 } from "./task-input.ts";
-import type { ParseHostedChatRequestOptions } from "./chat-request-parser.ts";
+import type {
+  ParsedHostedChatRequest,
+  ParseHostedChatRequestOptions,
+} from "./chat-request-parser.ts";
 import {
   type HostedAcceptedTaskInputReceipt,
   hostedAcceptedTaskInputReference,
@@ -51,9 +54,12 @@ import {
 } from "../runtime/terminal-run-control.ts";
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
+
+function inheritedInvocationIdentity(parentId: string, toolCallId: string): string {
+  return `${parentId}:${toolCallId}`;
+}
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
@@ -152,7 +158,8 @@ export function bindHostedTerminalRun(
   transport: { apiUrl: string; fetch?: typeof globalThis.fetch },
 ): void {
   const authority = credentials.get(request);
-  if (authority && run?.runId === authority.runId) {
+  if (!authority) return;
+  if (run?.runId === authority.runId) {
     credentials.set(run, {
       ...authority,
       apiUrl: transport.apiUrl,
@@ -327,7 +334,9 @@ export function hostedInheritedRunAdmitter(
       headers: {
         Authorization: `Bearer ${parent.authToken}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": `inherited:${await computeHash(`${parentId}:${toolCallId}`)}`,
+        "Idempotency-Key": `inherited:${await computeHash(
+          inheritedInvocationIdentity(parentId, toolCallId),
+        )}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
         Accept: "application/vnd.veryfront.inherited-run+json",
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
@@ -511,6 +520,29 @@ export async function acceptWorkflowInheritedRunAdmission(
   };
 }
 
+function assertInheritedChildResourceBinding(
+  response: Response,
+  binding: { conversationId?: string },
+  row: Record<string, unknown>,
+  canonicalId: string,
+  eventCursor: number,
+  externalCursor: number,
+): void {
+  if (
+    canonicalId !== row.id ||
+    (binding.conversationId !== undefined && row.conversation_id !== binding.conversationId) ||
+    typeof row.conversation_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      row.conversation_id,
+    ) ||
+    typeof row.output_message_id !== "string" ||
+    !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
+    !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
+    !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
+    !Number.isSafeInteger(externalCursor) || externalCursor < 0
+  ) throw new Error("Inherited child resource binding mismatch");
+}
+
 /** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
 export async function acceptInheritedRunAdmission(
   response: Response,
@@ -544,19 +576,14 @@ export async function acceptInheritedRunAdmission(
   const canonical = terminalRoute(token, runId);
   const eventCursor = Number(response.headers.get("X-Veryfront-Run-Event-Sequence"));
   const externalCursor = Number(response.headers.get("X-Veryfront-Run-External-Event-Sequence"));
-  if (
-    canonical.id !== row.id ||
-    (binding.conversationId !== undefined && row.conversation_id !== binding.conversationId) ||
-    typeof row.conversation_id !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      row.conversation_id,
-    ) ||
-    typeof row.output_message_id !== "string" ||
-    !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
-    !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
-    !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
-    !Number.isSafeInteger(externalCursor) || externalCursor < 0
-  ) throw new Error("Inherited child resource binding mismatch");
+  assertInheritedChildResourceBinding(
+    response,
+    binding,
+    row,
+    canonical.id,
+    eventCursor,
+    externalCursor,
+  );
   const taskInput = admittedInputs.get(response);
   const verification = await verifyInheritedTaskInputBinding(response, binding, eventToken, runId);
   if (taskInput) authorizeHostedTaskInput(taskInput);
