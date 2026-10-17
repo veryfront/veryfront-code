@@ -842,3 +842,171 @@ it("lease renewal does not consult a project Promise catch hook", async () => {
     else Deno.env.set(envKey, previous);
   }
 });
+
+it("framework preflight rejection retires its managed generation before producer creation", {
+  sanitizeOps: true,
+  sanitizeResources: true,
+}, async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const value = admission();
+  const manager = new AgentRunSessionManager({
+    maxConcurrentSessions: 1,
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        awaitRetiredPreviousOwner,
+        validateCurrentOwnership: async () => receipt(value),
+      });
+      return {
+        owner,
+        writer: await createManagedRecoveryWriter({
+          claims,
+          owner,
+          directory,
+          append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+          bindAdmissionWriter: () => {},
+        }),
+      };
+    },
+  });
+  try {
+    const input = {
+      runId: identity.publicRunId,
+      threadId: identity.threadId,
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    bindManagedRecoveryInput(input, await signed(value));
+    const agent = createAgent({
+      id: "recovery-proof",
+      model: "anthropic/test",
+      system: "Synthetic",
+      skills: false,
+      resolveModelTransport: () => {
+        throw new Error("synthetic framework model preflight failure");
+      },
+    });
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager: manager,
+        }),
+      Error,
+      "synthetic framework model preflight failure",
+    );
+    const next = manager.startRun({
+      runId: "after-framework-preflight",
+      threadId: identity.threadId,
+    });
+    manager.completeRun("after-framework-preflight", next);
+  } finally {
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+for (const failure of ["ownership-check", "unknown-override"] as const) {
+  it(`distinguishes ${failure} failure from an invoked producer`, {
+    sanitizeOps: true,
+    sanitizeResources: true,
+  }, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const value = admission();
+    let armed = false;
+    let checks = 0;
+    let invocations = 0;
+    let activeSession:
+      | Awaited<ReturnType<AgentRunSessionManager["startManagedRecoveryRun"]>>
+      | undefined;
+    class ObservedManager extends AgentRunSessionManager {
+      override async startManagedRecoveryRun(
+        ...args: Parameters<AgentRunSessionManager["startManagedRecoveryRun"]>
+      ) {
+        activeSession = await super.startManagedRecoveryRun(...args);
+        return activeSession;
+      }
+    }
+    const manager = new ObservedManager({
+      maxConcurrentSessions: 1,
+      recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+        const owner = await RecoverySessionOwner.acquire({
+          claims,
+          directory: `${directory}/owner`,
+          awaitRetiredPreviousOwner,
+          validateCurrentOwnership: async () => {
+            if (armed && ++checks === 1 && failure === "ownership-check") {
+              throw new Error("synthetic ownership-check failure");
+            }
+            return receipt(value);
+          },
+        });
+        return {
+          owner,
+          writer: await createManagedRecoveryWriter({
+            claims,
+            owner,
+            directory,
+            append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+            bindAdmissionWriter: () => {},
+          }),
+        };
+      },
+    });
+    try {
+      const input = {
+        runId: identity.publicRunId,
+        threadId: identity.threadId,
+        messages: [],
+        tools: [],
+        context: [],
+      };
+      bindManagedRecoveryInput(input, await signed(value));
+      const agent = createAgent({
+        id: "recovery-proof",
+        model: "anthropic/test",
+        system: "Synthetic",
+        skills: false,
+      });
+      await assertRejects(
+        () =>
+          createRuntimeAgentStreamResponse(input, agent, {
+            sessionManager: manager,
+            createRuntime: () => {
+              armed = true;
+              return {
+                stream: () => {
+                  invocations++;
+                  // No completion report: the host cannot assume this override did no work.
+                  return Promise.reject(new Error("synthetic unknown-override failure"));
+                },
+              };
+            },
+          }),
+        Error,
+        `synthetic ${failure} failure`,
+      );
+      assertEquals(invocations, failure === "ownership-check" ? 0 : 1);
+      if (failure === "unknown-override") {
+        assertThrows(() =>
+          manager.startRun({ runId: "still-fenced", threadId: identity.threadId })
+        );
+      } else {
+        const next = manager.startRun({ runId: "after-guard", threadId: identity.threadId });
+        manager.completeRun("after-guard", next);
+      }
+    } finally {
+      // This synthetic override starts no work. Only the test has that knowledge.
+      activeSession?.settle();
+      manager.reset();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}

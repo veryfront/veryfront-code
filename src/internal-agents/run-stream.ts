@@ -1789,7 +1789,6 @@ export async function createRuntimeAgentStreamResponse(
       );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     if (managedRecovery) await managedRecovery.owner.assertCurrentOwnership();
-    runtimeInvocationStarted = true;
     const withManagedOccurrences = <T>(operation: () => T): T =>
       managedRecovery ? runWithToolCallOccurrences(operation) : operation();
     const candidateRuntimeStream = await runWithExecutionOwnershipGuard(
@@ -1804,8 +1803,9 @@ export async function createRuntimeAgentStreamResponse(
                 () =>
                   runWithMandatoryRunEventSink(
                     modelCallContextRelay.sink,
-                    () =>
-                      runtimeDispatch.kind === "override"
+                    () => {
+                      runtimeInvocationStarted = true;
+                      return runtimeDispatch.kind === "override"
                         ? runtimeDispatch.runtime.stream(
                           runtimeMessages,
                           runtimeContext,
@@ -1827,7 +1827,8 @@ export async function createRuntimeAgentStreamResponse(
                           undefined,
                           maxOutputTokens,
                           abortSignal,
-                        ),
+                        );
+                    },
                   ),
               )
             ),
