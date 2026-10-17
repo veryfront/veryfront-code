@@ -547,6 +547,40 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(result.total_files, 1);
     });
 
+    it("moves a file on the file path move route and reads the moved file path", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestMethod = "";
+      let requestBody: unknown;
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestMethod = request.method;
+        requestBody = await request.json();
+        return Response.json({ id: "file-1", path: "pages/moved page.tsx" });
+      }, async () => {
+        return await vfRemoteMoveFile.execute({
+          project: "my-project",
+          source_path: "pages/index page.tsx",
+          destination_path: "pages/moved page.tsx",
+          branch: "branch-1",
+        });
+      });
+
+      assertEquals(
+        requestUrl,
+        "https://api.remote-vf.test/api/my-project/files/pages%2Findex%20page.tsx/move?branch_id=branch-1",
+      );
+      assertEquals(requestMethod, "POST");
+      assertEquals(requestBody, { destination_path: "pages/moved page.tsx" });
+      assertEquals(result, {
+        success: true,
+        source_path: "pages/index page.tsx",
+        destination_path: "pages/moved page.tsx",
+      });
+    });
+
     it("keeps max_results and results on the branch search route", async () => {
       resetEnv();
 
