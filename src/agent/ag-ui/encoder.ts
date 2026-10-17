@@ -576,15 +576,20 @@ function copyNumberMetadata(
   if (value !== undefined) target[metadataKey] = value;
 }
 
+function messageFinishUsage(event: AgUiRuntimeStreamEvent): Record<string, unknown> | null {
+  if (event.totalUsage && typeof event.totalUsage === "object" && !ArrayIsArray(event.totalUsage)) {
+    return event.totalUsage as Record<string, unknown>;
+  }
+  if (event.usage && typeof event.usage === "object" && !ArrayIsArray(event.usage)) {
+    return event.usage as Record<string, unknown>;
+  }
+  return null;
+}
+
 function readMessageFinishUsageMetadata(
   event: AgUiRuntimeStreamEvent,
 ): AgUiRunFinishedMetadata | null {
-  const usage = event.totalUsage && typeof event.totalUsage === "object" &&
-      !ArrayIsArray(event.totalUsage)
-    ? event.totalUsage as Record<string, unknown>
-    : event.usage && typeof event.usage === "object" && !ArrayIsArray(event.usage)
-    ? event.usage as Record<string, unknown>
-    : null;
+  const usage = messageFinishUsage(event);
   if (!usage) return null;
 
   const metadata: AgUiRunFinishedMetadata = {};
@@ -816,13 +821,17 @@ function hasMessageFinishArrayTruncationMarker(input: unknown[], length: number)
   return true;
 }
 
-function snapshotMessageFinishObjectValue(
-  input: unknown,
-  context: MessageFinishObjectSnapshotContext = {
+function createMessageFinishObjectSnapshotContext(): MessageFinishObjectSnapshotContext {
+  return {
     remainingBytes: MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
     remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
     seen: createPrivateWeakStore<object, true>(),
-  },
+  };
+}
+
+function snapshotMessageFinishObjectValue(
+  input: unknown,
+  context: MessageFinishObjectSnapshotContext = createMessageFinishObjectSnapshotContext(),
   depth = 0,
 ): MessageFinishObjectSnapshot {
   const reasons: string[] = [];
@@ -890,15 +899,18 @@ function snapshotMessageFinishObjectValue(
           input,
           reflectApply(numberToString, index, []) as string,
         );
-        const item = !property || !property.enumerable
-          ? { value: null, status: "complete", reasons: [] } satisfies MessageFinishObjectSnapshot
-          : !objectHasOwn(property, "value")
-          ? {
+        let item: MessageFinishObjectSnapshot;
+        if (!property?.enumerable) {
+          item = { value: null, status: "complete", reasons: [] };
+        } else if (!objectHasOwn(property, "value")) {
+          item = {
             value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
             status: "partial",
             reasons: ["accessor_property"],
-          } satisfies MessageFinishObjectSnapshot
-          : snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+          };
+        } else {
+          item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+        }
         primordialArrayPush(output, item.value);
         for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
         if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
@@ -1111,11 +1123,10 @@ function fitMessageFinishMetadataWithinDurableBudget(
   }
 }
 
-function createMessageFinishMetadataEvent(
-  state: AgUiEncoderState,
+function observeFinishReason(
+  value: Record<string, unknown>,
   event: AgUiRuntimeStreamEvent,
-): AgUiEncodedEvent[] {
-  const value: Record<string, unknown> = {};
+): string | null {
   let finishReasonMetadata: string | null = null;
   if (typeof event.finishReason === "string" && event.finishReason.length > 0) {
     const snapshot = snapshotMessageFinishObjectValue(event.finishReason);
@@ -1132,6 +1143,15 @@ function createMessageFinishMetadataEvent(
       );
     }
   }
+  return finishReasonMetadata;
+}
+
+function createMessageFinishMetadataEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const value: Record<string, unknown> = {};
+  const finishReasonMetadata = observeFinishReason(value, event);
 
   const usageMetadata = readMessageFinishUsageMetadata(event);
   if (usageMetadata) {
@@ -1362,7 +1382,7 @@ function completeToolInput(
  */
 function createToolResultEvent(
   toolCallId: unknown,
-  content: Record<string, unknown> | unknown,
+  content: unknown,
   isError = false,
 ): AgUiEncodedEvent {
   return {
@@ -1414,34 +1434,33 @@ function createReasoningEvent(
     state.activeReasoningContentId = contentId;
   }
 
-  return {
-    event: type,
-    payload: type === "ReasoningMessageStart"
-      ? { messageId, ...(contentId ? { contentId } : {}), role: "reasoning" }
-      : type === "ReasoningMessageContent"
-      ? {
-        messageId,
-        ...(contentId ? { contentId } : {}),
-        delta: typeof event.delta === "string" ? event.delta : "",
-      }
-      : { messageId, ...(contentId ? { contentId } : {}) },
-  };
+  const payload = { messageId, ...(contentId ? { contentId } : {}) };
+  if (type === "ReasoningMessageStart") {
+    return { event: type, payload: { ...payload, role: "reasoning" } };
+  }
+  if (type === "ReasoningMessageContent") {
+    return {
+      event: type,
+      payload: { ...payload, delta: typeof event.delta === "string" ? event.delta : "" },
+    };
+  }
+  return { event: type, payload };
 }
 
 function createTextEvent(
   messageId: string,
   type: "TextMessageStart" | "TextMessageContent" | "TextMessageEnd",
-  delta = "",
+  delta: string,
   contentId: string,
 ): AgUiEncodedEvent {
-  return {
-    event: type,
-    payload: type === "TextMessageStart"
-      ? { messageId, contentId, role: "assistant" }
-      : type === "TextMessageContent"
-      ? { messageId, contentId, delta }
-      : { messageId, contentId },
-  };
+  const payload = { messageId, contentId };
+  if (type === "TextMessageStart") {
+    return { event: type, payload: { ...payload, role: "assistant" } };
+  }
+  if (type === "TextMessageContent") {
+    return { event: type, payload: { ...payload, delta } };
+  }
+  return { event: type, payload };
 }
 
 function closeOpenTextEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
@@ -1560,6 +1579,229 @@ function assertValidEmittedAt(value: unknown): asserts value is number {
   }
 }
 
+function mapFileEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  const native = buildNativeRunEventFrame({
+    name: event.type,
+    value: event,
+    parentMessageId: state.messageId,
+  });
+  return [native ? native.live : createCustomDataEvent(event.type, event)];
+}
+
+function mapTextStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenReasoningEvent(state);
+  if (state.textOpen) {
+    if (isActiveTextIdentity(state, event)) return events;
+    appendEncodedEvents(events, closeOpenTextEvent(state));
+  }
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.textOpen = true;
+  state.activeTextContentId = contentId;
+  state.sawVisibleOutput = true;
+  appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
+  return events;
+}
+
+function mapTextDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenReasoningEvent(state);
+  if (state.textOpen && !isActiveTextIdentity(state, event)) {
+    appendEncodedEvents(events, closeOpenTextEvent(state));
+  }
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.sawVisibleOutput = true;
+  if (!state.textOpen) {
+    state.textOpen = true;
+    state.activeTextContentId = contentId;
+    appendEncodedEvents(events, [
+      createTextEvent(messageId, "TextMessageStart", "", contentId),
+      createTextEvent(
+        messageId,
+        "TextMessageContent",
+        typeof event.delta === "string" ? event.delta : "",
+        contentId,
+      ),
+    ]);
+    return events;
+  }
+
+  appendEncodedEvents(events, [createTextEvent(
+    messageId,
+    "TextMessageContent",
+    typeof event.delta === "string" ? event.delta : "",
+    state.activeTextContentId ?? contentId,
+  )]);
+  return events;
+}
+
+function mapTextEndEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  if (!state.textOpen) return [];
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.textOpen = false;
+  const resolvedContentId = state.activeTextContentId ?? contentId;
+  state.activeTextContentId = null;
+  return [createTextEvent(messageId, "TextMessageEnd", "", resolvedContentId)];
+}
+
+function mapReasoningStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenTextEvent(state);
+  appendEncodedEvents(events, closeOpenReasoningEvent(state));
+  state.sawVisibleOutput = true;
+  appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
+  return events;
+}
+
+function mapReasoningDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenTextEvent(state);
+  state.sawVisibleOutput = true;
+  if (state.reasoningMessageId === null) {
+    appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
+  }
+  appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
+  return events;
+}
+
+function mapToolInputStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+  ]);
+  state.sawVisibleOutput = true;
+  if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+    state.openToolCallIds ??= createPrivateSet<string>();
+    state.openToolCallIds.add(event.toolCallId);
+  }
+  appendEncodedEvents(events, [{
+    event: "ToolCallStart",
+    payload: {
+      toolCallId: event.toolCallId,
+      toolCallName: event.toolName,
+      ...(state.messageId ? { parentMessageId: state.messageId } : {}),
+    },
+  }]);
+  return events;
+}
+
+function mapToolInputAvailableEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    completeToolInput(state, event),
+  ]);
+}
+
+function mapToolInputErrorEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  const events = combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    completeToolInput(state, event),
+  ]);
+  appendEncodedEvents(events, [{
+    event: "ToolCallResult",
+    payload: {
+      toolCallId: event.toolCallId,
+      content: {
+        error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
+      },
+      isError: true,
+    },
+  }]);
+  return events;
+}
+
+function mapToolInputDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  if (typeof event.toolCallId === "string") {
+    state.streamedToolInputIds.add(event.toolCallId);
+  }
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      {
+        event: "ToolCallArgs",
+        payload: {
+          toolCallId: event.toolCallId,
+          delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+        },
+      },
+    ],
+  ]);
+}
+
+function mapToolOutputAvailableEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  if (event.preliminary === true) return [];
+  state.sawVisibleOutput = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      createToolResultEvent(
+        event.toolCallId,
+        event.output,
+        // Producers send a provider result they judge failed as tool-output-error,
+        // so only forwarded results without the marker are judged by content.
+        event.providerExecuted !== true && isToolResultErrorOutput(event.output),
+      ),
+    ],
+  ]);
+}
+
+function mapErrorEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawTerminalError = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      {
+        event: "RunError",
+        payload: {
+          ...(typeof event.code === "string" && event.code.length > 0 ? { code: event.code } : {}),
+          message: typeof event.error === "string" ? event.error : "Agent run failed",
+        },
+      },
+    ],
+  ]);
+}
+
 function mapRuntimeStreamEventToAgUiEventsUnstamped(
   state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -1587,15 +1829,8 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
   switch (event.type) {
     case "source-document":
     case "source-url":
-    case "file": {
-      state.sawVisibleOutput = true;
-      const native = buildNativeRunEventFrame({
-        name: event.type,
-        value: event,
-        parentMessageId: state.messageId,
-      });
-      return [native ? native.live : createCustomDataEvent(event.type, event)];
-    }
+    case "file":
+      return mapFileEvent(state, event);
 
     case "message-start":
       getMessageId(state, event);
@@ -1605,77 +1840,20 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     case "finish":
       return createMessageFinishMetadataEvent(state, event);
 
-    case "text-start": {
-      const events = closeOpenReasoningEvent(state);
-      if (state.textOpen) {
-        if (isActiveTextIdentity(state, event)) return events;
-        appendEncodedEvents(events, closeOpenTextEvent(state));
-      }
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.textOpen = true;
-      state.activeTextContentId = contentId;
-      state.sawVisibleOutput = true;
-      appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
-      return events;
-    }
+    case "text-start":
+      return mapTextStartEvent(state, event);
 
-    case "text-delta": {
-      const events = closeOpenReasoningEvent(state);
-      if (state.textOpen && !isActiveTextIdentity(state, event)) {
-        appendEncodedEvents(events, closeOpenTextEvent(state));
-      }
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.sawVisibleOutput = true;
-      if (!state.textOpen) {
-        state.textOpen = true;
-        state.activeTextContentId = contentId;
-        appendEncodedEvents(events, [
-          createTextEvent(messageId, "TextMessageStart", "", contentId),
-          createTextEvent(
-            messageId,
-            "TextMessageContent",
-            typeof event.delta === "string" ? event.delta : "",
-            contentId,
-          ),
-        ]);
-        return events;
-      }
+    case "text-delta":
+      return mapTextDeltaEvent(state, event);
 
-      appendEncodedEvents(events, [createTextEvent(
-        messageId,
-        "TextMessageContent",
-        typeof event.delta === "string" ? event.delta : "",
-        state.activeTextContentId ?? contentId,
-      )]);
-      return events;
-    }
+    case "text-end":
+      return mapTextEndEvent(state, event);
 
-    case "text-end": {
-      if (!state.textOpen) return [];
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.textOpen = false;
-      const resolvedContentId = state.activeTextContentId ?? contentId;
-      state.activeTextContentId = null;
-      return [createTextEvent(messageId, "TextMessageEnd", "", resolvedContentId)];
-    }
+    case "reasoning-start":
+      return mapReasoningStartEvent(state, event);
 
-    case "reasoning-start": {
-      const events = closeOpenTextEvent(state);
-      appendEncodedEvents(events, closeOpenReasoningEvent(state));
-      state.sawVisibleOutput = true;
-      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
-      return events;
-    }
-
-    case "reasoning-delta": {
-      const events = closeOpenTextEvent(state);
-      state.sawVisibleOutput = true;
-      if (state.reasoningMessageId === null) {
-        appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
-      }
-      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
-      return events;
-    }
+    case "reasoning-delta":
+      return mapReasoningDeltaEvent(state, event);
 
     case "reasoning-end":
       // An end with no span open has nothing to close. Emitting one anyway
@@ -1683,90 +1861,20 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       // span ordinal, shifting every later span's id.
       return closeOpenReasoningEvent(state);
 
-    case "tool-input-start": {
-      const events = combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-      ]);
-      state.sawVisibleOutput = true;
-      if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
-        (state.openToolCallIds ??= createPrivateSet<string>()).add(event.toolCallId);
-      }
-      appendEncodedEvents(events, [{
-        event: "ToolCallStart",
-        payload: {
-          toolCallId: event.toolCallId,
-          toolCallName: event.toolName,
-          ...(state.messageId ? { parentMessageId: state.messageId } : {}),
-        },
-      }]);
-      return events;
-    }
+    case "tool-input-start":
+      return mapToolInputStartEvent(state, event);
 
     case "tool-input-delta":
-      state.sawVisibleOutput = true;
-      if (typeof event.toolCallId === "string") {
-        state.streamedToolInputIds.add(event.toolCallId);
-      }
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          {
-            event: "ToolCallArgs",
-            payload: {
-              toolCallId: event.toolCallId,
-              delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
-            },
-          },
-        ],
-      ]);
+      return mapToolInputDeltaEvent(state, event);
 
-    case "tool-input-available": {
-      state.sawVisibleOutput = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        completeToolInput(state, event),
-      ]);
-    }
+    case "tool-input-available":
+      return mapToolInputAvailableEvent(state, event);
 
-    case "tool-input-error": {
-      state.sawVisibleOutput = true;
-      const events = combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        completeToolInput(state, event),
-      ]);
-      appendEncodedEvents(events, [{
-        event: "ToolCallResult",
-        payload: {
-          toolCallId: event.toolCallId,
-          content: {
-            error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
-          },
-          isError: true,
-        },
-      }]);
-      return events;
-    }
+    case "tool-input-error":
+      return mapToolInputErrorEvent(state, event);
 
     case "tool-output-available":
-      if (event.preliminary === true) return [];
-      state.sawVisibleOutput = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          createToolResultEvent(
-            event.toolCallId,
-            event.output,
-            // Producers send a provider result they judge failed as tool-output-error,
-            // so only forwarded results without the marker are judged by content.
-            event.providerExecuted !== true && isToolResultErrorOutput(event.output),
-          ),
-        ],
-      ]);
+      return mapToolOutputAvailableEvent(state, event);
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
@@ -1821,22 +1929,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [];
 
     case "error":
-      state.sawTerminalError = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          {
-            event: "RunError",
-            payload: {
-              ...(typeof event.code === "string" && event.code.length > 0
-                ? { code: event.code }
-                : {}),
-              message: typeof event.error === "string" ? event.error : "Agent run failed",
-            },
-          },
-        ],
-      ]);
+      return mapErrorEvent(state, event);
 
     default:
       // The `data-` guard at the top of this function already returns for
