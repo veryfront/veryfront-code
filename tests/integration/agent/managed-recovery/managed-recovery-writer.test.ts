@@ -76,7 +76,7 @@ import { createManagedRecoveryWriter } from "#veryfront/internal-agents/managed-
 import { createEphemeralAgentWithRuntimeOptions } from "#veryfront/agent/factory.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 
-it("real cross-project runtime boundaries preserve separately signed source and run bindings on disk", async () => {
+it("real cross-project runtime boundaries omit private message metadata while preserving signed bindings", async () => {
   const previous = Deno.env.get(envKey);
   const directory = await Deno.makeTempDir();
   try {
@@ -118,12 +118,28 @@ it("real cross-project runtime boundaries preserve separately signed source and 
     });
     writer.bindSignal(new AbortController().signal);
     const model = scriptedModel([{ text: "Synthetic complete" }], { only: "stream" });
-    const runtime = createEphemeralAgentWithRuntimeOptions({
+    let capturedMetadata = false;
+    const metadataRuntime = createEphemeralAgentWithRuntimeOptions({
       model: "veryfront-cloud/openai/gpt-5.4",
       system: "Synthetic",
       maxSteps: 1,
-    }, { resolveModelRuntime: () => model, persistRecoveryBoundary: writer.persistBoundary });
-    const result = await runtime.stream({ input: "Synthetic request" });
+    }, {
+      resolveModelRuntime: () => model,
+      persistRecoveryBoundary: async (boundary) => {
+        capturedMetadata ||= boundary.runtimeContinuation?.messages.some((message) =>
+          message.metadata !== undefined
+        ) ?? false;
+        await writer.persistBoundary(boundary);
+      },
+    });
+    const result = await metadataRuntime.stream({
+      messages: [{
+        id: "synthetic-user",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic request" }],
+        metadata: { privatePolicy: "NEVER_PERSIST_PRIVATE_POLICY" },
+      }],
+    });
     await result.toDataStreamResponse().text();
     const home = await DurableRunHome.open({
       directory: `${directory}/${identity.canonicalRunId}.snapshot`,
@@ -135,6 +151,27 @@ it("real cross-project runtime boundaries preserve separately signed source and 
       "#veryfront/internal-agents/recovery-snapshot.ts"
     );
     const snapshot = parseRecoverySnapshot(records.at(-1)!.value);
+    assertEquals(capturedMetadata, true);
+    assertEquals(snapshot.runtimeContinuation !== undefined, true);
+    assertEquals(JSON.stringify(records).includes("NEVER_PERSIST_PRIVATE_POLICY"), false);
+    assertEquals(snapshot.messages.every((message) => !("metadata" in message)), true);
+    assertEquals(
+      snapshot.runtimeContinuation!.messages.every((message) => !("metadata" in message)),
+      true,
+    );
+    const { getRecoveryContinuationSchema } = await import(
+      "#veryfront/internal-agents/recovery-snapshot.ts"
+    );
+    assertEquals(
+      getRecoveryContinuationSchema().safeParse({
+        ...snapshot.runtimeContinuation,
+        messages: snapshot.runtimeContinuation!.messages.map((message) => ({
+          ...message,
+          metadata: { privatePolicy: "NEVER_PERSIST_PRIVATE_POLICY" },
+        })),
+      }).success,
+      false,
+    );
     assertEquals(snapshot.binding.identity.projectId, identity.projectId);
     assertEquals(snapshot.binding.sourceBinding, value.sourceBinding);
     assertEquals(events.includes("MESSAGES_SNAPSHOT"), true);

@@ -60,6 +60,10 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function recoveryMessages(messages: AgentRuntimeRecoveryBoundary["messages"]) {
+  return messages.map(({ metadata: _metadata, ...message }) => message);
+}
+
 /** Private host materialization; API event acknowledgement never proves external effect commit. */
 export async function createManagedRecoveryWriter(input: {
   claims: VerifiedControlPlaneRequestClaims;
@@ -301,7 +305,7 @@ export async function createManagedRecoveryWriter(input: {
     persistBoundary(boundary: AgentRuntimeRecoveryBoundary) {
       const operation = boundaryTail.then(async () => {
         await active();
-        const messages = boundary.messages.map(({ metadata: _metadata, ...message }) => message);
+        const messages = recoveryMessages(boundary.messages);
         if (!initialHistoryMessageIds) {
           initialHistoryMessageIds = messages.map((message) => message.id);
           initialHistoryMessageDigests = messages.map(recoveryHistoryMessageDigest);
@@ -314,7 +318,10 @@ export async function createManagedRecoveryWriter(input: {
         const history = new Set(initialHistoryMessageIds);
         if (boundary.runtimeContinuation) {
           lastRuntimeContinuation = getRecoveryContinuationSchema().parse(
-            snapshotDurableValue(boundary.runtimeContinuation),
+            snapshotDurableValue({
+              ...boundary.runtimeContinuation,
+              messages: recoveryMessages(boundary.runtimeContinuation.messages),
+            }),
           );
         }
         const matchingContinuation = lastRuntimeContinuation?.messages.length === messages.length &&
