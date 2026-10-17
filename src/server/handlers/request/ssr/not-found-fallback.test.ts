@@ -262,9 +262,8 @@ describe(
           assertExists(result);
           assertEquals(result.status, 404);
           const html = await result.text();
-          // The id attribute only survives a real SSR render: the
-          // extractNotFoundText fallback rebuilds the text as a bare <p>, so
-          // this pins the assertion below to the render path.
+          // The component id pins this assertion to successful SSR rather than
+          // the generic response used after a render failure.
           assertStringIncludes(
             html,
             '<p id="hosted-not-found">Missing Hosted</p>',
@@ -315,7 +314,7 @@ describe(
         );
       });
 
-      it("falls back to the component's JSX text when the not-found render throws", async () => {
+      it("serves generic text after a component rejects rendering", async () => {
         const adapter = await getAdapter();
 
         await withTestContext(
@@ -323,10 +322,10 @@ describe(
           async (context) => {
             const segDir = join(context.projectDir, "app", "a", "b");
             await mkdir(segDir, { recursive: true });
-            // The JSX text stays in the source so extractNotFoundText can recover it.
+            // Text after a failed application condition is not safe to publish as a fallback.
             await writeTextFile(
               join(segDir, "not-found.tsx"),
-              `export default function NotFound(){ throw new Error("boom"); return <p>  Missing &gt; Text  </p>; }`,
+              `export default function NotFound(){ throw new Error("boom"); return <p>NOT_PUBLIC_AFTER_FAILURE</p>; }`,
             );
 
             const ctx = makeCtx({
@@ -356,8 +355,8 @@ describe(
             const html = await result.text();
             assertStringIncludes(
               html,
-              "<p>Missing &gt; Text</p>",
-              "the text fallback must survive an SSR render failure",
+              "<p>Not Found</p>",
+              "a failed application render must use generic text",
             );
           },
         );
@@ -373,7 +372,7 @@ describe(
             await mkdir(segDir, { recursive: true });
             await writeTextFile(
               join(segDir, "not-found.tsx"),
-              `export default function NotFound(){ throw new Error("boom"); }`,
+              `function compare(){ return a < b > NEVER_EXPOSE; } export default function NotFound(){ throw new Error("boom"); return <Icon />; }`,
             );
 
             const ctx = makeCtx({

@@ -61,7 +61,7 @@ export function extractCssVariables(css: string): Record<string, string> {
     ) {
       const run = match[1]!;
       const marker = run.indexOf("--");
-      if (marker === -1 || marker + 2 === run.length) continue;
+      if (marker !== 0 || run.length === 2) continue;
       const value = segment.slice(match.index + match[0].length).trim();
       if (!value) continue;
       variables[run.slice(marker + 2)] = value;

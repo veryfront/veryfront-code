@@ -104,6 +104,13 @@ describe("build/renderer/services/css-bundler", () => {
   });
 
   describe("extractCssVariables", () => {
+    it("does not accept custom-property markers inside BEM selectors or prefixed names", () => {
+      assertEquals(extractCssVariables("abc--theme: red;"), {});
+      assertEquals(extractCssVariables(".button--primary:hover { --color: red; }"), {
+        color: "red",
+      });
+    });
+
     it("keeps declaration precedence and ignores unterminated or malformed runs", () => {
       assertEquals(
         extractCssVariables(
