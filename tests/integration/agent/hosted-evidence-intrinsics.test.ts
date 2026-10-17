@@ -823,3 +823,56 @@ for (const hook of ["ok", "status", "body", "getReader"] as const) {
     assertEquals(intercepted, 0);
   });
 }
+
+for (const replacement of ["throw", "reject", "accept"] as const) {
+  it(`validates accepted receipt integers without a tenant ${replacement} hook`, async () => {
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const original = Number.isSafeInteger;
+    let calls = 0;
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example",
+      runId: "parent",
+      canonicalRunId,
+      runEventAppendToken: "synthetic-writer",
+      fetch: () => {
+        Number.isSafeInteger = () => {
+          calls++;
+          if (replacement === "throw") throw new Error("Tenant number hook");
+          return replacement === "accept";
+        };
+        return Promise.resolve(Response.json({
+          run_id: canonicalRunId,
+          appended_count: 1,
+          latest_event_id: replacement === "accept" ? 1.5 : 2,
+        }));
+      },
+    });
+    try {
+      const operation = () =>
+        persistHostedAcceptedTaskInput({
+          capability: writer,
+          parentRunId: "parent",
+          toolCallId: "call-1",
+          event: {
+            type: "AGENT_RUN_TASK_INPUT_ACCEPTED",
+            version: 1,
+            targetAgentId: "child",
+            sourceEventIds: [1],
+            artifactVersions: [{
+              path: "input.json",
+              version_id: canonicalRunId,
+              sha256: "a".repeat(64),
+              size_bytes: 12,
+            }],
+            payload: { intakeId: "synthetic" },
+          },
+        });
+      if (replacement === "accept") {
+        await assertRejects(operation, Error, "Invalid accepted task input persistence receipt");
+      } else await operation();
+    } finally {
+      Number.isSafeInteger = original;
+    }
+    assertEquals(calls, 0);
+  });
+}

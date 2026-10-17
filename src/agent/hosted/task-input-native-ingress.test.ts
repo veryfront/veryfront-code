@@ -203,3 +203,26 @@ describe("verified native typed input", () => {
     if (!(result instanceof Response)) assertEquals(result.serverResolvedTaskInput, undefined);
   });
 });
+
+for (const rootRunId of ["run_signed_root", "", "bad/root", 42, undefined]) {
+  it(`validates and retains the general-chat signed root ${JSON.stringify(rootRunId)}`, async () => {
+    const result = await parseHostedChatRequestFromRequest(
+      request({
+        messages: [],
+        context: { projectId, conversationId: invocation.run.conversationId, branchId: "branch-1" },
+        durableRootRun: { runId: "run_child", messageId: invocation.run.messageId },
+      }),
+      {
+        ...principal,
+        verifyRunEventAppendToken: async () => ({
+          verified: true,
+          rootRunId: rootRunId as string | undefined,
+        }),
+      },
+    );
+    if (rootRunId === undefined || rootRunId === "run_signed_root") {
+      if (result instanceof Response) throw new Error(await result.text());
+      assertEquals(result.serverResolvedRootRunId, rootRunId);
+    } else assertEquals(result instanceof Response && result.status === 403, true);
+  });
+}

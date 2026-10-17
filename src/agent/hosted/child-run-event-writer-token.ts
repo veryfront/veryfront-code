@@ -69,6 +69,7 @@ const headersDelete = NativeHeaders.prototype.delete;
 const NativeWeakMap = WeakMap;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
+const numberIsSafeInteger = Number.isSafeInteger;
 const arraySome = Array.prototype.some;
 const jsonParse = JSON.parse;
 const jsonStringify = JSON.stringify;
@@ -846,7 +847,7 @@ export async function persistHostedAcceptedTaskInput(
   const eventId = ownValue(body, "latest_event_id");
   if (
     ownValue(body, "run_id") !== state.canonicalRunId || ownValue(body, "appended_count") !== 1 ||
-    typeof eventId !== "number" || !Number.isSafeInteger(eventId) || eventId <= 0
+    typeof eventId !== "number" || !numberIsSafeInteger(eventId) || eventId <= 0
   ) throw new Error("Invalid accepted task input persistence receipt");
   const receipt = objectCreate(null) as HostedAcceptedTaskInputReceipt;
   setWeakMapValue(acceptedTaskInputReceipts, receipt, {

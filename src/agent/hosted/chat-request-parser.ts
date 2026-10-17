@@ -370,6 +370,13 @@ async function withVerifiedRunEventAppendToken(
     return Response.json({ errorCode: "INVALID_HOSTED_TASK_INPUT" }, { status: 403 });
   }
 
+  const rootRunId = verification.rootRunId;
+  if (
+    rootRunId !== undefined &&
+    (typeof rootRunId !== "string" ||
+      !IntrinsicReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]))
+  ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
+
   const inferenceAuthToken = bindInferenceTokenHeader
     ? readInferenceTokenHeader(request)
     : undefined;
@@ -449,6 +456,7 @@ async function withVerifiedRunEventAppendToken(
       ? parsedRequest
       : stripUnverifiedServerResolvedRequestState(parsedRequest)),
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    ...(rootRunId !== undefined ? { serverResolvedRootRunId: rootRunId } : {}),
     ...(verifiedContext
       ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
       : {}),
@@ -1034,16 +1042,10 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (verifiedTaskInput) {
     verifiedRequest.serverResolvedTaskInput = authorizeHostedTaskInput(verifiedTaskInput);
   }
-  if (writerVerification?.verified && writerVerification.rootRunId !== undefined) {
-    if (
-      typeof writerVerification.rootRunId !== "string" ||
-      !IntrinsicReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [
-        writerVerification.rootRunId,
-      ]) ||
-      (verifiedTaskInput && verifiedTaskInput.rootRunId !== writerVerification.rootRunId)
-    ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
-    verifiedRequest.serverResolvedRootRunId = writerVerification.rootRunId;
-  }
+  if (
+    verifiedTaskInput && verifiedRequest.serverResolvedRootRunId !== undefined &&
+    verifiedTaskInput.rootRunId !== verifiedRequest.serverResolvedRootRunId
+  ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
 
   // Request-scoped agent definitions may only come from the trusted control plane.
   if (verifiedRequest.agentConfig && verifiedRequest.serverEnvelopeVerified !== true) {
