@@ -33,6 +33,7 @@ const ArraySort = Array.prototype.sort;
 const hasOwn = Object.hasOwn;
 const fromCharCode = String.fromCharCode;
 const RegExpConstructor = RegExp;
+const NAMESPACE_TOKEN_ESCAPE = String.raw`\$&`;
 function sortSearchItems<T>(items: T[], compare: (a: T, b: T) => number): T[] {
   ReflectApply(ArraySort, items, [compare]);
   return items;
@@ -203,7 +204,11 @@ function parseCanonicalIntegrationQuery(
  * that is not alphanumeric.
  */
 function createNamespaceTokenPattern(namespaceTerm: string): RegExp {
-  const escaped = replacePrivateRegExp(/[.*+?^${}()|[\]\\-]/g, namespaceTerm, "\\$&");
+  const escaped = replacePrivateRegExp(
+    /[.*+?^${}()|[\]\\-]/g,
+    namespaceTerm,
+    NAMESPACE_TOKEN_ESCAPE,
+  );
   return new RegExpConstructor(`(?<![a-z0-9])${escaped}(?![a-z0-9])`);
 }
 
@@ -219,12 +224,13 @@ function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
 function compareToolSearchMatches(left: ToolSearchMatch, right: ToolSearchMatch): number {
   // Equally relevant visible tools must not hide deferred capabilities. Stronger
   // matches still win before this tie-break, including an exact visible name.
-  return (left.status === right.status ? 0 : left.status === "loaded" ? -1 : 1) ||
-    compareAscii(left.name, right.name);
+  if (left.status === right.status) return compareAscii(left.name, right.name);
+  return left.status === "loaded" ? -1 : 1;
 }
 
 function compareAscii(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function isUtf8LengthWithin(value: string, maxBytes: number): boolean {
@@ -242,6 +248,17 @@ export function isSupportedToolExposureCheckpointVersion(
   value: unknown,
 ): value is ToolExposureCheckpoint["version"] {
   return value === 1 || value === 2;
+}
+
+function schemaArrayLength(value: object, keyCount: number): number | null {
+  const lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+    value,
+    "length",
+  ]) as PropertyDescriptor | undefined;
+  if (!isOwnDataPropertyDescriptor(lengthDescriptor)) return null;
+  const length = lengthDescriptor.value;
+  if (!Number.isSafeInteger(length) || length < 0 || keyCount !== length + 1) return null;
+  return length;
 }
 
 /**
@@ -271,6 +288,60 @@ function snapshotSchemaDescriptions(
       aggregate.bytes <= TOOL_SEARCH_TOTAL_SCHEMA_BYTES;
   };
 
+  function visitSchemaProperty(
+    value: object,
+    depth: number,
+    key: PropertyKey,
+    isArray: boolean,
+    arrayLength: number | null,
+  ): boolean {
+    if (isArray && key === "length") return true;
+    if (typeof key !== "string" || !debitBytes(key)) return false;
+    if (isArray) {
+      const index = Number(key);
+      if (
+        !Number.isSafeInteger(index) || index < 0 || index >= (arrayLength ?? 0) ||
+        String(index) !== key
+      ) return false;
+    }
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+    if (!isOwnDataPropertyDescriptor(descriptor) || !descriptor.enumerable) return false;
+    if (key === "description" && typeof descriptor.value === "string") {
+      pushPrivateArray(descriptions, normalizeSearchText(descriptor.value));
+    }
+    pushPrivateArray(stack, { value: descriptor.value, depth: depth + 1 });
+    return true;
+  }
+  function visitSchemaNode(value: unknown, depth: number): boolean {
+    if (typeof value === "string") return debitBytes(value);
+    if (!value || typeof value !== "object") return true;
+    if (seen.has(value)) return false;
+    seen.add(value);
+
+    const isArray = ArrayIsArray(value);
+    const prototype = ReflectApply(ObjectGetPrototypeOf, undefined, [value]);
+    if (prototype !== null && prototype !== (isArray ? Array.prototype : Object.prototype)) {
+      return false;
+    }
+    const keys = ReflectOwnKeys(value);
+    if (keys.length > TOOL_SEARCH_SCHEMA_MAX_NODES - nodes) return false;
+
+    let arrayLength: number | null = null;
+    if (isArray) {
+      const length = schemaArrayLength(value, keys.length);
+      if (length === null) return false;
+      arrayLength = length;
+    }
+
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      if (!hasOwn(keys, keyIndex)) continue;
+      if (!visitSchemaProperty(value, depth, keys[keyIndex]!, isArray, arrayLength)) return false;
+    }
+    return true;
+  }
   try {
     while (stack.length > 0) {
       const current = stack[stack.length - 1];
@@ -283,56 +354,7 @@ function snapshotSchemaDescriptions(
         aggregate.nodes > TOOL_SEARCH_TOTAL_SCHEMA_NODES
       ) return null;
 
-      if (typeof current.value === "string") {
-        if (!debitBytes(current.value)) return null;
-        continue;
-      }
-      if (!current.value || typeof current.value !== "object") continue;
-      if (seen.has(current.value)) return null;
-      seen.add(current.value);
-
-      const isArray = ArrayIsArray(current.value);
-      const prototype = ReflectApply(ObjectGetPrototypeOf, undefined, [current.value]);
-      if (prototype !== null && prototype !== (isArray ? Array.prototype : Object.prototype)) {
-        return null;
-      }
-      const keys = ReflectOwnKeys(current.value);
-      if (keys.length > TOOL_SEARCH_SCHEMA_MAX_NODES - nodes) return null;
-
-      let arrayLength: number | null = null;
-      if (isArray) {
-        const lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-          current.value,
-          "length",
-        ]) as PropertyDescriptor | undefined;
-        if (!isOwnDataPropertyDescriptor(lengthDescriptor)) return null;
-        const length = lengthDescriptor.value;
-        if (!Number.isSafeInteger(length) || length < 0 || keys.length !== length + 1) return null;
-        arrayLength = length;
-      }
-
-      for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-        if (!hasOwn(keys, keyIndex)) continue;
-        const key = keys[keyIndex]!;
-        if (isArray && key === "length") continue;
-        if (typeof key !== "string" || !debitBytes(key)) return null;
-        if (isArray) {
-          const index = Number(key);
-          if (
-            !Number.isSafeInteger(index) || index < 0 || index >= (arrayLength ?? 0) ||
-            String(index) !== key
-          ) return null;
-        }
-        const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-          current.value,
-          key,
-        ]) as PropertyDescriptor | undefined;
-        if (!isOwnDataPropertyDescriptor(descriptor) || !descriptor.enumerable) return null;
-        if (key === "description" && typeof descriptor.value === "string") {
-          pushPrivateArray(descriptions, normalizeSearchText(descriptor.value));
-        }
-        pushPrivateArray(stack, { value: descriptor.value, depth: current.depth + 1 });
-      }
+      if (!visitSchemaNode(current.value, current.depth)) return null;
     }
   } catch {
     return null;
@@ -530,6 +552,28 @@ function rememberFilterValue(preview: FilterPreview, value: string | undefined):
   else pushPrivateArray(preview.values, value);
 }
 
+function validateInventoryRequest(
+  input: Parameters<typeof listToolExposure>[0],
+): { limit: number; offset: number } {
+  if (input.scope !== undefined && input.scope !== "all" && input.scope !== "platform") {
+    throw new Error("Tool inventory scope must be all or platform");
+  }
+  assertInventoryFilter(input.domain, "domain");
+  assertInventoryFilter(input.resource, "resource");
+  const limit = input.limit ?? 10;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    throw new Error("Tool inventory limit must be an integer from 1 to 20");
+  }
+  const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+  if (
+    input.cursor !== undefined &&
+    (!testPrivateRegExp(/^(0|[1-9]\d{0,9})$/, input.cursor) || !Number.isSafeInteger(offset))
+  ) {
+    throw new Error("Invalid tool inventory cursor");
+  }
+  return { limit, offset };
+}
+
 /**
  * Page authorized executable metadata in name order. Scope, domain, and
  * resource filters apply before pagination. Schemas stay deferred.
@@ -543,22 +587,7 @@ export function listToolExposure(input: {
   domain?: string;
   resource?: string;
 }): ToolInventoryPage {
-  if (input.scope !== undefined && input.scope !== "all" && input.scope !== "platform") {
-    throw new Error("Tool inventory scope must be all or platform");
-  }
-  assertInventoryFilter(input.domain, "domain");
-  assertInventoryFilter(input.resource, "resource");
-  const limit = input.limit ?? 10;
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
-    throw new Error("Tool inventory limit must be an integer from 1 to 20");
-  }
-  const offset = input.cursor === undefined ? 0 : Number(input.cursor);
-  if (
-    input.cursor !== undefined &&
-    (!testPrivateRegExp(/^(0|[1-9][0-9]{0,9})$/, input.cursor) || !Number.isSafeInteger(offset))
-  ) {
-    throw new Error("Invalid tool inventory cursor");
-  }
+  const { limit, offset } = validateInventoryRequest(input);
   const candidates = collectSearchCandidates({
     authorized: input.authorized,
     available: input.available ?? [],
@@ -574,17 +603,19 @@ export function listToolExposure(input: {
   const resources: FilterPreview = { values: [], truncated: false };
   let domainMatched = input.domain === undefined;
   let resourceMatched = input.resource === undefined;
-  for (let index = 0; index < candidates.length; index++) {
-    const entry = candidates[index]!;
+  function collectInventoryEntry(entry: SearchableTool): void {
     rememberFilterValue(domains, entry.discovery?.domain);
-    if (input.domain !== undefined && entry.discovery?.domain !== input.domain) continue;
+    if (input.domain !== undefined && entry.discovery?.domain !== input.domain) return;
     domainMatched = true;
     rememberFilterValue(resources, entry.discovery?.resource);
-    if (input.resource !== undefined && entry.discovery?.resource !== input.resource) continue;
+    if (input.resource !== undefined && entry.discovery?.resource !== input.resource) return;
     resourceMatched = true;
-    if (setHas(seen, entry.name)) continue;
+    if (setHas(seen, entry.name)) return;
     ReflectApply(SetAdd, seen, [entry.name]);
     pushPrivateArray(entries, toMetadataMatch(entry));
+  }
+  for (let index = 0; index < candidates.length; index++) {
+    collectInventoryEntry(candidates[index]!);
   }
   const inventory = input.scope ?? "all";
   if (!domainMatched || !resourceMatched) {
@@ -688,9 +719,7 @@ function scoreToolExposureTerms(
   const averageDocumentFrequency = documentFrequencyTotal / weightedTerms.length;
 
   const scored: { score: number; match: ToolSearchMatch }[] = [];
-  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
-    if (!hasOwn(candidates, candidateIndex)) continue;
-    const candidate = candidates[candidateIndex]!;
+  function scoreCandidate(candidate: SearchableTool): void {
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
@@ -712,9 +741,13 @@ function scoreToolExposureTerms(
     // Name and description evidence can still route to catalog navigation,
     // such as an integration reader mentioning the requested provider.
     const minimumMatchedTerms = terms.length >= 3 ? Math.ceil(terms.length / 2) : 1;
-    if (!matchedCapabilityField && matchedTermCount < minimumMatchedTerms) continue;
-    if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
+    if (!matchedCapabilityField && matchedTermCount < minimumMatchedTerms) return;
+    if (!matchedSelectiveTerm && matchedTermCount < terms.length) return;
     pushPrivateArray(scored, { score, match: toSearchMatch(candidate) });
+  }
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+    if (!hasOwn(candidates, candidateIndex)) continue;
+    scoreCandidate(candidates[candidateIndex]!);
   }
 
   return mapPrivateArray(
@@ -724,6 +757,77 @@ function scoreToolExposureTerms(
         right.score - left.score || compareToolSearchMatches(left.match, right.match),
     ),
     ({ match }) => match,
+  );
+}
+
+function rankCanonicalToolMatches(
+  canonical: NonNullable<ReturnType<typeof parseCanonicalIntegrationQuery>>,
+  candidates: readonly SearchableTool[],
+): ToolSearchMatch[] {
+  const canonicalName = canonical.canonicalName;
+  const exact = canonicalName === null ? [] : sortSearchItems(
+    mapPrivateArray(
+      filterPrivateArray(
+        candidates,
+        (candidate) => privateTextToLowerCase(candidate.name) === canonicalName,
+      ),
+      toSearchMatch,
+    ),
+    compareToolSearchMatches,
+  );
+  if (exact.length > 0) return exact;
+
+  // A missing exact action can discover catalog guidance, never another action.
+  // Loading a sibling would report success for a capability the caller lacks.
+  // Text evidence compares normalized namespaces, including names with underscores.
+  const namespaceTerm = normalizeSearchText(canonical.namespace);
+  const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
+  const namespaceCandidates = filterPrivateArray(candidates, (candidate) => {
+    const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
+    const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
+      (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
+    const isLocalCatalogReader = candidate.name === "get_integration" ||
+      candidate.name === "list_integrations";
+    if (!isPlatformCatalogReader && !isLocalCatalogReader) return false;
+    // A non-canonical tool carrying the namespace in its *name* is a
+    // normalization coincidence, not the integration, whatever its description
+    // happens to mention: `jira_list_projects` is a local tool, not Jira.
+    if (testPrivateRegExp(namespacePattern, candidate.normalizedName)) return false;
+    return testPrivateRegExp(namespacePattern, candidate.normalizedDescription) ||
+      somePrivateArray(
+        candidate.parameterDescriptions,
+        (description) => testPrivateRegExp(namespacePattern, description),
+      );
+  });
+  const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
+  if (
+    namespaceMatches.length > 0 ||
+    somePrivateArray(
+      candidates,
+      (candidate) =>
+        parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name))?.integration ===
+          canonical.namespace,
+    ) || canonicalName === null ||
+    canonical.namespace !== PLATFORM_TOOL_NAMESPACE
+  ) {
+    return namespaceMatches;
+  }
+
+  // With no integration evidence at all, models often prefix a platform tool with
+  // the platform namespace (`veryfront__list_files`). Only that reserved namespace
+  // aliases local tools: `github__list_files` must never load a project's own
+  // `list_files`. Match the exact local id only; a normalized phrase match would
+  // reintroduce `veryfront_list_files`.
+  const localId = privateTextSlice(canonicalName, canonical.namespace.length + 2);
+  return sortSearchItems(
+    mapPrivateArray(
+      filterPrivateArray(
+        candidates,
+        (candidate) => privateTextToLowerCase(candidate.name) === localId,
+      ),
+      toSearchMatch,
+    ),
+    compareToolSearchMatches,
   );
 }
 
@@ -743,73 +847,7 @@ function rankToolExposureMatches(input: {
   // tool instead of the namespace the caller actually asked for. Only the real
   // canonical name satisfies a canonical query; catalog readers can provide guidance.
   const canonical = parseCanonicalIntegrationQuery(input.query);
-  if (canonical !== null) {
-    const canonicalName = canonical.canonicalName;
-    const exact = canonicalName === null ? [] : sortSearchItems(
-      mapPrivateArray(
-        filterPrivateArray(
-          candidates,
-          (candidate) => privateTextToLowerCase(candidate.name) === canonicalName,
-        ),
-        toSearchMatch,
-      ),
-      compareToolSearchMatches,
-    );
-    if (exact.length > 0) return exact;
-
-    // A missing exact action can discover catalog guidance, never another action.
-    // Loading a sibling would report success for a capability the caller lacks.
-    // Text evidence compares normalized namespaces, including names with underscores.
-    const namespaceTerm = normalizeSearchText(canonical.namespace);
-    const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
-    const namespaceCandidates = filterPrivateArray(candidates, (candidate) => {
-      const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
-      const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
-        (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
-      const isLocalCatalogReader = candidate.name === "get_integration" ||
-        candidate.name === "list_integrations";
-      if (!isPlatformCatalogReader && !isLocalCatalogReader) return false;
-      // A non-canonical tool carrying the namespace in its *name* is a
-      // normalization coincidence, not the integration, whatever its description
-      // happens to mention: `jira_list_projects` is a local tool, not Jira.
-      if (testPrivateRegExp(namespacePattern, candidate.normalizedName)) return false;
-      return testPrivateRegExp(namespacePattern, candidate.normalizedDescription) ||
-        somePrivateArray(
-          candidate.parameterDescriptions,
-          (description) => testPrivateRegExp(namespacePattern, description),
-        );
-    });
-    const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
-    if (
-      namespaceMatches.length > 0 ||
-      somePrivateArray(
-        candidates,
-        (candidate) =>
-          parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name))?.integration ===
-            canonical.namespace,
-      ) || canonicalName === null ||
-      canonical.namespace !== PLATFORM_TOOL_NAMESPACE
-    ) {
-      return namespaceMatches;
-    }
-
-    // With no integration evidence at all, models often prefix a platform tool with
-    // the platform namespace (`veryfront__list_files`). Only that reserved namespace
-    // aliases local tools: `github__list_files` must never load a project's own
-    // `list_files`. Match the exact local id only; a normalized phrase match would
-    // reintroduce `veryfront_list_files`.
-    const localId = privateTextSlice(canonicalName, canonical.namespace.length + 2);
-    return sortSearchItems(
-      mapPrivateArray(
-        filterPrivateArray(
-          candidates,
-          (candidate) => privateTextToLowerCase(candidate.name) === localId,
-        ),
-        toSearchMatch,
-      ),
-      compareToolSearchMatches,
-    );
-  }
+  if (canonical !== null) return rankCanonicalToolMatches(canonical, candidates);
 
   // A literal local id identifies one capability, not every tool whose schema
   // mentions it. Keep phrase searches broad while exact calls load only that schema.
@@ -1013,6 +1051,55 @@ function capEagerVisibleTools(
   return filterPrivateArray(visible, (tool) => setHas(keptNames, tool.name));
 }
 
+function collectLoadableTools(
+  authorized: readonly ToolDefinition[],
+  bootstrap: ReadonlySet<string>,
+): {
+  bootstrapCount: number;
+  loadable: ToolDefinition[];
+  loadableNames: Set<string>;
+} {
+  let bootstrapCount = 0;
+  const loadable: ToolDefinition[] = [];
+  const loadableNames = createPrivateSet<string>();
+  for (let index = 0; index < authorized.length; index++) {
+    const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
+    if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
+    else {
+      loadable[loadable.length] = tool;
+      ReflectApply(SetAdd, loadableNames, [tool.name]);
+    }
+  }
+  return { bootstrapCount, loadable, loadableNames };
+}
+
+function collectVisibleTools(
+  authorized: readonly ToolDefinition[],
+  bootstrap: ReadonlySet<string>,
+  loadedToolNames: ReadonlySet<string>,
+): { visible: ToolDefinition[]; visibleNames: Set<string> } {
+  const visible: ToolDefinition[] = [];
+  const visibleNames = createPrivateSet<string>();
+  for (let index = 0; index < authorized.length; index++) {
+    const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
+    if (setHas(bootstrap, tool.name) || setHas(loadedToolNames, tool.name)) {
+      visible[visible.length] = tool;
+      ReflectApply(SetAdd, visibleNames, [tool.name]);
+    }
+  }
+  return { visible, visibleNames };
+}
+
+function assertNoReservedToolName(authorized: readonly ToolDefinition[]): void {
+  for (let index = 0; index < authorized.length; index++) {
+    if (authorized[index]?.name === TOOL_SEARCH_TOOL_NAME) {
+      throw new Error(`"${TOOL_SEARCH_TOOL_NAME}" is reserved by the Veryfront runtime`);
+    }
+  }
+}
+
 /** Plan the schemas visible to the model for the current step. */
 export function createToolExposurePlan(input: {
   authorized: readonly ToolDefinition[];
@@ -1038,11 +1125,7 @@ export function createToolExposurePlan(input: {
       loadedToolNames: input.state.loadedToolNames,
     };
   }
-  for (let index = 0; index < authorized.length; index++) {
-    if (authorized[index]?.name === TOOL_SEARCH_TOOL_NAME) {
-      throw new Error(`"${TOOL_SEARCH_TOOL_NAME}" is reserved by the Veryfront runtime`);
-    }
-  }
+  assertNoReservedToolName(authorized);
 
   const hasCanonicalSkillLoader = somePrivateArray(
     authorized,
@@ -1052,36 +1135,22 @@ export function createToolExposurePlan(input: {
   // a project owns the local name. Defer the local alias when both are authorized.
   const bootstrap = input.bootstrapToolNames ??
     (hasCanonicalSkillLoader ? DEFAULT_BOOTSTRAP_TOOL_NAMES : LEGACY_BOOTSTRAP_TOOL_NAMES);
-  let bootstrapCount = 0;
-  const loadable: ToolDefinition[] = [];
-  const loadableNames = createPrivateSet<string>();
-  for (let index = 0; index < authorized.length; index++) {
-    const tool = authorized[index]!;
-    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
-    if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
-    else {
-      loadable[loadable.length] = tool;
-      ReflectApply(SetAdd, loadableNames, [tool.name]);
-    }
-  }
+  const { bootstrapCount, loadable, loadableNames } = collectLoadableTools(authorized, bootstrap);
   const loadedCapacity = input.maxVisibleTools === undefined
     ? undefined
     : Math.max(0, input.maxVisibleTools - bootstrapCount);
-  const maxLoadedTools = loadedCapacity === undefined
-    ? undefined
-    : Math.max(0, loadedCapacity - (loadable.length > loadedCapacity ? 1 : 0));
+  let maxLoadedTools: number | undefined;
+  if (loadedCapacity !== undefined) {
+    const searchToolSlots = loadable.length > loadedCapacity ? 1 : 0;
+    maxLoadedTools = Math.max(0, loadedCapacity - searchToolSlots);
+  }
   pruneLoadedToolNames(input.state, loadableNames);
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
-  const visible: ToolDefinition[] = [];
-  const visibleNames = createPrivateSet<string>();
-  for (let index = 0; index < authorized.length; index++) {
-    const tool = authorized[index]!;
-    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
-    if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
-      visible[visible.length] = tool;
-      ReflectApply(SetAdd, visibleNames, [tool.name]);
-    }
-  }
+  const { visible, visibleNames } = collectVisibleTools(
+    authorized,
+    bootstrap,
+    input.state.loadedToolNames,
+  );
   const deferred: ToolDefinition[] = [];
   for (let index = 0; index < loadable.length; index++) {
     const tool = loadable[index]!;

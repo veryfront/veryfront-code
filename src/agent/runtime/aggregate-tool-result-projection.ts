@@ -43,6 +43,70 @@ export type ToolResultProjectionBudget = {
   readonly estimatedInputTokens: number | null;
 };
 
+function historicalProjectionBoundary(sourceMessages: readonly Message[]): {
+  latestUser: number;
+  protectedToolTurnStart: number;
+} {
+  let latestUser = -1;
+  let latestToolCall = -1;
+  let latestToolResult = -1;
+  let firstToolResultAfterLatestUser = -1;
+  for (let index = 0; index < sourceMessages.length; index++) {
+    if (!hasOwn(sourceMessages, index)) continue;
+    const message = sourceMessages[index]!;
+    if (message.role === "user") {
+      latestUser = index;
+      firstToolResultAfterLatestUser = -1;
+    }
+    if (
+      somePrivateArray(
+        message.parts,
+        (part) => privateTextStartsWith(part.type, "tool-") && part.type !== "tool-result",
+      )
+    ) {
+      latestToolCall = index;
+    }
+    if (somePrivateArray(message.parts, (part) => part.type === "tool-result")) {
+      latestToolResult = index;
+      if (firstToolResultAfterLatestUser < 0) firstToolResultAfterLatestUser = index;
+    }
+  }
+  // The most recent call and all its results are the active tool turn. A turn
+  // completed before the latest user message is history and can be projected.
+  const latestToolTurnStart = latestToolCall >= 0 ? latestToolCall : latestToolResult;
+  // A resumed result delivered after the latest user message answers a call
+  // stored before it; the model has not seen it yet, so it stays active.
+  let protectedToolTurnStart = sourceMessages.length;
+  if (latestToolTurnStart > latestUser) protectedToolTurnStart = latestToolTurnStart;
+  else if (firstToolResultAfterLatestUser >= 0) {
+    protectedToolTurnStart = firstToolResultAfterLatestUser;
+  }
+  return { latestUser, protectedToolTurnStart };
+}
+
+function isExactResultReference(
+  part: ToolResultPart,
+  modelPart: ToolResultPart,
+  context: ToolResultContext,
+): boolean {
+  if (modelPart.result === part.result) return true;
+  const ref = readToolResultOwnDataProperty(modelPart.result, "ref");
+  return readToolResultOwnDataProperty(modelPart.result, "type") === "tool_result_reference" &&
+    typeof ref === "string" && context.getOriginalResult(ref) === part.result;
+}
+
+function improvesProjectionBudget(
+  candidate: ToolResultProjectionBudget,
+  inline: ToolResultProjectionBudget,
+  best: ToolResultProjectionBudget,
+  hasBest: boolean,
+): boolean {
+  return !candidate.outputExceeded && candidate.estimatedInputTokens !== null &&
+    !inline.outputExceeded && inline.estimatedInputTokens !== null &&
+    (candidate.fits || candidate.estimatedInputTokens < inline.estimatedInputTokens) &&
+    (!hasBest || candidate.fits || candidate.estimatedInputTokens < best.estimatedInputTokens!);
+}
+
 /**
  * Replace old ordinary tool results with retrievable references, oldest first,
  * until the assembled request fits. Only this model request changes: source
@@ -76,40 +140,101 @@ export function projectHistoricalToolResultsForBudget(input: {
     return bestProjected;
   };
 
-  let latestUser = -1;
-  let latestToolCall = -1;
-  let latestToolResult = -1;
-  let firstToolResultAfterLatestUser = -1;
-  for (let index = 0; index < input.sourceMessages.length; index++) {
-    if (!hasOwn(input.sourceMessages, index)) continue;
-    const message = input.sourceMessages[index]!;
-    if (message.role === "user") {
-      latestUser = index;
-      firstToolResultAfterLatestUser = -1;
+  function handleProjectionError(
+    error: unknown,
+    createdRef: string | undefined,
+  ): "retry" | undefined {
+    if (createdRef) input.context.delete(createdRef);
+    if (isToolResultContextCapacityError(error)) {
+      if (createdRefs.length > bestRefCount) {
+        // An unamortized batch must not occupy the last slot and prevent
+        // a later, larger result from paying the reader cost by itself.
+        discardTentativeReferences();
+        return "retry";
+      }
+      return;
     }
-    if (
-      somePrivateArray(
-        message.parts,
-        (part) => privateTextStartsWith(part.type, "tool-") && part.type !== "tool-result",
-      )
-    ) {
-      latestToolCall = index;
-    }
-    if (somePrivateArray(message.parts, (part) => part.type === "tool-result")) {
-      latestToolResult = index;
-      if (firstToolResultAfterLatestUser < 0) firstToolResultAfterLatestUser = index;
-    }
+    for (const ref of createdRefs) input.context.delete(ref);
+    throw error;
   }
-  // The most recent call and all its results are the active tool turn. A turn
-  // completed before the latest user message is history and can be projected.
-  const latestToolTurnStart = latestToolCall >= 0 ? latestToolCall : latestToolResult;
-  // A resumed result delivered after the latest user message answers a call
-  // stored before it; the model has not seen it yet, so it stays active.
-  const protectedToolTurnStart = latestToolTurnStart > latestUser
-    ? latestToolTurnStart
-    : firstToolResultAfterLatestUser >= 0
-    ? firstToolResultAfterLatestUser
-    : input.sourceMessages.length;
+
+  function projectPart(
+    sourceMessage: Message,
+    messageIndex: number,
+    partIndex: number,
+  ): "retry" | "stop" | undefined {
+    if (!hasOwn(sourceMessage.parts, partIndex)) return;
+    const modelMessage = projected[messageIndex];
+    const part = sourceMessage.parts[partIndex]!;
+    if (!modelMessage || part.type !== "tool-result" || !("result" in part)) return;
+    if (!hasOwn(modelMessage.parts, partIndex)) return;
+    const modelPart = modelMessage.parts[partIndex] as ToolResultPart;
+    // Existing exact references can use a smaller preview. Preview-only or
+    // unrelated model projections must never become retrievable references.
+    if (!isExactResultReference(part, modelPart, input.context)) return;
+    if (isProtectedToolResult(part)) return;
+    const currentEstimate = budget.estimatedInputTokens;
+    if (currentEstimate === null) return "stop";
+    const storedBefore = input.context.size;
+    let createdRef: string | undefined;
+    let bestMessages: Message[] | undefined;
+    let bestCandidateBudget = budget;
+    let budgetWithReader: ToolResultProjectionBudget | undefined;
+    const previewCandidates = isSkillReferenceToolResult(part)
+      ? SKILL_REFERENCE_PREVIEW_CANDIDATES
+      : ORDINARY_PREVIEW_CANDIDATES;
+    function selectPreview(part: ToolResultPart, modelMessage: Message): void {
+      for (const previewBytes of previewCandidates) {
+        const reference = input.context.discloseReference(
+          toolResultDisclosureInput(part),
+          previewBytes === undefined ? undefined : { previewBytes },
+        );
+        if (input.context.size > storedBefore) createdRef = reference.modelResult.ref;
+        // Measure the inline request with the same reader exposure, separating
+        // this result's savings from the helper schema's one-time overhead.
+        budgetWithReader ??= input.inspect(projected);
+        const parts = slicePrivateArray(modelMessage.parts);
+        parts[partIndex] = { ...modelPart, result: reference.modelResult };
+        const messages = slicePrivateArray(projected);
+        messages[messageIndex] = { ...modelMessage, parts };
+        const nextBudget = input.inspect(messages);
+        if (
+          improvesProjectionBudget(
+            nextBudget,
+            budgetWithReader,
+            bestCandidateBudget,
+            bestMessages !== undefined,
+          )
+        ) {
+          bestMessages = messages;
+          bestCandidateBudget = nextBudget;
+          if (nextBudget.fits) break;
+        }
+      }
+    }
+    try {
+      selectPreview(part, modelMessage);
+    } catch (error) {
+      return handleProjectionError(error, createdRef);
+    }
+    if (!bestMessages) {
+      if (createdRef) input.context.delete(createdRef);
+      return;
+    }
+    if (createdRef) createdRefs.push(createdRef);
+    projected = bestMessages;
+    budget = bestCandidateBudget;
+    // Several individually useful references may jointly amortize the reader
+    // schema. Keep them tentative until their combined estimate improves.
+    if (budget.fits || budget.estimatedInputTokens! < bestOverallBudget.estimatedInputTokens!) {
+      bestProjected = projected;
+      bestOverallBudget = budget;
+      bestRefCount = createdRefs.length;
+    }
+    if (budget.fits) return "stop";
+  }
+
+  const { latestUser, protectedToolTurnStart } = historicalProjectionBoundary(input.sourceMessages);
 
   for (let messageIndex = 0; messageIndex < input.sourceMessages.length; messageIndex++) {
     if (
@@ -118,89 +243,9 @@ export function projectHistoricalToolResultsForBudget(input: {
     ) continue;
     const sourceMessage = input.sourceMessages[messageIndex]!;
     for (let partIndex = 0; partIndex < sourceMessage.parts.length; partIndex++) {
-      if (!hasOwn(sourceMessage.parts, partIndex)) continue;
-      const modelMessage = projected[messageIndex];
-      const part = sourceMessage.parts[partIndex]!;
-      if (!modelMessage || part.type !== "tool-result" || !("result" in part)) continue;
-      if (!hasOwn(modelMessage.parts, partIndex)) continue;
-      const modelPart = modelMessage.parts[partIndex] as ToolResultPart;
-      // Existing exact references can use a smaller preview. Preview-only or
-      // unrelated model projections must never become retrievable references.
-      if (modelPart.result !== part.result) {
-        const ref = readToolResultOwnDataProperty(modelPart.result, "ref");
-        if (
-          readToolResultOwnDataProperty(modelPart.result, "type") !== "tool_result_reference" ||
-          typeof ref !== "string" || input.context.getOriginalResult(ref) !== part.result
-        ) continue;
-      }
-      if (isProtectedToolResult(part)) continue;
-      const currentEstimate = budget.estimatedInputTokens;
-      if (currentEstimate === null) return finishProjection();
-      const storedBefore = input.context.size;
-      let createdRef: string | undefined;
-      let bestMessages: Message[] | undefined;
-      let bestCandidateBudget = budget;
-      let budgetWithReader: ToolResultProjectionBudget | undefined;
-      const previewCandidates = isSkillReferenceToolResult(part)
-        ? SKILL_REFERENCE_PREVIEW_CANDIDATES
-        : ORDINARY_PREVIEW_CANDIDATES;
-      try {
-        for (const previewBytes of previewCandidates) {
-          const reference = input.context.discloseReference(
-            toolResultDisclosureInput(part),
-            previewBytes === undefined ? undefined : { previewBytes },
-          );
-          if (input.context.size > storedBefore) createdRef = reference.modelResult.ref;
-          // Measure the inline request with the same reader exposure, separating
-          // this result's savings from the helper schema's one-time overhead.
-          budgetWithReader ??= input.inspect(projected);
-          const parts = slicePrivateArray(modelMessage.parts);
-          parts[partIndex] = { ...modelPart, result: reference.modelResult };
-          const messages = slicePrivateArray(projected);
-          messages[messageIndex] = { ...modelMessage, parts };
-          const nextBudget = input.inspect(messages);
-          if (
-            !nextBudget.outputExceeded && nextBudget.estimatedInputTokens !== null &&
-            !budgetWithReader.outputExceeded && budgetWithReader.estimatedInputTokens !== null &&
-            (nextBudget.fits ||
-              nextBudget.estimatedInputTokens < budgetWithReader.estimatedInputTokens) &&
-            (!bestMessages || nextBudget.fits ||
-              nextBudget.estimatedInputTokens < bestCandidateBudget.estimatedInputTokens!)
-          ) {
-            bestMessages = messages;
-            bestCandidateBudget = nextBudget;
-            if (nextBudget.fits) break;
-          }
-        }
-      } catch (error) {
-        if (createdRef) input.context.delete(createdRef);
-        if (isToolResultContextCapacityError(error)) {
-          if (createdRefs.length > bestRefCount) {
-            // An unamortized batch must not occupy the last slot and prevent
-            // a later, larger result from paying the reader cost by itself.
-            discardTentativeReferences();
-            partIndex--;
-          }
-          continue;
-        }
-        for (const ref of createdRefs) input.context.delete(ref);
-        throw error;
-      }
-      if (!bestMessages) {
-        if (createdRef) input.context.delete(createdRef);
-        continue;
-      }
-      if (createdRef) createdRefs.push(createdRef);
-      projected = bestMessages;
-      budget = bestCandidateBudget;
-      // Several individually useful references may jointly amortize the reader
-      // schema. Keep them tentative until their combined estimate improves.
-      if (budget.fits || budget.estimatedInputTokens! < bestOverallBudget.estimatedInputTokens!) {
-        bestProjected = projected;
-        bestOverallBudget = budget;
-        bestRefCount = createdRefs.length;
-      }
-      if (budget.fits) return finishProjection();
+      const outcome = projectPart(sourceMessage, messageIndex, partIndex);
+      if (outcome === "retry") partIndex--;
+      if (outcome === "stop") return finishProjection();
     }
   }
   return finishProjection();
