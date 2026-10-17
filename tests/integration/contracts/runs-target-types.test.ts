@@ -1,6 +1,6 @@
 /**
- * The vendored Runs target contract types (veryfront-issue-inbox#2233) must stay the
- * bytes veryfront-api generates from its shared Zod schemas, pinned by the kit hash.
+ * The vendored Runs target contract types (veryfront-issue-inbox#2233) retain their
+ * pinned base and maintained event revision, with every artifact hash verified.
  */
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/contract/runs-fixtures.generated.ts";
@@ -76,7 +76,7 @@ describe("Runs target contract types", () => {
     });
   });
 
-  it("are the pinned 0.8.9 artifacts, byte for byte", async () => {
+  it("are the pinned 0.8.9 base plus maintained task-input artifacts, byte for byte", async () => {
     const pin = JSON.parse(await Deno.readTextFile(new URL("pin.json", contractDir))) as {
       contract: string;
       files: Record<string, string>;

@@ -4,9 +4,16 @@
   "archiveSha256": "1c6b884892bc1ccc93f50323ba00863f94f386c1e5a96296a41302559604e865",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "fbf7f7e8084578ad60efa4d67e642907192f4faa9fe7b40d2fac2af9c833c3a6",
-    "openapi.target.json": "bd536d3fbe21c970fbb099c06bdb24ba1cdb045ae31695de8765e80825622a57",
+    "runs-api.generated.ts": "6e26281aa9d581f751679add3954ad80a27c95719de9f2891a088b998dc19656",
+    "openapi.target.json": "9aa7334551ca27842da60a7cb26dd183c3b33eec58551ab002b86f013d8b6bd3",
     "runs-fixtures.generated.ts": "367013897103f0a9c0321c386cbed81d61f1ec4bed36e42129f662fd51245676"
   },
-  "fixturesGeneratedBy": "deno task contracts:runs:fixtures"
+  "fixturesGeneratedBy": "deno task contracts:runs:fixtures",
+  "taskInputEvents": {
+    "repository": "veryfront/veryfront-api",
+    "commit": "2ccdde48747ccd67915273e798666df9dee93c4e",
+    "path": "src/api/contracts/execution/pinned/openapi.target.json",
+    "sourceSha256": "35248683671ee1864d2fa5abe76135e0e552bca4fb24b31e6c7a54646c669a5c",
+    "generatedBy": "scripts/generate-runs-task-input-contract.ts, then veryfront-api renderRunsTargetArtifacts (openapi-typescript 7.13.0)"
+  }
 }
