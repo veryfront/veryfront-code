@@ -2103,9 +2103,11 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
         },
       },
     };
+    let cancelDuringResolution: AbortController | undefined;
     await withHostedChildTaskInputResolver(async (request) => {
       resolutions++;
       await request.evidence.readParentToolResults();
+      cancelDuringResolution?.abort();
       return {
         sourceEventIds: [5],
         payload: { directory: "synthetic" },
@@ -2117,6 +2119,29 @@ for (const replayMode of ["admission retry", "completed replay", "ambiguous rece
         }],
       };
     }, async () => {
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await assertRejects(() =>
+        executeHostedDurableChildFork({
+          ...input,
+          executionOptions: { ...input.executionOptions, abortSignal: cancelled.signal },
+        })
+      );
+      assertEquals([resolutions, reads, writes, admissions], [0, 0, 0, 0]);
+      cancelDuringResolution = new AbortController();
+      await assertRejects(() =>
+        executeHostedDurableChildFork({
+          ...input,
+          executionOptions: {
+            ...input.executionOptions,
+            abortSignal: cancelDuringResolution!.signal,
+          },
+        })
+      );
+      assertEquals([resolutions, reads, writes, admissions], [1, 1, 0, 0]);
+      cancelDuringResolution = undefined;
+      resolutions = 0;
+      reads = 0;
       if (replayMode === "ambiguous receipt") {
         const calls = await Promise.allSettled([
           executeHostedDurableChildFork(input),

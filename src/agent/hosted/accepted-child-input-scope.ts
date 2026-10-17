@@ -15,6 +15,7 @@ export type HostedChildTaskInputResolver = (
 ) => Promise<Omit<HostedAcceptedTaskInputEvent, "type" | "version" | "targetAgentId"> | undefined>;
 type Scope = { active: boolean; resolver: HostedChildTaskInputResolver };
 const storage = new AsyncLocalStorage<Scope | undefined>();
+const freeze = Object.freeze;
 const NativeResponse = Response;
 const NativeReadableStream = ReadableStream;
 /** Application-owned deterministic receipt selection, scoped to one active parent execution. */
@@ -66,10 +67,23 @@ export function getHostedChildTaskInputResolver(): HostedChildTaskInputResolver 
   const scope = storage.getStore();
   if (!scope?.active) return undefined;
   const resolver = scope.resolver;
-  return async (input) => {
+  const whileActive = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (!scope.active) throw new Error("Accepted child input resolver is no longer active");
-    const accepted = await resolver(input);
+    const result = await operation();
     if (!scope.active) throw new Error("Accepted child input resolver is no longer active");
-    return accepted;
+    return result;
+  };
+  return (input) => {
+    const evidence = input.evidence;
+    return whileActive(() =>
+      resolver(freeze({
+        ...input,
+        evidence: freeze({
+          readParentToolResults: () => whileActive(() => evidence.readParentToolResults()),
+          readCommittedVersion: (path: string, versionId: string) =>
+            whileActive(() => evidence.readCommittedVersion(path, versionId)),
+        }),
+      }))
+    );
   };
 }

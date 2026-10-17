@@ -962,6 +962,7 @@ async function prepareAcceptedInvocationInput<
       input.executionOptions.abortSignal,
     ),
   }));
+  throwIfChildRunAborted(input.executionOptions.abortSignal);
   if (!accepted) return input;
   // Retain the append promise before awaiting its response. A failed response
   // may follow a committed event, so retry must not blindly append it again.
@@ -1007,6 +1008,7 @@ export async function executeHostedDurableChildFork<
     // Receipt reads and persistence belong to the same owner as execution.
     // Keep a durable receipt if admission fails, while allowing admission itself
     // to retry. Completed invocation replay performs neither operation again.
+    throwIfChildRunAborted(input.executionOptions.abortSignal);
     const prepared = await prepareAcceptedInvocationInput(input, capability, key, resolver);
     return runWithHostedRunEventWriterCapability(
       undefined,

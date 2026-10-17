@@ -137,3 +137,70 @@ it("revokes resolver authority for bodyless responses and failed operations", as
   );
   await assertRejects(() => captured!(request), Error, "no longer active");
 });
+
+for (const streaming of [false, true]) {
+  it(`revokes retained evidence readers after ${streaming ? "stream EOF" : "parent return"}`, async () => {
+    let reads = 0;
+    let evidence: Parameters<HostedChildTaskInputResolver>[0]["evidence"] | undefined;
+    const input = {
+      ...request,
+      evidence: {
+        readParentToolResults: () => {
+          reads++;
+          return Promise.resolve([]);
+        },
+        readCommittedVersion: () => {
+          reads++;
+          return Promise.resolve({ path: "note", versionId: "version", content: "private" });
+        },
+      },
+    };
+    const response = await withHostedChildTaskInputResolver(async (input) => {
+      evidence = input.evidence;
+      await evidence.readParentToolResults();
+      await evidence.readCommittedVersion("note", "version");
+      return undefined;
+    }, async () => {
+      await getHostedChildTaskInputResolver()!(input);
+      return streaming ? new Response("done") : undefined;
+    });
+    if (response) await response.text();
+    await assertRejects(() => evidence!.readParentToolResults(), Error, "no longer active");
+    await assertRejects(
+      () => evidence!.readCommittedVersion("note", "version"),
+      Error,
+      "no longer active",
+    );
+    assertEquals(reads, 2);
+  });
+}
+
+for (const reader of ["parent", "version"] as const) {
+  it(`rejects an in-flight ${reader} evidence read after parent revocation`, async () => {
+    const gate = Promise.withResolvers<void>();
+    let pending: Promise<unknown> | undefined;
+    await withHostedChildTaskInputResolver(async (input) => {
+      pending = reader === "parent"
+        ? input.evidence.readParentToolResults()
+        : input.evidence.readCommittedVersion("note", "version");
+      pending.catch(() => {});
+      return undefined;
+    }, async () => {
+      await getHostedChildTaskInputResolver()!({
+        ...request,
+        evidence: {
+          readParentToolResults: async () => {
+            await gate.promise;
+            return [];
+          },
+          readCommittedVersion: async () => {
+            await gate.promise;
+            return { path: "note", versionId: "version", content: "private" };
+          },
+        },
+      });
+    });
+    gate.resolve();
+    await assertRejects(() => pending!, Error, "no longer active");
+  });
+}
