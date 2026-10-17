@@ -14,6 +14,18 @@ import { EMBEDDED_POLYFILLS } from "#veryfront/modules/server/module-server.ts";
 import { VERSION } from "#veryfront/utils";
 
 describe("Embedded Polyfills", () => {
+  it("executes async-resource callbacks when HTTP modules use the embedded browser shim", async () => {
+    const source = EMBEDDED_POLYFILLS["_veryfront/platform/polyfills/node-async-hooks"];
+    if (source === undefined) throw new Error("Missing embedded async_hooks polyfill");
+    const shim = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    const resource = new shim.AsyncResource("http");
+    assertEquals(
+      resource.runInAsyncScope((left: number, right: number) => left + right, null, 2, 3),
+      5,
+    );
+    assertEquals(new shim.AsyncLocalStorage().getStore(), undefined);
+  });
+
   it("all import-rewritten polyfill paths have embedded content", () => {
     const requiredPaths = getRequiredPolyfillPaths();
     const embeddedPaths = new Set(Object.keys(EMBEDDED_POLYFILLS));

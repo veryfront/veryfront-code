@@ -1,8 +1,9 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 
 // Captured at module evaluation so project code cannot replace them later.
 const requestDispatchStorage = new AsyncLocalStorage<true>();
-const runInHostContext = AsyncLocalStorage.snapshot();
+const requestHostContext = new AsyncResource("VeryfrontHttpRequest");
+const AsyncResourceRunInAsyncScope = AsyncResource.prototype.runInAsyncScope;
 const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 const IntrinsicReflectApply = Reflect.apply;
 
@@ -26,10 +27,12 @@ export function scopeRequestAsyncContext<Info, R>(
   // Keep both parameters declared: Deno.serve() passes no request to a
   // handler whose declared arity is zero.
   return (request: Request, info?: Info) =>
-    runInHostContext(() =>
-      IntrinsicReflectApply(AsyncLocalStorageRun, requestDispatchStorage, [
-        true,
-        () => handler(request, info),
-      ]) as R
-    );
+    IntrinsicReflectApply(AsyncResourceRunInAsyncScope, requestHostContext, [
+      () =>
+        IntrinsicReflectApply(AsyncLocalStorageRun, requestDispatchStorage, [
+          true,
+          () => handler(request, info),
+        ]),
+      null,
+    ]) as R;
 }

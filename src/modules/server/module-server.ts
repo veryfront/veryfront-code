@@ -144,6 +144,12 @@ export class AsyncLocalStorage {
   disable() {}
   enterWith(_store) {}
 }
+export class AsyncResource {
+  constructor(_type) {}
+  runInAsyncScope(callback, thisArg, ...args) {
+    return Reflect.apply(callback, thisArg, args);
+  }
+}
 `,
   "_veryfront/platform/polyfills/node-noop": `/**
  * Browser polyfill for unknown Node.js built-in modules.
