@@ -10,8 +10,7 @@
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
-import nodeModule from "node:module";
+import nodeModule, { createRequire } from "node:module";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { satisfies, valid, versionAdmission } from "./semver.ts";
@@ -211,6 +210,36 @@ export function captureLocalReactPeers(): LocalReactPeerSnapshot {
   return ObjectFreeze({ roots, paths: ObjectFreeze(paths), versions });
 }
 
+function resolveCapturedReactPeer(
+  specifier: string,
+  reactVersion: string | undefined,
+  peers: LocalReactPeerSnapshot,
+): string {
+  const packageName =
+    specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])
+      ? "react-dom"
+      : "react";
+  const version = peers.versions[packageName];
+  if (
+    !version || (reactVersion !== undefined && versionAdmission(version, reactVersion) === false)
+  ) {
+    throw new TypeError("Local React runtime does not match the selected project version");
+  }
+  const path = peers.paths[specifier];
+  if (path) return path;
+  const root = peers.roots[packageName];
+  if (!root) throw new TypeError("Local React peer root is unavailable in captured graph");
+  try {
+    return pathToFileURL(resolveFreshPeer(specifier, root)).href;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+      throw new TypeError("Local React peer subpath is unavailable in captured graph");
+    }
+    throw error;
+  }
+}
+
 /** Resolve SSR React imports against the same peers as the framework renderer. */
 export function getLocalReactPath(
   specifier: string,
@@ -220,29 +249,7 @@ export function getLocalReactPath(
   if (!isReactSpecifier(specifier)) return undefined;
   assertReactPackageDeclaration(reactVersion);
   if (peers && (isNode || isBun)) {
-    const packageName =
-      specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])
-        ? "react-dom"
-        : "react";
-    const version = peers.versions[packageName];
-    if (
-      !version || (reactVersion !== undefined && versionAdmission(version, reactVersion) === false)
-    ) {
-      throw new TypeError("Local React runtime does not match the selected project version");
-    }
-    const path = peers.paths[specifier];
-    if (path) return path;
-    const root = peers.roots[packageName];
-    if (!root) throw new TypeError("Local React peer root is unavailable in captured graph");
-    try {
-      return pathToFileURL(resolveFreshPeer(specifier, root)).href;
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
-        throw new TypeError("Local React peer subpath is unavailable in captured graph");
-      }
-      throw error;
-    }
+    return resolveCapturedReactPeer(specifier, reactVersion, peers);
   }
   if ((isNode || isBun) && reactVersion !== undefined) {
     const packageName =
