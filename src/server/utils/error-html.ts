@@ -2,6 +2,8 @@ import { escapeHTML } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
 import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
 
+const SCRIPT_LESS_THAN_ESCAPE = String.raw`\u003c`;
+
 interface ErrorHtmlOptions {
   statusCode: number;
   title: string;
@@ -97,7 +99,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
           url: window.location.href,
           errors: [{
             type: '${errorType}',
-            message: ${JSON.stringify(errorMessage).replace(/</g, "\\u003c")}
+            message: ${JSON.stringify(errorMessage).replaceAll("<", SCRIPT_LESS_THAN_ESCAPE)}
           }]
         }, vfStudioTargetOrigin());
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }

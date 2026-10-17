@@ -11,6 +11,8 @@
 import { escapeHtml } from "veryfront/utils/html-escape";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 
+const SCRIPT_LESS_THAN_ESCAPE = String.raw`\u003c`;
+
 /** Options for generating markdown preview HTML. */
 interface MarkdownHtmlOptions {
   /** Rendered HTML content from the markdown compiler. */
@@ -40,7 +42,7 @@ function detectTheme(req: Request, url: URL): "light" | "dark" | null {
   const colorModeParam = url.searchParams.get("color_mode")?.toLowerCase();
   const clientHint = req.headers
     .get("Sec-CH-Prefers-Color-Scheme")
-    ?.replace(/"/g, "")
+    ?.replaceAll('"', "")
     .trim()
     .toLowerCase();
 
@@ -81,7 +83,7 @@ function buildStudioScript(
   };
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
-  const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
+  const safeJson = JSON.stringify(bridgeConfig).replaceAll("<", SCRIPT_LESS_THAN_ESCAPE);
   return `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
   <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
 }

@@ -6,6 +6,14 @@ import {
   RSC_DEPENDENCY_PINNING_HEADER,
 } from "#veryfront/rendering/rsc/constants.ts";
 
+const SCRIPT_ESCAPES = {
+  lessThan: String.raw`\u003c`,
+  greaterThan: String.raw`\u003e`,
+  ampersand: String.raw`\u0026`,
+  lineSeparator: String.raw`\u2028`,
+  paragraphSeparator: String.raw`\u2029`,
+};
+
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
  * inline HTML <script>. JSON already escapes quotes, backslashes, and control
@@ -20,11 +28,11 @@ import {
  */
 function jsonForScript(value: unknown): string {
   return JSON.stringify(value)
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
+    .replaceAll("<", SCRIPT_ESCAPES.lessThan)
+    .replaceAll(">", SCRIPT_ESCAPES.greaterThan)
+    .replaceAll("&", SCRIPT_ESCAPES.ampersand)
+    .replaceAll("\u2028", SCRIPT_ESCAPES.lineSeparator)
+    .replaceAll("\u2029", SCRIPT_ESCAPES.paragraphSeparator);
 }
 
 export class PageHandler {
@@ -51,7 +59,8 @@ export class PageHandler {
 
   private buildHtml(pathname: string, searchParams: URLSearchParams, nonce?: string): string {
     const queryString = searchParams.toString();
-    const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
+    const querySuffix = queryString ? "?" + queryString : "";
+    const renderUrl = `/_veryfront/rsc/render${pathname}${querySuffix}`;
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
     const transportHeadersJs = jsonForScript(
