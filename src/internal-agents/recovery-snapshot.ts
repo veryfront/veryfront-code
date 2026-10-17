@@ -50,17 +50,25 @@ export const getRecoveryModelTurnSchema = defineSchema((v) =>
     providerReplayCheckpoint: getExecutorProviderReplayCheckpointSchema().optional(),
   }).strict()
 );
+const getRecoveryMessageSchema = defineSchema(() =>
+  getMessageSchema().omit({ metadata: true }).strict()
+);
+export const getRecoveryContinuationSchema = defineSchema((v) =>
+  getAgentPauseCheckpointSchema().extend({
+    messages: v.array(getRecoveryMessageSchema()).max(1_000),
+  })
+);
 export const getRecoverySnapshotSchema = defineSchema((v) =>
   v.object({
     version: v.literal(1),
-    runtimeContinuation: getAgentPauseCheckpointSchema().optional(),
+    runtimeContinuation: getRecoveryContinuationSchema().optional(),
     initialHistoryMessageIds: v.array(v.string().min(1).max(256)).max(1000).optional(),
     initialHistoryMessageDigests: v.array(v.string().regex(/^[0-9a-f]{64}$/)).max(1000).optional(),
     binding: getSnapshotBindingSchema(),
     acknowledgedEventId: v.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
     acknowledgedExternalSequence: v.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     // Runtime credentials and enumerable private metadata are not checkpoint fields.
-    messages: v.array(getMessageSchema().omit({ metadata: true }).strict()).max(1_000),
+    messages: v.array(getRecoveryMessageSchema()).max(1_000),
     modelTurns: v.array(getRecoveryModelTurnSchema()).max(100),
     toolExposureCheckpoint: getExecutorToolExposureCheckpointSchema(),
     toolBoundaries: v.array(getToolBoundarySchema()).max(1_000),

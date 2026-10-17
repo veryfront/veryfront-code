@@ -471,6 +471,20 @@ it("continuation and restore bindings use structural JSON equality", () => {
       recoveredInterruptedLocalToolBatch: false,
     },
   };
+  for (const extra of [{ metadata: { syntheticCredential: "test-only" } }, { foreign: true }]) {
+    assertThrows(() =>
+      parseRecoverySnapshot({
+        ...snapshot,
+        runtimeContinuation: {
+          ...snapshot.runtimeContinuation,
+          messages: snapshot.runtimeContinuation.messages.map((message) => ({
+            ...message,
+            ...extra,
+          })),
+        },
+      })
+    );
+  }
   const parsed = parseRecoverySnapshot(snapshot);
   validateRecoverySnapshotForRestore(snapshot, {
     sourceBinding: parsed.binding.sourceBinding,
