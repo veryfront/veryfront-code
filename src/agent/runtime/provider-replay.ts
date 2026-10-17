@@ -186,6 +186,26 @@ function isReplayRequiredAnthropicBlock(block: Record<string, unknown>): boolean
   return block.type === "thinking" || block.type === "redacted_thinking";
 }
 
+function emissionMessageBlocks(
+  rawAssistantMessage: unknown[],
+  messageIndex: number,
+): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
+  for (let blockIndex = 0; blockIndex < rawAssistantMessage.length; blockIndex++) {
+    const block = hasOwn(rawAssistantMessage, blockIndex)
+      ? rawAssistantMessage[blockIndex]!
+      : undefined;
+    if (!isRecord(block)) {
+      invalidCheckpoint("provider replay emission block must be an object", {
+        messageIndex,
+        blockIndex,
+      });
+    }
+    pushPrivateArray(blocks, block);
+  }
+  return blocks;
+}
+
 function snapshotAnthropicRawAssistantMessagesForEmission(
   providerMetadata: Record<string, unknown> | undefined,
 ): Record<string, unknown>[][] | undefined {
@@ -228,19 +248,7 @@ function snapshotAnthropicRawAssistantMessagesForEmission(
         messageIndex,
       });
     }
-    const blocks: Record<string, unknown>[] = [];
-    for (let blockIndex = 0; blockIndex < rawAssistantMessage.length; blockIndex++) {
-      const block = hasOwn(rawAssistantMessage, blockIndex)
-        ? rawAssistantMessage[blockIndex]!
-        : undefined;
-      if (!isRecord(block)) {
-        invalidCheckpoint("provider replay emission block must be an object", {
-          messageIndex,
-          blockIndex,
-        });
-      }
-      pushPrivateArray(blocks, block);
-    }
+    const blocks = emissionMessageBlocks(rawAssistantMessage, messageIndex);
     pushPrivateArray(groups, blocks);
   }
   return groups;
@@ -1093,6 +1101,21 @@ function validateAnthropicProviderToolCorrelationBlock(
   state.pendingProviderTools.delete(toolCallId);
 }
 
+function correlateCheckpointProviderTools(
+  checkpoint: ProviderReplayCheckpoint,
+  state: ReturnType<typeof createAnthropicProviderToolCorrelationState>,
+): void {
+  for (
+    let replayBlockIndex = 0;
+    replayBlockIndex < checkpoint.providerBlocks.length;
+    replayBlockIndex++
+  ) {
+    if (!hasOwn(checkpoint.providerBlocks, replayBlockIndex)) continue;
+    const replayBlock = checkpoint.providerBlocks[replayBlockIndex]!;
+    validateAnthropicProviderToolCorrelationBlock(replayBlock.block, state);
+  }
+}
+
 function assertAnthropicProviderToolResultsMatchTranscript(
   messages: readonly Message[],
   checkpoints: readonly ProviderReplayCheckpoint[],
@@ -1118,15 +1141,7 @@ function assertAnthropicProviderToolResultsMatchTranscript(
     const checkpoint = checkpointsByMessageId.get(message.id);
     if (!checkpoint) continue;
     visitedCheckpointMessageIds.add(message.id);
-    for (
-      let replayBlockIndex = 0;
-      replayBlockIndex < checkpoint.providerBlocks.length;
-      replayBlockIndex++
-    ) {
-      if (!hasOwn(checkpoint.providerBlocks, replayBlockIndex)) continue;
-      const replayBlock = checkpoint.providerBlocks[replayBlockIndex]!;
-      validateAnthropicProviderToolCorrelationBlock(replayBlock.block, state);
-    }
+    correlateCheckpointProviderTools(checkpoint, state);
   }
 }
 
@@ -1190,6 +1205,25 @@ function getProviderExecutedToolCallIds(target: Message): Set<string> {
   );
 }
 
+function transcriptVisibleToolResult(
+  part: Record<string, unknown>,
+  providerExecutedToolCallIds: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (!isNonEmptyString(part.toolCallId)) {
+    invalidCheckpoint("checkpoint anchor tool result is malformed");
+  }
+  const hasResult = "result" in part || "output" in part;
+  const rawResult = "result" in part ? part.result : part.output;
+  const isPreparedError = isRecord(rawResult) && rawResult.type === "error-text";
+  return {
+    type: "tool-result",
+    toolCallId: part.toolCallId,
+    ...(providerExecutedToolCallIds.has(part.toolCallId) ? { providerExecuted: true } : {}),
+    ...(hasResult ? { result: unwrapPreparedProviderResult(rawResult) } : {}),
+    ...(part.isError === true || isPreparedError ? { isError: true } : {}),
+  };
+}
+
 function toTranscriptVisibleProviderPart(
   part: unknown,
   providerExecutedToolCallIds: ReadonlySet<string>,
@@ -1214,19 +1248,7 @@ function toTranscriptVisibleProviderPart(
           : {}),
       };
     case "tool-result": {
-      if (!isNonEmptyString(part.toolCallId)) {
-        invalidCheckpoint("checkpoint anchor tool result is malformed");
-      }
-      const hasResult = "result" in part || "output" in part;
-      const rawResult = "result" in part ? part.result : part.output;
-      const isPreparedError = isRecord(rawResult) && rawResult.type === "error-text";
-      return {
-        type: "tool-result",
-        toolCallId: part.toolCallId,
-        ...(providerExecutedToolCallIds.has(part.toolCallId) ? { providerExecuted: true } : {}),
-        ...(hasResult ? { result: unwrapPreparedProviderResult(rawResult) } : {}),
-        ...(part.isError === true || isPreparedError ? { isError: true } : {}),
-      };
+      return transcriptVisibleToolResult(part, providerExecutedToolCallIds);
     }
     default:
       invalidCheckpoint("checkpoint anchor contains an unsupported provider part");
@@ -1609,11 +1631,78 @@ function parseProviderReplayBlock(
   return { type: "provider-block", provider, block: value.block };
 }
 
-/** Parse untrusted checkpoint state; malformed state fails explicitly. */
-export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayCheckpoint {
-  if (!isRecord(value)) {
-    invalidCheckpoint("checkpoint must be an object");
+function checkpointBlockPositions(
+  value: Record<string, unknown> & { totalPartCount: number },
+  providerBlocks: readonly ProviderReplayBlock[],
+): number[] {
+  if (
+    !isArray(value.providerBlockPositions) ||
+    value.providerBlockPositions.length !== providerBlocks.length
+  ) {
+    invalidCheckpoint("checkpoint providerBlockPositions must align one-to-one with blocks");
   }
+  const positions: number[] = [];
+  for (let index = 0; index < value.providerBlockPositions.length; index++) {
+    const position = hasOwn(value.providerBlockPositions, index)
+      ? value.providerBlockPositions[index]!
+      : undefined;
+    if (
+      typeof position !== "number" ||
+      !numberIsSafeInteger(position) ||
+      position < 0 ||
+      position >= value.totalPartCount
+    ) {
+      invalidCheckpoint("checkpoint block position must be an integer below totalPartCount", {
+        index,
+      });
+    }
+    const previous = positions.length > 0 ? positions[positions.length - 1] : undefined;
+    if (previous !== undefined && position <= previous) {
+      invalidCheckpoint("checkpoint block positions must be strictly increasing", { index });
+    }
+    pushPrivateArray(positions, position);
+  }
+  return positions;
+}
+
+function checkpointMessageBlockCounts(
+  value: Record<string, unknown>,
+  providerBlocks: readonly ProviderReplayBlock[],
+): number[] | undefined {
+  let providerMessageBlockCounts: number[] | undefined;
+  if (value.providerMessageBlockCounts !== undefined) {
+    if (
+      !isArray(value.providerMessageBlockCounts) ||
+      value.providerMessageBlockCounts.length === 0
+    ) {
+      invalidCheckpoint("checkpoint providerMessageBlockCounts must be a non-empty array");
+    }
+    providerMessageBlockCounts = [];
+    let groupedBlockCount = 0;
+    for (let index = 0; index < value.providerMessageBlockCounts.length; index++) {
+      const count = hasOwn(value.providerMessageBlockCounts, index)
+        ? value.providerMessageBlockCounts[index]!
+        : undefined;
+      if (
+        typeof count !== "number" ||
+        !numberIsSafeInteger(count) ||
+        count <= 0
+      ) {
+        invalidCheckpoint("checkpoint providerMessageBlockCounts entries must be positive", {
+          index,
+        });
+      }
+      groupedBlockCount += count;
+      pushPrivateArray(providerMessageBlockCounts, count);
+    }
+    if (groupedBlockCount !== providerBlocks.length) {
+      invalidCheckpoint("checkpoint providerMessageBlockCounts must cover every block");
+    }
+  }
+  return providerMessageBlockCounts;
+}
+
+function assertCheckpointKeys(value: Record<string, unknown>): void {
   // As with block keys: never echo an unknown key name.
   const keys = objectKeys(value);
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
@@ -1622,6 +1711,14 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
       invalidCheckpoint("checkpoint carries an unknown key");
     }
   }
+}
+
+/** Parse untrusted checkpoint state; malformed state fails explicitly. */
+export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayCheckpoint {
+  if (!isRecord(value)) {
+    invalidCheckpoint("checkpoint must be an object");
+  }
+  assertCheckpointKeys(value);
   if (value.version !== 1) {
     invalidCheckpoint("checkpoint version is unsupported");
   }
@@ -1662,63 +1759,11 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
   if (value.totalPartCount < providerBlocks.length) {
     invalidCheckpoint("checkpoint totalPartCount cannot be lower than the block count");
   }
-  if (
-    !isArray(value.providerBlockPositions) ||
-    value.providerBlockPositions.length !== providerBlocks.length
-  ) {
-    invalidCheckpoint("checkpoint providerBlockPositions must align one-to-one with blocks");
-  }
-  const positions: number[] = [];
-  for (let index = 0; index < value.providerBlockPositions.length; index++) {
-    const position = hasOwn(value.providerBlockPositions, index)
-      ? value.providerBlockPositions[index]!
-      : undefined;
-    if (
-      typeof position !== "number" ||
-      !numberIsSafeInteger(position) ||
-      position < 0 ||
-      position >= value.totalPartCount
-    ) {
-      invalidCheckpoint("checkpoint block position must be an integer below totalPartCount", {
-        index,
-      });
-    }
-    const previous = positions.length > 0 ? positions[positions.length - 1] : undefined;
-    if (previous !== undefined && position <= previous) {
-      invalidCheckpoint("checkpoint block positions must be strictly increasing", { index });
-    }
-    pushPrivateArray(positions, position);
-  }
-  let providerMessageBlockCounts: number[] | undefined;
-  if (value.providerMessageBlockCounts !== undefined) {
-    if (
-      !isArray(value.providerMessageBlockCounts) ||
-      value.providerMessageBlockCounts.length === 0
-    ) {
-      invalidCheckpoint("checkpoint providerMessageBlockCounts must be a non-empty array");
-    }
-    providerMessageBlockCounts = [];
-    let groupedBlockCount = 0;
-    for (let index = 0; index < value.providerMessageBlockCounts.length; index++) {
-      const count = hasOwn(value.providerMessageBlockCounts, index)
-        ? value.providerMessageBlockCounts[index]!
-        : undefined;
-      if (
-        typeof count !== "number" ||
-        !numberIsSafeInteger(count) ||
-        count <= 0
-      ) {
-        invalidCheckpoint("checkpoint providerMessageBlockCounts entries must be positive", {
-          index,
-        });
-      }
-      groupedBlockCount += count;
-      pushPrivateArray(providerMessageBlockCounts, count);
-    }
-    if (groupedBlockCount !== providerBlocks.length) {
-      invalidCheckpoint("checkpoint providerMessageBlockCounts must cover every block");
-    }
-  }
+  const positions = checkpointBlockPositions(
+    value as Record<string, unknown> & { totalPartCount: number },
+    providerBlocks,
+  );
+  const providerMessageBlockCounts = checkpointMessageBlockCounts(value, providerBlocks);
   if (
     value.elapsedMs !== undefined &&
     (typeof value.elapsedMs !== "number" || !numberIsFinite(value.elapsedMs) ||
@@ -1819,6 +1864,60 @@ export function assertReconstructibleProviderReplayCheckpoint(
   }
 }
 
+type ReplayAttachment = {
+  target: Message;
+  rawAssistantMessages: Record<string, unknown>[][];
+};
+
+function planCheckpointAttachments(
+  attachmentPlan: ReplayAttachment[],
+  messages: readonly Message[],
+  checkpoint: ProviderReplayCheckpoint,
+): void {
+  const matches = filterPrivateArray(messages, (message) => message.id === checkpoint.messageId);
+  if (matches.length === 0) return;
+  const assistantMatches = filterPrivateArray(matches, (message) => message.role === "assistant");
+  const toolSiblings = filterPrivateArray(matches, (message) => message.role === "tool");
+  const target = assistantMatches[0];
+  if (!target) {
+    const role = matches[0]?.role;
+    invalidCheckpoint("checkpoint messageId must anchor to an assistant message", {
+      ...(role ? { role } : {}),
+    });
+  }
+  if (assistantMatches.length === 1) {
+    const providerExecutedToolCallIds = getProviderExecutedToolCallIdsForTargetSegment(
+      messages,
+      target,
+      checkpoint,
+    );
+    assertCheckpointMatchesAssistantTurn(
+      target,
+      checkpoint,
+      toolSiblings,
+      providerExecutedToolCallIds,
+    );
+    pushPrivateArray(attachmentPlan, {
+      target,
+      rawAssistantMessages: getRawAssistantMessagesForCheckpoint(checkpoint),
+    });
+    return;
+  }
+  const rawSegments = assertCheckpointMatchesSplitAssistantTurns(
+    matches,
+    assistantMatches,
+    checkpoint,
+  );
+  for (let index = 0; index < rawSegments.length; index++) {
+    if (!hasOwn(rawSegments, index)) continue;
+    const rawBlocks = rawSegments[index]!;
+    pushPrivateArray(attachmentPlan, {
+      target: assistantMatches[index]!,
+      rawAssistantMessages: rawBlocks,
+    });
+  }
+}
+
 /**
  * Attach delivered replay state to the assistant turns it anchors to.
  *
@@ -1835,10 +1934,7 @@ export function applyProviderReplayCheckpointsToMessages(
   options: ApplyProviderReplayCheckpointsOptions = {},
 ): void {
   if (checkpoints === undefined || checkpoints.length === 0) return;
-  const attachmentPlan: Array<{
-    target: Message;
-    rawAssistantMessages: Record<string, unknown>[][];
-  }> = [];
+  const attachmentPlan: ReplayAttachment[] = [];
   // Runtime support is a property of the delivery, not of which turns are
   // still in context: an unsupported checkpoint fails the run even when its
   // turn is absent, so deployment skew surfaces immediately.
@@ -1864,48 +1960,7 @@ export function applyProviderReplayCheckpointsToMessages(
       invalidCheckpoint("checkpoint delivery must not contain missing entries");
     }
     const checkpoint = checkpoints[checkpointIndex]!;
-    const matches = filterPrivateArray(messages, (message) => message.id === checkpoint.messageId);
-    if (matches.length === 0) continue;
-    const assistantMatches = filterPrivateArray(matches, (message) => message.role === "assistant");
-    const toolSiblings = filterPrivateArray(matches, (message) => message.role === "tool");
-    const target = assistantMatches[0];
-    if (!target) {
-      const role = matches[0]?.role;
-      invalidCheckpoint("checkpoint messageId must anchor to an assistant message", {
-        ...(role ? { role } : {}),
-      });
-    }
-    if (assistantMatches.length === 1) {
-      const providerExecutedToolCallIds = getProviderExecutedToolCallIdsForTargetSegment(
-        messages,
-        target,
-        checkpoint,
-      );
-      assertCheckpointMatchesAssistantTurn(
-        target,
-        checkpoint,
-        toolSiblings,
-        providerExecutedToolCallIds,
-      );
-      pushPrivateArray(attachmentPlan, {
-        target,
-        rawAssistantMessages: getRawAssistantMessagesForCheckpoint(checkpoint),
-      });
-      continue;
-    }
-    const rawSegments = assertCheckpointMatchesSplitAssistantTurns(
-      matches,
-      assistantMatches,
-      checkpoint,
-    );
-    for (let index = 0; index < rawSegments.length; index++) {
-      if (!hasOwn(rawSegments, index)) continue;
-      const rawBlocks = rawSegments[index]!;
-      pushPrivateArray(attachmentPlan, {
-        target: assistantMatches[index]!,
-        rawAssistantMessages: rawBlocks,
-      });
-    }
+    planCheckpointAttachments(attachmentPlan, messages, checkpoint);
   }
   for (let index = 0; index < attachmentPlan.length; index++) {
     const { target, rawAssistantMessages } = attachmentPlan[index]!;

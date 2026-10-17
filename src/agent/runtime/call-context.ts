@@ -400,7 +400,7 @@ function isAnthropicCacheControl(value: unknown): boolean {
       value,
       "type",
     ]) as PropertyDescriptor | undefined;
-    return descriptor !== undefined && descriptor.enumerable === true &&
+    return descriptor?.enumerable === true &&
       isOwnDataPropertyDescriptor(descriptor) && descriptor.value === "ephemeral";
   } catch {
     return false;
@@ -412,6 +412,57 @@ type StructuredCacheProviderBucket = {
   value: Record<PropertyKey, unknown>;
   cacheControl: unknown;
 };
+
+function readStructuredCacheProviderBucket(
+  providerOptions: Record<PropertyKey, unknown>,
+  key: PropertyKey,
+): { value: Record<PropertyKey, unknown>; cacheControl: unknown } | undefined {
+  let bucketDescriptor: PropertyDescriptor | undefined;
+  try {
+    bucketDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      providerOptions,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(
+      `Structured system message providerOptions.${String(key)} must be inspectable`,
+    );
+  }
+  if (!bucketDescriptor?.enumerable || !isOwnDataPropertyDescriptor(bucketDescriptor)) {
+    return undefined;
+  }
+  const value = bucketDescriptor.value;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError(
+      `Structured system message providerOptions.${String(key)} must not be a Proxy`,
+    );
+  }
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      "cacheControl",
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(
+      `Structured system message providerOptions.${String(key)}.cacheControl must be inspectable`,
+    );
+  }
+  const cacheControl = descriptor?.enumerable && isOwnDataPropertyDescriptor(descriptor)
+    ? descriptor.value
+    : undefined;
+  if (
+    typeof key === "string" && !isAnthropicCacheProviderKey(key) &&
+    !isAnthropicCacheControl(cacheControl)
+  ) {
+    return undefined;
+  }
+  return { value, cacheControl };
+}
 
 function getStructuredCacheProviderBuckets(
   providerOptions: Record<PropertyKey, unknown>,
@@ -425,50 +476,9 @@ function getStructuredCacheProviderBuckets(
     if (key !== "anthropic" && key !== anthropicProviderAlias) {
       continue;
     }
-    let bucketDescriptor: PropertyDescriptor | undefined;
-    try {
-      bucketDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        providerOptions,
-        key,
-      ]) as PropertyDescriptor | undefined;
-    } catch {
-      throw new TypeError(
-        `Structured system message providerOptions.${String(key)} must be inspectable`,
-      );
-    }
-    if (!bucketDescriptor?.enumerable || !isOwnDataPropertyDescriptor(bucketDescriptor)) {
-      continue;
-    }
-    const value = bucketDescriptor.value;
-    if (!isRecord(value)) {
-      continue;
-    }
-    if (isProxyWithoutHooks(value)) {
-      throw new TypeError(
-        `Structured system message providerOptions.${String(key)} must not be a Proxy`,
-      );
-    }
-
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        value,
-        "cacheControl",
-      ]) as PropertyDescriptor | undefined;
-    } catch {
-      throw new TypeError(
-        `Structured system message providerOptions.${String(key)}.cacheControl must be inspectable`,
-      );
-    }
-    const cacheControl = descriptor?.enumerable && isOwnDataPropertyDescriptor(descriptor)
-      ? descriptor.value
-      : undefined;
-    if (
-      typeof key === "string" && !isAnthropicCacheProviderKey(key) &&
-      !isAnthropicCacheControl(cacheControl)
-    ) {
-      continue;
-    }
+    const bucket = readStructuredCacheProviderBucket(providerOptions, key);
+    if (bucket === undefined) continue;
+    const { value, cacheControl } = bucket;
     pushPrivateArray(buckets, {
       key,
       cacheControl,
@@ -503,18 +513,7 @@ function removeStructuredCacheControls(
     for (let bucketIndex = 0; bucketIndex < cacheProviderBuckets.length; bucketIndex++) {
       if (!hasOwn(cacheProviderBuckets, bucketIndex)) continue;
       const bucket = cacheProviderBuckets[bucketIndex]!;
-      const nextBucket = { ...bucket.value };
-      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
-      if (ReflectOwnKeys(nextBucket).length > 0) {
-        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
-          configurable: true,
-          enumerable: true,
-          value: nextBucket,
-          writable: true,
-        }]);
-      } else {
-        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
-      }
+      removeStructuredBucketCacheControl(nextProviderOptions, bucket);
     }
 
     return ReflectOwnKeys(nextProviderOptions).length > 0
@@ -547,6 +546,24 @@ function hasStructuredCacheControl(
 }
 
 const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+
+function removeStructuredBucketCacheControl(
+  nextProviderOptions: Record<PropertyKey, unknown>,
+  bucket: StructuredCacheProviderBucket,
+): void {
+  const nextBucket = { ...bucket.value };
+  ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
+  if (ReflectOwnKeys(nextBucket).length > 0) {
+    ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+      configurable: true,
+      enumerable: true,
+      value: nextBucket,
+      writable: true,
+    }]);
+  } else {
+    ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
+  }
+}
 
 function applyStructuredCacheTtl(
   messages: ChatSystemMessage[],
@@ -615,18 +632,7 @@ function applyStructuredCacheTtl(
     for (let bucketIndex = 0; bucketIndex < undefinedCacheProviderBuckets.length; bucketIndex++) {
       if (!hasOwn(undefinedCacheProviderBuckets, bucketIndex)) continue;
       const bucket = undefinedCacheProviderBuckets[bucketIndex]!;
-      const nextBucket = { ...bucket.value };
-      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
-      if (ReflectOwnKeys(nextBucket).length > 0) {
-        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
-          configurable: true,
-          enumerable: true,
-          value: nextBucket,
-          writable: true,
-        }]);
-      } else {
-        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
-      }
+      removeStructuredBucketCacheControl(nextProviderOptions, bucket);
     }
     for (let bucketIndex = 0; bucketIndex < cacheProviderBuckets.length; bucketIndex++) {
       if (!hasOwn(cacheProviderBuckets, bucketIndex)) continue;
@@ -643,18 +649,7 @@ function applyStructuredCacheTtl(
         }]);
         continue;
       }
-      const nextBucket = { ...bucket.value };
-      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
-      if (ReflectOwnKeys(nextBucket).length > 0) {
-        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
-          configurable: true,
-          enumerable: true,
-          value: nextBucket,
-          writable: true,
-        }]);
-      } else {
-        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
-      }
+      removeStructuredBucketCacheControl(nextProviderOptions, bucket);
     }
     if (shouldAddCanonicalBreakpoint) {
       const anthropic = snapshotOwnEnumerableDataRecord(
@@ -680,6 +675,73 @@ function applyStructuredCacheTtl(
     }
     return nextMessage;
   });
+}
+
+function appendProjectContextBlocks(
+  dynamicParts: string[],
+  input: BuildAgentCallContextInput,
+  sourceInstructions: string,
+): void {
+  const projectBlocks: string[] = [];
+  if (input.projectInstructions) {
+    pushPrivateArray(projectBlocks, buildProjectInstructionsPromptBlock(input.projectInstructions));
+  }
+  if (input.projectContext) {
+    pushPrivateArray(projectBlocks, buildProjectContextPromptBlock(input.projectContext));
+  }
+  appendPrivateArray(projectBlocks, input.extraBlocks ?? []);
+
+  for (let blockIndex = 0; blockIndex < projectBlocks.length; blockIndex++) {
+    if (!hasOwn(projectBlocks, blockIndex)) continue;
+    const block = projectBlocks[blockIndex]!;
+    if (block.length === 0) {
+      continue;
+    }
+    const blockName = getBlockName(block);
+    if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
+      continue;
+    }
+    pushPrivateArray(dynamicParts, block);
+  }
+}
+
+function appendSkillContextBlock(
+  dynamicParts: string[],
+  input: BuildAgentCallContextInput,
+  sourceInstructions: string,
+): void {
+  if (input.skills !== undefined) {
+    const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
+    if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
+      pushPrivateArray(
+        dynamicParts,
+        hasAuthoredSkillCatalog
+          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills, input.skillLoaderToolName)
+          : buildRuntimeAvailableSkillsPromptBlock(input.skills, input.skillLoaderToolName),
+      );
+    }
+  }
+}
+
+function appendEnvironmentContextTail(
+  dynamicParts: string[],
+  input: BuildAgentCallContextInput,
+  sourceInstructions: string,
+  after: string | null,
+): void {
+  if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+    pushPrivateArray(
+      dynamicParts,
+      createRuntimePromptBlock({
+        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
+        content: input.environmentContext,
+      }),
+    );
+  }
+
+  if (after) {
+    pushPrivateArray(dynamicParts, after);
+  }
 }
 
 /**
@@ -755,53 +817,11 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     pushPrivateArray(dynamicParts, runtimeContextMarker);
   }
 
-  const projectBlocks: string[] = [];
-  if (input.projectInstructions) {
-    pushPrivateArray(projectBlocks, buildProjectInstructionsPromptBlock(input.projectInstructions));
-  }
-  if (input.projectContext) {
-    pushPrivateArray(projectBlocks, buildProjectContextPromptBlock(input.projectContext));
-  }
-  appendPrivateArray(projectBlocks, input.extraBlocks ?? []);
+  appendProjectContextBlocks(dynamicParts, input, sourceInstructions);
 
-  for (let blockIndex = 0; blockIndex < projectBlocks.length; blockIndex++) {
-    if (!hasOwn(projectBlocks, blockIndex)) continue;
-    const block = projectBlocks[blockIndex]!;
-    if (block.length === 0) {
-      continue;
-    }
-    const blockName = getBlockName(block);
-    if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
-      continue;
-    }
-    pushPrivateArray(dynamicParts, block);
-  }
+  appendSkillContextBlock(dynamicParts, input, sourceInstructions);
 
-  if (input.skills !== undefined) {
-    const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
-    if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
-      pushPrivateArray(
-        dynamicParts,
-        hasAuthoredSkillCatalog
-          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills, input.skillLoaderToolName)
-          : buildRuntimeAvailableSkillsPromptBlock(input.skills, input.skillLoaderToolName),
-      );
-    }
-  }
-
-  if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
-    pushPrivateArray(
-      dynamicParts,
-      createRuntimePromptBlock({
-        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
-        content: input.environmentContext,
-      }),
-    );
-  }
-
-  if (instructions.after) {
-    pushPrivateArray(dynamicParts, instructions.after);
-  }
+  appendEnvironmentContextTail(dynamicParts, input, sourceInstructions, instructions.after);
 
   const messages: ChatSystemMessage[] = staticPrompt.length > 0
     ? [{
