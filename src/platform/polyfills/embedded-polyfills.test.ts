@@ -12,12 +12,14 @@ import { describe, it } from "#std/testing/bdd";
 import { getRequiredPolyfillPaths } from "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts";
 import { EMBEDDED_POLYFILLS } from "#veryfront/modules/server/module-server.ts";
 import { VERSION } from "#veryfront/utils";
+import { encodeBase64Bytes } from "#veryfront/utils/base64url.ts";
 
 describe("Embedded Polyfills", () => {
   it("executes async-resource callbacks when HTTP modules use the embedded browser shim", async () => {
     const source = EMBEDDED_POLYFILLS["_veryfront/platform/polyfills/node-async-hooks"];
     if (source === undefined) throw new Error("Missing embedded async_hooks polyfill");
-    const shim = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    const encoded = encodeBase64Bytes(new TextEncoder().encode(source));
+    const shim = await import(`data:text/javascript;base64,${encoded}`);
     const resource = new shim.AsyncResource("http");
     assertEquals(
       resource.runInAsyncScope((left: number, right: number) => left + right, null, 2, 3),
