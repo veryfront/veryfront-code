@@ -543,6 +543,7 @@ function prepareMessageChunk(
     lane,
     resolved,
     open: findPendingByLane(state, resolved.lane),
+    commands: [] as AgUiNormalizationCommand[],
   };
 }
 
@@ -553,10 +554,9 @@ function expandTextChunk(
 ): ExpansionResult {
   const prepared = prepareMessageChunk(event, "text", producerOccurrence, state);
   if (!prepared.success) return { commands: [prepared.command], state };
-  const { messageId, lane, resolved, open } = prepared;
-  const commands: AgUiNormalizationCommand[] = [];
+  const { messageId, lane, resolved, open, commands } = prepared;
   let nextState = state;
-  let pending: Extract<AgUiPendingStream, { readonly kind: "text" }>;
+  let pending = open;
 
   if (open?.kind === "text" && (messageId === undefined || messageId === open.messageId)) {
     const conflict = validateOpenTextChunk(event, open, producerOccurrence, state);
@@ -787,10 +787,9 @@ function expandReasoningChunk(
 ): ExpansionResult {
   const prepared = prepareMessageChunk(event, "reasoning", producerOccurrence, state);
   if (!prepared.success) return { commands: [prepared.command], state };
-  const { messageId, lane, resolved, open } = prepared;
-  const commands: AgUiNormalizationCommand[] = [];
+  const { messageId, lane, resolved, open, commands } = prepared;
   let nextState = state;
-  let pending: Extract<AgUiPendingStream, { readonly kind: "reasoning" }>;
+  let pending = open;
   if (open?.kind === "reasoning" && (messageId === undefined || messageId === open.messageId)) {
     pending = open;
   } else {
