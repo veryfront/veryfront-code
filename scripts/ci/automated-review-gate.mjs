@@ -83,6 +83,9 @@ async function verifyMergeGroup(
   if (queue?.pullNumber !== pullNumber || !FULL_SHA.test(mergeGroup.head_sha)) {
     throw new Error("Merge group identity is malformed");
   }
+  const headRef = mergeGroup.head_ref.startsWith("refs/heads/")
+    ? mergeGroup.head_ref
+    : `refs/heads/${mergeGroup.head_ref}`;
   const response = await github.graphql(QUEUE_BINDING, {
     ...common,
     number: pullNumber,
@@ -93,7 +96,7 @@ async function verifyMergeGroup(
     pull?.headRefOid !== headSha ||
     pull?.mergeQueueEntry?.baseCommit?.oid !== queue.baseHeadSha ||
     pull?.mergeQueueEntry?.headCommit?.oid !== mergeGroup.head_sha ||
-    mergeGroup.head_ref !==
+    headRef !==
       `refs/heads/gh-readonly-queue/${pull?.baseRefName}/pr-${pullNumber}-${queue.baseHeadSha}`
   ) {
     throw new Error(
@@ -102,7 +105,7 @@ async function verifyMergeGroup(
   }
   const ref = await github.rest.git.getRef({
     ...common,
-    ref: mergeGroup.head_ref.slice(5),
+    ref: headRef.slice(5),
   });
   if (ref.data.object.sha !== mergeGroup.head_sha) {
     throw new Error("Merge queue ref no longer targets this merge group");

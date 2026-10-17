@@ -64,6 +64,7 @@ function fixture(
       issues: { listComments: () => {} },
       reactions: { listForIssueComment: () => {} },
       pulls: {
+        list: () => {},
         get: () =>
           Promise.resolve({
             data: {
@@ -216,6 +217,22 @@ describe("automated review completion", () => {
     }
   });
 
+  it("accepts merge-group refs with or without the refs/heads prefix", async () => {
+    const { github, statuses } = fixture([review()]);
+    await publishReviewStatus({
+      github,
+      owner: "owner",
+      repo: "repo",
+      pullNumber: 42,
+      mergeGroup: {
+        head_sha: GROUP,
+        head_ref: `gh-readonly-queue/main/pr-42-${BASE}`,
+      },
+    });
+    assertEquals(statuses[0]?.sha, GROUP);
+    assertEquals(statuses[0]?.state, "success");
+  });
+
   it("does not attest a merge group that no longer belongs to the current PR head", async () => {
     const { github, statuses } = fixture([review()]);
     github.graphql = () =>
@@ -344,6 +361,40 @@ describe("automated review completion", () => {
             },
           },
         },
+      })
+    );
+    assertEquals(statuses, []);
+  });
+  it("periodically reconciles open PRs so late completion reactions are observed", async () => {
+    const { github, statuses } = fixture([review()]);
+    const paginate = github.paginate;
+    github.paginate = (endpoint, params) =>
+      endpoint === github.rest.pulls.list
+        ? Promise.resolve([{ number: 42 }])
+        : paginate(endpoint, params);
+    await reconcileReviewEvent({
+      github,
+      context: {
+        repo: { owner: "owner", repo: "repo" },
+        eventName: "schedule",
+        payload: {},
+      },
+    });
+    assertEquals(statuses.map((status) => [status.sha, status.state]), [[
+      HEAD,
+      "success",
+    ], [GROUP, "success"]]);
+  });
+
+  it("does not publish success when review retrieval fails", async () => {
+    const { github, statuses } = fixture([review()]);
+    github.paginate = () => Promise.reject(new Error("GitHub unavailable"));
+    await assertRejects(() =>
+      publishReviewStatus({
+        github,
+        owner: "owner",
+        repo: "repo",
+        pullNumber: 42,
       })
     );
     assertEquals(statuses, []);
