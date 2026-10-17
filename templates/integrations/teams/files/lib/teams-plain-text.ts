@@ -1,3 +1,35 @@
+const capturedTextReplace = String.prototype.replace;
+const applyTextReplace = Reflect.apply;
+
+function decodeNamedEntities(value: string): string {
+  let decoded = value;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&nbsp;/g,
+    " ",
+  ]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&lt;/g,
+    "<",
+  ]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&gt;/g,
+    ">",
+  ]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&quot;/g,
+    '"',
+  ]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&#39;/g,
+    "'",
+  ]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [
+    /&amp;/g,
+    "&",
+  ]) as string;
+  return decoded;
+}
+
 const BLOCK_TAGS = new Set([
   "address",
   "article",
@@ -57,13 +89,7 @@ export function htmlToPlainText(html: string): string {
     cursor = close + 1;
   }
 
-  return text
-    .replaceAll("&nbsp;", " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'")
-    .replaceAll("&amp;", "&")
+  return decodeNamedEntities(text)
     .replace(/\s+/g, " ")
     .trim();
 }
