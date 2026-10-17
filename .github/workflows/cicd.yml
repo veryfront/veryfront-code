@@ -2710,6 +2710,7 @@ jobs:
   # ============================================
 
   component-contracts:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Component publication contracts
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 5
@@ -2725,8 +2726,7 @@ jobs:
   publish-platform-component:
     name: Publish platform component
     needs: [component-contracts, quality-gate-release, sonar-quality-gate, quality-gate-registry, version-check, prerelease, release]
-    if: >-
-      ${{ always() && github.ref == 'refs/heads/main' &&
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
           inputs.maintenance_release_number == '' &&
           needs.component-contracts.result == 'success' &&
