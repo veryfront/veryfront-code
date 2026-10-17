@@ -35,7 +35,7 @@ import {
   getRecoveryOwnershipReceiptSchema,
   type RecoveryAdmission,
 } from "./recovery-admission-schema.ts";
-import { MAX_RECOVERY_SUFFIX_PAGE_BYTES } from "./recovery-suffix.ts";
+import { MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES } from "./recovery-suffix.ts";
 import { createRecoverySourceManifest } from "./recovery-source-manifest.ts";
 
 const byteLength = Buffer.byteLength;
@@ -202,7 +202,7 @@ export function createManagedRecoveryHttpTransport(
             "x-veryfront-run-terminal-token": credentials.terminal,
           },
         ),
-        MAX_RECOVERY_SUFFIX_PAGE_BYTES,
+        MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES,
       );
     },
     createToolAdmissionBinder(claims: VerifiedControlPlaneRequestClaims) {

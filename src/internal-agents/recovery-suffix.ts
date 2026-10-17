@@ -4,17 +4,37 @@ import {
   type VerifiedControlPlaneRequestClaims,
 } from "./control-plane-auth.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
-import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getRecoveryGenerationSchema,
   getRecoverySourceBindingSchema,
 } from "./recovery-admission-schema.ts";
 
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+
+export const MAX_RECOVERY_SUFFIX_EVENT_BYTES = 10 * 1024 * 1024;
 export const MAX_RECOVERY_SUFFIX_ROWS = 100;
 export const MAX_RECOVERY_SUFFIX_PAGE_BYTES = 256 * 1024;
+// The API admits event append bodies up to 10 MiB. A single persisted entry
+// may need that full budget plus the ordinary page's identity and fencing envelope.
+export const MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES = MAX_RECOVERY_SUFFIX_EVENT_BYTES +
+  MAX_RECOVERY_SUFFIX_PAGE_BYTES;
 export const MAX_RECOVERY_SUFFIX_PAGES = 32;
-export const MAX_RECOVERY_SUFFIX_BYTES = 8 * 1024 * 1024;
+export const MAX_RECOVERY_SUFFIX_BYTES = 32 * 1024 * 1024;
+
+const getRecoverySuffixPayloadSchema = defineSchema((v) =>
+  v.custom<unknown>(() => true)
+    .transform((value) =>
+      snapshotBoundedJsonValue(
+        value,
+        MAX_RECOVERY_SUFFIX_EVENT_BYTES,
+        MAX_RECOVERY_SUFFIX_EVENT_BYTES,
+      )
+    )
+    .refine((snapshot) => snapshot.success, "Expected a bounded recovery event payload")
+    .transform((snapshot) => snapshot.success ? snapshot.value : null)
+);
 
 /** Private paired-credential reader contract; public event projections are insufficient. */
 export const getRecoverySuffixPageSchema = defineSchema((v) => {
@@ -62,7 +82,7 @@ export const getRecoverySuffixPageSchema = defineSchema((v) => {
         eventId,
         externalSequence: eventId.nullable(),
         eventType: v.string().min(1).max(128),
-        payload: getJsonValueSchema(),
+        payload: getRecoverySuffixPayloadSchema(),
         appendGeneration: getRecoveryGenerationSchema(),
         dispatchFactEventId: eventId,
         payloadHash: hash,
@@ -95,7 +115,7 @@ const invalidSuffix = () => new Error("Managed recovery suffix is incomplete or 
 
 /** The API hashes decoded persisted JSON, preserving array order and sorting object keys. */
 export function recoverySuffixPayloadHash(payload: unknown): string {
-  const value = getJsonValueSchema().parse(payload);
+  const value = getRecoverySuffixPayloadSchema().parse(payload);
   function canonical(input: typeof value): string {
     if (input === null || typeof input !== "object") return privateJsonStringify(input);
     if (isArray(input)) {
@@ -186,10 +206,17 @@ export async function readAuthenticatedRecoverySuffix(input: {
     });
     const bytes = encode(privateJsonStringify(raw)).byteLength;
     totalBytes += bytes;
-    if (bytes > MAX_RECOVERY_SUFFIX_PAGE_BYTES || totalBytes > MAX_RECOVERY_SUFFIX_BYTES) {
+    if (
+      bytes > MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES ||
+      totalBytes > MAX_RECOVERY_SUFFIX_BYTES
+    ) {
       throw invalidSuffix();
     }
     const page = getRecoverySuffixPageSchema().parse(raw);
+    if (
+      bytes > MAX_RECOVERY_SUFFIX_PAGE_BYTES &&
+      page.events.length + page.continuations.length !== 1
+    ) throw invalidSuffix();
     if (
       monotonicNow() >= Math.min(deadline, pageStarted + page.leaseRemainingMs) ||
       !same(page.identity, target.identity) || !same(page.generation, admission.generation) ||

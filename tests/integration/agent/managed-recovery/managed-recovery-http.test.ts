@@ -319,8 +319,8 @@ it("suffix transport uses only original paired credentials, fixed cursors and bo
         assertEquals(headers.get("x-veryfront-run-terminal-token"), "original-terminal");
         assertEquals(headers.get("x-veryfront-run-event-writer-token"), null);
         return oversized
-          ? new Response("x".repeat(256 * 1024 + 1))
-          : Response.json({ private: "page" });
+          ? new Response("x".repeat(10 * 1024 * 1024 + 256 * 1024 + 1))
+          : Response.json({ private: "x".repeat(10 * 1024 * 1024 - 4096) });
       },
     );
     const request = {
@@ -329,7 +329,9 @@ it("suffix transport uses only original paired credentials, fixed cursors and bo
       throughExternalSequence: 17,
       limit: 100,
     };
-    assertEquals(await transport.readRecoverySuffixPage(claims, request), { private: "page" });
+    assertEquals(await transport.readRecoverySuffixPage(claims, request), {
+      private: "x".repeat(10 * 1024 * 1024 - 4096),
+    });
     oversized = true;
     await assertRejects(() => transport.readRecoverySuffixPage(claims, request));
     await assertRejects(() => transport.readRecoverySuffixPage(claims, { ...request, limit: 101 }));

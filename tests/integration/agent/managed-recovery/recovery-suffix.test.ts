@@ -61,10 +61,15 @@ it("private suffix pages keep DB and external cursors separate and reject projec
   );
 });
 
+import {
+  bindManagedRecoveryCredentials,
+  createManagedRecoveryHttpTransport,
+} from "#veryfront/internal-agents/managed-recovery-http.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { parseRecoverySnapshot } from "#veryfront/internal-agents/recovery-snapshot.ts";
 import {
   materializeAuthenticatedRecoverySuffix,
+  MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES,
   readAuthenticatedRecoverySuffix,
   recoverySuffixPayloadHash,
 } from "#veryfront/internal-agents/recovery-suffix.ts";
@@ -276,6 +281,81 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
       continuations: [{ ...continuation, checkpointEventId: 101 }],
     })
   );
+  // An append near the API's 10 MiB request-body ceiling stays recoverable.
+  // Its sealed continuation occupies a separate ordinary page.
+  const largePayload = { messages: [], padding: "x".repeat(10 * 1024 * 1024 - 4096) };
+  const largeEvent = {
+    ...stateful,
+    payload: largePayload,
+    payloadHash: recoverySuffixPayloadHash(largePayload),
+  };
+  let largePage = 0;
+  bindManagedRecoveryCredentials(claims, {
+    authToken: "original-invocation",
+    terminalToken: "original-terminal",
+  });
+  const largeTransport = createManagedRecoveryHttpTransport(
+    "https://api.veryfront.test",
+    async () =>
+      Response.json(
+        ++largePage === 1
+          ? { ...response, events: [largeEvent], nextAfterEventId: 101 }
+          : { ...response, events: [], continuations: [continuation] },
+      ),
+  );
+  const largeSuffix = await readAuthenticatedRecoverySuffix({
+    snapshot,
+    claims,
+    readPage: (request) => largeTransport.readRecoverySuffixPage(claims, request),
+    assertCurrentOwnership: async () => ({ ...receipt, leaseRemainingMs: 300_000 }),
+  });
+  const largeRestored = materializeAuthenticatedRecoverySuffix({ snapshot, suffix: largeSuffix });
+  assertEquals(largeRestored.acknowledgedEventId, 102);
+  assertEquals(largeRestored.runtimeContinuation, safeSnapshot.runtimeContinuation);
+  await assertRejects(() =>
+    read({
+      ...response,
+      events: [largeEvent],
+      continuations: [continuation],
+    })
+  );
+  await assertRejects(() =>
+    read({
+      ...response,
+      events: [largeEvent, { ...largeEvent, eventId: 102 }],
+    })
+  );
+  const maximumPage = { ...response, events: [{ ...largeEvent, payload: { padding: "" } }] };
+  const envelopeBytes = new TextEncoder().encode(JSON.stringify(maximumPage)).byteLength;
+  maximumPage.events[0]!.payload.padding = "x".repeat(
+    MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES - envelopeBytes + 1,
+  );
+  await assertRejects(() => read(maximumPage));
+  let cumulativePages = 0;
+  const cumulativePayload = { padding: "x".repeat(9 * 1024 * 1024) };
+  const cumulativeHash = recoverySuffixPayloadHash(cumulativePayload);
+  await assertRejects(() =>
+    readAuthenticatedRecoverySuffix({
+      snapshot,
+      claims,
+      readPage: async () => {
+        cumulativePages++;
+        return {
+          ...response,
+          events: [{
+            ...largeEvent,
+            eventId: 90 + cumulativePages,
+            externalSequence: cumulativePages === 1 ? 7 : null,
+            payload: cumulativePayload,
+            payloadHash: cumulativeHash,
+          }],
+          nextAfterEventId: 90 + cumulativePages,
+        };
+      },
+      assertCurrentOwnership: async () => ({ ...receipt, leaseRemainingMs: 300_000 }),
+    })
+  );
+  assertEquals(cumulativePages, 4, "The cumulative 32 MiB cap rejects the fourth 9 MiB page");
   suffix.events[0]!.eventType = "TOOL_CALL_RESULT";
   assertThrows(() => materializeAuthenticatedRecoverySuffix({ snapshot, suffix }));
 });
