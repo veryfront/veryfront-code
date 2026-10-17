@@ -73,9 +73,16 @@ function topLevelSlug(exportPath: string): string {
   return exportPath.replace("./", "").split("/")[0];
 }
 
-function extractReferenceDescription(line: string): string | undefined {
-  const match = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*)\|/);
-  return match?.[1].trim();
+export function extractReferenceDescription(line: string): string | undefined {
+  if (!line.startsWith("|")) return undefined;
+  const first = line.slice(1).trimStart();
+  if (!first.startsWith("`")) return undefined;
+  const quote = first.indexOf("`", 1);
+  if (quote <= 1) return undefined;
+  const tail = first.slice(quote + 1).trimStart();
+  if (!tail.startsWith("|")) return undefined;
+  const end = tail.indexOf("|", 1);
+  return end === -1 ? undefined : tail.slice(1, end).trim();
 }
 
 function main(): void {
@@ -280,4 +287,4 @@ function main(): void {
   Deno.exit(1);
 }
 
-main();
+if (import.meta.main) main();
