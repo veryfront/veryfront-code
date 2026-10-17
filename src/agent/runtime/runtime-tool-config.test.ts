@@ -95,6 +95,25 @@ describe("agent/runtime-tool-config", () => {
     );
   });
 
+  it("keeps a no-tools selector eager under authored and host deferred modes", () => {
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: false,
+        providerTools: ["web_search"],
+        toolLoading: "deferred",
+      })),
+      { mode: "eager", provenance: "authored-tool-loading" },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: false,
+        providerTools: ["web_search"],
+        __vfToolLoadingMode: "deferred",
+      })),
+      { mode: "eager", provenance: "host-runtime-binding" },
+    );
+  });
+
   it("keeps host bindings internal and gives the eager rollback override precedence", () => {
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
