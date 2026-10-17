@@ -6,6 +6,8 @@ import {
   validateRecoverySnapshotForRestore,
 } from "#veryfront/internal-agents/recovery-snapshot.ts";
 
+import { convertAgentRuntimeMessagesToProviderMessages } from "#veryfront/agent/runtime/message-adapter.ts";
+
 import { recoveryHistoryMessageDigest } from "#veryfront/internal-agents/recovery-history.ts";
 
 function fixture() {
@@ -500,4 +502,42 @@ it("continuation and restore bindings use structural JSON equality", () => {
       },
     })
   );
+});
+
+it("tool result roles agree with the native provider transcript for current and historical messages", () => {
+  for (const role of ["user", "system", "assistant", "tool"] as const) {
+    const value = fixture();
+    const current = {
+      ...value,
+      messages: [value.messages[0], { ...value.messages[1], role }],
+      modelTurns: [
+        { messageId: "model-1", acknowledgedExternalSequence: 1 },
+        ...(role === "assistant"
+          ? [{ messageId: "result-1", acknowledgedExternalSequence: 1 }]
+          : []),
+      ],
+    };
+    const historical = {
+      ...current,
+      initialHistoryMessageIds: current.messages.map((message) => message!.id),
+      initialHistoryMessageDigests: current.messages.map((message) =>
+        recoveryHistoryMessageDigest(message!)
+      ),
+      modelTurns: [],
+      toolBoundaries: [],
+    };
+    if (role === "user" || role === "system") {
+      assertThrows(() => parseRecoverySnapshot(current));
+      assertThrows(() => parseRecoverySnapshot(historical));
+    } else {
+      for (const snapshot of [current, historical]) {
+        const restored = validateRecoverySnapshotForRestore(
+          snapshot,
+          parseRecoverySnapshot(snapshot).binding,
+        );
+        const transcript = convertAgentRuntimeMessagesToProviderMessages(restored.messages);
+        assertEquals(transcript.filter((message) => message.role === "tool").length, 1);
+      }
+    }
+  }
 });

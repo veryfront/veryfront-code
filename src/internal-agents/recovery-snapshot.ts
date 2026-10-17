@@ -156,7 +156,9 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     for (const part of message.parts) {
       if (!("toolCallId" in part) || !("toolName" in part)) continue;
       if (part.type === "tool-result") {
-        if (results.has(part.toolCallId)) throw invalid();
+        if (
+          (message.role !== "assistant" && message.role !== "tool") || results.has(part.toolCallId)
+        ) throw invalid();
         results.set(part.toolCallId, part);
         if ("providerExecuted" in part && part.providerExecuted === true) {
           providerResults.set(part.toolCallId, part.toolName);
@@ -184,7 +186,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
     if (!historyIds.has(call.messageId)) continue;
     const resultMessage = snapshot.messages.find((message) =>
       historyIds.has(message.id) &&
-      (message.role === "tool" || providerCalls.has(id) && message.role === "assistant") &&
+      (message.role === "tool" || message.role === "assistant") &&
       message.parts.some((part) =>
         part.type === "tool-result" && part.toolCallId === id && part.toolName === call.toolName
       )
