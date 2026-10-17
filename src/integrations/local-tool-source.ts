@@ -45,6 +45,7 @@ const objectEntries = Object.entries;
 const objectValues = Object.values;
 const RegExpConstructor = RegExp;
 const regexpExec = RegExp.prototype.exec;
+const AUTHORITY_PARAMETER_PATTERN = /^https:\/\/\{([A-Za-z]\w*)\}(?=\/|$)/;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
@@ -362,41 +363,40 @@ function isEnvironmentVariableName(value: string): boolean {
   return true;
 }
 
-/**
- * Accepts only a bare hostname with an optional numeric port and, when
- * `allowPathPrefix` is set, an optional path prefix of plain segments.
- * Anything that could break out of the URL authority or path once substituted
- * (a scheme, userinfo, a query, a fragment, an empty segment, or whitespace)
- * is rejected before the value reaches the endpoint template.
- */
-function isHostWithOptionalPort(value: string, allowPathPrefix: boolean): boolean {
-  if (value.length === 0 || value.length > 255) return false;
+function readHostAuthority(value: string, allowPathPrefix: boolean): number | undefined {
   let sawColon = false;
   let portDigits = 0;
   let pathStart = -1;
-  for (let index = 0; index < value.length; index++) {
-    const code = apply(stringCharCodeAt, value, [index]) as number;
-    if (code === 47) {
-      if (!allowPathPrefix || index === 0 || (sawColon && portDigits === 0)) return false;
-      pathStart = index;
-      break;
-    }
+  function acceptAuthorityCharacter(code: number, index: number): boolean {
     if (code === 58) {
       if (sawColon || index === 0) return false;
       sawColon = true;
-      continue;
+      return true;
     }
     if (sawColon) {
       if (code < 48 || code > 57) return false;
       portDigits += 1;
-      continue;
+      return true;
     }
     const allowed = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
       (code >= 97 && code <= 122) || code === 45 || code === 46;
     if (!allowed) return false;
+    return true;
   }
-  if (sawColon && (portDigits === 0 || portDigits > 5)) return false;
-  if (pathStart === -1) return true;
+  for (let index = 0; index < value.length; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code === 47) {
+      if (!allowPathPrefix || index === 0 || (sawColon && portDigits === 0)) return undefined;
+      pathStart = index;
+      break;
+    }
+    if (!acceptAuthorityCharacter(code, index)) return undefined;
+  }
+  if (sawColon && (portDigits === 0 || portDigits > 5)) return undefined;
+  return pathStart;
+}
+
+function isHostPathSuffix(value: string, pathStart: number): boolean {
   let segmentLength = 0;
   for (let index = pathStart + 1; index < value.length; index++) {
     const code = apply(stringCharCodeAt, value, [index]) as number;
@@ -412,6 +412,21 @@ function isHostWithOptionalPort(value: string, allowPathPrefix: boolean): boolea
     segmentLength += 1;
   }
   return segmentLength > 0;
+}
+
+/**
+ * Accepts only a bare hostname with an optional numeric port and, when
+ * `allowPathPrefix` is set, an optional path prefix of plain segments.
+ * Anything that could break out of the URL authority or path once substituted
+ * (a scheme, userinfo, a query, a fragment, an empty segment, or whitespace)
+ * is rejected before the value reaches the endpoint template.
+ */
+function isHostWithOptionalPort(value: string, allowPathPrefix: boolean): boolean {
+  if (value.length === 0 || value.length > 255) return false;
+  const pathStart = readHostAuthority(value, allowPathPrefix);
+  if (pathStart === undefined) return false;
+  if (pathStart === -1) return true;
+  return isHostPathSuffix(value, pathStart);
 }
 
 /**
@@ -627,7 +642,7 @@ function tenantHostBinding(
   if (!stringBoolean(stringIncludes, fixedLabels, ".")) unsupportedTemplate();
 
   const parameter = endpoint.params?.[parameterName];
-  if (!parameter || parameter.in !== "path" || parameter.required !== true) {
+  if (parameter?.in !== "path" || parameter.required !== true) {
     configurationError(
       `Local integration tool "${toolId}" must back its tenant-host placeholder ` +
         `with the required path parameter "${parameterName}"`,
@@ -765,6 +780,16 @@ async function resolveAdmittedAuthPlan(
   return createResolvedAuthPlan(tool.connector, tool.authEnvironmentHost, host);
 }
 
+function assertSupportedBodyFields(endpoint: IntegrationEndpoint, toolId: string): void {
+  const bodyFields = objectValues(endpoint.body ?? {});
+  for (let index = 0; index < bodyFields.length; index++) {
+    const field = bodyFields[index]!;
+    if (field.encoding || field.partFilenameField) {
+      configurationError(`Local integration tool "${toolId}" uses an unsupported encoded body`);
+    }
+  }
+}
+
 function assertSupportedEndpoint(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
@@ -781,13 +806,7 @@ function assertSupportedEndpoint(
   if (endpoint.bodyMode === "form-data" || endpoint.bodyMode === "raw") {
     configurationError(`Local integration tool "${toolId}" uses an unsupported body mode`);
   }
-  const bodyFields = objectValues(endpoint.body ?? {});
-  for (let index = 0; index < bodyFields.length; index++) {
-    const field = bodyFields[index]!;
-    if (field.encoding || field.partFilenameField) {
-      configurationError(`Local integration tool "${toolId}" uses an unsupported encoded body`);
-    }
-  }
+  assertSupportedBodyFields(endpoint, toolId);
 
   if (connector.name === "salesforce") {
     if (!stringBoolean(stringStartsWith, endpoint.url, "{{oauth.raw.instance_url}}/")) {
@@ -803,20 +822,16 @@ function assertSupportedEndpoint(
 
   const authorityMatch = apply(
     regexpExec,
-    new RegExpConstructor(
-      "^https://\\{([A-Za-z][A-Za-z0-9_]*)\\}(?=/|$)",
-    ),
+    AUTHORITY_PARAMETER_PATTERN,
     [endpoint.url],
   ) as RegExpExecArray | null;
   if (authorityMatch) {
     const parameterName = authorityMatch[1]!;
     const field = endpoint.params?.[parameterName];
     const patternDescriptor = field && getOwnPropertyDescriptor(field, "pattern");
-    const pattern = patternDescriptor && "value" in patternDescriptor
-      ? patternDescriptor.value
-      : undefined;
+    const pattern = patternDescriptor?.value;
     if (
-      !field || field.type !== "string" || field.in !== "path" ||
+      field?.type !== "string" || field.in !== "path" ||
       (field.required !== true && field.default === undefined) ||
       typeof pattern !== "string" ||
       !stringBoolean(stringStartsWith, pattern, "^") ||
