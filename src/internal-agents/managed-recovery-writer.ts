@@ -80,7 +80,7 @@ export async function createManagedRecoveryWriter(input: {
   let externalSequence = admission.acknowledgedExternalSequence;
   let appendTail = Promise.resolve();
   let boundaryTail = Promise.resolve();
-  let failure: unknown;
+  let failure: { error: unknown } | undefined;
   let lastRuntimeContinuation = input.restoredSnapshot?.runtimeContinuation;
   let initialHistoryMessageIds = input.restoredSnapshot?.initialHistoryMessageIds;
   let initialHistoryMessageDigests = input.restoredSnapshot?.initialHistoryMessageDigests;
@@ -94,6 +94,14 @@ export async function createManagedRecoveryWriter(input: {
   let signal: AbortSignal | undefined;
   const admissions = new Map<string, Deferred<AgentRunToolCallAdmissionReceipt>>();
   const results = new Map<string, Deferred<{ eventId: number; externalSequence: number }>>();
+  const fail = (error: unknown) => {
+    failure ??= { error };
+    for (const pending of admissions.values()) pending.reject(failure.error);
+    for (const pending of results.values()) pending.reject(failure.error);
+  };
+  const assertNotFailed = () => {
+    if (failure) throw failure.error;
+  };
   const modelTurns = new Map<string, unknown>(
     (input.restoredSnapshot?.modelTurns ?? []).map((turn) => [turn.messageId, turn]),
   );
@@ -119,9 +127,11 @@ export async function createManagedRecoveryWriter(input: {
     return value;
   };
   const active = async () => {
-    if (failure) throw failure;
+    assertNotFailed();
     signal?.throwIfAborted();
     await input.owner.assertCurrentOwnership();
+    assertNotFailed();
+    signal?.throwIfAborted();
   };
   const append = (
     event: Record<string, unknown>,
@@ -159,13 +169,14 @@ export async function createManagedRecoveryWriter(input: {
       return receipt;
     });
     appendTail = operation.then(() => {}, (error) => {
-      failure = error;
+      fail(error);
       throw error;
     });
     void appendTail.catch(() => {});
     return operation;
   };
   const wait = async <T>(value: Promise<T>): Promise<T> => {
+    assertNotFailed();
     if (!signal) throw new Error("Recovery writer lifetime is not bound");
     signal.throwIfAborted();
     return await new Promise<T>((resolve, reject) => {
@@ -207,7 +218,7 @@ export async function createManagedRecoveryWriter(input: {
     return await runWithToolCallAdmissionReceipt(
       receipt,
       () => {
-        if (failure) throw failure;
+        assertNotFailed();
         signal?.throwIfAborted();
       },
       operation,
@@ -218,62 +229,73 @@ export async function createManagedRecoveryWriter(input: {
     bindSignal(value: AbortSignal) {
       if (signal) throw new Error("Recovery writer lifetime already bound");
       signal = value;
-      value.addEventListener("abort", () => {
-        for (const pending of admissions.values()) pending.reject(value.reason);
-        for (const pending of results.values()) pending.reject(value.reason);
-      }, { once: true });
+      if (value.aborted) fail(value.reason);
+      else value.addEventListener("abort", () => fail(value.reason), { once: true });
     },
     executeTool,
     async persistProviderReplayCheckpoint(checkpoint: ProviderReplayCheckpoint) {
       await append(createProviderReplayCheckpointEvent(checkpoint));
     },
     async persistRunEvent(event: AgentRunEvent) {
-      const receipt = await append(event);
-      if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
-      const capture = receipt.modelCaptures?.find((value) =>
-        value.modelCallId === event.modelCallId
-      );
-      if (
-        !capture || capture.projectId !== admission.identity.projectId ||
-        capture.runId !== admission.identity.canonicalRunId ||
-        capture.eventId !== String(receipt.eventId)
-      ) {
-        throw new Error("Recovery model context lacks its exact authenticated capture receipt");
+      try {
+        const receipt = await append(event);
+        if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+        const capture = receipt.modelCaptures?.find((value) =>
+          value.modelCallId === event.modelCallId
+        );
+        if (
+          !capture || capture.projectId !== admission.identity.projectId ||
+          capture.runId !== admission.identity.canonicalRunId ||
+          capture.eventId !== String(receipt.eventId)
+        ) {
+          throw new Error("Recovery model context lacks its exact authenticated capture receipt");
+        }
+        return capture;
+      } catch (error) {
+        fail(error);
+        throw error;
       }
-      return capture;
     },
     async appendMappedEvent(
       mapped: { event: string; payload: Record<string, unknown> },
       occurrenceId?: string,
     ) {
-      const event = coerceWireEvent(mapped.event, mapped.payload);
-      if (
-        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"].includes(
-          String(event.type),
-        )
-      ) return;
-      if (
-        event.type === "TOOL_CALL_START" && typeof event.toolCallId === "string" &&
-        historicalToolCallIds.has(event.toolCallId)
-      ) {
-        const error = new Error("Current recovery tool collides with immutable incoming history");
-        failure = error;
-        admissionFor(event.toolCallId).reject(error);
+      try {
+        const event = coerceWireEvent(mapped.event, mapped.payload);
+        if (
+          ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"].includes(
+            String(event.type),
+          )
+        ) return;
+        if (
+          event.type === "TOOL_CALL_START" && typeof event.toolCallId === "string" &&
+          historicalToolCallIds.has(event.toolCallId)
+        ) {
+          const error = new Error("Current recovery tool collides with immutable incoming history");
+          fail(error);
+          throw error;
+        }
+        const receipt = await append(event, occurrenceId);
+        if (event.type === "TOOL_CALL_START") {
+          if (!occurrenceId || receipt.toolAdmissions.length !== 1) {
+            throw new Error("Recovery tool start lacks exact durable admission");
+          }
+          const tool = receipt.toolAdmissions[0]!;
+          if (
+            tool.occurrenceId !== occurrenceId || tool.toolCallId !== event.toolCallId ||
+            tool.projectId !== admission.identity.projectId ||
+            tool.runId !== admission.identity.canonicalRunId
+          ) {
+            throw new Error("Recovery tool start acknowledgement is foreign");
+          }
+          admissionFor(tool.toolCallId).resolve(tool);
+        }
+        if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
+          resultFor(event.toolCallId).resolve(receipt);
+        }
+      } catch (error) {
+        fail(error);
         throw error;
-      }
-      const receipt = await append(event, occurrenceId);
-      if (event.type === "TOOL_CALL_START") {
-        if (!occurrenceId || receipt.toolAdmissions.length !== 1) {
-          throw new Error("Recovery tool start lacks exact durable admission");
-        }
-        const tool = receipt.toolAdmissions[0]!;
-        if (tool.occurrenceId !== occurrenceId || tool.toolCallId !== event.toolCallId) {
-          throw new Error("Recovery tool start acknowledgement is foreign");
-        }
-        admissionFor(tool.toolCallId).resolve(tool);
-      }
-      if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
-        resultFor(event.toolCallId).resolve(receipt);
       }
     },
     persistBoundary(boundary: AgentRuntimeRecoveryBoundary) {
@@ -428,7 +450,7 @@ export async function createManagedRecoveryWriter(input: {
         diskSequence++;
       });
       boundaryTail = operation.catch((error) => {
-        failure = error;
+        fail(error);
         throw error;
       });
       void boundaryTail.catch(() => {});

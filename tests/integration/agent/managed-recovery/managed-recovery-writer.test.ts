@@ -697,3 +697,162 @@ it("provider-executed current calls persist replay without waiting for local adm
     else Deno.env.set(envKey, previous);
   }
 });
+
+for (
+  const failureKind of ["admission", "result", "malformed-admission", "foreign-admission"] as const
+) {
+  it(`persistence failure retires pending ${failureKind} work without an external abort`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await Deno.makeTempDir();
+    const controller = new AbortController();
+    let pending: Promise<unknown> | undefined;
+    try {
+      const claims = await signed();
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let fail = false;
+      let cursor = 0;
+      let effects = 0;
+      const outage = new Error("Synthetic durable append failure");
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async (event, occurrenceId) => {
+          if (
+            fail && failureKind !== "malformed-admission" && failureKind !== "foreign-admission"
+          ) throw outage;
+          return {
+            eventId: ++cursor,
+            externalSequence: cursor,
+            toolAdmissions:
+              event.type === "TOOL_CALL_START" && (!fail || failureKind === "foreign-admission")
+                ? [{
+                  occurrenceId: occurrenceId!,
+                  admissionEventId: "admit",
+                  startEventId: String(cursor),
+                  toolCallId: "call",
+                  publicToolCallId: "public-call",
+                  projectId: fail && failureKind === "foreign-admission"
+                    ? "77777777-7777-4777-8777-777777777777"
+                    : identity.projectId,
+                  runId: identity.canonicalRunId,
+                }]
+                : [],
+          };
+        },
+      });
+      writer.bindSignal(controller.signal);
+      const {
+        runWithToolCallOccurrences,
+        introduceToolCallOccurrence,
+        runWithToolCallOccurrenceDispatch,
+      } = await import("#veryfront/runtime/tool-call-occurrence.ts");
+      const { runWithRecoveryToolExecutionPolicy } = await import(
+        "#veryfront/runtime/execution-ownership-guard.ts"
+      );
+      const { executeConfiguredTool } = await import("#veryfront/agent/runtime/tool-helpers.ts");
+      const { tool } = await import("#veryfront/tool");
+      const { defineSchema } = await import("#veryfront/schemas/index.ts");
+      let occurrenceId = "";
+      if (failureKind === "result") {
+        await writer.persistBoundary({
+          messages: [],
+          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+          providerReplayCheckpoints: [],
+        });
+        await writer.appendMappedEvent({
+          event: "ToolCallStart",
+          payload: { toolCallId: "call", toolCallName: "inspect" },
+        }, "occurrence");
+        pending = writer.persistBoundary({
+          messages: [{
+            id: "model",
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+          }, {
+            id: "result",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "call",
+              toolName: "inspect",
+              result: { ok: true },
+            }],
+          }],
+          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+          providerReplayCheckpoints: [],
+        });
+      } else {
+        pending = runWithToolCallOccurrences(() => {
+          const call = { id: "call" };
+          occurrenceId = introduceToolCallOccurrence(call) ?? "";
+          return runWithToolCallOccurrenceDispatch(
+            call,
+            () =>
+              runWithRecoveryToolExecutionPolicy(
+                writer.executeTool,
+                () =>
+                  executeConfiguredTool("inspect", {}, {
+                    inspect: tool({
+                      id: "inspect",
+                      description: "Synthetic effect",
+                      inputSchema: defineSchema((v) => v.object({}))(),
+                      execute: () => {
+                        effects++;
+                        return Promise.resolve({ ok: true });
+                      },
+                    }),
+                  }),
+              ),
+          );
+        });
+      }
+      const retired = pending.then(() => "resolved", () => "rejected");
+      fail = true;
+      const { assertRejects } = await import("#veryfront/testing/assert.ts");
+      await assertRejects(() =>
+        writer.appendMappedEvent(
+          failureKind === "result"
+            ? { event: "ToolCallResult", payload: { toolCallId: "call", result: { ok: true } } }
+            : { event: "ToolCallStart", payload: { toolCallId: "call", toolCallName: "inspect" } },
+          occurrenceId,
+        )
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        assertEquals(
+          await Promise.race([
+            retired,
+            new Promise<string>((resolve) => {
+              timer = setTimeout(() => resolve("pending"), 200);
+            }),
+          ]),
+          "rejected",
+        );
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      assertEquals(controller.signal.aborted, false);
+      assertEquals(effects, 0);
+      await assertRejects(() =>
+        writer.persistBoundary({
+          messages: [],
+          toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+          providerReplayCheckpoints: [],
+        })
+      );
+    } finally {
+      controller.abort();
+      await pending?.catch(() => {});
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
