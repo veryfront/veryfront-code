@@ -90,19 +90,11 @@ export class IntegrationApiError extends VeryfrontError {
       category: existing.category,
       status: httpStatus !== undefined && httpStatus >= 400 ? httpStatus : existing.status,
       title: existing.title,
-      suggestion: outcomeUnknown
-        ? "Check the provider outcome before retrying this operation"
-        : kind === "unsupported_precondition"
-        ? "Use an API deployment that confirms connection-generation precondition support"
-        : existing.suggestion,
+      suggestion: integrationFailureSuggestion(kind, outcomeUnknown, existing),
       ...(existing.exitCode === undefined ? {} : { exitCode: existing.exitCode }),
     });
     super(
-      kind === "unsupported_precondition"
-        ? "The API did not confirm connection-generation precondition support"
-        : kind === "http"
-        ? `Integration API request failed (${httpStatus})`
-        : `Integration API ${kind.replaceAll("_", " ")} failure`,
+      integrationFailureMessage(kind, httpStatus),
       {
         ...definition,
         context: createIntegrationErrorContext({
@@ -117,6 +109,29 @@ export class IntegrationApiError extends VeryfrontError {
     this.httpProblem = httpProblem;
     if (problem) Object.defineProperty(this, "problem", { value: problem, enumerable: false });
   }
+}
+
+function integrationFailureSuggestion(
+  kind: IntegrationApiError["kind"],
+  outcomeUnknown: boolean,
+  existing: Pick<typeof API_CLIENT_ERROR, "suggestion">,
+): string | undefined {
+  if (outcomeUnknown) return "Check the provider outcome before retrying this operation";
+  if (kind === "unsupported_precondition") {
+    return "Use an API deployment that confirms connection-generation precondition support";
+  }
+  return existing.suggestion;
+}
+
+function integrationFailureMessage(
+  kind: IntegrationApiError["kind"],
+  httpStatus: number | undefined,
+): string {
+  if (kind === "unsupported_precondition") {
+    return "The API did not confirm connection-generation precondition support";
+  }
+  if (kind === "http") return `Integration API request failed (${httpStatus})`;
+  return `Integration API ${kind.replaceAll("_", " ")} failure`;
 }
 
 function record(value: unknown): value is IntegrationJsonObject {
@@ -238,6 +253,65 @@ function nextCursor(page: IntegrationJsonObject, legacyTools: boolean): string |
   return next;
 }
 
+function validateToolConnectionPrecondition(
+  options: IntegrationCallOptions,
+  generationPreconditionSupported: boolean,
+): void {
+  if (options.connectionId !== undefined && !uuid(options.connectionId)) {
+    throw new TypeError("connectionId must be a UUID");
+  }
+  if (options.expectedConnectionGenerationId !== undefined) {
+    if (!options.connectionId || !uuid(options.expectedConnectionGenerationId)) {
+      throw new TypeError(
+        "expectedConnectionGenerationId requires connectionId and both must be UUIDs",
+      );
+    }
+    if (!generationPreconditionSupported) {
+      throw new IntegrationApiError("unsupported_precondition", undefined, false);
+    }
+  }
+}
+
+function rememberPaginationCursor(next: string | undefined, seen: Set<string>): void {
+  if (next && seen.has(next)) throw new Error("Integration API repeated a pagination cursor");
+  if (next) seen.add(next);
+}
+
+function assertIntegrationProjectBinding(
+  response: Response,
+  project: Readonly<{ id: string; slug: string }> | undefined,
+  requireProjectBinding: boolean,
+  outcomeUnknown: boolean,
+): void {
+  const effectiveProject = response.headers.get("x-veryfront-project-id");
+  if (
+    project && ((requireProjectBinding && effectiveProject === null) ||
+      (effectiveProject !== null &&
+        (!uuid(effectiveProject) || effectiveProject.toLowerCase() !== project.id)))
+  ) {
+    discardResponseBody(response);
+    throw new IntegrationApiError("project_binding", response.status, outcomeUnknown);
+  }
+}
+
+function throwIntegrationRequestError(
+  error: unknown,
+  signal: AbortSignal,
+  response: Response | undefined,
+  outcomeUnknown: boolean,
+): never {
+  if (error instanceof IntegrationApiError) throw error;
+  if (signal.aborted) {
+    if (!outcomeUnknown) throw signal.reason;
+    throw new IntegrationApiError("transport", response?.status, true);
+  }
+  throw new IntegrationApiError(
+    response ? "invalid_response" : "transport",
+    response?.status,
+    outcomeUnknown,
+  );
+}
+
 /**
  * Bind explicit API credentials and an authorized project for catalog, status and tool calls.
  * Requires the API expected-project precondition and effective-project response header contract.
@@ -316,15 +390,7 @@ export async function createIntegrationClient(
           problem,
         );
       }
-      const effectiveProject = response.headers.get("x-veryfront-project-id");
-      if (
-        project && ((requireProjectBinding && effectiveProject === null) ||
-          (effectiveProject !== null &&
-            (!uuid(effectiveProject) || effectiveProject.toLowerCase() !== project.id)))
-      ) {
-        discardResponseBody(response);
-        throw new IntegrationApiError("project_binding", response.status, outcomeUnknown);
-      }
+      assertIntegrationProjectBinding(response, project, requireProjectBinding, outcomeUnknown);
       const advertised = response.headers.get("x-veryfront-tool-preconditions")?.split(",")
         .map((value) => value.trim()).includes("connection_generation_id") ?? false;
       if (options.capturePreconditions) generationPreconditionSupported = advertised;
@@ -343,16 +409,7 @@ export async function createIntegrationClient(
         call ? MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES : MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
       );
     } catch (error) {
-      if (error instanceof IntegrationApiError) throw error;
-      if (scope.signal.aborted) {
-        if (!outcomeUnknown) throw scope.signal.reason;
-        throw new IntegrationApiError("transport", response?.status, true);
-      }
-      throw new IntegrationApiError(
-        response ? "invalid_response" : "transport",
-        response?.status,
-        outcomeUnknown,
-      );
+      throwIntegrationRequestError(error, scope.signal, response, outcomeUnknown);
     } finally {
       scope.dispose();
     }
@@ -417,8 +474,7 @@ export async function createIntegrationClient(
           throw new IntegrationApiError("invalid_response", 200, false);
         }
         const next = nextCursor(page, key === "tools");
-        if (next && seen.has(next)) throw new Error("Integration API repeated a pagination cursor");
-        if (next) seen.add(next);
+        rememberPaginationCursor(next, seen);
         for (const item of page[key]) {
           scope.signal.throwIfAborted();
           yield requireShape<T>(item, valid);
@@ -738,19 +794,7 @@ export async function createIntegrationClient(
       if (!identity) {
         throw new TypeError("Tool name must use canonical integration__tool_id format");
       }
-      if (options.connectionId !== undefined && !uuid(options.connectionId)) {
-        throw new TypeError("connectionId must be a UUID");
-      }
-      if (options.expectedConnectionGenerationId !== undefined) {
-        if (!options.connectionId || !uuid(options.expectedConnectionGenerationId)) {
-          throw new TypeError(
-            "expectedConnectionGenerationId requires connectionId and both must be UUIDs",
-          );
-        }
-        if (!generationPreconditionSupported) {
-          throw new IntegrationApiError("unsupported_precondition", undefined, false);
-        }
-      }
+      validateToolConnectionPrecondition(options, generationPreconditionSupported);
       const signal = context.abortSignal && options.abortSignal
         ? AbortSignal.any([context.abortSignal, options.abortSignal])
         : context.abortSignal ?? options.abortSignal;
