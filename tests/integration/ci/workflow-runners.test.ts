@@ -318,7 +318,6 @@ describe("public runner pool workflow", () => {
 // branch protection (`gh api repos/veryfront/veryfront-code/branches/main/protection/required_status_checks`).
 // Update these lists whenever either changes.
 const RULESET_REQUIRED_CONTEXTS = [
-  "Automated review",
   "SonarQube Cloud quality gate",
   "ci (format)",
   "ci (lint)",
@@ -337,8 +336,6 @@ const BRANCH_PROTECTION_REQUIRED_CONTEXTS = [
   "tests (integration)",
   "tests (rsc browser e2e)",
 ];
-// Contexts posted as commit statuses rather than by a job.
-const REQUIRED_STATUS_CONTEXTS = ["Automated review"];
 // Every context that must keep its exact name. A job called through a reusable
 // workflow reports as `<caller> / <called job>`, so each job behind one of
 // these must stay a plain job in its workflow.
@@ -404,7 +401,7 @@ describe("required status contexts", () => {
       ]
     ) {
       assert(
-        REQUIRED_JOB_CONTEXTS.includes(context) || REQUIRED_STATUS_CONTEXTS.includes(context),
+        REQUIRED_JOB_CONTEXTS.includes(context),
         `required context "${context}" is missing from the protected list`,
       );
     }
@@ -429,9 +426,24 @@ describe("required status contexts", () => {
     }
   });
 
-  it("keeps posting the required automated review status", async () => {
-    const gate = await Deno.readTextFile(new URL("automated-review-gate.yml", WORKFLOWS_DIR));
-    assert(gate.includes('status?.context !== "Automated review"'));
+  it("requests Codex review on each pull request update", async () => {
+    const workflow = asRecord(
+      parse(await Deno.readTextFile(new URL("codex-review.yml", WORKFLOWS_DIR))),
+      "codex-review.yml",
+    );
+    assertEquals(workflow.on, {
+      pull_request: { types: ["opened", "synchronize", "reopened", "ready_for_review"] },
+    });
+    assertEquals(workflow.permissions, { "pull-requests": "write" });
+    const jobs = asRecord(workflow.jobs, "jobs");
+    assertEquals(Object.keys(jobs), ["request-review"]);
+    const job = asRecord(jobs["request-review"], "request-review");
+    assertEquals(job.if, undefined);
+    const steps = job.steps as Record<string, unknown>[];
+    assertEquals(steps.length, 1);
+    const script = String(asRecord(steps[0]!.with, "inputs").script);
+    assert(script.includes("github.rest.issues.createComment"));
+    assert(script.includes('body: "@codex review"'));
   });
 
   it("calls the pool workflow only for jobs behind no required context", async () => {
