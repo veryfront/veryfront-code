@@ -72,18 +72,19 @@ export type ManagedRecoveryRunSession = Awaited<
 >;
 const sessionsByInput = createPrivateWeakStore<
   RuntimeRunAgentInput,
-  { session: ManagedRecoveryRunSession; consumed: boolean }
+  { session: ManagedRecoveryRunSession; consumed: boolean; onConsumed: () => void }
 >();
 
 /** Transfer only the authenticated handler's already acquired owner into this exact input. */
 export function bindManagedRecoveryRunSession(
   input: RuntimeRunAgentInput,
   session: ManagedRecoveryRunSession,
+  onConsumed: () => void,
 ): void {
   const claims = getManagedRecoveryInputClaims(input);
   if (!claims || sessionsByInput.get(input)) throw new Error("Invalid recovery session transfer");
   session.owner.assertAdmittedClaims(claims);
-  sessionsByInput.set(input, { session, consumed: false });
+  sessionsByInput.set(input, { session, consumed: false, onConsumed });
 }
 
 export function takeManagedRecoveryRunSession(
@@ -93,5 +94,6 @@ export function takeManagedRecoveryRunSession(
   if (!reservation) return undefined;
   if (reservation.consumed) throw new Error("Recovery session already consumed");
   reservation.consumed = true;
+  reservation.onConsumed();
   return reservation.session;
 }

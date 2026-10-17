@@ -7017,3 +7017,143 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
     else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
   }
 });
+
+for (const expireBeforeHandoff of [false, true]) {
+  it(`retains reservation cleanup until runtime consumes the session (expired=${expireBeforeHandoff})`, async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    let discoveryCalls = 0;
+    let remoteSetupCalls = 0;
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch(async () => {
+      remoteSetupCalls++;
+      if (expireBeforeHandoff) await new Promise((resolve) => setTimeout(resolve, 2100));
+      throw new Error("Synthetic Studio discovery unavailable");
+    });
+    let cancelledReservations = 0;
+    let settledReservations = 0;
+    class CleanupTrackingSessionManager extends AgentRunSessionManager {
+      override cancelRun(...args: Parameters<AgentRunSessionManager["cancelRun"]>): boolean {
+        cancelledReservations++;
+        return super.cancelRun(...args);
+      }
+      override settleCancelledRun(
+        ...args: Parameters<AgentRunSessionManager["settleCancelledRun"]>
+      ): void {
+        settledReservations++;
+        return super.settleCancelledRun(...args);
+      }
+    }
+    const recoveryDirectory = await Deno.makeTempDir();
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () =>
+        createAgentWithConfig("assistant-1", {
+          tools: true,
+          mcpServers: [{ kind: "veryfront-studio" }],
+        }),
+      getAllAgentIds: () => [],
+      sessionManager: new CleanupTrackingSessionManager({
+        recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+          const admission = getVerifiedControlPlaneRecoveryAdmission(claims);
+          if (!admission) throw new Error("Expected verified recovery admission");
+          const owner = await RecoverySessionOwner.acquire({
+            claims,
+            directory: recoveryDirectory,
+            awaitRetiredPreviousOwner,
+            validateCurrentOwnership: async () => ({
+              version: 1,
+              identity: {
+                projectId: admission.identity.projectId,
+                canonicalRunId: admission.identity.canonicalRunId,
+                publicRunId: admission.identity.publicRunId,
+                agentId: admission.identity.agentId,
+                threadId: admission.identity.threadId,
+              },
+              generation: admission.generation,
+              acknowledgedEventId: 0,
+              acknowledgedExternalSequence: 0,
+              leaseRemainingMs: 10_000,
+            }),
+          });
+          return { owner };
+        },
+      }),
+    });
+    const body = createAgentStreamRequestBody({
+      project: { projectId, sourceTargetEnvironmentId: "33333333-3333-4333-8333-333333333333" },
+      agentSource: { type: "release", releaseId: "44444444-4444-4444-8444-444444444444" },
+      credentials: { authToken: "synthetic-invocation" },
+      forwardedProps: {
+        clientId: "veryfront-studio",
+        veryfront: { client: { id: "veryfront-studio", type: "web", platform: "browser" } },
+      },
+      managedRecoveryAdmission: {
+        version: 1,
+        identity: {
+          projectId,
+          canonicalRunId: "22222222-2222-4222-8222-222222222222",
+          publicRunId: "run_1",
+          agentId: "assistant-1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          sourceHash: "a".repeat(64),
+        },
+        generation: {
+          workerId: "worker-1",
+          dispatchNonce: "66666666-6666-4666-8666-666666666666",
+          transportRecoveryAttempt: 0,
+        },
+        acknowledgedExternalSequence: 0,
+        leaseRemainingMs: 10_000,
+        sourceBinding: {
+          projectId,
+          environmentId: "33333333-3333-4333-8333-333333333333",
+          releaseId: "44444444-4444-4444-8444-444444444444",
+        },
+        eventPersistence: "runtime-owned-v1",
+        expiresAt: Math.floor(Date.now() / 1000) + (expireBeforeHandoff ? 2 : 30),
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+      projectId,
+    });
+    const request = sealIngressCredentials(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+          [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+        },
+        body,
+      }),
+    );
+    assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+    ctx.proxyToken = "synthetic-proxy-token";
+    const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+    try {
+      const result = await handler.handle(request, ctx);
+      assertExists(result.response);
+      assertEquals(result.response.status, 500);
+      await result.response.body?.cancel();
+      assertEquals(cancelledReservations, expireBeforeHandoff ? 1 : 0);
+      assertEquals(settledReservations, expireBeforeHandoff ? 1 : 0);
+      assertEquals(remoteSetupCalls > 0, true);
+      assertEquals(discoveryCalls, 1);
+    } finally {
+      restoreMockFetch();
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+      await Deno.remove(recoveryDirectory, { recursive: true });
+      if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+    }
+  });
+}

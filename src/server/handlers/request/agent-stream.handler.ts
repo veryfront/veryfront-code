@@ -1592,7 +1592,9 @@ export class AgentStreamHandler extends BaseHandler {
                         );
                         bindManagedRecoveryInput(runtimeInput, verifiedClaims);
                         if (reservedRecovery) {
-                          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery);
+                          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
+                            pendingRecovery = undefined;
+                          });
                         }
                         if (platformDependencies && platformDependencyScope.projectId) {
                           registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
@@ -1684,28 +1686,31 @@ export class AgentStreamHandler extends BaseHandler {
                           );
                         }
                         const runAgentStream = () => {
-                          pendingRecovery = undefined;
-                          return createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
-                            ...this.deps,
-                            localTools,
-                            providerReplayCheckpoints,
-                            persistProviderReplayCheckpoint,
-                            servingIdentity: ctx.projectId
-                              ? {
-                                projectId: ctx.projectId,
-                                spanAttributes: buildServingSpanAttributes(ctx),
-                              }
-                              : undefined,
-                            projectAgentSandbox: {
-                              apiUrl: veryfrontApiUrl,
-                              authToken: projectRuntimeToken || undefined,
-                              branchId: executionProject
-                                ? executionProject.runtimeTargetBranchId
-                                : payload.runtimeTargetBranchId,
-                              projectId: executionProject?.projectId ??
-                                projectScopedContext.projectId ?? null,
+                          return createRuntimeAgentStreamResponse(
+                            runtimeInput,
+                            runtimeAgent,
+                            {
+                              ...this.deps,
+                              localTools,
+                              providerReplayCheckpoints,
+                              persistProviderReplayCheckpoint,
+                              servingIdentity: ctx.projectId
+                                ? {
+                                  projectId: ctx.projectId,
+                                  spanAttributes: buildServingSpanAttributes(ctx),
+                                }
+                                : undefined,
+                              projectAgentSandbox: {
+                                apiUrl: veryfrontApiUrl,
+                                authToken: projectRuntimeToken || undefined,
+                                branchId: executionProject
+                                  ? executionProject.runtimeTargetBranchId
+                                  : payload.runtimeTargetBranchId,
+                                projectId: executionProject?.projectId ??
+                                  projectScopedContext.projectId ?? null,
+                              },
                             },
-                          });
+                          );
                         };
                         const shouldIsolateEnv = apiAuthToken.length > 0;
                         const agentEnv = buildAgentStreamEnv({
