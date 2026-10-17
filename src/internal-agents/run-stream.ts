@@ -1875,6 +1875,7 @@ export async function createRuntimeAgentStreamResponse(
             "Internal agent runtime stream stopped before EOF",
           );
           let readerCancellation: Promise<void> | undefined;
+          let readerCancellationCompleted = false;
           const runOutcome = createRunOutcomeTracker(childRunToolNames);
           let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
           stopHeartbeat = () => {
@@ -1934,7 +1935,9 @@ export async function createRuntimeAgentStreamResponse(
             if (readerReachedEof) {
               return Promise.resolve();
             }
-            readerCancellation ??= reader.cancel(reason).catch((error) => {
+            readerCancellation ??= reader.cancel(reason).then(() => {
+              readerCancellationCompleted = true;
+            }, (error) => {
               logger.debug(
                 "Internal agent runtime reader cancellation failed during cleanup",
                 {
@@ -2326,8 +2329,15 @@ export async function createRuntimeAgentStreamResponse(
                 });
               });
             } else if (sandboxClosed) {
-              // A runtime override that never reported its producer gives no settlement
-              // evidence; retire the registration so it cannot answer stops forever.
+              // Ordinary overrides can use the stream cancellation contract instead
+              // of the optional producer callback. Release capacity only after that
+              // cancellation joins; a managed replacement still requires its producer.
+              if (
+                !managedRecovery && abortSignal.aborted &&
+                (readerReachedEof || readerCancellationCompleted)
+              ) {
+                deps.sessionManager.completeRun(input.runId, abortSignal);
+              }
               settledStop("abandoned");
             }
           }

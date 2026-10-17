@@ -5663,6 +5663,49 @@ describe("internal-agents/run-stream", () => {
     sessionManager.completeRun("after-producer-settlement", next);
   });
 
+  it("releases cancelled override capacity only after its underlying cancellation settles", async () => {
+    const sessionManager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
+    const agent = createAgent({
+      id: "cancelled-capacity-agent",
+      model: "anthropic/claude-opus-4-6",
+      system: "test",
+    });
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "cancelled-capacity-run",
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    const completion = Promise.withResolvers<void>();
+    const cancellationStarted = Promise.withResolvers<void>();
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () => new ReadableStream<Uint8Array>({
+          cancel() {
+            cancellationStarted.resolve();
+            return completion.promise;
+          },
+        }),
+      }),
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected runtime response body");
+    await reader.read();
+    await reader.cancel();
+    await cancellationStarted.promise;
+    await assertRejects(async () => {
+      sessionManager.startRun({ runId: "before-producer-settlement", threadId: input.threadId });
+    });
+    completion.resolve();
+    await completion.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const next = sessionManager.startRun({ runId: "after-producer-settlement", threadId: input.threadId });
+    sessionManager.completeRun("after-producer-settlement", next);
+  });
+
   it("debug logs runtime reader cancellation failures during cleanup", async () => {
     const logs = captureConsoleJsonLogs();
     try {
