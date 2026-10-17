@@ -178,6 +178,67 @@ export async function inlineRuntimeMessageFileContents(
   const inlineTextByPart = new Map<string, string>();
   let remainingBudget = MAX_TOTAL_INLINE_FILE_CONTENT_CHARS;
 
+  function contentForFile(file: FileUIPartWithUpload, message: ChatUiMessage) {
+    let contentPromise = contentByUrl.get(file.url);
+    if (!contentPromise) {
+      contentPromise = fetchFileContent({
+        url: file.url,
+        mediaType: file.mediaType,
+        ...(file.filename ? { filename: file.filename } : {}),
+        ...(file.uploadId ? { uploadId: file.uploadId } : {}),
+        ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.fetchTimeoutMs != null ? { timeoutMs: options.fetchTimeoutMs } : {}),
+        part: file,
+        message,
+      }).then(normalizeInlineFileContent);
+      contentByUrl.set(file.url, contentPromise);
+    }
+
+    return contentPromise;
+  }
+
+  async function inlinePart(
+    file: FileUIPartWithUpload,
+    message: ChatUiMessage,
+    messageIndex: number,
+    partIndex: number,
+  ) {
+    const contentPromise = contentForFile(file, message);
+    let inlineContent: InlineFileContent | undefined;
+    try {
+      inlineContent = await contentPromise;
+    } catch (error) {
+      // Attachments on the newest user message must stay hard failures, and
+      // caller aborts always propagate; stale history attachments degrade.
+      if (messageIndex === newestUserMessageIndex || options.abortSignal?.aborted) {
+        throw error;
+      }
+      inlineTextByPart.set(
+        `${messageIndex}:${partIndex}`,
+        `[attachment unavailable: ${file.filename ?? file.uploadId ?? "file"}]`,
+      );
+      return;
+    }
+    if (!inlineContent) return;
+
+    let content = inlineContent.content;
+    let truncated = inlineContent.truncated;
+    if (content.length > remainingBudget) {
+      content = content.slice(0, remainingBudget);
+      truncated = true;
+    }
+    remainingBudget -= content.length;
+
+    inlineTextByPart.set(
+      `${messageIndex}:${partIndex}`,
+      buildInlineFileContentText(
+        file,
+        truncated ? `${content}\n\n[Attachment content truncated]` : content,
+      ),
+    );
+  }
+
   // Allocate the aggregate inline budget newest-first so the most recent
   // attachments win, then skip fetching entirely once the budget is spent.
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
@@ -185,7 +246,6 @@ export async function inlineRuntimeMessageFileContents(
     for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
       const file = getInlineableFilePart(message.parts[partIndex]);
       if (!file) continue;
-
       if (remainingBudget <= 0) {
         inlineTextByPart.set(
           `${messageIndex}:${partIndex}`,
@@ -193,55 +253,7 @@ export async function inlineRuntimeMessageFileContents(
         );
         continue;
       }
-
-      let contentPromise = contentByUrl.get(file.url);
-      if (!contentPromise) {
-        contentPromise = fetchFileContent({
-          url: file.url,
-          mediaType: file.mediaType,
-          ...(file.filename ? { filename: file.filename } : {}),
-          ...(file.uploadId ? { uploadId: file.uploadId } : {}),
-          ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
-          ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-          ...(options.fetchTimeoutMs != null ? { timeoutMs: options.fetchTimeoutMs } : {}),
-          part: file,
-          message,
-        }).then(normalizeInlineFileContent);
-        contentByUrl.set(file.url, contentPromise);
-      }
-
-      let inlineContent: InlineFileContent | undefined;
-      try {
-        inlineContent = await contentPromise;
-      } catch (error) {
-        // Attachments on the newest user message must stay hard failures, and
-        // caller aborts always propagate; stale history attachments degrade.
-        if (messageIndex === newestUserMessageIndex || options.abortSignal?.aborted) {
-          throw error;
-        }
-        inlineTextByPart.set(
-          `${messageIndex}:${partIndex}`,
-          `[attachment unavailable: ${file.filename ?? file.uploadId ?? "file"}]`,
-        );
-        continue;
-      }
-      if (!inlineContent) continue;
-
-      let content = inlineContent.content;
-      let truncated = inlineContent.truncated;
-      if (content.length > remainingBudget) {
-        content = content.slice(0, remainingBudget);
-        truncated = true;
-      }
-      remainingBudget -= content.length;
-
-      inlineTextByPart.set(
-        `${messageIndex}:${partIndex}`,
-        buildInlineFileContentText(
-          file,
-          truncated ? `${content}\n\n[Attachment content truncated]` : content,
-        ),
-      );
+      await inlinePart(file, message, messageIndex, partIndex);
     }
   }
 
@@ -393,10 +405,11 @@ async function fetchRuntimeTextFileContent(
     timeoutMs,
   );
   if (!response.ok) {
+    const statusText = response.statusText ? " " + response.statusText : "";
     throw NETWORK_ERROR.create({
       detail: `Failed to fetch text attachment content${
         formatFileContentFetchLabel(input)
-      }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
+      }: HTTP ${response.status}${statusText}`,
     });
   }
   return await readRuntimeTextFileContent(response, input, fetchSignal, timeoutMs);
@@ -625,10 +638,11 @@ function normalizeInlineFileContent(content: string | undefined): InlineFileCont
 }
 
 function escapeXmlAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(
-    />/g,
-    "&gt;",
-  );
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")
+    .replaceAll(
+      ">",
+      "&gt;",
+    );
 }
 
 function buildInlineFileContentText(
