@@ -442,6 +442,13 @@ function subagentRunIdField(
   return subagentRunId === undefined ? {} : { subagentRunId };
 }
 
+function chunkPayloadDelta(
+  event: AgUiEventOf<"TEXT_MESSAGE_CHUNK" | "TOOL_CALL_CHUNK" | "REASONING_MESSAGE_CHUNK">,
+): string {
+  if (event.delta === undefined) return "";
+  return event.delta;
+}
+
 /** Emits the chunk's payload event, or folds its extension fields into the previous command. */
 function appendChunkPayload<TEvent extends AgUiEvent>(
   event: AgUiEventOf<"TEXT_MESSAGE_CHUNK" | "TOOL_CALL_CHUNK" | "REASONING_MESSAGE_CHUNK">,
@@ -460,7 +467,7 @@ function appendChunkPayload<TEvent extends AgUiEvent>(
         commands.length,
         withChunkPayloadFields(
           event,
-          payload(event.delta === undefined ? "" : event.delta),
+          payload(chunkPayloadDelta(event)),
           knownFields,
         ),
       ),
