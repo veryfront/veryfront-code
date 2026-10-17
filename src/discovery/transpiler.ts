@@ -691,44 +691,49 @@ function transitiveLockedDependencies(
   const pinned = new Map<string, string>();
   const visited = new Set<string>([rootPath]);
   const queue: string[] = [rootPath];
+  function visitDependency(path: string, dependency: string): { refusal: string } | undefined {
+    const found = lockedDependencyFrom(sources.locked, path, dependency);
+    // A name the lockfile does not resolve is a name the CDN would resolve
+    // for itself, against the public registry, at build time -- so the
+    // bundle could execute a package and version the project never
+    // installed. An optional dependency skipped on this platform reaches
+    // here too, and refusing it is the same answer for the same reason:
+    // this build cannot be shown to be the project's own.
+    if (found === undefined) return { refusal: unresolvedEdgeRefusal(rootName, dependency) };
+    // Present and private is the substitution this refuses: the project's
+    // own copy of that name is not the one esm.sh would serve.
+    if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
+      return { refusal: privateTransitiveRefusal(rootName, dependency) };
+    }
+    // An ALIAS installs one package under another's name, and the CDN's
+    // `deps` names a package -- so the pin would send esm.sh after the
+    // public package of the alias rather than the one the project
+    // installed under it.
+    if (found.entry.installed !== null && found.entry.installed !== dependency) {
+      return { refusal: aliasedDependencyRefusal(rootName, dependency) };
+    }
+    const already = pinned.get(dependency);
+    // esm.sh resolves one version per name for a build, so a name the
+    // lockfile nests at two versions cannot be expressed as a pin at all.
+    // Dropping it instead left the CDN free to choose, which is the same
+    // gap in a quieter form.
+    if (already !== undefined && already !== found.entry.version) {
+      return { refusal: nestedVersionsRefusal(rootName, dependency) };
+    }
+    pinned.set(dependency, found.entry.version);
+    if (pinned.size > MAX_TRANSITIVE_LOCKED_DEPENDENCIES) {
+      return { refusal: oversizedGraphRefusal(rootName) };
+    }
+    if (visited.has(found.path)) return undefined;
+    visited.add(found.path);
+    queue.push(found.path);
+    return undefined;
+  }
   while (queue.length > 0) {
     const path = queue.shift()!;
     for (const dependency of Object.keys(sources.locked[path]!.dependencies)) {
-      const found = lockedDependencyFrom(sources.locked, path, dependency);
-      // A name the lockfile does not resolve is a name the CDN would resolve
-      // for itself, against the public registry, at build time -- so the
-      // bundle could execute a package and version the project never
-      // installed. An optional dependency skipped on this platform reaches
-      // here too, and refusing it is the same answer for the same reason:
-      // this build cannot be shown to be the project's own.
-      if (found === undefined) return { refusal: unresolvedEdgeRefusal(rootName, dependency) };
-      // Present and private is the substitution this refuses: the project's
-      // own copy of that name is not the one esm.sh would serve.
-      if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
-        return { refusal: privateTransitiveRefusal(rootName, dependency) };
-      }
-      // An ALIAS installs one package under another's name, and the CDN's
-      // `deps` names a package -- so the pin would send esm.sh after the
-      // public package of the alias rather than the one the project
-      // installed under it.
-      if (found.entry.installed !== null && found.entry.installed !== dependency) {
-        return { refusal: aliasedDependencyRefusal(rootName, dependency) };
-      }
-      const already = pinned.get(dependency);
-      // esm.sh resolves one version per name for a build, so a name the
-      // lockfile nests at two versions cannot be expressed as a pin at all.
-      // Dropping it instead left the CDN free to choose, which is the same
-      // gap in a quieter form.
-      if (already !== undefined && already !== found.entry.version) {
-        return { refusal: nestedVersionsRefusal(rootName, dependency) };
-      }
-      pinned.set(dependency, found.entry.version);
-      if (pinned.size > MAX_TRANSITIVE_LOCKED_DEPENDENCIES) {
-        return { refusal: oversizedGraphRefusal(rootName) };
-      }
-      if (visited.has(found.path)) continue;
-      visited.add(found.path);
-      queue.push(found.path);
+      const refusal = visitDependency(path, dependency);
+      if (refusal !== undefined) return refusal;
     }
   }
   return { pins: pinList(pinned) };
@@ -774,7 +779,11 @@ function oversizedGraphRefusal(rootName: string): string {
 function pinList(pinned: ReadonlyMap<string, string>): string[] {
   return [...pinned]
     .map(([name, version]) => `${name}@${version}`)
-    .toSorted((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    .toSorted((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    });
 }
 
 /**
@@ -1134,56 +1143,62 @@ function expandBraces(pattern: string, allowSequenceAfterLiteral = false): strin
   const alternatives = sequenced ?? splitBraceBody(body);
   let expandedAlternatives = alternatives;
   let generatedLiteral = false;
-  if (sequenced === null && alternatives.length < 2) {
-    // brace-expansion preserves an outer pair when only a nested brace
-    // supplies the alternatives: `{{a,b}}` becomes `{a}` and `{b}`.
-    if (body.includes("{")) {
-      const nestedOpen = unescapedIndexOf(body, "{");
-      const nestedClose = nestedOpen < 0 ? -1 : matchingBrace(body, nestedOpen);
-      if (
-        nestedOpen === 0 && nestedClose === body.length - 1 &&
-        braceSequence(body.slice(1, -1)) !== null
-      ) {
-        const tail = expandBraces(pattern.slice(close + 1));
-        return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
-      }
-      const nested = expandBraces(body);
-      if (nested === null) return null;
-      if (nested.length > 1 || nested[0] !== body) {
-        expandedAlternatives = nested.map((alternative) => `{${alternative}}`);
-        generatedLiteral = true;
-      } else {
-        return [pattern];
-      }
-    } else {
-      // npm leaves the complete expression literal when an unexpandable pair
-      // precedes a later sequence. Expanding that sequence alone would turn a
-      // pattern npm cannot match into a false workspace member.
-      if (!allowSequenceAfterLiteral && containsBraceSequence(pattern.slice(close + 1))) {
-        return [pattern];
-      }
+  function expandNestedLiteral(): string[] | null | undefined {
+    const nestedOpen = unescapedIndexOf(body, "{");
+    const nestedClose = nestedOpen < 0 ? -1 : matchingBrace(body, nestedOpen);
+    if (
+      nestedOpen === 0 && nestedClose === body.length - 1 &&
+      braceSequence(body.slice(1, -1)) !== null
+    ) {
       const tail = expandBraces(pattern.slice(close + 1));
       return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
     }
-  }
-  const head = pattern.slice(0, open);
-  const tail = pattern.slice(close + 1);
-  const expanded: string[] = [];
-  for (const alternative of expandedAlternatives) {
-    const rest = expandBraces(
-      `${head}${alternative}${tail}`,
-      allowSequenceAfterLiteral || generatedLiteral,
-    );
-    // Past the cap the expansion is INCOMPLETE, and a partial one is not a
-    // safe reading in either direction: dropping an alternative of an
-    // exclusion would admit a member npm excludes. The declaration is
-    // unverifiable instead.
-    if (rest === null || expanded.length + rest.length > MAX_WORKSPACE_PATTERN_ALTERNATIVES) {
-      return null;
+    const nested = expandBraces(body);
+    if (nested === null) return null;
+    if (nested.length > 1 || nested[0] !== body) {
+      expandedAlternatives = nested.map((alternative) => `{${alternative}}`);
+      generatedLiteral = true;
+    } else {
+      return [pattern];
     }
-    expanded.push(...rest);
+    return undefined;
   }
-  return expanded;
+  function expandLiteralSuffix(): string[] | null {
+    // npm leaves the complete expression literal when an unexpandable pair
+    // precedes a later sequence. Expanding that sequence alone would turn a
+    // pattern npm cannot match into a false workspace member.
+    if (!allowSequenceAfterLiteral && containsBraceSequence(pattern.slice(close + 1))) {
+      return [pattern];
+    }
+    const tail = expandBraces(pattern.slice(close + 1));
+    return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
+  }
+  if (sequenced === null && alternatives.length < 2) {
+    // Preserve outer literals while expanding nested alternatives when npm does.
+    const nestedResult = body.includes("{") ? expandNestedLiteral() : expandLiteralSuffix();
+    if (nestedResult !== undefined) return nestedResult;
+  }
+  return expandAlternatives();
+  function expandAlternatives(): string[] | null {
+    const head = pattern.slice(0, open);
+    const tail = pattern.slice(close + 1);
+    const expanded: string[] = [];
+    for (const alternative of expandedAlternatives) {
+      const rest = expandBraces(
+        `${head}${alternative}${tail}`,
+        allowSequenceAfterLiteral || generatedLiteral,
+      );
+      // Past the cap the expansion is INCOMPLETE, and a partial one is not a
+      // safe reading in either direction: dropping an alternative of an
+      // exclusion would admit a member npm excludes. The declaration is
+      // unverifiable instead.
+      if (rest === null || expanded.length + rest.length > MAX_WORKSPACE_PATTERN_ALTERNATIVES) {
+        return null;
+      }
+      expanded.push(...rest);
+    }
+    return expanded;
+  }
 }
 
 function containsBraceSequence(pattern: string): boolean {
@@ -1316,6 +1331,27 @@ type SegmentToken =
  */
 function segmentTokens(pattern: string): SegmentToken[] {
   const tokens: SegmentToken[] = [];
+  function appendExtglob(char: string, index: number): number | undefined {
+    if (isExtglobMark(char) && pattern[index + 1] === "(") {
+      const closed = matchingParenthesis(pattern, index + 1);
+      if (closed >= 0) {
+        tokens.push({
+          kind: "extglob",
+          mark: char,
+          alternatives: splitExtglobBody(pattern.slice(index + 2, closed)).map(segmentTokens),
+        });
+        return closed;
+      }
+    }
+    return undefined;
+  }
+  function appendStar(): void {
+    // `a**b` is `a*b`: within one segment a run of stars is still one run,
+    // and minimatch collapses them before compiling.
+    const previous = tokens[tokens.length - 1];
+    if (previous?.kind === "star") previous.consecutive = true;
+    else tokens.push({ kind: "star" });
+  }
   for (let index = 0; index < pattern.length; index++) {
     const char = pattern[index]!;
     if (char === "\\" && index + 1 < pattern.length) {
@@ -1325,24 +1361,13 @@ function segmentTokens(pattern: string): SegmentToken[] {
     // Read before `*` and `?` stand for themselves: in `*(app|web)` the mark
     // belongs to the group, and taking it as a wildcard left the `(app|web)`
     // behind as literal text.
-    if (isExtglobMark(char) && pattern[index + 1] === "(") {
-      const closed = matchingParenthesis(pattern, index + 1);
-      if (closed >= 0) {
-        tokens.push({
-          kind: "extglob",
-          mark: char,
-          alternatives: splitExtglobBody(pattern.slice(index + 2, closed)).map(segmentTokens),
-        });
-        index = closed;
-        continue;
-      }
+    const extglobEnd = appendExtglob(char, index);
+    if (extglobEnd !== undefined) {
+      index = extglobEnd;
+      continue;
     }
     if (char === "*") {
-      // `a**b` is `a*b`: within one segment a run of stars is still one run,
-      // and minimatch collapses them before compiling.
-      const previous = tokens[tokens.length - 1];
-      if (previous?.kind === "star") previous.consecutive = true;
-      else tokens.push({ kind: "star" });
+      appendStar();
       continue;
     }
     if (char === "?") {
@@ -1429,16 +1454,16 @@ const POSIX_CLASSES: ReadonlyMap<string, (char: string) => boolean> = new Map([
   // spells out control characters, which the linter reads as a mistake.
   ["ascii", (char: string) => char.codePointAt(0)! <= 0x7f],
   ["blank", (char: string) => /[\p{Zs}\t]/u.test(char)],
-  ["cntrl", (char: string) => /[\p{Cc}]/u.test(char)],
-  ["digit", (char: string) => /[\p{Nd}]/u.test(char)],
+  ["cntrl", (char: string) => /\p{Cc}/u.test(char)],
+  ["digit", (char: string) => /\p{Nd}/u.test(char)],
   ["graph", (char: string) => /[^\p{Z}\p{C}]/u.test(char)],
-  ["lower", (char: string) => /[\p{Ll}]/u.test(char)],
+  ["lower", (char: string) => /\p{Ll}/u.test(char)],
   // `print` really is the control characters in minimatch's own table, not
   // the printable ones. Matching npm is the job here, not POSIX.
-  ["print", (char: string) => /[\p{C}]/u.test(char)],
-  ["punct", (char: string) => /[\p{P}]/u.test(char)],
+  ["print", (char: string) => /\p{C}/u.test(char)],
+  ["punct", (char: string) => /\p{P}/u.test(char)],
   ["space", (char: string) => /[\p{Z}\t\r\n\v\f]/u.test(char)],
-  ["upper", (char: string) => /[\p{Lu}]/u.test(char)],
+  ["upper", (char: string) => /\p{Lu}/u.test(char)],
   ["word", (char: string) => /[\p{L}\p{Nl}\p{Nd}\p{Pc}]/u.test(char)],
   ["xdigit", (char: string) => /[A-Fa-f0-9]/.test(char)],
 ]);
@@ -1535,6 +1560,37 @@ function matchesTokens(
   return answer;
 }
 
+function matchesStarToken(
+  tokens: readonly SegmentToken[],
+  index: number,
+  name: string,
+  offset: number,
+  memo: Map<string, boolean>,
+  token: Extract<SegmentToken, { kind: "star" }>,
+): boolean {
+  // A single leading `*` before an extglob consumes input, while a trailing
+  // `*` after an extglob does the same. A nonterminal star can stay empty so
+  // a later literal or group can consume the remaining name.
+  const next = tokens[index + 1];
+  const previous = tokens[index - 1];
+  const suffixMayBeEmpty = canMatchEmpty(tokens, index + 1);
+  const mustConsumeAdjacentToExtglob = !token.synthetic && !token.consecutive &&
+    ((index === 0 && next?.kind === "extglob") ||
+      (index + 1 === tokens.length && previous?.kind === "extglob") ||
+      (previous?.kind === "extglob" && next?.kind === "extglob" &&
+        (next.mark === "@" || next.mark === "+")) ||
+      (previous?.kind === "extglob" && (previous.mark === "@" || previous.mark === "+") &&
+        next?.kind === "extglob" && (next.mark === "?" || next.mark === "*")));
+  const mustConsume = token.required || mustConsumeAdjacentToExtglob ||
+    (!token.synthetic && !token.consecutive && suffixMayBeEmpty &&
+      previous?.kind === "extglob" && previous.mark !== "!");
+  const firstEnd = offset + (mustConsume ? 1 : 0);
+  for (let end = firstEnd; end <= name.length; end++) {
+    if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
+  }
+  return false;
+}
+
 /** The token at `index` against `name` from `offset`, and the rest after it. */
 function matchesTokenHere(
   tokens: readonly SegmentToken[],
@@ -1545,27 +1601,7 @@ function matchesTokenHere(
 ): boolean {
   const token = tokens[index]!;
   if (token.kind === "star") {
-    // A single leading `*` before an extglob consumes input, while a trailing
-    // `*` after an extglob does the same. A nonterminal star can stay empty so
-    // a later literal or group can consume the remaining name.
-    const next = tokens[index + 1];
-    const previous = tokens[index - 1];
-    const suffixMayBeEmpty = canMatchEmpty(tokens, index + 1);
-    const mustConsumeAdjacentToExtglob = !token.synthetic && !token.consecutive &&
-      ((index === 0 && next?.kind === "extglob") ||
-        (index + 1 === tokens.length && previous?.kind === "extglob") ||
-        (previous?.kind === "extglob" && next?.kind === "extglob" &&
-          (next.mark === "@" || next.mark === "+")) ||
-        (previous?.kind === "extglob" && (previous.mark === "@" || previous.mark === "+") &&
-          next?.kind === "extglob" && (next.mark === "?" || next.mark === "*")));
-    const mustConsume = token.required || mustConsumeAdjacentToExtglob ||
-      (!token.synthetic && !token.consecutive && suffixMayBeEmpty &&
-        previous?.kind === "extglob" && previous.mark !== "!");
-    const firstEnd = offset + (mustConsume ? 1 : 0);
-    for (let end = firstEnd; end <= name.length; end++) {
-      if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
-    }
-    return false;
+    return matchesStarToken(tokens, index, name, offset, memo, token);
   }
   if (token.kind === "extglob") return matchesExtglob(tokens, index, name, offset, memo);
   return offset < name.length && matchesToken(token, name[offset]!) &&
@@ -1606,7 +1642,23 @@ function matchesExtglob(
       (!guarded || to === from || allowsLeadingDot(alternative[0])) &&
       matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
     );
-  if (token.mark === "!") {
+  function matchesForbiddenAlternative(
+    forbidden: readonly SegmentToken[],
+    remainder: string,
+    hasEmptyAlternative: boolean,
+  ): boolean {
+    for (const alternative of hasEmptyAlternative ? [] : token.alternatives) {
+      // A `*` alternative has to consume something too, for the same reason:
+      // minimatch compiles it as `[^/]+?` inside the lookahead, so `!(*)a`
+      // refuses `aba` and not merely `a`.
+      const refuses = alternative.length === 1 && alternative[0]!.kind === "star"
+        ? [{ kind: "any" } as SegmentToken, ...alternative]
+        : alternative;
+      if (matchesTokens([...refuses, ...forbidden], 0, remainder, 0, new Map())) return true;
+    }
+    return false;
+  }
+  function matchesNegativeExtglob(): boolean {
     // Adjacent negative extglobs are one minimatch lookahead expression. The
     // later group must not reject the remainder independently, or a valid
     // pattern such as `!(a|b)!(a|*)` becomes impossible to match.
@@ -1657,15 +1709,7 @@ function matchesExtglob(
         canMatchEmpty(tail, 1)
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
-    for (const alternative of hasEmptyAlternative ? [] : token.alternatives) {
-      // A `*` alternative has to consume something too, for the same reason:
-      // minimatch compiles it as `[^/]+?` inside the lookahead, so `!(*)a`
-      // refuses `aba` and not merely `a`.
-      const refuses = alternative.length === 1 && alternative[0]!.kind === "star"
-        ? [{ kind: "any" } as SegmentToken, ...alternative]
-        : alternative;
-      if (matchesTokens([...refuses, ...forbidden], 0, remainder, 0, new Map())) return false;
-    }
+    if (matchesForbiddenAlternative(forbidden, remainder, hasEmptyAlternative)) return false;
     // Refused nothing, so the group is an ordinary run with the tail after it.
     const fallbackStar = {
       kind: "star",
@@ -1677,6 +1721,9 @@ function matchesExtglob(
       negativePrefix: index === 0 && tail[0]?.kind === "extglob" && tail[0].mark === "!",
     } as const;
     return matchesTokens([fallbackStar, ...tailForFallback], 0, remainder, 0, new Map());
+  }
+  if (token.mark === "!") {
+    return matchesNegativeExtglob();
   }
   // `?` and `*` let the group stand for nothing at all; `@` and `+` do not.
   if ((token.mark === "?" || token.mark === "*") && rest(offset)) return true;
