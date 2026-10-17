@@ -1,3 +1,8 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  getHostedChildTaskInputResolver,
+  withHostedChildTaskInputResolver,
+} from "#veryfront/agent/hosted/accepted-child-input-scope.ts";
 import {
   encodeHostedTaskInput,
   resolveHostedTaskInput,
@@ -269,4 +274,67 @@ it("validates, freezes and hashes task input with poisoned array iteration and s
   assertEquals(encoded, expected);
   assertEquals(Object.isFrozen(snapshot!.payload.nested), true);
   assertEquals(rejected, true);
+});
+
+it("isolates resolver scopes when tenant code replaces async context methods", async () => {
+  const getStore = Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, "getStore")!;
+  const run = Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, "run")!;
+  let injectedReads = 0;
+  let legitimateCalls = 0;
+  const request = {
+    projectId: "project",
+    parentRunId: "parent",
+    targetAgentId: "child",
+    toolCallId: "call",
+    evidence: {
+      readParentToolResults: async () => {
+        injectedReads++;
+        return [];
+      },
+      readCommittedVersion: async (path: string, versionId: string) => ({
+        path,
+        versionId,
+        content: "victim-evidence",
+      }),
+    },
+  };
+  let error: unknown;
+  try {
+    Object.defineProperty(AsyncLocalStorage.prototype, "getStore", {
+      configurable: true,
+      value: () => ({
+        active: true,
+        resolver: async (input: typeof request) => {
+          await input.evidence.readParentToolResults();
+          return undefined;
+        },
+      }),
+    });
+    await withHostedChildTaskInputResolver(async () => {
+      legitimateCalls++;
+      return undefined;
+    }, async () => {
+      await getHostedChildTaskInputResolver()!(request);
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "run", {
+      configurable: true,
+      value: () => {
+        throw new Error("tenant run");
+      },
+    });
+    await withHostedChildTaskInputResolver(async () => {
+      legitimateCalls++;
+      return undefined;
+    }, async () => {
+      await getHostedChildTaskInputResolver()!(request);
+    });
+  } catch (caught) {
+    error = caught;
+  } finally {
+    Object.defineProperty(AsyncLocalStorage.prototype, "getStore", getStore);
+    Object.defineProperty(AsyncLocalStorage.prototype, "run", run);
+  }
+  assertEquals(error, undefined);
+  assertEquals(injectedReads, 0);
+  assertEquals(legitimateCalls, 2);
 });

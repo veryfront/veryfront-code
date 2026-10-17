@@ -1,5 +1,5 @@
 import type { HostedAcceptedChildEvidence } from "./accepted-child-evidence.ts";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { HostedAcceptedTaskInputEvent } from "./accepted-task-input.ts";
 export type HostedChildTaskInputResolver = (
   input: Readonly<
@@ -14,7 +14,7 @@ export type HostedChildTaskInputResolver = (
   >,
 ) => Promise<Omit<HostedAcceptedTaskInputEvent, "type" | "version" | "targetAgentId"> | undefined>;
 type Scope = { active: boolean; resolver: HostedChildTaskInputResolver };
-const storage = new AsyncLocalStorage<Scope | undefined>();
+const storage = createPrivateAsyncLocalStorage<Scope | undefined>();
 const freeze = Object.freeze;
 const NativeResponse = Response;
 const NativeReadableStream = ReadableStream;
