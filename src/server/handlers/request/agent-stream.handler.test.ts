@@ -6849,7 +6849,8 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
     sessionManager: new AgentRunSessionManager(),
   });
   const body = createAgentStreamRequestBody({
-    project: { projectId },
+    project: { projectId, sourceTargetEnvironmentId: "33333333-3333-4333-8333-333333333333" },
+    agentSource: { type: "release", releaseId: "44444444-4444-4444-8444-444444444444" },
     credentials: { authToken: "synthetic-invocation" },
     managedRecoveryAdmission: {
       version: 1,
@@ -6857,6 +6858,8 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
         projectId,
         canonicalRunId: "22222222-2222-4222-8222-222222222222",
         publicRunId: "run_1",
+        agentId: "assistant-1",
+        threadId: "10000000-1000-4000-8000-100000000001",
         sourceHash: "a".repeat(64),
       },
       generation: {
@@ -6901,6 +6904,50 @@ it("sealed ingress preserves terminal authority for managed recovery admission",
     assertEquals(result.response.status, 404);
     assertEquals(await result.response.json(), { error: "Agent not found" });
     assertEquals(discoveryCalls, 1);
+    for (
+      const foreignBody of [
+        body.replace('"agentId":"assistant-1"', '"agentId":"other-agent"'),
+        body.replace(
+          '"conversationId":"10000000-1000-4000-8000-100000000001"',
+          '"conversationId":"88888888-8888-4888-8888-888888888888"',
+        ),
+        body.replace(
+          '"agentSource":{"type":"release","releaseId":"44444444-4444-4444-8444-444444444444"}',
+          '"agentSource":{"type":"release","releaseId":"88888888-8888-4888-8888-888888888888"}',
+        ),
+        body.replace(
+          '"sourceTargetEnvironmentId":"33333333-3333-4333-8333-333333333333"',
+          '"sourceTargetEnvironmentId":"88888888-8888-4888-8888-888888888888"',
+        ),
+      ]
+    ) {
+      assertEquals(foreignBody !== body, true);
+      const signed = await createControlPlaneSignature(foreignBody, {
+        requestId: "run_1",
+        projectId,
+      });
+      Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", signed.publicKeyPem);
+      const foreignCtx = createCtx(signed.publicKeyPem);
+      foreignCtx.projectId = projectId;
+      const rejected = await handler.handle(
+        sealIngressCredentials(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": signed.jws,
+              [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: "synthetic-terminal",
+            },
+            body: foreignBody,
+          }),
+        ),
+        foreignCtx,
+      );
+      assertExists(rejected.response);
+      assertEquals(rejected.response.status >= 400, true);
+      await rejected.response.body?.cancel();
+      assertEquals(discoveryCalls, 1);
+    }
   } finally {
     if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
     else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);

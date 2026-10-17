@@ -254,6 +254,8 @@ export function createManagedRecoveryHttpTransport(
         initial.identity.projectId !== admission.identity.projectId ||
         initial.identity.canonicalRunId !== admission.identity.canonicalRunId ||
         initial.identity.publicRunId !== admission.identity.publicRunId ||
+        initial.identity.agentId !== admission.identity.agentId ||
+        initial.identity.threadId !== admission.identity.threadId ||
         initial.generation.workerId !== admission.generation.workerId ||
         initial.generation.dispatchNonce !== admission.generation.dispatchNonce ||
         initial.generation.transportRecoveryAttempt !==

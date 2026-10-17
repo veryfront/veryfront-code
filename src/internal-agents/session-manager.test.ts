@@ -340,3 +340,59 @@ describe("cancelled execution finalization", () => {
     }
   });
 });
+
+describe("cancelled producer capacity", () => {
+  for (const finalize of ["completeRun", "failRun"] as const) {
+    it(`retains ordinary capacity until ${finalize} joins cleanup`, () => {
+      const manager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
+      try {
+        const signal = manager.startRun({ runId: "ordinary", threadId: "thread" });
+        manager.cancelRun("ordinary");
+        assertEquals(signal.aborted, true);
+        assertThrows(
+          () => manager.startRun({ runId: "next", threadId: "thread" }),
+          Error,
+          "Maximum concurrent sessions",
+        );
+        manager[finalize]("ordinary", signal);
+        const next = manager.startRun({ runId: "next", threadId: "thread" });
+        manager.completeRun("next", next);
+      } finally {
+        manager.reset();
+      }
+    });
+  }
+});
+
+it("same-id replacement retains both producers until their matching finalizers", () => {
+  const manager = new AgentRunSessionManager({ maxConcurrentSessions: 2 });
+  try {
+    const old = manager.startRun({ runId: "reused", threadId: "thread" });
+    manager.cancelRun("reused");
+    const replacement = manager.startRun({ runId: "reused", threadId: "thread" });
+    assertThrows(() => manager.startRun({ runId: "third", threadId: "thread" }));
+    manager.failRun("reused", old);
+    assertEquals(manager.getRunStatus("reused"), "running");
+    const third = manager.startRun({ runId: "third", threadId: "thread" });
+    manager.completeRun("reused", replacement);
+    manager.completeRun("third", third);
+  } finally {
+    manager.reset();
+  }
+});
+
+it("session TTL cancellation retains producer capacity until cleanup", async () => {
+  const manager = new AgentRunSessionManager({ maxConcurrentSessions: 1, sessionTtlMs: 1 });
+  try {
+    const signal = manager.startRun({ runId: "expired", threadId: "thread" });
+    await new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true })
+    );
+    assertThrows(() => manager.startRun({ runId: "next", threadId: "thread" }));
+    manager.completeRun("expired", signal);
+    const next = manager.startRun({ runId: "next", threadId: "thread" });
+    manager.completeRun("next", next);
+  } finally {
+    manager.reset();
+  }
+});

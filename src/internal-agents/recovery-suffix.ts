@@ -26,6 +26,8 @@ export const getRecoverySuffixPageSchema = defineSchema((v) => {
       projectId: v.string().uuid(),
       canonicalRunId: v.string().uuid(),
       publicRunId: v.string().min(1).max(256),
+      agentId: v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+      threadId: v.string().uuid(),
     }).strict(),
     generation: getRecoveryGenerationSchema(),
     leaseRemainingMs: v.number().int().min(1).max(300_000),
@@ -155,6 +157,8 @@ export async function readAuthenticatedRecoverySuffix(input: {
     target.identity.projectId !== admission.identity.projectId ||
     target.identity.canonicalRunId !== admission.identity.canonicalRunId ||
     target.identity.publicRunId !== admission.identity.publicRunId ||
+    target.identity.agentId !== admission.identity.agentId ||
+    target.identity.threadId !== admission.identity.threadId ||
     !same(target.generation, admission.generation) ||
     !same(snapshot.binding.identity, admission.identity) ||
     !same(snapshot.binding.sourceBinding, admission.sourceBinding) ||

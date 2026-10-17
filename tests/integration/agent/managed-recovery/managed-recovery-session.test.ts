@@ -13,6 +13,8 @@ import { RecoverySessionOwner } from "#veryfront/internal-agents/recovery-sessio
 
 const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const identity = {
+  agentId: "recovery-proof",
+  threadId: "77777777-7777-4777-8777-777777777777",
   projectId: "11111111-1111-4111-8111-111111111111",
   canonicalRunId: "22222222-2222-4222-8222-222222222222",
   publicRunId: "run-proof",
@@ -42,6 +44,8 @@ function receipt(value = admission()) {
   return {
     version: 1,
     identity: {
+      agentId: value.identity.agentId,
+      threadId: value.identity.threadId,
       projectId: value.identity.projectId,
       canonicalRunId: value.identity.canonicalRunId,
       publicRunId: value.identity.publicRunId,
@@ -82,12 +86,16 @@ it("managed sessions require opt-in and genuine private claims", async () => {
     const claims = await signed();
     const manager = new AgentRunSessionManager();
     await assertRejects(() =>
-      manager.startManagedRecoveryRun({ runId: identity.publicRunId, threadId: "thread", claims })
+      manager.startManagedRecoveryRun({
+        runId: identity.publicRunId,
+        threadId: identity.threadId,
+        claims,
+      })
     );
     await assertRejects(() =>
       manager.startManagedRecoveryRun({
         runId: identity.publicRunId,
-        threadId: "thread",
+        threadId: identity.threadId,
         claims: { ...claims },
       })
     );
@@ -143,13 +151,13 @@ it("actual session replacement joins predecessor and fences its late finalizer",
     const firstClaims = await signed(current);
     const first = await manager.startManagedRecoveryRun({
       runId: identity.publicRunId,
-      threadId: "thread",
+      threadId: identity.threadId,
       claims: firstClaims,
     });
     await assertRejects(() =>
       manager.startManagedRecoveryRun({
         runId: identity.publicRunId,
-        threadId: "thread",
+        threadId: identity.threadId,
         claims: firstClaims,
       })
     );
@@ -159,7 +167,7 @@ it("actual session replacement joins predecessor and fences its late finalizer",
     let replaced = false;
     const replacement = manager.startManagedRecoveryRun({
       runId: identity.publicRunId,
-      threadId: "thread",
+      threadId: identity.threadId,
       claims: await signed(current),
     }).then((value) => {
       replaced = true;
@@ -171,7 +179,7 @@ it("actual session replacement joins predecessor and fences its late finalizer",
       else first.signal.addEventListener("abort", () => resolve(), { once: true });
     });
     assertEquals(replaced, false);
-    assertThrows(() => manager.startRun({ runId: "unrelated", threadId: "thread" }));
+    assertThrows(() => manager.startRun({ runId: "unrelated", threadId: identity.threadId }));
     first.settle();
     const second = await replacement;
     assertEquals(retirements, 1);
@@ -206,7 +214,11 @@ it("pre-producer setup failure restores its snapshot and late response cancellat
       const owner = await RecoverySessionOwner.acquire({
         claims,
         directory: `${directory}/owner`,
-        validateCurrentOwnership: async () => receipt(current),
+        validateCurrentOwnership: async () => ({
+          ...receipt(current),
+          // A predecessor event was acknowledged after the first setup attempt.
+          acknowledgedExternalSequence: current.generation.transportRecoveryAttempt > 0 ? 1 : 0,
+        }),
         awaitRetiredPreviousOwner,
       });
       return {
@@ -228,7 +240,7 @@ it("pre-producer setup failure restores its snapshot and late response cancellat
                 sourceBinding: firstAdmission.sourceBinding,
               },
               acknowledgedEventId: 1,
-              acknowledgedExternalSequence: 0,
+              acknowledgedExternalSequence: 1,
               messages: [{
                 id: "durable-user",
                 role: "user",
@@ -277,7 +289,7 @@ it("pre-producer setup failure restores its snapshot and late response cancellat
       current = admission(attempt);
       const input = {
         runId: identity.publicRunId,
-        threadId: crypto.randomUUID(),
+        threadId: identity.threadId,
         messages: [{ id: "request-user", role: "user" as const, content: "unrestored request" }],
         tools: [],
         context: [],
@@ -322,7 +334,7 @@ it("pre-producer setup failure restores its snapshot and late response cancellat
         current = admission(2);
         const replacement = await manager.startManagedRecoveryRun({
           runId: identity.publicRunId,
-          threadId: crypto.randomUUID(),
+          threadId: identity.threadId,
           claims: await signed(current),
         });
         assertEquals(replacement.signal.aborted, false);
@@ -416,14 +428,14 @@ it("actual stream denies a callable effect after live generation changes", async
   try {
     const input = {
       runId: identity.publicRunId,
-      threadId: crypto.randomUUID(),
+      threadId: identity.threadId,
       messages: [],
       tools: [],
       context: [],
     };
     bindManagedRecoveryInput(input, await signed(first));
     const agent = createAgent({
-      id: "effect-proof",
+      id: "recovery-proof",
       model: "anthropic/test",
       system: "Synthetic",
       skills: false,
@@ -473,7 +485,7 @@ it("project WeakMap hooks cannot intercept recovery input authority", async () =
     const claims = await signed();
     const input = {
       runId: identity.publicRunId,
-      threadId: "thread",
+      threadId: identity.threadId,
       messages: [],
       tools: [],
       context: [],
@@ -513,7 +525,7 @@ it("a verified recovery admission expiring before input binding cannot become an
     const claims = await signed(value);
     const input = {
       runId: identity.publicRunId,
-      threadId: "expired-recovery-thread",
+      threadId: identity.threadId,
       messages: [],
       tools: [],
       context: [],
@@ -528,6 +540,128 @@ it("a verified recovery admission expiring before input binding cannot become an
     bindManagedRecoveryInput(input, undefined);
     assertEquals(getManagedRecoveryInputClaims(input), undefined);
   } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("cancellation during successor acquisition prevents its producer from starting", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  let current = admission();
+  let notifyGap = () => {};
+  const gap = new Promise<void>((resolve) => {
+    notifyGap = resolve;
+  });
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const manager = new AgentRunSessionManager({
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory,
+        validateCurrentOwnership: async () => receipt(current),
+        awaitRetiredPreviousOwner: async (generation) => {
+          await awaitRetiredPreviousOwner(generation);
+          notifyGap();
+          await blocked;
+        },
+      });
+      return {
+        owner,
+        ...(owner.requiresRestoredSnapshot
+          ? {
+            snapshot: {
+              version: 1,
+              binding: {
+                identity,
+                generation: admission().generation,
+                sourceBinding: admission().sourceBinding,
+              },
+              acknowledgedEventId: 1,
+              acknowledgedExternalSequence: 0,
+              messages: [],
+              modelTurns: [],
+              toolBoundaries: [],
+              toolExposureCheckpoint: { version: 2, loadedToolNames: [] },
+            },
+          }
+          : {}),
+      };
+    },
+  });
+  try {
+    const first = await manager.startManagedRecoveryRun({
+      runId: identity.publicRunId,
+      threadId: identity.threadId,
+      claims: await signed(current),
+    });
+    current = admission(1);
+    const replacing = manager.startManagedRecoveryRun({
+      runId: identity.publicRunId,
+      threadId: identity.threadId,
+      claims: await signed(current),
+    });
+    const outcome = replacing.then(() => undefined, (error: unknown) => error);
+    await waitFor(() => first.signal.aborted);
+    first.settle();
+    await gap;
+    const cancelled = manager.cancelRun(identity.publicRunId);
+    release();
+    const error = await outcome;
+    assertEquals(cancelled, true);
+    assertEquals(error instanceof Error ? error.message : undefined, "Run cancelled");
+    assertEquals(manager.getRunStatus(identity.publicRunId), null);
+  } finally {
+    release();
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("cancelled ordinary cleanup blocks managed acquisition at combined capacity", async () => {
+  const previous = Deno.env.get(envKey);
+  let acquisitions = 0;
+  const manager = new AgentRunSessionManager({
+    maxConcurrentSessions: 1,
+    recoveryOwnerFactory: () => {
+      acquisitions++;
+      return Promise.reject(new Error("factory reached"));
+    },
+  });
+  try {
+    const claims = await signed();
+    const ordinary = manager.startRun({ runId: "ordinary", threadId: identity.threadId });
+    manager.cancelRun("ordinary");
+    await assertRejects(
+      () =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: identity.threadId,
+          claims,
+        }),
+      Error,
+      "Maximum concurrent sessions",
+    );
+    assertEquals(acquisitions, 0);
+    manager.failRun("ordinary", ordinary);
+    await assertRejects(
+      () =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: identity.threadId,
+          claims,
+        }),
+      Error,
+      "factory reached",
+    );
+    assertEquals(acquisitions, 1);
+  } finally {
+    manager.reset();
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);
   }

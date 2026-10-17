@@ -200,7 +200,9 @@ export async function verifyControlPlaneRequest(
       // A valid signature can cover a plain cancel or malformed resume body.
       // The handler owns payload validation; no dependency grant is minted.
     }
-    if (body && ObjectHasOwn(body, "managedRecoveryAdmission") && pinnedKey) {
+    if (body && ObjectHasOwn(body, "managedRecoveryAdmission")) {
+      // A recovery request may never fall back to ordinary execution authority.
+      if (!pinnedKey) throw new Error("Managed recovery requires the pinned operator signing key");
       // Adapter compatibility keys are not operator recovery authority.
       await verifyControlPlaneJws(controlPlaneJws, rawBody, {
         ...verificationOptions,

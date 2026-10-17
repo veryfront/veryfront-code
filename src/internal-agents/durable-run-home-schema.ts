@@ -10,6 +10,8 @@ export const getDurableRunIdentitySchema = defineSchema((v) =>
     projectId: v.string().uuid(),
     canonicalRunId: v.string().uuid(),
     publicRunId: v.string().min(1).max(256),
+    agentId: v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+    threadId: v.string().uuid(),
     sourceHash: v.string().regex(/^[a-f0-9]{64}$/),
   }).strict()
 );

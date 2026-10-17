@@ -10,6 +10,8 @@ it("journal reopens and replays only the acknowledged cursor suffix", async () =
     projectId: "11111111-1111-4111-8111-111111111111",
     canonicalRunId: "22222222-2222-4222-8222-222222222222",
     publicRunId: "run-proof",
+    agentId: "proof-agent",
+    threadId: "77777777-7777-4777-8777-777777777777",
     sourceHash: "a".repeat(64),
   };
   try {

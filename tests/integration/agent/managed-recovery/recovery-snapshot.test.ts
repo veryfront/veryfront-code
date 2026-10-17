@@ -14,6 +14,8 @@ function fixture() {
     projectId: "11111111-1111-4111-8111-111111111111",
     canonicalRunId: "22222222-2222-4222-8222-222222222222",
     publicRunId: "snapshot-proof",
+    agentId: "proof-agent",
+    threadId: "77777777-7777-4777-8777-777777777777",
     sourceHash: "a".repeat(64),
   };
   const result = {
@@ -129,12 +131,17 @@ it("admission proof is distinct from an acknowledged effect and ambiguous intent
   assertThrows(() => validateRecoverySnapshotForRestore(pending, parsed.binding));
 });
 
-it("source release and full generation must match the expected snapshot binding", () => {
+it("agent, conversation, source release and full generation must match the expected snapshot binding", () => {
   const value = fixture();
   const binding = parseRecoverySnapshot(value).binding;
   for (
     const expected of [
       { ...binding, identity: { ...binding.identity, sourceHash: "b".repeat(64) } },
+      { ...binding, identity: { ...binding.identity, agentId: "other-agent" } },
+      {
+        ...binding,
+        identity: { ...binding.identity, threadId: "88888888-8888-4888-8888-888888888888" },
+      },
       {
         ...binding,
         sourceBinding: {

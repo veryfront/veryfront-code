@@ -1,5 +1,8 @@
 import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
-import { bindManagedRecoveryInput } from "#veryfront/internal-agents/managed-recovery-input.ts";
+import {
+  assertManagedRecoveryExecutionBinding,
+  bindManagedRecoveryInput,
+} from "#veryfront/internal-agents/managed-recovery-input.ts";
 import {
   copyNativeResponse,
   readResponseValue,
@@ -1332,6 +1335,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
+      assertManagedRecoveryExecutionBinding(payload, verifiedClaims);
       bindManagedRecoveryCredentials(verifiedClaims, {
         authToken: payload.credentials?.authToken,
         sourceAuthToken: payload.credentials?.sourceAuthToken,

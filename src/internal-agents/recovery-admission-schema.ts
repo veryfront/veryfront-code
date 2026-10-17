@@ -36,6 +36,8 @@ export const getRecoveryOwnershipReceiptSchema = defineSchema((v) =>
       projectId: v.string().uuid(),
       canonicalRunId: v.string().uuid(),
       publicRunId: v.string().min(1).max(256),
+      agentId: v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+      threadId: v.string().uuid(),
     }).strict(),
     generation: getRecoveryGenerationSchema(),
     acknowledgedEventId: v.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

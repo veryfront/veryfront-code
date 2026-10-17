@@ -28,6 +28,8 @@ const identity = {
   projectId: "11111111-1111-4111-8111-111111111111",
   canonicalRunId: "22222222-2222-4222-8222-222222222222",
   publicRunId: "expiry-proof",
+  agentId: "proof-agent",
+  threadId: "77777777-7777-4777-8777-777777777777",
   sourceHash: "a".repeat(64),
 };
 const generation = {
@@ -41,6 +43,8 @@ const receipt = {
     projectId: identity.projectId,
     canonicalRunId: identity.canonicalRunId,
     publicRunId: identity.publicRunId,
+    agentId: identity.agentId,
+    threadId: identity.threadId,
   },
   generation,
   leaseRemainingMs: 10_000,

@@ -120,8 +120,10 @@ export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 export class AgentRunSessionManager {
   readonly stopRegistry = new RunStopRegistry();
   private readonly managedSessions = new Map<string, ManagedRecoverySession>();
-  private readonly acquiringManagedRuns = new Set<string>();
+  private readonly acquiringManagedRuns = new Map<string, AbortController>();
   private readonly ordinarySignals = new Map<string, AbortSignal>();
+  // Cancellation stops work; only the matching producer finalizer releases capacity.
+  private readonly allocatedOrdinarySignals = new Map<AbortSignal, string>();
   private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
   private readonly servingIdentities = new Map<string, RunServingIdentity>();
 
@@ -169,7 +171,8 @@ export class AgentRunSessionManager {
       throw new AgentRunAlreadyExistsError(input.runId);
     }
     if (!this.managedSessions.has(input.runId)) this.assertCapacity();
-    this.acquiringManagedRuns.add(input.runId);
+    const acquisition = new AbortController();
+    this.acquiringManagedRuns.set(input.runId, acquisition);
     try {
       const acquired = await factory({
         claims: input.claims,
@@ -188,6 +191,7 @@ export class AgentRunSessionManager {
           }
         },
       });
+      if (acquisition.signal.aborted) throw new AgentRunCancelledError();
       const owner = acquired.owner;
       owner.assertAdmittedClaims(input.claims);
       const snapshot = acquired.snapshot === undefined
@@ -197,6 +201,7 @@ export class AgentRunSessionManager {
         throw new Error("Managed recovery requires an acknowledged durable snapshot");
       }
       await owner.assertCurrentOwnership();
+      if (acquisition.signal.aborted) throw new AgentRunCancelledError();
       if (this.managedSessions.has(input.runId)) throw new AgentRunAlreadyExistsError(input.runId);
       // Each generation gets its own resume-session namespace. Retiring one generation
       // never clears cancellation fences or waiters belonging to another generation.
@@ -237,8 +242,7 @@ export class AgentRunSessionManager {
   }
 
   private assertCapacity(): void {
-    const ordinary =
-      [...this.ordinarySignals.keys()].filter((runId) => this.sessions.getRunStatus(runId)).length;
+    const ordinary = this.allocatedOrdinarySignals.size;
     // An aborted producer still occupies capacity until its cleanup joins.
     const managed = this.managedSessions.size;
     if (
@@ -263,11 +267,7 @@ export class AgentRunSessionManager {
       this.assertCapacity();
       const signal = this.sessions.startRun(input);
       this.ordinarySignals.set(input.runId, signal);
-      signal.addEventListener("abort", () => {
-        if (this.ordinarySignals.get(input.runId) === signal) {
-          this.ordinarySignals.delete(input.runId);
-        }
-      }, { once: true });
+      this.allocatedOrdinarySignals.set(signal, input.runId);
       const identity = input.servingIdentity;
       if (identity) {
         this.servingIdentities.set(input.runId, identity);
@@ -357,19 +357,25 @@ export class AgentRunSessionManager {
   }
 
   cancelRun(runId: string, signal?: AbortSignal): boolean {
+    const acquisition = !signal ? this.acquiringManagedRuns.get(runId) : undefined;
+    acquisition?.abort();
     const managed = this.managedSessions.get(runId);
     if (managed) {
       if (signal && managed.signal !== signal) return false;
-      return managed.manager.cancelRun(runId, signal);
+      return managed.manager.cancelRun(runId, signal) || acquisition !== undefined;
     }
     if (signal && this.ordinarySignals.has(runId) && this.ordinarySignals.get(runId) !== signal) {
       return false;
     }
     this.servingIdentities.delete(runId);
-    return this.sessions.cancelRun(runId);
+    return this.sessions.cancelRun(runId) || acquisition !== undefined;
   }
 
   completeRun(runId: string, signal?: AbortSignal): void {
+    const allocated = signal ?? this.ordinarySignals.get(runId);
+    if (allocated && this.allocatedOrdinarySignals.get(allocated) === runId) {
+      this.allocatedOrdinarySignals.delete(allocated);
+    }
     const managed = this.managedSessions.get(runId);
     if (managed) {
       if (signal && managed.signal !== signal) return;
@@ -385,6 +391,10 @@ export class AgentRunSessionManager {
   }
 
   failRun(runId: string, signal?: AbortSignal): void {
+    const allocated = signal ?? this.ordinarySignals.get(runId);
+    if (allocated && this.allocatedOrdinarySignals.get(allocated) === runId) {
+      this.allocatedOrdinarySignals.delete(allocated);
+    }
     const managed = this.managedSessions.get(runId);
     if (managed) {
       if (signal && managed.signal !== signal) return;
@@ -407,6 +417,8 @@ export class AgentRunSessionManager {
   reset(): void {
     for (const session of this.managedSessions.values()) session.manager.reset();
     this.managedSessions.clear();
+    for (const acquisition of this.acquiringManagedRuns.values()) acquisition.abort();
+    this.allocatedOrdinarySignals.clear();
     this.ordinarySignals.clear();
     this.servingIdentities.clear();
     this.sessions.reset();

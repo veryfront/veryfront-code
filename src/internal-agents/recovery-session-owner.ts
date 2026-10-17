@@ -41,6 +41,7 @@ const sameGeneration = (
  */
 export class RecoverySessionOwner {
   private previousGenerations: RecoveryAdmission["generation"][] = [];
+  private executionRequired = false;
   private constructor(
     private admission: RecoveryAdmission,
     private validateCurrentOwnership: () => Promise<unknown>,
@@ -93,7 +94,11 @@ export class RecoverySessionOwner {
       await input.awaitRetiredPreviousOwner(predecessor.generation);
       await owner.assertCurrentOwnership();
     }
-    await owner.assertCurrentOwnership();
+    const receipt = await owner.assertCurrentOwnership();
+    // Acquisition can fail before the first acknowledged runtime append. A fresh
+    // generation fences late predecessor writes; its live receipt, read after
+    // retirement, distinguishes published execution from an acquisition record.
+    owner.executionRequired = receipt.acknowledgedExternalSequence > 0;
     // Dispatch expiry bounds admission only. Continuing work requires live paired
     // credentials at the API, whose receipt budget is clipped to their expiry.
     if (admission.expiresAt <= DateNow() / 1000) {
@@ -109,8 +114,7 @@ export class RecoverySessionOwner {
   }
 
   get requiresRestoredSnapshot(): boolean {
-    return this.previousGenerations.length > 0 ||
-      this.admission.generation.transportRecoveryAttempt > 0;
+    return this.executionRequired;
   }
 
   /** Disk snapshots are data; only this privately admitted owner supplies the expected binding. */
@@ -148,6 +152,8 @@ export class RecoverySessionOwner {
       receipt.identity.projectId !== identity.projectId ||
       receipt.identity.canonicalRunId !== identity.canonicalRunId ||
       receipt.identity.publicRunId !== identity.publicRunId ||
+      receipt.identity.agentId !== identity.agentId ||
+      receipt.identity.threadId !== identity.threadId ||
       !sameGeneration(receipt.generation, this.admission.generation) ||
       receipt.acknowledgedExternalSequence < this.admission.acknowledgedExternalSequence ||
       monotonicNow() - requestStarted >= receipt.leaseRemainingMs
