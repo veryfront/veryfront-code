@@ -1,7 +1,10 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
 import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
+
+const SCRIPT_LESS_THAN_ESCAPE = String.raw`\u003c`;
 
 /** Base delay multiplied by attempt count for WebSocket reconnection */
 const WS_RECONNECT_BASE_DELAY_MS = 1_000;
@@ -16,7 +19,9 @@ const WS_MAX_RECONNECT_ATTEMPTS = 10;
 function jsonForScript(value: unknown): string {
   const json = JSON.stringify(value);
   // JSON.stringify(undefined) returns undefined (not a string)
-  return json === undefined ? "undefined" : json.replace(/</g, "\\u003c");
+  return json === undefined
+    ? "undefined"
+    : replacePrivateRegExp(/</g, json, SCRIPT_LESS_THAN_ESCAPE);
 }
 
 export function generateRuntimeScript(): string {
@@ -212,6 +217,18 @@ export function generateRuntimeScript(): string {
   `;
 }
 
+function buildErrorFileSection(errorFile: string, errorLine: string, errorColumn: string): string {
+  const lineSuffix = errorLine ? ":" + errorLine : "";
+  const columnSuffix = errorColumn ? ":" + errorColumn : "";
+  return errorFile
+    ? `
+      <div class="error-file">
+        File: ${errorFile}${lineSuffix}${columnSuffix}
+      </div>
+    `
+    : "";
+}
+
 export function generateErrorHTML(
   errorInfo: ErrorInfo,
   suggestion?: string,
@@ -228,13 +245,7 @@ export function generateErrorHTML(
   const errorStack = errorInfo.error.stack ? escapeHtml(errorInfo.error.stack) : "";
   const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
 
-  const fileSection = errorFile
-    ? `
-      <div class="error-file">
-        File: ${errorFile}${errorLine ? `:${errorLine}` : ""}${errorColumn ? `:${errorColumn}` : ""}
-      </div>
-    `
-    : "";
+  const fileSection = buildErrorFileSection(errorFile, errorLine, errorColumn);
 
   const suggestionSection = errorSuggestion
     ? `
