@@ -1,3 +1,22 @@
+const capturedTextReplace = String.prototype.replace;
+const applyTextReplace = Reflect.apply;
+
+const namedEntityText: Record<string, string> = {
+  "&nbsp;": " ",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&amp;": "&",
+};
+
+function decodeNamedEntities(value: string): string {
+  return applyTextReplace(capturedTextReplace, value, [
+    /&(?:nbsp|lt|gt|quot|#39|amp);/g,
+    (entity: string): string => namedEntityText[entity]!,
+  ]) as string;
+}
+
 export function htmlToPlainText(html: string): string {
   let text = "";
   let cursor = 0;
@@ -13,13 +32,7 @@ export function htmlToPlainText(html: string): string {
     cursor = close + 1;
   }
 
-  return text
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
+  return decodeNamedEntities(text)
     .replace(/\s+/g, " ")
     .trim();
 }

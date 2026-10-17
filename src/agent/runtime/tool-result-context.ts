@@ -244,6 +244,32 @@ function pointerNotFound(): ReferenceError {
   return new ReferenceError("JSON pointer was not found in the retained result");
 }
 
+function selectRetainedProperty(value: unknown, token: string): unknown {
+  if (value === null || typeof value !== "object") throw pointerNotFound();
+  if (
+    ArrayIsArray(value) &&
+    (token === "" || token === "length" ||
+      (token.length > 1 && privateTextCharCodeAt(token, 0) === ZERO))
+  ) throw pointerNotFound();
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, token);
+  if (!descriptor) throw pointerNotFound();
+  return descriptor.value;
+}
+
+function assertPointerDepth(depth: number): void {
+  if (depth > MAX_POINTER_DEPTH) {
+    throw new TypeError("Retained result JSON pointer exceeds the maximum depth");
+  }
+}
+
+function decodePointerEscape(pointer: string, index: number): string {
+  const escape = privateTextCharCodeAt(pointer, index);
+  if (escape !== ZERO && escape !== ONE) {
+    throw new TypeError("Invalid retained result JSON pointer escape");
+  }
+  return escape === ZERO ? "~" : "/";
+}
+
 /** Resolve an RFC 6901 pointer against own properties of the retained JSON snapshot. */
 function selectRetainedJsonValue(serialized: string, pointer: string): unknown {
   if (
@@ -259,25 +285,11 @@ function selectRetainedJsonValue(serialized: string, pointer: string): unknown {
   for (let index = 1; index <= pointer.length; index++) {
     const code = index === pointer.length ? SLASH : privateTextCharCodeAt(pointer, index);
     if (code === SLASH) {
-      if (++depth > MAX_POINTER_DEPTH) {
-        throw new TypeError("Retained result JSON pointer exceeds the maximum depth");
-      }
-      if (value === null || typeof value !== "object") throw pointerNotFound();
-      if (
-        ArrayIsArray(value) &&
-        (token === "" || token === "length" ||
-          (token.length > 1 && privateTextCharCodeAt(token, 0) === ZERO))
-      ) throw pointerNotFound();
-      const descriptor = ObjectGetOwnPropertyDescriptor(value, token);
-      if (!descriptor) throw pointerNotFound();
-      value = descriptor.value;
+      assertPointerDepth(++depth);
+      value = selectRetainedProperty(value, token);
       token = "";
     } else if (code === TILDE) {
-      const escape = privateTextCharCodeAt(pointer, ++index);
-      if (escape !== ZERO && escape !== ONE) {
-        throw new TypeError("Invalid retained result JSON pointer escape");
-      }
-      token += escape === ZERO ? "~" : "/";
+      token += decodePointerEscape(pointer, ++index);
     } else {
       token += privateTextSlice(pointer, index, index + 1);
     }
@@ -286,18 +298,21 @@ function selectRetainedJsonValue(serialized: string, pointer: string): unknown {
 }
 
 function jsonValueType(value: unknown): string {
-  return value === null ? "null" : ArrayIsArray(value) ? "array" : typeof value;
+  if (value === null) return "null";
+  return ArrayIsArray(value) ? "array" : typeof value;
+}
+
+function escapedPointerCharacter(key: string, index: number): string {
+  const code = privateTextCharCodeAt(key, index);
+  if (code === TILDE) return "~0";
+  if (code === SLASH) return "~1";
+  return privateTextSlice(key, index, index + 1);
 }
 
 function escapePointerToken(key: string): string {
   let token = "/";
   for (let index = 0; index < key.length; index++) {
-    const code = privateTextCharCodeAt(key, index);
-    token += code === TILDE
-      ? "~0"
-      : code === SLASH
-      ? "~1"
-      : privateTextSlice(key, index, index + 1);
+    token += escapedPointerCharacter(key, index);
   }
   return token;
 }
@@ -627,11 +642,11 @@ export class ToolResultContext {
     const reused = cached?.record === record && cached.pointer === request.pointer &&
       cached.view === view;
     const selected = reused ? cached.text : selectRetainedText(record, request);
-    const selectedBytes = reused
-      ? cached.byteLength
-      : view === "value" && (request.pointer === undefined || request.pointer === "")
-      ? record.byteLength
-      : byteLength(selected);
+    let selectedBytes: number;
+    if (reused) selectedBytes = cached.byteLength;
+    else if (view === "value" && (request.pointer === undefined || request.pointer === "")) {
+      selectedBytes = record.byteLength;
+    } else selectedBytes = byteLength(selected);
     this.#selection = {
       record,
       pointer: request.pointer,

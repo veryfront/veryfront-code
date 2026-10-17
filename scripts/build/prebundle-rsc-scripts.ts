@@ -101,6 +101,10 @@ const denoImportMapPlugin: esbuild.Plugin = {
               enterWith() {}
               disable() {}
             }
+            export class AsyncResource {
+              constructor(_type) {}
+              runInAsyncScope(fn, thisArg, ...args) { return Reflect.apply(fn, thisArg, args); }
+            }
           `,
           loader: "js",
         };

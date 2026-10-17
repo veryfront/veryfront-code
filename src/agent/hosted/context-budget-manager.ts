@@ -180,10 +180,10 @@ function findRecentTailStartIndex(
   return startIndex;
 }
 
-function expandTailForToolPairs(
-  messages: readonly AgentRuntimeMessage[],
-  initialStartIndex: number,
-): number {
+function collectToolPairs(messages: readonly AgentRuntimeMessage[]): {
+  pendingCalls: Map<string, number[]>;
+  pairs: { callIndexes: number[]; resultIndex: number }[];
+} {
   const pendingCalls = new Map<string, number[]>();
   const pairs: { callIndexes: number[]; resultIndex: number }[] = [];
   for (const [index, message] of messages.entries()) {
@@ -202,6 +202,15 @@ function expandTailForToolPairs(
       }
     }
   }
+
+  return { pendingCalls, pairs };
+}
+
+function expandTailForToolPairs(
+  messages: readonly AgentRuntimeMessage[],
+  initialStartIndex: number,
+): number {
+  const { pendingCalls, pairs } = collectToolPairs(messages);
 
   let startIndex = initialStartIndex;
   // Consume results in reverse order so moving the boundary includes earlier dependencies.
@@ -346,41 +355,11 @@ function assertValidContextBudgetOptions(options: ContextBudgetManagerOptions): 
   }
 }
 
-/** Apply hosted-chat context budget management. */
-export async function applyContextBudget(
+function selectRetainedTail(
   messages: readonly AgentRuntimeMessage[],
   options: ContextBudgetManagerOptions,
-): Promise<ContextBudgetManagerResult> {
-  assertValidContextBudgetOptions(options);
-  const reason = options.reason ?? "context_window";
-  const tokensBefore = getMessageListTokens(messages);
-  const beforeBreakdown = estimateMessageTokenBreakdown(messages);
-  const usableBudget = getUsableTokenBudget(options);
-
-  if (tokensBefore <= usableBudget) {
-    const retainedMessages = [...messages];
-    const afterBreakdown = estimateMessageTokenBreakdown(retainedMessages);
-    return {
-      messages: retainedMessages,
-      diagnostics: {
-        compacted: false,
-        tokensBefore,
-        tokensAfter: tokensBefore,
-        beforeBreakdown,
-        afterBreakdown,
-        tokenBudget: options.tokenBudget,
-        reserveTokens: options.reserveTokens,
-        summaryTokens: 0,
-        retainedTailTokens: tokensBefore,
-        reason,
-      },
-    };
-  }
-
-  if (messages.length === 0) {
-    throw new ContextCompactionError("Context compaction requires at least one message");
-  }
-
+  usableBudget: number,
+): { tailStartIndex: number; preservedRequest?: AgentRuntimeMessage } {
   const initialTailStartIndex = findRecentTailStartIndex(messages, options);
   const conversationTailStartIndex = expandTailForRecentAssistantTurn(
     messages,
@@ -425,6 +404,45 @@ export async function applyContextBudget(
       preservedRequest = messages[latestUserIndex];
     }
   }
+  return { tailStartIndex, preservedRequest };
+}
+
+/** Apply hosted-chat context budget management. */
+export async function applyContextBudget(
+  messages: readonly AgentRuntimeMessage[],
+  options: ContextBudgetManagerOptions,
+): Promise<ContextBudgetManagerResult> {
+  assertValidContextBudgetOptions(options);
+  const reason = options.reason ?? "context_window";
+  const tokensBefore = getMessageListTokens(messages);
+  const beforeBreakdown = estimateMessageTokenBreakdown(messages);
+  const usableBudget = getUsableTokenBudget(options);
+
+  if (tokensBefore <= usableBudget) {
+    const retainedMessages = [...messages];
+    const afterBreakdown = estimateMessageTokenBreakdown(retainedMessages);
+    return {
+      messages: retainedMessages,
+      diagnostics: {
+        compacted: false,
+        tokensBefore,
+        tokensAfter: tokensBefore,
+        beforeBreakdown,
+        afterBreakdown,
+        tokenBudget: options.tokenBudget,
+        reserveTokens: options.reserveTokens,
+        summaryTokens: 0,
+        retainedTailTokens: tokensBefore,
+        reason,
+      },
+    };
+  }
+
+  if (messages.length === 0) {
+    throw new ContextCompactionError("Context compaction requires at least one message");
+  }
+
+  const { tailStartIndex, preservedRequest } = selectRetainedTail(messages, options, usableBudget);
   const messagesToSummarize = messages.slice(0, tailStartIndex)
     .filter((message) => message !== preservedRequest);
   const retainedTail = messages.slice(tailStartIndex);

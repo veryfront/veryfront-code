@@ -20,3 +20,16 @@ export class AsyncLocalStorage<T = unknown> {
 
   enterWith(_store: T): void {}
 }
+
+/** Browser counterpart of the host async-context resource; callbacks run directly. */
+export class AsyncResource {
+  constructor(_type: string) {}
+
+  runInAsyncScope<Args extends unknown[], R>(
+    callback: (...args: Args) => R,
+    thisArg: unknown,
+    ...args: Args
+  ): R {
+    return Reflect.apply(callback, thisArg, args);
+  }
+}

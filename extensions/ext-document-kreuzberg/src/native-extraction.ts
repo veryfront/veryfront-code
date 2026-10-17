@@ -43,16 +43,28 @@ function isPptxMimeType(mimeType: string): boolean {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 }
 
+const capturedTextReplace = String.prototype.replace;
+const applyTextReplace = Reflect.apply;
+
+function decodeNamedEntities(value: string): string {
+  let decoded = value;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [/&quot;/g, '"']) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [/&apos;/g, "'"]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [/&gt;/g, ">"]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [/&lt;/g, "<"]) as string;
+  decoded = applyTextReplace(capturedTextReplace, decoded, [/&amp;/g, "&"]) as string;
+  return decoded;
+}
+
 function decodeXmlText(value: string): string {
-  return value.replace(
+  const decoded = value.replace(
     /&#x([0-9a-f]+);/gi,
     (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)),
-  ).replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
+  ).replace(
+    /&#(\d+);/g,
+    (_, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)),
+  );
+  return decodeNamedEntities(decoded);
 }
 
 function extractPptxSlideText(xml: string): string {

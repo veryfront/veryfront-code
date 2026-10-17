@@ -300,6 +300,89 @@ interface ClassHeadScan {
 
 const classHeadScans = new WeakMap<RegexLineContext, ClassHeadScan>();
 
+function scanClassHeadQuote(prefix: string, index: number, scan: ClassHeadScan): number {
+  const current = prefix[index];
+  if (current === "\\") return index + 1;
+  if (current === scan.quote) scan.quote = undefined;
+  else if (scan.quote === "`" && current === "$" && prefix[index + 1] === "{") {
+    scan.templateDepths.push(1);
+    scan.quote = undefined;
+    return index + 1;
+  }
+  return index;
+}
+
+function classHeadCommentEnd(prefix: string, index: number): number | undefined {
+  if (prefix[index] !== "/") return undefined;
+  if (prefix[index + 1] === "*") {
+    const close = prefix.indexOf("*/", index + 2);
+    return close === -1 ? -1 : close + 1;
+  }
+  if (prefix[index + 1] === "/") return prefix.indexOf("\n", index + 2);
+  return undefined;
+}
+
+function updateClassHeadTemplateDepth(current: string, scan: ClassHeadScan): void {
+  const { templateDepths } = scan;
+  if (templateDepths.length === 0) return;
+  const depth = templateDepths.length - 1;
+  if (current === "{") templateDepths[depth]!++;
+  if (current === "}" && --templateDepths[depth]! === 0) {
+    templateDepths.pop();
+    scan.quote = "`";
+  }
+}
+
+function isClassKeyword(prefix: string, index: number): boolean {
+  return prefix[index] === "c" && prefix.startsWith("class", index) &&
+    !/[\w$]/.test(prefix[index - 1] ?? "") &&
+    !/[\w$]/.test(prefix[index + 5] ?? "");
+}
+
+function classHeadSlashEnd(
+  prefix: string,
+  index: number,
+  context: RegexLineContext,
+): number | undefined {
+  const commentEnd = classHeadCommentEnd(prefix, index);
+  if (commentEnd !== undefined) return commentEnd;
+  if (prefix[index] !== "/") return undefined;
+  const close = findRegexLiteralEnd(prefix, index, context);
+  return close === -1 ? undefined : close;
+}
+
+function scanClassHead(prefix: string, scan: ClassHeadScan, context: RegexLineContext): void {
+  const { classStarts } = scan;
+  let index = scan.index;
+  while (++index < prefix.length) {
+    if (scan.quote) {
+      index = scanClassHeadQuote(prefix, index, scan);
+      continue;
+    }
+    const current = prefix[index]!;
+    if (current === "'" || current === '"' || current === "`") {
+      scan.quote = current;
+      continue;
+    }
+    const slashEnd = classHeadSlashEnd(prefix, index, context);
+    if (slashEnd !== undefined) {
+      if (slashEnd === -1) {
+        index--;
+        break;
+      }
+      index = slashEnd;
+      continue;
+    }
+    updateClassHeadTemplateDepth(current, scan);
+    if (isClassKeyword(prefix, index)) {
+      const previous = previousJavaScriptTokenIndex(prefix, index);
+      if (previous < 0 || prefix[previous] !== ".") classStarts.push(index);
+      index += 4;
+    }
+  }
+  scan.index = Math.max(scan.index, Math.min(index, prefix.length - 1));
+}
+
 function trailingClassHead(
   line: string,
   endIndex: number,
@@ -312,69 +395,8 @@ function trailingClassHead(
     scan = { index: -1, templateDepths: [], classStarts: [] };
     classHeadScans.set(expressionContext, scan);
   }
-  const { templateDepths, classStarts } = scan;
-  let index = scan.index;
-  while (++index < prefix.length) {
-    const current = prefix[index]!;
-    const next = prefix[index + 1];
-    if (scan.quote) {
-      if (current === "\\") index++;
-      else if (current === scan.quote) scan.quote = undefined;
-      else if (scan.quote === "`" && current === "$" && next === "{") {
-        templateDepths.push(1);
-        scan.quote = undefined;
-        index++;
-      }
-      continue;
-    }
-    if (current === "'" || current === '"' || current === "`") {
-      scan.quote = current;
-      continue;
-    }
-    if (current === "/" && next === "*") {
-      const close = prefix.indexOf("*/", index + 2);
-      if (close === -1) {
-        index--;
-        break;
-      }
-      index = close + 1;
-      continue;
-    }
-    if (current === "/" && next === "/") {
-      const newline = prefix.indexOf("\n", index + 2);
-      if (newline === -1) {
-        index--;
-        break;
-      }
-      index = newline;
-      continue;
-    }
-    if (current === "/") {
-      const close = findRegexLiteralEnd(prefix, index, expressionContext);
-      if (close !== -1) {
-        index = close;
-        continue;
-      }
-    }
-    if (templateDepths.length > 0) {
-      const depth = templateDepths.length - 1;
-      if (current === "{") templateDepths[depth]!++;
-      if (current === "}" && --templateDepths[depth]! === 0) {
-        templateDepths.pop();
-        scan.quote = "`";
-      }
-    }
-    if (
-      current === "c" && prefix.startsWith("class", index) &&
-      !/[\w$]/.test(prefix[index - 1] ?? "") &&
-      !/[\w$]/.test(prefix[index + 5] ?? "")
-    ) {
-      const previous = previousJavaScriptTokenIndex(prefix, index);
-      if (previous < 0 || prefix[previous] !== ".") classStarts.push(index);
-      index += 4;
-    }
-  }
-  scan.index = Math.max(scan.index, Math.min(index, prefix.length - 1));
+  scanClassHead(prefix, scan, expressionContext);
+  const { classStarts } = scan;
   // Callers usually advance along one line, but cached contexts can also be
   // queried at an earlier offset. Keep lookup independent of scan order.
   let low = 0;
@@ -1317,29 +1339,34 @@ function startsMdxEsmContinuation(line: string, executableLine: string): boolean
   return first !== undefined && "=+-*/%&|^?:.,([<>".includes(first);
 }
 
+function stripLeadingMdxComments(candidate: string, state: { inBlockComment: boolean }): string {
+  while (candidate.length > 0) {
+    if (state.inBlockComment) {
+      const commentEnd = candidate.indexOf("*/");
+      if (commentEnd < 0) {
+        candidate = "";
+        break;
+      }
+      state.inBlockComment = false;
+      candidate = candidate.slice(commentEnd + 2).trimStart();
+      continue;
+    }
+    if (candidate.startsWith("//")) candidate = "";
+    if (!candidate.startsWith("/*")) break;
+    state.inBlockComment = true;
+  }
+  return candidate;
+}
+
 function nextMdxEsmCodeLine(code: string, start: number): string {
-  let inBlockComment = false;
+  const state = { inBlockComment: false };
   let separatedByBlank = false;
   while (start < code.length) {
     let end = code.indexOf("\n", start);
     if (end < 0) end = code.length;
     const physicalLine = code.slice(start, end);
     let candidate = physicalLine.trimStart();
-    while (candidate.length > 0) {
-      if (inBlockComment) {
-        const commentEnd = candidate.indexOf("*/");
-        if (commentEnd < 0) {
-          candidate = "";
-          break;
-        }
-        inBlockComment = false;
-        candidate = candidate.slice(commentEnd + 2).trimStart();
-        continue;
-      }
-      if (candidate.startsWith("//")) candidate = "";
-      if (!candidate.startsWith("/*")) break;
-      inBlockComment = true;
-    }
+    candidate = stripLeadingMdxComments(candidate, state);
     if (candidate.length > 0) return `${separatedByBlank ? "\n" : ""}${candidate}`;
     if (physicalLine.trim().length === 0) separatedByBlank = true;
     start = end < code.length ? end + 1 : code.length;

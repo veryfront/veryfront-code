@@ -85,6 +85,58 @@ const apply = Reflect.apply;
 const timeoutSignal = AbortSignal.timeout.bind(AbortSignal);
 const anySignal = AbortSignal.any.bind(AbortSignal);
 
+function admissionFailureMessage(status: number, detail: string): string {
+  if (status === 401) {
+    return "Veryfront login expired. Run veryfront login, then npm run dev again.";
+  }
+  if (status === 403) return "You do not have access to this Veryfront project or environment.";
+  if (detail.includes("selected environment has no deployed release")) {
+    return "The selected environment has no deployed release. Connected local execution requires an API that supports local source with environment selection.";
+  }
+  if (detail.includes("account ownership")) {
+    return "Project billing is not ready. Complete the project account setup in Studio.";
+  }
+  return `Veryfront local run admission failed (HTTP ${status}). Check your project, environment, and API version.`;
+}
+
+function admittedChildAgentId(name: string, input: unknown): string | undefined {
+  if (
+    input && typeof input === "object" && "agent_id" in input && typeof input.agent_id === "string"
+  ) {
+    return input.agent_id.trim();
+  }
+  return name.startsWith("agent_") ? name.slice(6) : undefined;
+}
+
+function mirroredStreamEventType(type: string): string {
+  if (type === "step-start") return "start-step";
+  return type === "step-end" ? "finish-step" : type;
+}
+
+function encodeMirroredStreamEvents(
+  event: Parameters<typeof mapRuntimeStreamEventToAgUiEvents>[1],
+  encoder: ConversationRunEventEncoder,
+  persistedToolStarts: Set<string>,
+) {
+  const type = mirroredStreamEventType(event.type);
+  if (["message-start", "message-finish", "data"].includes(type)) return [];
+  const duplicateStart = type === "tool-input-start" &&
+    typeof event.toolCallId === "string" && persistedToolStarts.has(event.toolCallId);
+  if (type === "tool-input-start" && typeof event.toolCallId === "string") {
+    persistedToolStarts.add(event.toolCallId);
+  }
+  return (duplicateStart ? [] : encoder.encode({ ...event, type } as ChatStreamEvent)).map(
+    (encoded) =>
+      encoded.type === "CUSTOM"
+        ? buildRuntimeEventRecordedEvent({
+          runtime: "veryfront",
+          kind: getNonEmptyStringSchema().parse(encoded.name),
+          value: encoded.value,
+        }).durable
+        : encoded,
+  );
+}
+
 let installed: ReturnType<typeof createConnectedLocalRuntime> | undefined;
 
 /** @internal Called by the CLI before importing local project code. */
@@ -165,15 +217,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       const problem = await (apply(responseJson, response, []) as Promise<Record<string, unknown>>)
         .catch((): Record<string, unknown> => ({}));
       const detail = typeof problem.detail === "string" ? problem.detail : "";
-      const message = status === 401
-        ? "Veryfront login expired. Run veryfront login, then npm run dev again."
-        : status === 403
-        ? "You do not have access to this Veryfront project or environment."
-        : detail.includes("selected environment has no deployed release")
-        ? "The selected environment has no deployed release. Connected local execution requires an API that supports local source with environment selection."
-        : detail.includes("account ownership")
-        ? "Project billing is not ready. Complete the project account setup in Studio."
-        : `Veryfront local run admission failed (HTTP ${status}). Check your project, environment, and API version.`;
+      const message = admissionFailureMessage(status, detail);
       log(message);
       throw new ConnectedLocalAdmissionError(
         status >= 400 && status < 500 ? status : 502,
@@ -300,7 +344,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           canonicalRunId: accepted.id,
         });
         input.signal.throwIfAborted();
-        if (!claim || claim.conversation_id !== conversationId) {
+        if (claim?.conversation_id !== conversationId) {
           throw new Error("Veryfront did not return the admitted local run.");
         }
         if (!dependencies.client) {
@@ -417,7 +461,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         };
         let renewal: Promise<void> | undefined;
         const renew = setInterval(() => {
-          if (finishing || renewal) return;
+          if (finishing || renewal !== undefined) return;
           renewal = client.renewLease({
             workerId: registered.id,
             runId: claim.run_id,
@@ -433,15 +477,15 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           void finish("cancelled").catch(() => {});
         };
         const finish = async (status: TerminalStatus) => {
-          if (finalization) return await finalization;
+          if (finalization !== undefined) return await finalization;
           finishing = true;
           childScope.abort();
-          return await (finalization ??= (async () => {
+          finalization ??= (async () => {
             clearInterval(renew);
             input.signal.removeEventListener("abort", abort);
             if (status !== "completed") controller.abort();
             await renewal;
-            await Promise.allSettled([...childExecutions.values()]);
+            await Promise.allSettled(childExecutions.values());
             let appendError: unknown;
             try {
               await streamMirror.flush();
@@ -481,7 +525,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             } finally {
               active.delete(run);
             }
-          })());
+          })();
+          return await finalization;
         };
         const run: ConnectedLocalRun = {
           runId: accepted.id,
@@ -503,7 +548,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                     throw new Error("Local child has no matching admitted tool invocation.");
                   }
                   const previous = childExecutions.get(toolCallId);
-                  if (previous) return await previous;
+                  if (previous !== undefined) return await previous;
                   let admissionAccepted = false;
                   const execute = (async () => {
                     await streamMirror.flush();
@@ -575,12 +620,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 // wrapStream persists the parent stream; this scope only admits child tool calls.
                 async () => {},
                 async (id, name, input) => {
-                  const agentId = input && typeof input === "object" && "agent_id" in input &&
-                      typeof input.agent_id === "string"
-                    ? input.agent_id.trim()
-                    : name.startsWith("agent_")
-                    ? name.slice(6)
-                    : undefined;
+                  const agentId = admittedChildAgentId(name, input);
                   admittedTools.set(id, { name, agentId });
                   if (!persistedToolStarts.has(id)) {
                     persistedToolStarts.add(id);
@@ -596,7 +636,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           async prepareAgent(agent) {
             const assertActive = () => {
               controller.signal.throwIfAborted();
-              if (finalization) throw new Error("Local run inference authority has ended.");
+              if (finalization !== undefined) {
+                throw new Error("Local run inference authority has ended.");
+              }
             };
             const credential = () => {
               assertActive();
@@ -691,37 +733,13 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                   }
                   mapRuntimeStreamEventToAgUiEvents(streamState, event);
                   if (event.type === "message-finish") finished = true;
-                  const type = event.type === "step-start"
-                    ? "start-step"
-                    : event.type === "step-end"
-                    ? "finish-step"
-                    : event.type;
-                  if (!["message-start", "message-finish", "data"].includes(type)) {
-                    const duplicateStart = type === "tool-input-start" &&
-                      typeof event.toolCallId === "string" &&
-                      persistedToolStarts.has(event.toolCallId);
-                    if (type === "tool-input-start" && typeof event.toolCallId === "string") {
-                      persistedToolStarts.add(event.toolCallId);
-                    }
-                    const events =
-                      (duplicateStart ? [] : encoder.encode({ ...event, type } as ChatStreamEvent))
-                        .map(
-                          (encoded) =>
-                            encoded.type === "CUSTOM"
-                              ? buildRuntimeEventRecordedEvent({
-                                runtime: "veryfront",
-                                kind: getNonEmptyStringSchema().parse(encoded.name),
-                                value: encoded.value,
-                              }).durable
-                              : encoded,
-                        );
-                    if (events.length) {
-                      streamMirror.enqueue(events);
-                      // Bound backlog while allowing ordinary deltas to reach the browser
-                      // independently of the Cloud append round-trip.
-                      if (streamMirror.getSnapshot().pendingEventCount >= 64) {
-                        await streamMirror.flush();
-                      }
+                  const events = encodeMirroredStreamEvents(event, encoder, persistedToolStarts);
+                  if (events.length) {
+                    streamMirror.enqueue(events);
+                    // Bound backlog while allowing ordinary deltas to reach the browser
+                    // independently of the Cloud append round-trip.
+                    if (streamMirror.getSnapshot().pendingEventCount >= 64) {
+                      await streamMirror.flush();
                     }
                   }
                   streamController.enqueue(
