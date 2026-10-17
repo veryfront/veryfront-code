@@ -171,7 +171,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
     skills?: import("#veryfront/skill/selector.ts").SkillSelector;
     toolLoading?: AgentConfig["toolLoading"];
@@ -370,7 +370,7 @@ export type HostedChatExecutionPreparationInput<
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
@@ -713,7 +713,7 @@ export async function prepareHostedChatExecution<
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
     toolLoading?: AgentConfig["toolLoading"];
     bootstrapTools?: AgentConfig["bootstrapTools"];

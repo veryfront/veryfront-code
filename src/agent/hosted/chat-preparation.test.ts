@@ -1102,6 +1102,8 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
 Deno.test("prepareHostedChatExecution forwards trusted authored runtime context settings", async () => {
   let recordedOptions:
     | {
+      allowedTools?: string[];
+      includeRuntimeEssentialToolsWhenEmpty?: boolean;
       toolLoading?: unknown;
       toolResultContext?: unknown;
       knowledge?: unknown;
@@ -1125,6 +1127,7 @@ Deno.test("prepareHostedChatExecution forwards trusted authored runtime context 
     agentConfig: {
       id: "agent-1",
       model: "configured-model",
+      tools: false,
       toolLoading: "deferred",
       toolResultContext: { maxInlineBytes: 32, previewBytes: 16 },
       knowledge: { "knowledge/public/**": true, "knowledge/private/**": false },
@@ -1151,6 +1154,8 @@ Deno.test("prepareHostedChatExecution forwards trusted authored runtime context 
     },
   });
 
+  assertEquals(recordedOptions?.allowedTools, []);
+  assertEquals(recordedOptions?.includeRuntimeEssentialToolsWhenEmpty, false);
   assertEquals(recordedOptions?.toolLoading, "deferred");
   assertEquals(recordedOptions?.toolResultContext, { maxInlineBytes: 32, previewBytes: 16 });
   assertEquals(recordedOptions?.knowledge, {
