@@ -1719,6 +1719,7 @@ describe("expected outcome gates", () => {
         { completed: false, error: "Connection failed" },
         { completed: false },
         { completed: false, error: "Invalid input", outcome: "error" as const },
+        { completed: true, outcome: "error" as const },
       ];
       for (const [index, result] of results.entries()) {
         for (const expectedOutcome of [undefined, "success", "error"] as const) {
@@ -1731,7 +1732,7 @@ describe("expected outcome gates", () => {
           });
           assertEquals(
             report.summary.passed,
-            expectedOutcome === "error" ? Number(index === 3) : Number(index === 0),
+            expectedOutcome === "error" ? Number(index >= 3) : Number(index === 0),
           );
         }
       }

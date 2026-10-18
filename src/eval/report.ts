@@ -106,7 +106,7 @@ export function evalRecordOutcomeFailure(record: EvalRecord): string | undefined
       ? undefined
       : record.error ?? "Expected a terminal target error.";
   }
-  return !record.completed || record.error
+  return !record.completed || record.error || record.outcome === "error"
     ? record.error ?? RECORD_INCOMPLETE_EXPLANATION
     : undefined;
 }
