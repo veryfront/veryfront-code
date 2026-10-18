@@ -94,6 +94,35 @@ function mergeGoogleProviderOptions(
   }
 }
 
+function readGoogleProviderBucketInto(
+  output: Record<string, unknown>,
+  bucket: Record<string, unknown>,
+  providerName: string,
+): void {
+  let keys: string[];
+  try {
+    keys = objectKeys(bucket);
+  } catch {
+    throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+  }
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const optionName = keys[keyIndex]!;
+    let optionDescriptor: PropertyDescriptor | undefined;
+    try {
+      optionDescriptor = objectGetOwnPropertyDescriptor(bucket, optionName);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+    }
+    if (
+      !optionDescriptor || !optionDescriptor.enumerable ||
+      !objectHasOwn(optionDescriptor, "value")
+    ) {
+      continue;
+    }
+    defineGoogleProviderOption(output, optionName, optionDescriptor.value);
+  }
+}
+
 function readGoogleProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
   ...providerNames: string[]
@@ -116,28 +145,7 @@ function readGoogleProviderOptions(
     const bucket = bucketDescriptor.value;
     if (!bucket || typeof bucket !== "object" || arrayIsArray(bucket)) continue;
 
-    let keys: string[];
-    try {
-      keys = objectKeys(bucket);
-    } catch {
-      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
-    }
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-      const optionName = keys[keyIndex]!;
-      let optionDescriptor: PropertyDescriptor | undefined;
-      try {
-        optionDescriptor = objectGetOwnPropertyDescriptor(bucket, optionName);
-      } catch {
-        throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
-      }
-      if (
-        !optionDescriptor || !optionDescriptor.enumerable ||
-        !objectHasOwn(optionDescriptor, "value")
-      ) {
-        continue;
-      }
-      defineGoogleProviderOption(output, optionName, optionDescriptor.value);
-    }
+    readGoogleProviderBucketInto(output, bucket as Record<string, unknown>, providerName);
   }
 
   return output;
@@ -181,6 +189,24 @@ function invalidGoogleProviderHistory(): TypeError {
   );
 }
 
+function readGoogleRawFunctionCall(part: Record<string, unknown>) {
+  const functionCall = readRecord(part.functionCall);
+  const functionCallArgs = functionCall?.args === undefined ? {} : readRecord(functionCall.args);
+  if (
+    !functionCall ||
+    typeof functionCall.name !== "string" ||
+    !functionCallArgs
+  ) {
+    throw invalidGoogleProviderHistory();
+  }
+  const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
+  return {
+    functionCall: functionCall as Record<string, unknown> & { name: string },
+    functionCallArgs,
+    providerId,
+  };
+}
+
 function readGoogleRawToolHistory(
   rawAssistantParts: readonly Record<string, unknown>[],
   rawAssistantPartIndexes: readonly number[],
@@ -202,18 +228,7 @@ function readGoogleRawToolHistory(
     }
     const dataField = readGooglePartDataField(part);
     if (dataField === "functionCall") {
-      const functionCall = readRecord(part.functionCall);
-      const functionCallArgs = functionCall?.args === undefined
-        ? {}
-        : readRecord(functionCall.args);
-      if (
-        !functionCall ||
-        typeof functionCall.name !== "string" ||
-        !functionCallArgs
-      ) {
-        throw invalidGoogleProviderHistory();
-      }
-      const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
+      const { functionCall, functionCallArgs, providerId } = readGoogleRawFunctionCall(part);
       const id = registry.registerFunctionCall(
         rawAssistantPartIndexes[partIndex] ?? partIndex,
         providerId,
@@ -338,19 +353,17 @@ function survivingToolEvents(
   return surviving;
 }
 
-function validateGoogleToolReplay(
-  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
-  rawAssistantParts: readonly Record<string, unknown>[],
-  rawAssistantPartIndexes: readonly number[],
-  toolCallScope?: string,
+function recordGoogleContentCallId(
+  ids: Set<string>,
+  part: { readonly toolCallId: string },
 ): void {
-  const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
-    id: call.toolCallId,
-    name: call.toolName,
-    input: call.input,
-  }));
-  rejectDuplicateIds(providerToolCalls);
+  if (ids.has(part.toolCallId)) throw invalidGoogleProviderHistory();
+  ids.add(part.toolCallId);
+}
 
+function readGoogleCanonicalContentHistory(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+) {
   const contentProviderCalls: CanonicalProviderCall[] = [];
   const ordinaryCalls: CanonicalProviderCall[] = [];
   const providerResults: CanonicalProviderResult[] = [];
@@ -358,10 +371,7 @@ function validateGoogleToolReplay(
   const contentCallIds = new Set<string>();
   for (const part of message.content) {
     if (part.type === "tool-call") {
-      if (contentCallIds.has(part.toolCallId)) {
-        throw invalidGoogleProviderHistory();
-      }
-      contentCallIds.add(part.toolCallId);
+      recordGoogleContentCallId(contentCallIds, part);
       const call = {
         id: part.toolCallId,
         name: part.toolName,
@@ -390,7 +400,13 @@ function validateGoogleToolReplay(
     });
   }
   rejectDuplicateIds(providerResults);
+  return { contentProviderCalls, ordinaryCalls, providerResults, contentToolEvents };
+}
 
+function selectGoogleCanonicalProviderCalls(
+  providerToolCalls: CanonicalProviderCall[],
+  contentProviderCalls: CanonicalProviderCall[],
+): CanonicalProviderCall[] {
   let canonicalProviderCalls: CanonicalProviderCall[];
   if (providerToolCalls.length > 0 && contentProviderCalls.length > 0) {
     if (
@@ -411,6 +427,29 @@ function validateGoogleToolReplay(
       ? providerToolCalls
       : contentProviderCalls;
   }
+  return canonicalProviderCalls;
+}
+
+function validateGoogleToolReplay(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+  rawAssistantParts: readonly Record<string, unknown>[],
+  rawAssistantPartIndexes: readonly number[],
+  toolCallScope?: string,
+): void {
+  const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
+    id: call.toolCallId,
+    name: call.toolName,
+    input: call.input,
+  }));
+  rejectDuplicateIds(providerToolCalls);
+
+  const { contentProviderCalls, ordinaryCalls, providerResults, contentToolEvents } =
+    readGoogleCanonicalContentHistory(message);
+
+  const canonicalProviderCalls = selectGoogleCanonicalProviderCalls(
+    providerToolCalls,
+    contentProviderCalls,
+  );
   rejectDuplicateIds([...ordinaryCalls, ...canonicalProviderCalls]);
 
   let rawHistory: GoogleRawToolHistory;
@@ -497,6 +536,50 @@ function validateGoogleToolReplay(
   }
 }
 
+function toGoogleAssistantContent(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+): GoogleCompatibleContent {
+  const rawAssistantReplay = readGoogleRawAssistantReplay(message.providerMetadata);
+  if (rawAssistantReplay) {
+    validateGoogleToolReplay(
+      message,
+      rawAssistantReplay.parts,
+      rawAssistantReplay.partIndexes,
+      rawAssistantReplay.toolCallScope,
+    );
+    return { role: "model", parts: rawAssistantReplay.parts };
+  }
+
+  const parts: Array<Record<string, unknown>> = [];
+  for (const part of message.content) {
+    if (part.type === "text") {
+      parts.push({ text: part.text });
+      continue;
+    }
+    if (part.type === "reasoning") {
+      continue;
+    }
+    if (part.type === "tool-result") {
+      throw new TypeError(
+        "Google provider-executed assistant tool results require exact raw replay metadata",
+      );
+    }
+    if (part.providerExecuted === true) {
+      throw new TypeError(
+        "Google provider-executed assistant tool calls require exact raw replay metadata",
+      );
+    }
+    parts.push({
+      functionCall: {
+        id: part.toolCallId,
+        name: part.toolName,
+        args: part.input,
+      },
+    });
+  }
+  return { role: "model", parts };
+}
+
 function toGoogleContents(
   prompt: readonly ModelRuntimePromptMessage[],
 ): {
@@ -520,46 +603,8 @@ function toGoogleContents(
         });
         break;
       case "assistant": {
-        const rawAssistantReplay = readGoogleRawAssistantReplay(message.providerMetadata);
-        if (rawAssistantReplay) {
-          validateGoogleToolReplay(
-            message,
-            rawAssistantReplay.parts,
-            rawAssistantReplay.partIndexes,
-            rawAssistantReplay.toolCallScope,
-          );
-          contents.push({ role: "model", parts: rawAssistantReplay.parts });
-          break;
-        }
-
-        const parts: Array<Record<string, unknown>> = [];
-        for (const part of message.content) {
-          if (part.type === "text") {
-            parts.push({ text: part.text });
-            continue;
-          }
-          if (part.type === "reasoning") {
-            continue;
-          }
-          if (part.type === "tool-result") {
-            throw new TypeError(
-              "Google provider-executed assistant tool results require exact raw replay metadata",
-            );
-          }
-          if (part.providerExecuted === true) {
-            throw new TypeError(
-              "Google provider-executed assistant tool calls require exact raw replay metadata",
-            );
-          }
-          parts.push({
-            functionCall: {
-              id: part.toolCallId,
-              name: part.toolName,
-              args: part.input,
-            },
-          });
-        }
-        contents.push({ role: "model", parts });
+        const content = toGoogleAssistantContent(message);
+        contents.push(content);
         break;
       }
       case "tool":
@@ -697,6 +742,36 @@ function readGoogleTimestamp(value: unknown, subject: string): string {
   return timestamp;
 }
 
+function readGoogleSearchTypes(value: unknown): Record<string, unknown> {
+  const searchTypes = readRecord(value);
+  if (!searchTypes) {
+    throw new TypeError("google.google_search searchTypes must be an object");
+  }
+  rejectUnknownKeys(
+    searchTypes,
+    GOOGLE_SEARCH_TYPE_KEYS,
+    "google.google_search searchTypes",
+  );
+  return {
+    ...(searchTypes.webSearch !== undefined
+      ? {
+        webSearch: readEmptyGoogleToolObject(
+          searchTypes.webSearch,
+          "google.google_search webSearch",
+        ),
+      }
+      : {}),
+    ...(searchTypes.imageSearch !== undefined
+      ? {
+        imageSearch: readEmptyGoogleToolObject(
+          searchTypes.imageSearch,
+          "google.google_search imageSearch",
+        ),
+      }
+      : {}),
+  };
+}
+
 function readGoogleSearchArguments(value: unknown): Record<string, unknown> {
   const args = readRecord(value);
   if (!args) {
@@ -706,33 +781,7 @@ function readGoogleSearchArguments(value: unknown): Record<string, unknown> {
 
   const normalized: Record<string, unknown> = {};
   if (args.searchTypes !== undefined) {
-    const searchTypes = readRecord(args.searchTypes);
-    if (!searchTypes) {
-      throw new TypeError("google.google_search searchTypes must be an object");
-    }
-    rejectUnknownKeys(
-      searchTypes,
-      GOOGLE_SEARCH_TYPE_KEYS,
-      "google.google_search searchTypes",
-    );
-    normalized.searchTypes = {
-      ...(searchTypes.webSearch !== undefined
-        ? {
-          webSearch: readEmptyGoogleToolObject(
-            searchTypes.webSearch,
-            "google.google_search webSearch",
-          ),
-        }
-        : {}),
-      ...(searchTypes.imageSearch !== undefined
-        ? {
-          imageSearch: readEmptyGoogleToolObject(
-            searchTypes.imageSearch,
-            "google.google_search imageSearch",
-          ),
-        }
-        : {}),
-    };
+    normalized.searchTypes = readGoogleSearchTypes(args.searchTypes);
   }
 
   if (args.timeRangeFilter !== undefined) {
@@ -989,11 +1038,10 @@ function buildGoogleGenerationConfig(
   return objectKeys(config).length > 0 ? config : undefined;
 }
 
-export function buildGoogleGenerateContentRequest(
-  providerName: string,
+function warnUnsupportedGoogleSettings(
   options: OpenAICompatibleLanguageOptions,
   warnings: WarningCollector,
-): GoogleCompatibleRequest {
+): void {
   if (options.presencePenalty !== undefined) {
     warnings.push({
       type: "unsupported-setting",
@@ -1010,16 +1058,32 @@ export function buildGoogleGenerateContentRequest(
       details: "Gemini generateContent does not accept frequencyPenalty; the value was dropped.",
     });
   }
+}
+
+function readGoogleRequestLabels(
+  options: OpenAICompatibleLanguageOptions,
+): Record<string, string> | undefined {
+  if (options.requestLabels && objectKeys(options.requestLabels).length > 0) {
+    return options.requestLabels;
+  }
+  if (typeof options.userId === "string" && options.userId.length > 0) {
+    return { user_id: options.userId };
+  }
+  return undefined;
+}
+
+export function buildGoogleGenerateContentRequest(
+  providerName: string,
+  options: OpenAICompatibleLanguageOptions,
+  warnings: WarningCollector,
+): GoogleCompatibleRequest {
+  warnUnsupportedGoogleSettings(options, warnings);
 
   const { systemInstruction, contents } = toGoogleContents(options.prompt);
   const generationConfig = buildGoogleGenerationConfig(options);
   const tools = toGoogleTools(options.tools);
   const toolConfig = normalizeGoogleToolChoice(options.toolChoice);
-  const labels = options.requestLabels && objectKeys(options.requestLabels).length > 0
-    ? options.requestLabels
-    : typeof options.userId === "string" && options.userId.length > 0
-    ? { user_id: options.userId }
-    : undefined;
+  const labels = readGoogleRequestLabels(options);
   const body: GoogleCompatibleRequest = {
     contents,
     ...(systemInstruction ? { systemInstruction } : {}),
@@ -1043,7 +1107,7 @@ export function buildGoogleGenerateContentRequest(
   // runtime-owned structured-output keys the caller asked for.
   const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
   if (objectKeys(structuredOutput).length > 0) {
-    const generationConfig = { ...(readRecord(body.generationConfig) ?? {}) };
+    const generationConfig = { ...readRecord(body.generationConfig) };
     if ("responseJsonSchema" in structuredOutput) {
       delete generationConfig.responseSchema;
     }
