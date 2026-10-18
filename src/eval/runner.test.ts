@@ -1732,7 +1732,7 @@ describe("expected outcome gates", () => {
           });
           assertEquals(
             report.summary.passed,
-            expectedOutcome === "error" ? Number(index >= 3) : Number(index === 0),
+            expectedOutcome === "error" ? Number(index === 3) : Number(index === 0),
           );
         }
       }

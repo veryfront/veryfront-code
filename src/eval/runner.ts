@@ -161,6 +161,9 @@ function validateAdapterResultFields(
   if (result.outcome !== undefined && result.outcome !== "error") {
     throw createEvalValidationError(`Eval ${kind} adapter outcome must be error`);
   }
+  if (result.outcome === "error" && result.completed === true) {
+    throw createEvalValidationError(`Eval ${kind} adapter error outcome cannot be completed`);
+  }
   if (result.completed !== undefined && typeof result.completed !== "boolean") {
     throw createEvalValidationError(`Eval ${kind} adapter completed must be a boolean`);
   }
