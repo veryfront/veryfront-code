@@ -6,7 +6,7 @@ import { DurableRunHome, type DurableRunRecord } from "./durable-run-home.ts";
 
 /** Persist-before-publish event suffix primitive; does not authorize a runtime generation. */
 export class RecoveryEventJournal {
-  constructor(private home: DurableRunHome) {}
+  constructor(private readonly home: DurableRunHome) {}
 
   async append(input: { sequence: number; event: unknown }): Promise<void> {
     await this.home.append({

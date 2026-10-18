@@ -78,6 +78,53 @@ function recoveryMessages(messages: AgentRuntimeRecoveryBoundary["messages"]) {
   return mapPrivateArray(messages, ({ metadata: _metadata, ...message }) => message);
 }
 
+function hasCommittedRecoveryCheckpoint(
+  receipt: Awaited<ReturnType<RecoveryEventAppend>>,
+): boolean {
+  if (!receipt.recoveryCheckpoint) return false;
+  if (
+    receipt.recoveryCheckpoint.snapshot_event_id !== receipt.eventId ||
+    receipt.recoveryCheckpoint.snapshot_external_sequence !== receipt.externalSequence ||
+    !Number.isSafeInteger(receipt.recoveryCheckpoint.checkpoint_event_id) ||
+    receipt.recoveryCheckpoint.checkpoint_event_id <= receipt.eventId
+  ) return false;
+  return true;
+}
+
+function hasExactRecoveryModelCapture(
+  capture: AgentRunModelCallCaptureReceipt | undefined,
+  admission: NonNullable<ReturnType<typeof getVerifiedControlPlaneRecoveryAdmission>>,
+  receipt: Awaited<ReturnType<RecoveryEventAppend>>,
+): boolean {
+  if (!capture) return false;
+  return capture.projectId === admission.identity.projectId &&
+    capture.runId === admission.identity.canonicalRunId &&
+    capture.eventId === String(receipt.eventId);
+}
+
+type RecoveryBoundaryMessages = ReturnType<typeof recoveryMessages>;
+type RecoveryBoundaryToolPart =
+  & { readonly toolCallId: string; readonly toolName: string }
+  & ({ readonly args: unknown } | { readonly input: unknown });
+
+function findRecoveryToolResult(
+  messages: RecoveryBoundaryMessages,
+  messageIndex: number,
+  part: RecoveryBoundaryToolPart,
+): RecoveryBoundaryMessages[number]["parts"][number] | undefined {
+  let result: RecoveryBoundaryMessages[number]["parts"][number] | undefined;
+  for (let resultIndex = messageIndex; resultIndex < messages.length; resultIndex++) {
+    const candidate = messages[resultIndex]!;
+    if (resultIndex > messageIndex && candidate.role === "assistant") break;
+    result = filterPrivateArray(candidate.parts, (candidatePart) =>
+      candidatePart.type === "tool-result" && candidatePart.toolCallId === part.toolCallId)[0];
+    if (result) {
+      break;
+    }
+  }
+  return result;
+}
+
 /** Private host materialization; API event acknowledgement never proves external effect commit. */
 export async function createManagedRecoveryWriter(input: {
   claims: VerifiedControlPlaneRequestClaims;
@@ -190,15 +237,9 @@ export async function createManagedRecoveryWriter(input: {
         throw new Error("Recovery safe boundary exceeds its bound");
       }
       const receipt = await input.append(event, occurrenceId, recoveryCheckpoint);
-      if (
-        recoveryCheckpoint && (
-          !receipt.recoveryCheckpoint ||
-          receipt.recoveryCheckpoint.snapshot_event_id !== receipt.eventId ||
-          receipt.recoveryCheckpoint.snapshot_external_sequence !== receipt.externalSequence ||
-          !Number.isSafeInteger(receipt.recoveryCheckpoint.checkpoint_event_id) ||
-          receipt.recoveryCheckpoint.checkpoint_event_id <= receipt.eventId
-        )
-      ) throw new Error("Recovery safe boundary lacks its actual committed fact acknowledgement");
+      if (recoveryCheckpoint && !hasCommittedRecoveryCheckpoint(receipt)) {
+        throw new Error("Recovery safe boundary lacks its actual committed fact acknowledgement");
+      }
       await active();
       if (
         !Number.isSafeInteger(receipt.eventId) || receipt.eventId < 1 ||
@@ -276,6 +317,204 @@ export async function createManagedRecoveryWriter(input: {
       admitToolCall,
     );
   };
+  const captureInitialRecoveryHistory = (
+    boundary: AgentRuntimeRecoveryBoundary,
+    messages: RecoveryBoundaryMessages,
+  ): void => {
+    if (!initialHistoryMessageIds) {
+      initialHistoryMessageIds = mapPrivateArray(messages, (message) => message.id);
+      initialHistoryMessageDigests = mapPrivateArray(messages, recoveryHistoryMessageDigest);
+      initialHistoryProviderReplayCheckpoints = [];
+      for (let index = 0; index < boundary.messages.length; index++) {
+        const message = boundary.messages[index]!;
+        if (message.role !== "assistant") continue;
+        const metadata = readAttachedProviderMetadata(message);
+        if (metadata === undefined) continue;
+        const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
+        // Historical native metadata must survive even when it contains no thinking blocks.
+        state.replayRequired = true;
+        const checkpoint = captureProviderReplayCheckpoint(state, metadata);
+        if (checkpoint) pushPrivateArray(initialHistoryProviderReplayCheckpoints, checkpoint);
+      }
+    }
+  };
+
+  const matchingRecoveryContinuation = (
+    boundary: AgentRuntimeRecoveryBoundary,
+    messages: RecoveryBoundaryMessages,
+  ): RecoverySnapshot["runtimeContinuation"] | undefined => {
+    if (boundary.runtimeContinuation) {
+      lastRuntimeContinuation = getRecoveryContinuationSchema().parse(
+        snapshotDurableValue({
+          ...boundary.runtimeContinuation,
+          messages: recoveryMessages(boundary.runtimeContinuation.messages),
+        }),
+      );
+    }
+    return lastRuntimeContinuation?.messages.length === messages.length &&
+        everyPrivateArray(
+          lastRuntimeContinuation.messages,
+          (message, index) =>
+            recoveryHistoryMessageDigest(message) ===
+              recoveryHistoryMessageDigest(messages[index]!),
+        )
+      ? lastRuntimeContinuation
+      : undefined;
+  };
+
+  const assignRecoveryToolOccurrence = (
+    key: string,
+    part: RecoveryBoundaryToolPart,
+  ): string | undefined => {
+    for (const candidate of occurrencesByToolId.get(part.toolCallId) ?? []) {
+      if (!assignedOccurrences.has(candidate)) {
+        assignedOccurrences.add(candidate);
+        occurrenceByMessageCall.set(key, candidate);
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+
+  const recoveryToolBoundary = async (
+    messages: RecoveryBoundaryMessages,
+    messageIndex: number,
+    message: RecoveryBoundaryMessages[number],
+    part: RecoveryBoundaryToolPart,
+    toolBoundaries: unknown[],
+  ): Promise<void> => {
+    const key = messageCallKey(message.id, part.toolCallId);
+    const prior = restoredBoundaries.get(key);
+    if (prior) {
+      pushPrivateArray(toolBoundaries, prior);
+      return;
+    }
+    let occurrence = occurrenceByMessageCall.get(key);
+    while (!occurrence) {
+      const announced = announcementFor(part.toolCallId);
+      occurrence = assignRecoveryToolOccurrence(key, part);
+      if (!occurrence) await wait(announced.promise);
+    }
+    const receipt = await wait(admissionFor(occurrence).promise);
+    const base = {
+      modelMessageId: message.id,
+      toolName: part.toolName,
+      admissionReceipt: receipt,
+      input: "args" in part ? part.args : part.input,
+    };
+    // Only this assistant turn's results may acknowledge this occurrence.
+    const result = findRecoveryToolResult(messages, messageIndex, part);
+    if (result?.type === "tool-result") {
+      const acknowledged = await wait(resultFor(occurrence).promise);
+      pushPrivateArray(toolBoundaries, {
+        ...base,
+        kind: "acknowledged-receipt",
+        result,
+        resultEventId: String(acknowledged.eventId),
+        acknowledgedExternalSequence: acknowledged.externalSequence,
+      });
+    } else {
+      pushPrivateArray(toolBoundaries, { ...base, kind: "admitted-intent" });
+    }
+  };
+
+  const collectRecoveryToolBoundaries = async (
+    messages: RecoveryBoundaryMessages,
+    history: ReadonlySet<string>,
+    toolBoundaries: unknown[],
+  ): Promise<void> => {
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const message = messages[messageIndex]!;
+      if (message.role !== "assistant" || history.has(message.id)) continue;
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        const part = message.parts[partIndex]!;
+        if (
+          !("toolCallId" in part) || !("toolName" in part) ||
+          !("args" in part || "input" in part) ||
+          ("providerExecuted" in part && part.providerExecuted === true)
+        ) continue;
+        await recoveryToolBoundary(messages, messageIndex, message, part, toolBoundaries);
+      }
+    }
+  };
+
+  const recoveryBoundaryModelTurns = (
+    boundary: AgentRuntimeRecoveryBoundary,
+    messages: RecoveryBoundaryMessages,
+    history: ReadonlySet<string>,
+  ) => {
+    const pendingModelTurnMessageIds: string[] = [];
+    const boundaryModelTurns: unknown[] = [
+      ...modelTurns.values(),
+    ];
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const message = messages[messageIndex]!;
+      if (
+        message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
+      ) continue;
+      pushPrivateArray(pendingModelTurnMessageIds, message.id);
+      const providerReplayCheckpoint =
+        filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
+          value.messageId === message.id)[0];
+      pushPrivateArray(boundaryModelTurns, {
+        messageId: message.id,
+        ...(providerReplayCheckpoint ? { providerReplayCheckpoint } : {}),
+      });
+    }
+    return { pendingModelTurnMessageIds, boundaryModelTurns };
+  };
+
+  const commitRecoveryBoundaryModelTurns = (
+    boundary: AgentRuntimeRecoveryBoundary,
+    messages: RecoveryBoundaryMessages,
+    history: ReadonlySet<string>,
+    transcriptReceipt: Awaited<ReturnType<RecoveryEventAppend>>,
+  ): void => {
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const message = messages[messageIndex]!;
+      if (
+        message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
+      ) continue;
+      const providerReplayCheckpoint =
+        filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
+          value.messageId === message.id)[0];
+      modelTurns.set(message.id, {
+        messageId: message.id,
+        acknowledgedExternalSequence: transcriptReceipt.externalSequence,
+        ...(providerReplayCheckpoint ? { providerReplayCheckpoint } : {}),
+      });
+    }
+  };
+
+  const persistRecoveryJournalSnapshot = async (snapshot: RecoverySnapshot): Promise<void> => {
+    await active();
+    // A retired predecessor can finish an already-started immutable append
+    // after this owner read the journal. Only an admitted predecessor record
+    // may occupy that slot; same-generation conflicts remain fatal.
+    for (let retry = 0;; retry++) {
+      await active();
+      try {
+        await home.append({ sequence: diskSequence + 1, value: snapshot });
+        await active();
+        diskSequence++;
+        initialBoundary = false;
+        break;
+      } catch (error) {
+        await active();
+        const records = await home.read();
+        const occupied = records[diskSequence];
+        if (!occupied || retry >= 255) throw error;
+        const predecessor = await input.owner.validatePredecessorSnapshot(occupied.value);
+        if (
+          privateJsonStringify(predecessor.binding.generation) ===
+            privateJsonStringify(admission.generation)
+        ) throw error;
+        await active();
+        diskSequence++;
+      }
+    }
+  };
+
   return Object.freeze({
     bindSignal(value: AbortSignal) {
       if (signal) throw new Error("Recovery writer lifetime already bound");
@@ -293,11 +532,7 @@ export async function createManagedRecoveryWriter(input: {
         if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
         const capture = filterPrivateArray(receipt.modelCaptures ?? [], (value) =>
           value.modelCallId === event.modelCallId)[0];
-        if (
-          !capture || capture.projectId !== admission.identity.projectId ||
-          capture.runId !== admission.identity.canonicalRunId ||
-          capture.eventId !== String(receipt.eventId)
-        ) {
+        if (!hasExactRecoveryModelCapture(capture, admission, receipt)) {
           throw new Error("Recovery model context lacks its exact authenticated capture receipt");
         }
         return capture;
@@ -360,121 +595,16 @@ export async function createManagedRecoveryWriter(input: {
       const operation = chainPrivatePromise(boundaryTail, async () => {
         await active();
         const messages = recoveryMessages(boundary.messages);
-        if (!initialHistoryMessageIds) {
-          initialHistoryMessageIds = mapPrivateArray(messages, (message) => message.id);
-          initialHistoryMessageDigests = mapPrivateArray(messages, recoveryHistoryMessageDigest);
-          initialHistoryProviderReplayCheckpoints = [];
-          for (let index = 0; index < boundary.messages.length; index++) {
-            const message = boundary.messages[index]!;
-            if (message.role !== "assistant") continue;
-            const metadata = readAttachedProviderMetadata(message);
-            if (metadata === undefined) continue;
-            const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
-            // Historical native metadata must survive even when it contains no thinking blocks.
-            state.replayRequired = true;
-            const checkpoint = captureProviderReplayCheckpoint(state, metadata);
-            if (checkpoint) pushPrivateArray(initialHistoryProviderReplayCheckpoints, checkpoint);
-          }
-        }
+        captureInitialRecoveryHistory(boundary, messages);
         const history = createPrivateSet(initialHistoryMessageIds);
-        if (boundary.runtimeContinuation) {
-          lastRuntimeContinuation = getRecoveryContinuationSchema().parse(
-            snapshotDurableValue({
-              ...boundary.runtimeContinuation,
-              messages: recoveryMessages(boundary.runtimeContinuation.messages),
-            }),
-          );
-        }
-        const matchingContinuation = lastRuntimeContinuation?.messages.length === messages.length &&
-            everyPrivateArray(
-              lastRuntimeContinuation.messages,
-              (message, index) =>
-                recoveryHistoryMessageDigest(message) ===
-                  recoveryHistoryMessageDigest(messages[index]!),
-            )
-          ? lastRuntimeContinuation
-          : undefined;
+        const matchingContinuation = matchingRecoveryContinuation(boundary, messages);
         const toolBoundaries: unknown[] = [];
-        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-          const message = messages[messageIndex]!;
-          if (message.role !== "assistant" || history.has(message.id)) continue;
-          for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-            const part = message.parts[partIndex]!;
-            if (
-              !("toolCallId" in part) || !("toolName" in part) ||
-              !("args" in part || "input" in part) ||
-              ("providerExecuted" in part && part.providerExecuted === true)
-            ) continue;
-            const key = messageCallKey(message.id, part.toolCallId);
-            const prior = restoredBoundaries.get(key);
-            if (prior) {
-              pushPrivateArray(toolBoundaries, prior);
-              continue;
-            }
-            let occurrence = occurrenceByMessageCall.get(key);
-            while (!occurrence) {
-              const announced = announcementFor(part.toolCallId);
-              for (const candidate of occurrencesByToolId.get(part.toolCallId) ?? []) {
-                if (!assignedOccurrences.has(candidate)) {
-                  occurrence = candidate;
-                  assignedOccurrences.add(candidate);
-                  occurrenceByMessageCall.set(key, candidate);
-                  break;
-                }
-              }
-              if (!occurrence) await wait(announced.promise);
-            }
-            const receipt = await wait(admissionFor(occurrence).promise);
-            const base = {
-              modelMessageId: message.id,
-              toolName: part.toolName,
-              admissionReceipt: receipt,
-              input: "args" in part ? part.args : part.input,
-            };
-            // Only this assistant turn's results may acknowledge this occurrence.
-            let result: (typeof message.parts)[number] | undefined;
-            for (let resultIndex = messageIndex; resultIndex < messages.length; resultIndex++) {
-              const candidate = messages[resultIndex]!;
-              if (resultIndex > messageIndex && candidate.role === "assistant") break;
-              result = filterPrivateArray(candidate.parts, (candidatePart) =>
-                candidatePart.type === "tool-result" &&
-                candidatePart.toolCallId === part.toolCallId)[0];
-              if (result) {
-                break;
-              }
-            }
-            if (result?.type === "tool-result") {
-              const acknowledged = await wait(resultFor(occurrence).promise);
-              pushPrivateArray(toolBoundaries, {
-                ...base,
-                kind: "acknowledged-receipt",
-                result,
-                resultEventId: String(acknowledged.eventId),
-                acknowledgedExternalSequence: acknowledged.externalSequence,
-              });
-            } else {
-              pushPrivateArray(toolBoundaries, { ...base, kind: "admitted-intent" });
-            }
-          }
-        }
-        const pendingModelTurnMessageIds: string[] = [];
-        const boundaryModelTurns: unknown[] = [
-          ...modelTurns.values(),
-        ];
-        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-          const message = messages[messageIndex]!;
-          if (
-            message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
-          ) continue;
-          pushPrivateArray(pendingModelTurnMessageIds, message.id);
-          const providerReplayCheckpoint =
-            filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
-              value.messageId === message.id)[0];
-          pushPrivateArray(boundaryModelTurns, {
-            messageId: message.id,
-            ...(providerReplayCheckpoint ? { providerReplayCheckpoint } : {}),
-          });
-        }
+        await collectRecoveryToolBoundaries(messages, history, toolBoundaries);
+        const { pendingModelTurnMessageIds, boundaryModelTurns } = recoveryBoundaryModelTurns(
+          boundary,
+          messages,
+          history,
+        );
         const safeBoundary = matchingContinuation &&
           !somePrivateArray(
             toolBoundaries,
@@ -546,20 +676,7 @@ export async function createManagedRecoveryWriter(input: {
           checkpoint,
         );
         if (initialPublication) await appendObservations();
-        for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-          const message = messages[messageIndex]!;
-          if (
-            message.role !== "assistant" || history.has(message.id) || modelTurns.has(message.id)
-          ) continue;
-          const providerReplayCheckpoint =
-            filterPrivateArray(boundary.providerReplayCheckpoints, (value) =>
-              value.messageId === message.id)[0];
-          modelTurns.set(message.id, {
-            messageId: message.id,
-            acknowledgedExternalSequence: transcriptReceipt.externalSequence,
-            ...(providerReplayCheckpoint ? { providerReplayCheckpoint } : {}),
-          });
-        }
+        commitRecoveryBoundaryModelTurns(boundary, messages, history, transcriptReceipt);
         const snapshot = parseRecoverySnapshot(
           snapshotDurableValue({
             version: 1,
@@ -580,32 +697,7 @@ export async function createManagedRecoveryWriter(input: {
             toolBoundaries,
           }),
         );
-        await active();
-        // A retired predecessor can finish an already-started immutable append
-        // after this owner read the journal. Only an admitted predecessor record
-        // may occupy that slot; same-generation conflicts remain fatal.
-        for (let retry = 0;; retry++) {
-          await active();
-          try {
-            await home.append({ sequence: diskSequence + 1, value: snapshot });
-            await active();
-            diskSequence++;
-            initialBoundary = false;
-            break;
-          } catch (error) {
-            await active();
-            const records = await home.read();
-            const occupied = records[diskSequence];
-            if (!occupied || retry >= 255) throw error;
-            const predecessor = await input.owner.validatePredecessorSnapshot(occupied.value);
-            if (
-              privateJsonStringify(predecessor.binding.generation) ===
-                privateJsonStringify(admission.generation)
-            ) throw error;
-            await active();
-            diskSequence++;
-          }
-        }
+        await persistRecoveryJournalSnapshot(snapshot);
       });
       boundaryTail = chainPrivatePromise(operation, () => {}, (error) => {
         fail(error);
