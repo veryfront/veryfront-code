@@ -38,8 +38,31 @@ Complete Microsoft Outlook integration following the veryfront integration patte
    - `Mail.Read` - Read user mail
    - `Mail.Send` - Send mail as a user
    - `Mail.ReadWrite` - Read and write access to user mail
+   - `Mail.Read.Shared` - Read mail in mailboxes shared with the user
+   - `Mail.ReadWrite.Shared` - Move mail in mailboxes shared with the user
    - `offline_access` - Maintain access to data you have given it access to
 4. Click "Grant admin consent" (if available)
+
+### Shared mailbox permissions
+
+The shared mailbox tools call `/users/{mailbox}/...` for the mailbox you name in the
+`mailbox` argument. They never fall back to the signed-in user's mailbox.
+
+| Tool | Delegated permission | Application permission (app-only) |
+| --- | --- | --- |
+| List, search and get shared mailbox emails | `Mail.Read.Shared` | `Mail.Read` |
+| List shared mailbox folders | `Mail.Read.Shared` | `Mail.Read` |
+| List and get shared mailbox attachments | `Mail.Read.Shared` | `Mail.Read` |
+| Move shared mailbox email (write) | `Mail.ReadWrite.Shared` | `Mail.ReadWrite` |
+
+- Delegated access also needs the signed-in user to have access to the mailbox in Exchange.
+- Application permissions apply to every mailbox in the tenant. Limit them to the selected
+  mailboxes with an Exchange Online application access policy or RBAC for Applications.
+- Move Shared Mailbox Email is a write. It sends `POST /users/{mailbox}/messages/{messageId}/move`
+  with `destinationId` once and does not retry. The destination folder must already exist; use
+  List Shared Mailbox Folders to find its ID.
+- Pass `prefer: IdType="ImmutableId"` to the message and attachment tools to use immutable
+  message IDs. An immutable ID stays the same when the message moves to another folder.
 
 ### 4. Add Environment Variables
 

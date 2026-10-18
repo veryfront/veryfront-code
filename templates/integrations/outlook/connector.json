@@ -14,6 +14,7 @@
       "Mail.Send",
       "Mail.ReadWrite",
       "Mail.Read.Shared",
+      "Mail.ReadWrite.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "offline_access"
@@ -65,7 +66,7 @@
       {
         "step": 4,
         "title": "Add Microsoft Graph permissions",
-        "description": "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "description": "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
         "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference"
       },
       {
@@ -80,7 +81,8 @@
       }
     ],
     "notes": [
-      "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user.",
+      "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user. Mail.ReadWrite.Shared lets Move Shared Mailbox Email move messages in those mailboxes.",
+      "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. App-only (client credentials) access to a shared mailbox needs the Mail.Read and Mail.ReadWrite application permissions instead. Limit them to the selected mailboxes with an Exchange Online application access policy or RBAC for Applications.",
       "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
     ],
     "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
@@ -1647,6 +1649,13 @@
             "type": "string",
             "in": "query",
             "description": "OData filter expression"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
           }
         },
         "response": {
@@ -1765,6 +1774,13 @@
             "in": "query",
             "description": "Comma-separated message fields to return",
             "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
           }
         },
         "response": {
@@ -1845,6 +1861,259 @@
               }
             ],
             "omitted": "large email bodies and provider-specific message fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__get_shared_mailbox_email",
+      "name": "Get Shared Mailbox Email",
+      "description": "Get shared mailbox email",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__list_shared_mailbox_folders",
+      "name": "List Shared Mailbox Folders",
+      "description": "List shared mailbox folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "folders",
+              "data"
+            ],
+            "collectionName": "folders",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "parentFolderId"
+              },
+              {
+                "name": "childFolderCount"
+              },
+              {
+                "name": "unreadItemCount"
+              },
+              {
+                "name": "totalItemCount"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "folder provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__list_shared_mailbox_attachments",
+      "name": "List Shared Mailbox Attachments",
+      "description": "List shared mailbox attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "attachments",
+              "data"
+            ],
+            "collectionName": "attachments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "contentType"
+              },
+              {
+                "name": "size"
+              },
+              {
+                "name": "isInline"
+              },
+              {
+                "name": "lastModifiedDateTime"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "attachment binary content and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__get_shared_mailbox_attachment",
+      "name": "Get Shared Mailbox Attachment",
+      "description": "Get shared mailbox attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__move_shared_mailbox_email",
+      "name": "Move Shared Mailbox Email",
+      "description": "Move shared mailbox email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/move",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description": "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+            "required": true
           }
         }
       }
