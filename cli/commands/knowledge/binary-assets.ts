@@ -104,7 +104,7 @@ export async function putBinaryKnowledgeAsset(input: {
     try {
       current = await input.client.get<unknown>(
         `/projects/${encodeURIComponent(input.project)}/files/${encodeURIComponent(input.path)}`,
-        { branch_id: branch },
+        { ...(branch === "main" ? { ref: "main" } : { branch_id: branch }), exact_path: "true" },
         { signal: input.signal, retryPolicy: "none" },
       );
     } catch (error) {

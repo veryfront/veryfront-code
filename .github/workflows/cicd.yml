@@ -702,6 +702,7 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/binary-assets.test.ts \
             tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
             tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
             tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \

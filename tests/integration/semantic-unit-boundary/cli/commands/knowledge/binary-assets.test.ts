@@ -478,6 +478,7 @@ it("reconciles exact committed companions after a later bundle write fails", asy
     const request = new URL(String(url));
     if (request.pathname.includes("/files/")) {
       assertEquals(request.searchParams.get("branch_id"), ID);
+      assertEquals(request.searchParams.get("exact_path"), "true");
       if (!committed || !request.pathname.endsWith("knowledge%2Fone.bin")) {
         return Promise.resolve(new Response("missing", { status: 404 }));
       }
@@ -560,7 +561,9 @@ it("reconciles root-level assets only with exact scoped binary bytes", async () 
             return Promise.resolve(new Response("conflict", { status: 409 }));
           }
           if (request.pathname.includes("/files/")) {
-            assertEquals(request.searchParams.get("branch_id"), "main");
+            assertEquals(request.searchParams.get("ref"), "main");
+            assertEquals(request.searchParams.has("branch_id"), false);
+            assertEquals(request.searchParams.get("exact_path"), "true");
             return Promise.resolve(
               Response.json({
                 id: ID,
@@ -631,6 +634,52 @@ it("does not treat metadata authority failures as an absent companion", async ()
         String(status),
       );
       assertEquals(calls, 1);
+    }
+  } finally {
+    await Deno.remove(localPath);
+  }
+});
+
+it("requests exact paths for extensionless and literal UUID companion names", async () => {
+  const localPath = await Deno.makeTempFile();
+  const bytes = new Uint8Array([255]);
+  await Deno.writeFile(localPath, bytes);
+  try {
+    for (const path of ["asset", ID]) {
+      let writes = 0;
+      const client = createApiClient(
+        { apiUrl: "https://api.example.test", apiToken: "test" },
+        (url, init) => {
+          const request = new URL(String(url));
+          if (init?.method === "GET") {
+            assertEquals(request.pathname, `/projects/${ID}/files/${path}`);
+            assertEquals(request.searchParams.get("branch_id"), ID);
+            assertEquals(request.searchParams.get("exact_path"), "true");
+            return Promise.resolve(new Response("missing exact path", { status: 404 }));
+          }
+          writes++;
+          return Promise.resolve(
+            Response.json({
+              file_id: ID,
+              file_version_id: ID,
+              path,
+              byte_size: 1,
+              content_hash: new Headers(init?.headers).get("x-vf-content-sha256"),
+              content_type: "application/octet-stream",
+            }),
+          );
+        },
+      );
+      const result = await putBinaryKnowledgeAsset({
+        client,
+        project: ID,
+        path,
+        localPath,
+        branch: ID,
+        expected: { kind: "absent" },
+      });
+      assertEquals(result.path, path);
+      assertEquals(writes, 1);
     }
   } finally {
     await Deno.remove(localPath);
