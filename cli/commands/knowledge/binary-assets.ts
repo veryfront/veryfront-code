@@ -23,6 +23,44 @@ export async function hashAssetBytes(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function readBinaryBytes(input: {
+  client: ApiClient;
+  path: string;
+  byteSize: number;
+  signal?: AbortSignal;
+}): Promise<Uint8Array> {
+  if (!input.client.getStream) {
+    throw new Error("The API client does not support binary asset reads");
+  }
+  const stream = await input.client.getStream(input.path, {
+    signal: input.signal,
+    retryPolicy: "none",
+  });
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      input.signal?.throwIfAborted();
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > input.byteSize) throw new Error("Binary bundle content exceeds its declared size");
+      chunks.push(chunk.value);
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 /** Publish one immutable companion version. An ambiguous write must be reconciled before retry. */
 export async function putBinaryKnowledgeAsset(input: {
   client: ApiClient;
@@ -58,6 +96,64 @@ export async function putBinaryKnowledgeAsset(input: {
   if (bytes.byteLength > MAX_ASSET_BYTES) throw new Error("Binary asset exceeds the 8 MiB limit");
   const hash = await hashAssetBytes(bytes);
   input.signal?.throwIfAborted();
+  if (input.expected.kind === "absent") {
+    // Earlier bundle attempts can commit this exact companion before a later write fails.
+    // Reconcile only the target file, without imposing bundle-wide limits on publication.
+    let current: unknown;
+    let absent = false;
+    try {
+      current = await input.client.get<unknown>(
+        `/projects/${encodeURIComponent(input.project)}/files/${encodeURIComponent(input.path)}`,
+        { branch_id: branch },
+        { signal: input.signal, retryPolicy: "none" },
+      );
+    } catch (error) {
+      if (!error || typeof error !== "object" || !("status" in error) || error.status !== 404) {
+        throw error;
+      }
+      absent = true;
+    }
+    input.signal?.throwIfAborted();
+    if (!absent) {
+      if (
+        !current || typeof current !== "object" || !("path" in current) ||
+        current.path !== input.path ||
+        !("id" in current) || typeof current.id !== "string" || !UUID.test(current.id) ||
+        !("version_id" in current) || typeof current.version_id !== "string" ||
+        !UUID.test(current.version_id) ||
+        !("binary" in current) || !current.binary || typeof current.binary !== "object" ||
+        !("byte_size" in current.binary) || current.binary.byte_size !== bytes.byteLength ||
+        !("content_hash" in current.binary) || current.binary.content_hash !== hash ||
+        !("content_type" in current.binary) || typeof current.binary.content_type !== "string"
+      ) throw new Error("Binary asset path conflicts with the requested immutable companion (409)");
+      const rawPath = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
+        encodeURIComponent(input.path)
+      }?${new URLSearchParams({
+        branch_id: branch,
+        file_version_id: current.version_id,
+        content_hash: hash,
+      })}`;
+      const remote = await readBinaryBytes({
+        client: input.client,
+        path: rawPath,
+        byteSize: bytes.byteLength,
+        signal: input.signal,
+      });
+      if (
+        remote.byteLength !== bytes.byteLength || await hashAssetBytes(remote) !== hash ||
+        !remote.every((byte, index) => byte === bytes[index])
+      ) {
+        throw new Error("Binary asset readback does not match its immutable bytes");
+      }
+      input.signal?.throwIfAborted();
+      return {
+        path: input.path,
+        file_id: current.id,
+        version_id: current.version_id,
+        checksum: hash,
+      };
+    }
+  }
   const path = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
     encodeURIComponent(input.path)
   }?branch_id=${encodeURIComponent(branch)}`;
@@ -191,36 +287,12 @@ export async function readKnowledgeBundle(input: {
       ) {
         throw new Error("Binary bundle entry is not bound to its owner and immutable version");
       }
-      const stream = await input.client.getStream(`${url.pathname}${url.search}`, {
+      bytes = await readBinaryBytes({
+        client: input.client,
+        path: `${url.pathname}${url.search}`,
+        byteSize: entry.byte_size,
         signal: input.signal,
-        retryPolicy: "none",
       });
-      const reader = stream.getReader();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      try {
-        while (true) {
-          input.signal?.throwIfAborted();
-          const chunk = await reader.read();
-          if (chunk.done) {
-            break;
-          }
-          size += chunk.value.byteLength;
-          if (size > entry.byte_size) {
-            throw new Error("Binary bundle content exceeds its declared size");
-          }
-          chunks.push(chunk.value);
-        }
-      } finally {
-        await reader.cancel();
-        reader.releaseLock();
-      }
-      bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
     } else {
       throw new Error("Unsupported knowledge bundle entry kind");
     }

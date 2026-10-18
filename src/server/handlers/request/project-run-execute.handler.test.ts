@@ -3247,6 +3247,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         const observed = respondObservation(url.toString(), init);
         if (observed) return observed;
+        if (url.pathname.includes("/files/") && observeFetchRequestInit(init).method === "GET") {
+          assertEquals(url.searchParams.get("branch_id"), branch);
+          return new Response("missing", { status: 404 });
+        }
         const indexed = canonicalKnowledgeIndexResponse(url.toString(), init, checksums);
         if (indexed) return indexed;
         if (url.pathname === "/projects/demo-project/uploads") {

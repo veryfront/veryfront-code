@@ -3827,6 +3827,7 @@ function createRuntimeApiClient(
       const status = ReflectApply(ResponseStatusGetter, response, []) as number;
       const error = API_CLIENT_ERROR.create({
         detail: `Veryfront API request failed: ${status} ${response.statusText}`,
+        status,
       });
       throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }

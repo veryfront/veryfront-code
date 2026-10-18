@@ -9,6 +9,16 @@ import {
 } from "../../../../../../cli/commands/knowledge/binary-assets.ts";
 
 const ID = "11111111-1111-4111-8111-111111111111";
+function emptyReconciliationRead(
+  url: string | URL | Request,
+  init?: RequestInit,
+): Response | undefined {
+  if (init?.method !== "GET" || !new URL(String(url)).pathname.includes("/files/")) {
+    return undefined;
+  }
+  return new Response("missing", { status: 404 });
+}
+
 it("publishes exact non-UTF8 bytes with scoped CAS and verified identity", async () => {
   const localPath = await Deno.makeTempFile();
   const bytes = new Uint8Array([0xff, 0xfe, 0, 0x80, 13, 10]);
@@ -20,6 +30,8 @@ it("publishes exact non-UTF8 bytes with scoped CAS and verified identity", async
     apiToken: "test",
     projectSlug: "project",
   }, async (url, init) => {
+    const reconciliation = emptyReconciliationRead(url, init);
+    if (reconciliation) return reconciliation;
     calls++;
     assertEquals(
       String(url),
@@ -68,6 +80,8 @@ it("publishes binary companions at existing custom knowledge destinations", asyn
     apiToken: "test",
     projectSlug: "project",
   }, async (url, init) => {
+    const reconciliation = emptyReconciliationRead(url, init);
+    if (reconciliation) return reconciliation;
     calls++;
     assertEquals(
       String(url),
@@ -113,7 +127,9 @@ it("does not retry ambiguous binary writes and honors cancellation", async () =>
     apiUrl: "https://api.example.test",
     apiToken: "test",
     projectSlug: "project",
-  }, () => {
+  }, (url, init) => {
+    const reconciliation = emptyReconciliationRead(url, init);
+    if (reconciliation) return Promise.resolve(reconciliation);
     calls++;
     return Promise.resolve(new Response("unavailable", { status: 503 }));
   });
@@ -324,6 +340,8 @@ it("resolves a supported branch name before raw publication", async () => {
     apiToken: "test",
     projectSlug: "project",
   }, (url, init) => {
+    const reconciliation = emptyReconciliationRead(url, init);
+    if (reconciliation) return Promise.resolve(reconciliation);
     if (init?.method === "GET") {
       reads++;
       return Promise.resolve(
@@ -442,5 +460,179 @@ it("rejects misrouted inline text manifests before accepting bytes", async () =>
       Error,
       "owner",
     );
+  }
+});
+
+it("reconciles exact committed companions after a later bundle write fails", async () => {
+  const localPath = await Deno.makeTempFile();
+  const bytes = new Uint8Array([255, 0, 128]);
+  await Deno.writeFile(localPath, bytes);
+  const hash = await hashAssetBytes(bytes);
+  let committed = false;
+  let puts = 0;
+  const client = createApiClient({
+    apiUrl: "https://api.example.test",
+    apiToken: "test",
+    projectSlug: "project",
+  }, (url, init) => {
+    const request = new URL(String(url));
+    if (request.pathname.includes("/files/")) {
+      assertEquals(request.searchParams.get("branch_id"), ID);
+      if (!committed || !request.pathname.endsWith("knowledge%2Fone.bin")) {
+        return Promise.resolve(new Response("missing", { status: 404 }));
+      }
+      return Promise.resolve(
+        Response.json({
+          id: ID,
+          version_id: ID,
+          path: "knowledge/one.bin",
+          binary: {
+            byte_size: bytes.length,
+            content_hash: hash,
+            content_type: "application/octet-stream",
+          },
+        }),
+      );
+    }
+    if (init?.method === "GET") {
+      return Promise.resolve(
+        new Response(bytes, { headers: { "Content-Type": "application/octet-stream" } }),
+      );
+    }
+    puts++;
+    if (request.pathname.endsWith("knowledge%2Ftwo.bin")) {
+      return Promise.resolve(new Response("unavailable", { status: 503 }));
+    }
+    if (committed) return Promise.resolve(new Response("already exists", { status: 409 }));
+    committed = true;
+    return Promise.resolve(
+      Response.json({
+        file_id: ID,
+        file_version_id: ID,
+        path: "knowledge/one.bin",
+        byte_size: bytes.length,
+        content_hash: hash,
+        content_type: "application/octet-stream",
+      }),
+    );
+  });
+  const input = {
+    client,
+    project: "project",
+    localPath,
+    branch: ID,
+    expected: { kind: "absent" as const },
+  };
+  try {
+    await putBinaryKnowledgeAsset({ ...input, path: "knowledge/one.bin" });
+    await assertRejects(
+      () => putBinaryKnowledgeAsset({ ...input, path: "knowledge/two.bin" }),
+      Error,
+      "503",
+    );
+    const receipt = await putBinaryKnowledgeAsset({ ...input, path: "knowledge/one.bin" });
+    assertEquals(receipt.version_id, ID);
+    assertEquals(receipt.checksum, hash);
+    assertEquals(puts, 2);
+  } finally {
+    await Deno.remove(localPath);
+  }
+});
+
+it("reconciles root-level assets only with exact scoped binary bytes", async () => {
+  const localPath = await Deno.makeTempFile();
+  const bytes = new Uint8Array([255, 0, 128]);
+  await Deno.writeFile(localPath, bytes);
+  let writes = 0;
+  try {
+    for (const scenario of ["same", "different", "text", "wrong-owner", "corrupt", "cancelled"]) {
+      const local = scenario === "text" ? new TextEncoder().encode("abc") : bytes;
+      await Deno.writeFile(localPath, local);
+      const remote = scenario === "different" ? new Uint8Array([255, 0, 129]) : local;
+      const hash = await hashAssetBytes(remote);
+      const controller = new AbortController();
+      const client = createApiClient(
+        { apiUrl: "https://api.example.test", apiToken: "test" },
+        (url, init) => {
+          const request = new URL(String(url));
+          if (init?.method === "PUT") {
+            writes++;
+            return Promise.resolve(new Response("conflict", { status: 409 }));
+          }
+          if (request.pathname.includes("/files/")) {
+            assertEquals(request.searchParams.get("branch_id"), "main");
+            return Promise.resolve(
+              Response.json({
+                id: ID,
+                version_id: ID,
+                path: scenario === "wrong-owner" ? "other.bin" : "image.bin",
+                ...(scenario === "text" ? { content: "abc" } : {
+                  binary: {
+                    byte_size: remote.length,
+                    content_hash: hash,
+                    content_type: "application/octet-stream",
+                  },
+                }),
+              }),
+            );
+          }
+          if (scenario === "cancelled") controller.abort();
+          return Promise.resolve(
+            new Response(scenario === "corrupt" ? new Uint8Array([1, 2, 3]) : remote, {
+              headers: { "Content-Type": "application/octet-stream" },
+            }),
+          );
+        },
+      );
+      const publish = () =>
+        putBinaryKnowledgeAsset({
+          client,
+          project: ID,
+          path: "image.bin",
+          localPath,
+          branch: "main",
+          expected: { kind: "absent" },
+          signal: controller.signal,
+        });
+      if (scenario === "same") assertEquals((await publish()).checksum, hash);
+      else await assertRejects(publish);
+    }
+    assertEquals(writes, 0);
+  } finally {
+    await Deno.remove(localPath);
+  }
+});
+
+it("does not treat metadata authority failures as an absent companion", async () => {
+  const localPath = await Deno.makeTempFile();
+  await Deno.writeFile(localPath, new Uint8Array([255]));
+  try {
+    for (const status of [403, 409, 503]) {
+      let calls = 0;
+      const client = createApiClient(
+        { apiUrl: "https://api.example.test", apiToken: "test" },
+        (_url, init) => {
+          calls++;
+          assertEquals(init?.method, "GET");
+          return Promise.resolve(new Response("denied", { status }));
+        },
+      );
+      await assertRejects(
+        () =>
+          putBinaryKnowledgeAsset({
+            client,
+            project: ID,
+            path: "asset.bin",
+            localPath,
+            branch: ID,
+            expected: { kind: "absent" },
+          }),
+        Error,
+        String(status),
+      );
+      assertEquals(calls, 1);
+    }
+  } finally {
+    await Deno.remove(localPath);
   }
 });
