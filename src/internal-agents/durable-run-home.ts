@@ -149,9 +149,64 @@ export type DurableRunRecord = {
   value: ReturnType<typeof snapshotDurableValue>;
 };
 
+function retainDirectoryEntryName(names: string[], name: string): void {
+  // Pending publications may belong to a live writer; ignore without retaining them.
+  if (privateTextStartsWith(name, ".pending-")) return;
+  if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
+  pushPrivateArray(names, name);
+}
+
+function decodeDurableRecord(
+  text: string,
+  readIdentity: () => DurableRunIdentity,
+  sequence: number,
+): DurableRunRecord {
+  const raw: unknown = privateJsonParse(text);
+  if (
+    !raw || typeof raw !== "object" || !("body" in raw) || !("checksum" in raw) ||
+    typeof raw.body !== "string" || typeof raw.checksum !== "string" ||
+    objectKeys(raw).length !== 2 || digest(raw.body) !== raw.checksum
+  ) throw invalid();
+  const body: unknown = privateJsonParse(raw.body);
+  if (
+    !body || typeof body !== "object" || !("identity" in body) || !("sequence" in body) ||
+    !("value" in body) || !("version" in body) || body.version !== 1 ||
+    objectKeys(body).length !== 4 || body.sequence !== sequence ||
+    privateJsonStringify(getDurableRunIdentitySchema().parse(body.identity)) !==
+      privateJsonStringify(readIdentity())
+  ) {
+    throw invalid();
+  }
+  return { sequence, value: snapshotDurableValue(body.value) };
+}
+
+function assertRecordSequenceName(name: string, sequence: number): void {
+  if (name !== recordName(sequence)) throw invalid();
+}
+
+function assertExecutionBinding(binding: unknown, readIdentity: () => DurableRunIdentity): void {
+  if (
+    !binding || typeof binding !== "object" || !("version" in binding) ||
+    binding.version !== 1 || !("identity" in binding) || !("requestHash" in binding) ||
+    typeof binding.requestHash !== "string" ||
+    !apply(regexTest, /^[a-f0-9]{64}$/, [binding.requestHash]) ||
+    objectKeys(binding).length !== 3 ||
+    privateJsonStringify(binding.identity) !== privateJsonStringify(readIdentity())
+  ) throw invalid();
+}
+
+function compareRecordNames(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** Internal disk primitive only. Live API generation authority remains the caller's responsibility. */
 export class DurableRunHome {
-  private constructor(private directory: string, private identity: DurableRunIdentity) {}
+  private constructor(
+    private readonly directory: string,
+    private readonly identity: DurableRunIdentity,
+  ) {}
 
   static async open(
     input: { directory: string; identity: DurableRunIdentity },
@@ -186,10 +241,7 @@ export class DurableRunHome {
         const entry = await apply(directoryRead, directory, []);
         if (!entry) break;
         const name = entry.name;
-        // Pending publications may belong to a live writer; ignore without retaining them.
-        if (privateTextStartsWith(name, ".pending-")) continue;
-        if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
-        pushPrivateArray(names, name);
+        retainDirectoryEntryName(names, name);
       }
     } finally {
       await apply(directoryClose, directory, []);
@@ -200,45 +252,22 @@ export class DurableRunHome {
       if (apply(regexTest, recordPattern, [name])) pushPrivateArray(records, name);
       else if (name === "execution-binding.json") {
         const binding: unknown = privateJsonParse(await readBounded(join(this.directory, name)));
-        if (
-          !binding || typeof binding !== "object" || !("version" in binding) ||
-          binding.version !== 1 || !("identity" in binding) || !("requestHash" in binding) ||
-          typeof binding.requestHash !== "string" ||
-          !apply(regexTest, /^[a-f0-9]{64}$/, [binding.requestHash]) ||
-          objectKeys(binding).length !== 3 ||
-          privateJsonStringify(binding.identity) !== privateJsonStringify(this.identity)
-        ) throw invalid();
+        assertExecutionBinding(binding, () => this.identity);
       } else if (name !== "identity.json") throw invalid();
     }
     apply(sort, records, [
-      (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+      compareRecordNames,
     ]);
     if (records.length > MAX_DURABLE_RECORDS) throw invalid();
     const result: DurableRunRecord[] = [];
     let totalBytes = 0;
     for (let index = 0; index < records.length; index++) {
       const name = records[index]!;
-      if (name !== recordName(index + 1)) throw invalid();
+      assertRecordSequenceName(name, index + 1);
       const text = await readBounded(join(this.directory, name));
       totalBytes += byteLength(text);
       if (totalBytes > MAX_DURABLE_HOME_BYTES) throw invalid();
-      const raw: unknown = privateJsonParse(text);
-      if (
-        !raw || typeof raw !== "object" || !("body" in raw) || !("checksum" in raw) ||
-        typeof raw.body !== "string" || typeof raw.checksum !== "string" ||
-        objectKeys(raw).length !== 2 || digest(raw.body) !== raw.checksum
-      ) throw invalid();
-      const body: unknown = privateJsonParse(raw.body);
-      if (
-        !body || typeof body !== "object" || !("identity" in body) || !("sequence" in body) ||
-        !("value" in body) || !("version" in body) || body.version !== 1 ||
-        objectKeys(body).length !== 4 || body.sequence !== index + 1 ||
-        privateJsonStringify(getDurableRunIdentitySchema().parse(body.identity)) !==
-          privateJsonStringify(this.identity)
-      ) {
-        throw invalid();
-      }
-      pushPrivateArray(result, { sequence: index + 1, value: snapshotDurableValue(body.value) });
+      pushPrivateArray(result, decodeDurableRecord(text, () => this.identity, index + 1));
     }
     return result;
   }
