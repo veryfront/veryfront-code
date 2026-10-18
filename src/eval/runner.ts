@@ -594,7 +594,7 @@ async function runRecord(
       : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
-    completed: result.completed ?? !result.error,
+    completed: result.completed ?? (result.outcome !== "error" && !result.error),
     ...(result.error ? { error: result.error } : {}),
   };
 

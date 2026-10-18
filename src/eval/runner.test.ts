@@ -1720,6 +1720,7 @@ describe("expected outcome gates", () => {
         { completed: false },
         { completed: false, error: "Invalid input", outcome: "error" as const },
         { completed: true, outcome: "error" as const },
+        { outcome: "error" as const },
       ];
       for (const [index, result] of results.entries()) {
         for (const expectedOutcome of [undefined, "success", "error"] as const) {
@@ -1730,9 +1731,10 @@ describe("expected outcome gates", () => {
           const report = await runEval(definition, {
             adapters: { [targetKind]: () => ({ output: {}, ...result }) },
           });
+          if (index === 5) assertEquals(report.records[0]?.completed, false);
           assertEquals(
             report.summary.passed,
-            expectedOutcome === "error" ? Number(index === 3) : Number(index === 0),
+            expectedOutcome === "error" ? Number(index === 3 || index === 5) : Number(index === 0),
           );
         }
       }
