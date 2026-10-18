@@ -8,7 +8,7 @@ if (!("privateKey" in key)) throw new Error("Expected signing key pair");
 const signingKey = key.privateKey;
 const der = new Uint8Array(await crypto.subtle.exportKey("spki", key.publicKey));
 const publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${
-  btoa(String.fromCharCode(...der))
+  btoa(String.fromCodePoint(...der))
 }\n-----END PUBLIC KEY-----`;
 Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
 await import("#veryfront/schemas/_test-setup.ts");
