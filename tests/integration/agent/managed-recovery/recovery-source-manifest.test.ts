@@ -153,3 +153,33 @@ it("native binary validation does not expose payloads to project RegExp hooks", 
   }
   assertEquals(exposures, 0);
 });
+
+it("legacy source discriminator ignores inherited getters and replaced Object.hasOwn", () => {
+  const files = [{
+    path: "private.ts",
+    entityType: "function",
+    content: "credential-protected-source",
+  }];
+  const expected = createRecoverySourceManifest(files);
+  const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, "kind");
+  const originalHasOwn = Object.hasOwn;
+  let exposed = 0;
+  let actual: ReturnType<typeof createRecoverySourceManifest> | undefined;
+  try {
+    Object.defineProperty(Object.prototype, "kind", {
+      configurable: true,
+      get() {
+        if (originalHasOwn(this, "content")) exposed++;
+        return "binary";
+      },
+    });
+    Object.hasOwn = () => true;
+    actual = createRecoverySourceManifest(files);
+  } finally {
+    Object.hasOwn = originalHasOwn;
+    if (descriptor) Object.defineProperty(Object.prototype, "kind", descriptor);
+    else Reflect.deleteProperty(Object.prototype, "kind");
+  }
+  assertEquals(exposed, 0);
+  assertEquals(actual, expected);
+});

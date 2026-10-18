@@ -42,7 +42,10 @@ import {
   type RecoveryAdmission,
 } from "./recovery-admission-schema.ts";
 import { MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES } from "./recovery-suffix.ts";
-import { createRecoverySourceManifest } from "./recovery-source-manifest.ts";
+import {
+  createRecoverySourceManifest,
+  MAX_RECOVERY_SOURCE_RESPONSE_BYTES,
+} from "./recovery-source-manifest.ts";
 
 const ceil = Math.ceil;
 const byteLength = Buffer.byteLength;
@@ -396,7 +399,9 @@ export function createManagedRecoveryHttpTransport(
           authorization: `Bearer ${credentials.source}`,
         },
       );
-      const manifest = getManifestSchema().parse(await readBoundedJson(response, 96 * 1024 * 1024));
+      const manifest = getManifestSchema().parse(
+        await readBoundedJson(response, MAX_RECOVERY_SOURCE_RESPONSE_BYTES),
+      );
       const verifyText = (file: { content: string; byte_size: number; content_hash: string }) => {
         if (
           byteLength(file.content, "utf8") !== file.byte_size ||

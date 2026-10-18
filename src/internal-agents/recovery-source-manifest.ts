@@ -7,6 +7,7 @@ import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
+const hasOwn = Object.hasOwn;
 const ceil = Math.ceil;
 const isArray = Array.isArray;
 const apply = Reflect.apply;
@@ -17,6 +18,10 @@ const bufferFrom = Buffer.from;
 const bufferToString = Buffer.prototype.toString;
 const MAX_RELEASE_FILES = 10_000;
 const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
+// JSON can encode one decoded text/path byte as six ASCII escape bytes. Base64
+// expansion is smaller. Reserve fixed identity/field overhead per file and envelope.
+export const MAX_RECOVERY_SOURCE_RESPONSE_BYTES = 6 * MAX_RELEASE_BYTES +
+  MAX_RELEASE_FILES * (6 * 1_024 + 512) + 65_536;
 const getReleaseFileSchema = defineSchema((v) =>
   v.object({
     path: v.string().min(1).max(1_024),
@@ -45,6 +50,10 @@ const getNativeReleaseFileSchema = defineSchema((v) =>
 const getAnyReleaseFileSchema = defineSchema((v) =>
   v.union([getReleaseFileSchema(), getNativeReleaseFileSchema()])
 );
+type ReleaseFile = ReturnType<ReturnType<typeof getAnyReleaseFileSchema>["parse"]>;
+function isNativeReleaseFile(file: ReleaseFile): file is Extract<ReleaseFile, { kind: string }> {
+  return hasOwn(file, "kind") && "kind" in file;
+}
 const hash = (value: string) => privateSha256Hex(value);
 
 /**
@@ -67,9 +76,9 @@ export function createRecoverySourceManifest(value: unknown): {
   let totalBytes = 0;
   const parsed = mapPrivateArray(value, (entry) => {
     const file = getAnyReleaseFileSchema().parse(entry);
-    if ("kind" in file) native = true;
-    if ("kind" in file && file.kind === "binary") hasBinary = true;
-    const size = "kind" in file && file.kind === "binary"
+    if (isNativeReleaseFile(file)) native = true;
+    if (isNativeReleaseFile(file) && file.kind === "binary") hasBinary = true;
+    const size = isNativeReleaseFile(file) && file.kind === "binary"
       ? file.byteSize
       : byteLength(file.content, "utf8");
     if (size > 8 * 1024 * 1024) throw new Error("Immutable recovery source file exceeds its bound");
@@ -84,7 +93,7 @@ export function createRecoverySourceManifest(value: unknown): {
   }
   const paths = createPrivateSet<string>();
   const files = mapPrivateArray(parsed, (file) => {
-    if (native && !("kind" in file)) {
+    if (native && !isNativeReleaseFile(file)) {
       throw new Error("Native recovery source cannot mix legacy file entries");
     }
     if (paths.has(file.path)) throw new Error("Duplicate immutable recovery release path");
@@ -94,7 +103,7 @@ export function createRecoverySourceManifest(value: unknown): {
     paths.add(file.path);
     let byteSize: number;
     let contentHash: string;
-    if ("kind" in file && file.kind === "binary") {
+    if (isNativeReleaseFile(file) && file.kind === "binary") {
       if (
         file.contentBase64.length !== 4 * ceil(file.byteSize / 3) ||
         !testPrivateRegExp(/^[A-Za-z0-9+/]*={0,2}$/, file.contentBase64)
@@ -112,7 +121,7 @@ export function createRecoverySourceManifest(value: unknown): {
       byteSize = byteLength(file.content, "utf8");
       contentHash = hash(file.content);
     }
-    return native && "kind" in file
+    return native && isNativeReleaseFile(file)
       ? { path: file.path, type: file.entityType, kind: file.kind, contentHash, byteSize }
       : { path: file.path, type: file.entityType, contentHash, byteSize };
   });

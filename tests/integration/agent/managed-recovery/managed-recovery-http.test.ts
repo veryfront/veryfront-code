@@ -510,6 +510,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
   };
   let response: unknown = valid;
   let oversized = false;
+  let oversizedCancelled = false;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     assertEquals(
@@ -524,8 +525,11 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (++emitted <= 97) controller.enqueue(chunk);
+            if (++emitted <= 449) controller.enqueue(chunk);
             else controller.close();
+          },
+          cancel() {
+            oversizedCancelled = true;
           },
         }),
         { headers: { "content-length": "1" } },
@@ -587,6 +591,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       Error,
       "response exceeds its bound",
     );
+    assertEquals(oversizedCancelled, true);
   } finally {
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);
@@ -795,5 +800,85 @@ it("empty and all-text release transport stays v1 and rejects internally consist
   } finally {
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);
+  }
+});
+
+it("native transport accepts maximum decoded bytes with maximum path metadata above 96 MiB", async () => {
+  const { createHash } = await import("node:crypto");
+  const { Buffer } = await import("node:buffer");
+  const { createRecoverySourceManifest } = await import(
+    "#veryfront/internal-agents/recovery-source-manifest.ts"
+  );
+  const { bindManagedRecoveryCredentials, createManagedRecoveryHttpTransport } = await import(
+    "#veryfront/internal-agents/managed-recovery-http.ts"
+  );
+  const bytes = Buffer.alloc(8 * 1024 * 1024, 0xff);
+  const contentBase64 = bytes.toString("base64");
+  const contentHash = createHash("sha256").update(bytes).digest("hex");
+  for (const escapedText of [false, true]) {
+    const files = Array.from({ length: 10_000 }, (_, index) => {
+      const path = `${String(index).padStart(5, "0")}${"p".repeat(1019)}`;
+      if (escapedText && index < 2) {
+        return {
+          kind: "text" as const,
+          path,
+          entityType: "virtual_file" as const,
+          content: "\u0000".repeat(8 * 1024 * 1024),
+        };
+      }
+      return index < (escapedText ? 3 : 8)
+        ? {
+          kind: "binary" as const,
+          path,
+          entityType: "virtual_file" as const,
+          contentBase64,
+          contentHash,
+          byteSize: bytes.length,
+        }
+        : { kind: "text" as const, path, entityType: "virtual_file" as const, content: "" };
+    });
+    const digest = createRecoverySourceManifest(files);
+    const value = admission();
+    value.identity = { ...identity, sourceHash: digest.hash };
+    const payload = {
+      project_id: value.sourceBinding.projectId,
+      release_id: value.sourceBinding.releaseId,
+      manifest_version: 2,
+      manifest_hash: digest.hash,
+      file_count: digest.fileCount,
+      total_bytes: digest.totalBytes,
+      files: files.map((file) => ({
+        version_id: "55555555-5555-4555-8555-555555555555",
+        path: file.path,
+        entity_type: file.entityType,
+        kind: file.kind,
+        content_hash: file.kind === "binary"
+          ? file.contentHash
+          : createHash("sha256").update(file.content).digest("hex"),
+        byte_size: file.kind === "binary" ? file.byteSize : Buffer.byteLength(file.content),
+        ...(file.kind === "binary"
+          ? { content_base64: file.contentBase64 }
+          : { content: file.content }),
+      })),
+    };
+    const previous = Deno.env.get(envKey);
+    try {
+      const claims = await signed(value);
+      bindManagedRecoveryCredentials(claims, {
+        authToken: "original-invocation",
+        sourceAuthToken: "original-source",
+        terminalToken: "original-terminal",
+      });
+      const transport = createManagedRecoveryHttpTransport(
+        "https://trusted.test",
+        async () => Response.json(payload),
+      );
+      const actual = await transport.listImmutableReleaseFiles(claims);
+      assertEquals(actual.files.length, 10_000);
+      assertEquals(createRecoverySourceManifest(actual.files), digest);
+    } finally {
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
   }
 });
