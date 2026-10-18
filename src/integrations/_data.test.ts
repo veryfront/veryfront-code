@@ -1505,7 +1505,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 66],
+      ["outlook", 67],
       ["teams", 7],
     ]);
 
@@ -2794,6 +2794,7 @@ describe("integration endpoint specs", () => {
       "list_shared_mailbox_attachments",
       "get_shared_mailbox_attachment",
       "move_shared_mailbox_email",
+      "get_shared_mailbox_email_mime",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -2899,6 +2900,7 @@ describe("integration endpoint specs", () => {
         "/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
       ],
       move_shared_mailbox_email: ["POST", "/users/{mailbox}/messages/{messageId}/move"],
+      get_shared_mailbox_email_mime: ["GET", "/users/{mailbox}/messages/{messageId}/$value"],
     } as const;
     for (const [toolId, [method, path]] of Object.entries(sharedMailboxRoutes)) {
       const sharedEndpoint = getTool("outlook", toolId).endpoint;
@@ -2926,6 +2928,9 @@ describe("integration endpoint specs", () => {
         toolId,
       );
     }
+    assertEquals(getTool("outlook", "get_shared_mailbox_email_mime").endpoint?.response, {
+      encoding: "base64",
+    });
     assertEquals(getTool("outlook", "move_shared_mailbox_email").endpoint?.body, {
       destinationId: {
         type: "string",

@@ -1,7 +1,7 @@
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   LOCAL_INTEGRATION_REQUEST_INVALID,
   type LocalIntegrationDiagnosticIdentity,
@@ -10,6 +10,7 @@ import {
 } from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
+  MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
 } from "#veryfront/integrations/limits.ts";
 import type { IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -63,6 +64,9 @@ const setTimeoutIntrinsic = setTimeout;
 const StringConstructor = String;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringTrim = String.prototype.trim;
 const stringReplaceAll = String.prototype.replaceAll;
 const stringSlice = String.prototype.slice;
 const textEncoder = new TextEncoder();
@@ -464,6 +468,7 @@ function snapshotAndValidateArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  assertSupportedResponseEncoding(endpoint);
   const snapshot = snapshotArguments(args);
   assertKnownArguments(snapshot, endpoint);
 
@@ -489,6 +494,22 @@ function snapshotAndValidateArguments(
   }
 
   return snapshot;
+}
+
+function isBinaryResponse(endpoint: IntegrationEndpoint): boolean {
+  return endpoint.response?.encoding === "base64";
+}
+
+/** A binary response is a byte-exact download: GET only, never reshaped by a transform. */
+function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
+  if (!isBinaryResponse(endpoint)) return;
+  if (endpoint.method !== "GET") {
+    requestInvalid("Local integration binary responses require a GET endpoint");
+  }
+  const transform = endpoint.response?.transform;
+  if (transform !== undefined && transform !== "") {
+    requestInvalid("Local integration binary responses cannot declare a transform");
+  }
 }
 
 function serializeJson(value: unknown): string {
@@ -673,22 +694,32 @@ export const guardedTransport: LocalIntegrationEndpointTransport = async (reques
   });
 };
 
-function contentLengthWithinLimit(response: Response): boolean {
-  const raw = apply(headersGet, responseHeadersValue(response), [
-    "content-length",
-  ]) as string | null;
-  if (raw === null) return true;
+function responseHeaderValue(response: Response, name: string): string | null {
+  return apply(headersGet, responseHeadersValue(response), [name]) as string | null;
+}
+
+/**
+ * Reads a declared content length that does not exceed `limit`.
+ *
+ * Returns `null` when no length is declared and `false` when the declaration is
+ * malformed or over the limit.
+ */
+function declaredContentLength(response: Response, limit: number): number | null | false {
+  const raw = responseHeaderValue(response, "content-length");
+  if (raw === null) return null;
   if (raw.length === 0) return false;
   let value = 0;
   for (let index = 0; index < raw.length; index++) {
     const code = charCodeAt(raw, index);
     if (code < 48 || code > 57) return false;
     value = value * 10 + code - 48;
-    if (!numberIsSafeInteger(value) || value > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES) {
-      return false;
-    }
+    if (!numberIsSafeInteger(value) || value > limit) return false;
   }
-  return true;
+  return value;
+}
+
+function contentLengthWithinLimit(response: Response): boolean {
+  return declaredContentLength(response, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES) !== false;
 }
 
 function decodedByteLength(value: string): number {
@@ -749,11 +780,119 @@ async function readResponseJson(
   return snapshot.value;
 }
 
+const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Standard base64 that reads no mutable globals, so patched `btoa`/`Buffer` cannot alter it. */
+function encodeBase64(bytes: Uint8Array, size: number): string {
+  let encoded = "";
+  let index = 0;
+  for (; index + 2 < size; index += 3) {
+    const chunk = (bytes[index]! << 16) | (bytes[index + 1]! << 8) | bytes[index + 2]!;
+    encoded += BASE64_ALPHABET[chunk >> 18]! + BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      BASE64_ALPHABET[(chunk >> 6) & 63]! + BASE64_ALPHABET[chunk & 63]!;
+  }
+  if (index < size) {
+    const second = index + 1 < size ? bytes[index + 1]! : 0;
+    const chunk = (bytes[index]! << 16) | (second << 8);
+    encoded += BASE64_ALPHABET[chunk >> 18]! + BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      (index + 1 < size ? BASE64_ALPHABET[(chunk >> 6) & 63]! : "=") + "=";
+  }
+  return encoded;
+}
+
+/** Content codings that fetch decodes before the body is read. */
+function isDecodedContentCoding(coding: string): boolean {
+  return coding === "gzip" || coding === "x-gzip" || coding === "deflate" || coding === "br";
+}
+
+/**
+ * Classifies a response's Content-Encoding list, case-insensitively.
+ *
+ * Returns `"none"` when every coding is absent or identity, `"decoded"` when
+ * fetch decoded the body, and `null` when any coding is one fetch passes
+ * through undecoded, so the body is not the original bytes.
+ */
+function responseContentCoding(response: Response): "none" | "decoded" | null {
+  const raw = responseHeaderValue(response, "content-encoding");
+  if (raw === null) return "none";
+  const list = apply(stringToLowerCase, raw, []) as string;
+  let result: "none" | "decoded" = "none";
+  let start = 0;
+  while (start <= list.length) {
+    const comma = apply(stringIndexOf, list, [",", start]) as number;
+    const end = comma < 0 ? list.length : comma;
+    const coding = apply(stringTrim, slice(list, start, end), []) as string;
+    if (isDecodedContentCoding(coding)) result = "decoded";
+    else if (coding !== "" && coding !== "identity") return null;
+    start = end + 1;
+  }
+  return result;
+}
+
+/**
+ * Reads a binary body byte-exact, without text decoding or JSON parsing.
+ *
+ * Fails closed rather than returning partial content: an empty body, a body
+ * over the limit, a body shorter or longer than its declared length, or a
+ * failed stream is rejected without exposing any of its bytes.
+ */
+async function readResponseBinary(
+  response: Response,
+  signal: AbortSignal,
+  identity: LocalIntegrationDiagnosticIdentity,
+  status: number,
+): Promise<unknown> {
+  const coding = responseContentCoding(response);
+  // fetch decodes gzip/br bodies but keeps the encoded Content-Length, which
+  // says nothing about the decoded size, so only an unencoded body is checked
+  // against it. A truncated encoded stream fails in the decoder instead.
+  const declared = coding === "decoded"
+    ? null
+    : declaredContentLength(response, MAX_INTEGRATION_BINARY_RESPONSE_BYTES);
+  if (coding === null || declared === false) {
+    cancelResponseBody(response);
+    responseInvalid(identity, status);
+  }
+  let bytes: Uint8Array;
+  let truncated: boolean;
+  try {
+    ({ bytes, truncated } = await readResponseBytesPrefix(
+      response,
+      MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
+      signal,
+    ));
+  } catch {
+    responseInvalid(identity, status);
+  }
+  if (!typedArrayByteLength) responseInvalid(identity, status);
+  const size = apply(typedArrayByteLength, bytes, []) as number;
+  // An empty body is no download at all, so it fails like a 204 instead of
+  // passing as empty content.
+  const lengthMismatch = declared !== null && size !== declared;
+  if (truncated || size === 0 || lengthMismatch) {
+    responseInvalid(identity, status);
+  }
+  const rawContentType = responseHeaderValue(response, "content-type") ?? "";
+  const parameterStart = apply(stringIndexOf, rawContentType, [";"]) as number;
+  const contentType = apply(
+    stringTrim,
+    parameterStart < 0 ? rawContentType : slice(rawContentType, 0, parameterStart),
+    [],
+  ) as string;
+  return freeze({
+    encoding: "base64",
+    content_base64: encodeBase64(bytes, size),
+    size,
+    content_type: contentType === "" ? "application/octet-stream" : contentType,
+  });
+}
+
 async function executeTransportRequest(
   request: LocalIntegrationEndpointTransportRequest,
   transport: LocalIntegrationEndpointTransport,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
+  binary = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -765,6 +904,15 @@ async function executeTransportRequest(
   if (status < 200 || status >= 300) {
     cancelResponseBody(response);
     requestFailed(identity, status);
+  }
+  if (binary) {
+    // Only a complete 200 body is the requested content. 204 has none and
+    // 206 is a partial range, so neither may stand in for the original bytes.
+    if (status !== 200) {
+      cancelResponseBody(response);
+      responseInvalid(identity, status);
+    }
+    return freeze({ status, value: await readResponseBinary(response, signal, identity, status) });
   }
   if (status === 204) return freeze({ status, value: null });
   return freeze({
@@ -818,13 +966,16 @@ export async function executeLocalIntegrationEndpoint(
       signalLease.signal,
       body,
     );
+    const binary = isBinaryResponse(options.endpoint);
     const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
       options,
+      binary,
     );
     throwIfCallerAborted(options.signal);
+    if (binary) return result.value;
     return transformResponse(
       result.value,
       options.endpoint.response?.transform,

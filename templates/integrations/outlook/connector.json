@@ -2207,6 +2207,40 @@
       }
     },
     {
+      "id": "outlook__get_shared_mailbox_email_mime",
+      "name": "Get Shared Mailbox Email MIME",
+      "description": "Get shared mailbox email MIME",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/$value",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "response": {
+          "encoding": "base64"
+        }
+      }
+    },
+    {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
       "description": "List calendars",

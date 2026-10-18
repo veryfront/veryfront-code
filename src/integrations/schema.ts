@@ -416,6 +416,11 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     contentType: v.string().optional(),
     response: v.object({
       transform: v.string().optional(),
+      // "base64": a GET endpoint returns its body bytes unchanged as
+      // { encoding, content_base64, size, content_type } instead of parsed JSON.
+      // Honoured by the local endpoint executor and the hosted API executor;
+      // service-account sources (such as Salesforce) do not serve such endpoints.
+      encoding: v.enum(["base64"]).optional(),
       enrich: getIntegrationEndpointResponseEnrichmentSchema().optional(),
       historicalSummary: getIntegrationEndpointHistoricalSummarySchema().optional(),
     }).optional(),
