@@ -1688,3 +1688,84 @@ describe("eval/runner", () => {
     ]);
   });
 });
+
+describe("expected error outcomes", () => {
+  it("passes a declared terminal error and keeps its error and trace", async () => {
+    const definition = evalAgent({
+      target: "agent:test",
+      dataset: [{ id: "invalid-reference", input: "invalid", expectedOutcome: "error" }],
+      check({ record }) {
+        assertEquals(record.error, "Invalid reference");
+      },
+    });
+    const report = await runEval(definition, {
+      adapters: {
+        agent: () => ({ completed: false, outcome: "error", error: "Invalid reference" }),
+      },
+    });
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.gateFailures, []);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "Invalid reference");
+  });
+});
+
+describe("expected outcome gates", () => {
+  for (const targetKind of ["agent", "tool"] as const) {
+    it(`keeps ${targetKind} success, infrastructure, and grading failures strict`, async () => {
+      const define = targetKind === "agent" ? evalAgent : evalTool;
+      const results = [
+        { completed: true },
+        { completed: false, error: "Connection failed" },
+        { completed: false },
+        { completed: false, error: "Invalid input", outcome: "error" as const },
+      ];
+      for (const [index, result] of results.entries()) {
+        for (const expectedOutcome of [undefined, "success", "error"] as const) {
+          const definition = define({
+            target: "test",
+            dataset: [{ id: "case", input: {}, expectedOutcome }],
+          });
+          const report = await runEval(definition, {
+            adapters: { [targetKind]: () => ({ output: {}, ...result }) },
+          });
+          assertEquals(
+            report.summary.passed,
+            expectedOutcome === "error" ? Number(index === 3) : Number(index === 0),
+          );
+        }
+      }
+      for (const grading of ["assertion", "check-throw", "metric-throw", "timeout"] as const) {
+        const definition = define({
+          target: "test",
+          dataset: [{ id: "case", input: {}, expectedOutcome: "error" }],
+          metrics: grading === "metric-throw"
+            ? [{
+              ...metrics.answer.exactMatch().soft(),
+              evaluate() {
+                throw new Error("Grading failed");
+              },
+            }]
+            : [],
+          async check({ expect }) {
+            if (grading === "assertion") expect.completed().gate();
+            if (grading === "check-throw") throw new Error("Grading failed");
+            if (grading === "timeout") await new Promise((resolve) => setTimeout(resolve, 30));
+          },
+        });
+        const report = await runEval(definition, {
+          recordTimeoutMs: grading === "timeout" ? 5 : undefined,
+          adapters: {
+            [targetKind]: () => ({
+              output: {},
+              completed: false,
+              outcome: "error",
+              error: "Invalid input",
+            }),
+          },
+        });
+        assertEquals(report.summary.failed, 1, grading);
+      }
+    });
+  }
+});

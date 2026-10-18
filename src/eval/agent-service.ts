@@ -928,6 +928,9 @@ export function createAgentServiceEvalAdapter(
         ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
+        ...(response.ok && run.eventTypes.includes(agUiSseEventTypes.runError)
+          ? { outcome: "error" as const }
+          : {}),
         ...(!completed ? { error: describeFailedRun(response, run) } : {}),
       };
     } catch (error) {

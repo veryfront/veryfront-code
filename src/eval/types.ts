@@ -140,6 +140,8 @@ export interface EvalReportExporterRegistry {
 
 /** Normalized dataset example used by eval runners and reports. */
 export interface EvalExample {
+  /** Expected target outcome. Defaults to success. */
+  expectedOutcome?: "success" | "error";
   id: string;
   input: unknown;
   reference?: unknown;
@@ -148,6 +150,8 @@ export interface EvalExample {
 
 /** Dataset example shape accepted by eval definitions. */
 export type EvalExampleInput = {
+  /** Expected target outcome. Defaults to success. */
+  expectedOutcome?: "success" | "error";
   id: string;
   input: unknown;
   reference?: unknown;
@@ -320,6 +324,10 @@ export interface EvalTrace {
 
 /** One executed example and repetition inside an eval report. */
 export interface EvalRecord {
+  /** Expected target outcome. Defaults to success. */
+  expectedOutcome?: "success" | "error";
+  /** Confirmed terminal target error, distinct from execution or grading failures. */
+  outcome?: "error";
   id: string;
   evalId: string;
   exampleId: string;
@@ -515,6 +523,8 @@ export interface EvalAgentAdapterContext {
 
 /** Agent adapter result normalized into an eval record. */
 export interface EvalAgentAdapterResult {
+  /** Set only for a confirmed terminal target error, never a transport failure. */
+  outcome?: "error";
   text?: string;
   json?: unknown;
   output?: unknown;
@@ -551,6 +561,8 @@ export interface EvalToolAdapterContext {
 
 /** Tool adapter result normalized into an eval record. */
 export interface EvalToolAdapterResult {
+  /** Set only for a confirmed terminal target error, never a transport failure. */
+  outcome?: "error";
   output: unknown;
   toolCallId?: string;
   trace?: Partial<EvalTrace>;

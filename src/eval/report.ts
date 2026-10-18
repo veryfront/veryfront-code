@@ -67,6 +67,7 @@ function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
     examples: examples.map((example) => ({
       id: example.id,
       input: example.input,
+      ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: example.metadata } : {}),
     })),
@@ -98,8 +99,21 @@ function isBlockingFailure(result: EvalMetricResult): boolean {
     (result.severity === "gate" || result.severity === "budget");
 }
 
-function recordPassed(record: EvalRecord): boolean {
-  if (!record.completed || record.error) return false;
+/** Return the mandatory outcome gate failure, if any. */
+export function evalRecordOutcomeFailure(record: EvalRecord): string | undefined {
+  if (record.expectedOutcome === "error") {
+    return record.outcome === "error"
+      ? undefined
+      : record.error ?? "Expected a terminal target error.";
+  }
+  return !record.completed || record.error
+    ? record.error ?? RECORD_INCOMPLETE_EXPLANATION
+    : undefined;
+}
+
+/** Check the outcome gate and all blocking metric and check results. */
+export function evalRecordPassed(record: EvalRecord): boolean {
+  if (evalRecordOutcomeFailure(record) !== undefined) return false;
   const results = [...(record.metrics ?? []), ...(record.checks ?? [])];
   return results.every((result) => !isBlockingFailure(result));
 }
@@ -189,7 +203,8 @@ function summarizeUsage(records: EvalRecord[]): EvalUsageSummary {
 }
 
 function createRecordFailure(record: EvalRecord): EvalGateFailureSummary | null {
-  if (record.completed && !record.error) return null;
+  const explanation = evalRecordOutcomeFailure(record);
+  if (explanation === undefined) return null;
   return {
     recordId: record.id,
     exampleId: record.exampleId,
@@ -197,7 +212,7 @@ function createRecordFailure(record: EvalRecord): EvalGateFailureSummary | null 
     name: "record.error",
     family: "check",
     severity: "gate",
-    explanation: record.error ?? RECORD_INCOMPLETE_EXPLANATION,
+    explanation,
   };
 }
 
@@ -237,7 +252,7 @@ function summarizeFailedExamples(records: EvalRecord[]): {
   const examples = new Map<string, { passed: number; failed: number }>();
   for (const record of records) {
     const summary = examples.get(record.exampleId) ?? { passed: 0, failed: 0 };
-    if (recordPassed(record)) {
+    if (evalRecordPassed(record)) {
       summary.passed += 1;
     } else {
       summary.failed += 1;
@@ -320,7 +335,7 @@ function summarizeMetricResults(records: EvalRecord[]): EvalMetricSummary[] {
 
 /** Summarize eval records into pass/fail and metric aggregates. */
 export function summarizeEvalRecords(records: EvalRecord[]): EvalReportSummary {
-  const passed = records.filter(recordPassed).length;
+  const passed = records.filter(evalRecordPassed).length;
   const failed = records.length - passed;
   const { failedExamples, flakes } = summarizeFailedExamples(records);
   return {
