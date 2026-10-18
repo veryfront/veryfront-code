@@ -158,6 +158,53 @@ describe("llm/generate", () => {
     }
   });
 
+  it("keeps contact values in text and object when security is false", async () => {
+    const stub = stubProvider('{"city":"ada@example.com"}');
+    try {
+      const result = await generate({
+        input: "where",
+        model: "stub/stub",
+        outputSchema: SCHEMA,
+        security: false,
+      });
+      assertEquals(result.text, '{"city":"ada@example.com"}');
+      assertEquals(result.object, { city: "ada@example.com" });
+      assertEquals(
+        agentRegistry.getAllIds(),
+        [],
+        "the ephemeral agent must stay unregistered when security is false",
+      );
+    } finally {
+      stub.dispose();
+    }
+  });
+
+  it("does not forward security to the model call", async () => {
+    const stub = stubProvider("hello");
+    try {
+      await generate({ input: "hi", model: "stub/stub", security: false });
+      const [call] = stub.calls;
+      assertEquals(call !== undefined && "security" in call, false);
+      assertEquals(
+        JSON.stringify(call ?? {}).includes('"security"'),
+        false,
+        "security must configure the agent, not travel in the provider request",
+      );
+    } finally {
+      stub.dispose();
+    }
+  });
+
+  it("accepts only false as a security value", () => {
+    const typeCheckOnly = () =>
+      generate({
+        input: "hi",
+        // @ts-expect-error security only accepts false; omit it to keep the default.
+        security: true,
+      });
+    assertEquals(typeof typeCheckOnly, "function");
+  });
+
   it("omits object when no schema is requested", async () => {
     const stub = stubProvider("plain");
     try {
