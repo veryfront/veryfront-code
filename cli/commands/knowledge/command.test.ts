@@ -697,7 +697,7 @@ describe("collectKnowledgeSources", () => {
       localSourcePath: null,
       reason: "unsupported_file_type",
       message:
-        "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.",
+        "OKF bundle mode preserves Markdown documents and referenced text and binary companions; unreferenced generated artifacts are skipped.",
     }]);
   });
 

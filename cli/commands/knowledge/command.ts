@@ -358,7 +358,7 @@ const OKF_COMPANION_REFERENCE_KEYS = new Set([
 ]);
 const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
 function okfBundleSkipMessage(): string {
-  return "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.";
+  return "OKF bundle mode preserves Markdown documents and referenced text and binary companions; unreferenced generated artifacts are skipped.";
 }
 
 function isMarkdownPath(path: string): boolean {
