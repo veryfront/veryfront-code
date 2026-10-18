@@ -8,7 +8,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isCanonicalKnowledgePath(path: string): boolean {
   return path.length > 0 && path.length <= 1024 &&
     new TextEncoder().encode(path).length <= 1024 && path.split("/").length <= 64 &&
-    path === path.normalize("NFC") && !/[\\<>:"|?*\x00-\x1f\x7f]/.test(path) &&
+    path === path.normalize("NFC") && !/[\\<>:"|?*]/.test(path) &&
+    ![...path].some((character) =>
+      character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+    ) &&
     path.split("/").every((part) =>
       part.length > 0 && part !== "." && part !== ".." && !/[. ]$/.test(part) &&
       !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)
