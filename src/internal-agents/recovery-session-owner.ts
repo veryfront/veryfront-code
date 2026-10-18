@@ -46,8 +46,8 @@ export class RecoverySessionOwner {
   private executionRequired = false;
   private executionHome: DurableRunHome | undefined;
   private constructor(
-    private admission: RecoveryAdmission,
-    private validateCurrentOwnership: () => Promise<unknown>,
+    private readonly admission: RecoveryAdmission,
+    private readonly validateCurrentOwnership: () => Promise<unknown>,
   ) {}
 
   static async acquire(input: {

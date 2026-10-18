@@ -101,53 +101,30 @@ function readDetachableProperty(target: DetachableContainer, key: string): unkno
   return descriptor.value;
 }
 
-/** Copy a validated JSON value into containers no tenant prototype can reach. */
-function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
-  if (value === null) return null;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
+function detachJsonArray(value: unknown[], depth: number, budget: { nodes: number }): unknown[] {
+  const detached = createDetachedArray();
+  // `length` is a non-enumerable own data property on every array exotic
+  // object, so it is read directly rather than through the enumerable check.
+  const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
+    | PropertyDescriptor
+    | undefined;
+  const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
+      typeof lengthDescriptor.value === "number"
+    ? lengthDescriptor.value
+    : 0;
+  for (let index = 0; index < length; index += 1) {
+    const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
+    // JSON.stringify writes null for array entries it cannot represent.
+    detached[index] = entry === OMITTED ? null : entry;
   }
-  if (
-    typeof value === "undefined" || typeof value === "function" || typeof value === "symbol"
-  ) {
-    return OMITTED;
-  }
-  if (typeof value !== "object") {
-    // bigint, and any other primitive JSON.stringify refuses to represent.
-    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
-  }
-  // Root sits at depth 0 and the maximum depth is inclusive, matching the
-  // `depth > maxDepth` rule the snapshot validator behind
-  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
-  // the persister never rejects a checkpoint that read-back would accept.
-  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
-    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
-  }
-  if (budget.nodes <= 0) {
-    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
-  }
-  budget.nodes -= 1;
+  return detached;
+}
 
-  if (isArray(value)) {
-    const detached = createDetachedArray();
-    // `length` is a non-enumerable own data property on every array exotic
-    // object, so it is read directly rather than through the enumerable check.
-    const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
-      | PropertyDescriptor
-      | undefined;
-    const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
-        typeof lengthDescriptor.value === "number"
-      ? lengthDescriptor.value
-      : 0;
-    for (let index = 0; index < length; index += 1) {
-      const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
-      // JSON.stringify writes null for array entries it cannot represent.
-      detached[index] = entry === OMITTED ? null : entry;
-    }
-    return detached;
-  }
-
-  const record = value as Record<string, unknown>;
+function detachJsonRecord(
+  record: Record<string, unknown>,
+  depth: number,
+  budget: { nodes: number },
+): Record<string, unknown> {
   const detached = createDetachedObject();
   // `Reflect.ownKeys` hands back an ordinary array, so `for...of` would resolve
   // `Symbol.iterator` through the shared `Array.prototype` and hand a tenant
@@ -175,6 +152,40 @@ function detachJsonValue(value: unknown, depth: number, budget: { nodes: number 
   return detached;
 }
 
+/** Copy a validated JSON value into containers no tenant prototype can reach. */
+function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (
+    value === undefined || typeof value === "function" || typeof value === "symbol"
+  ) {
+    return OMITTED;
+  }
+  if (typeof value !== "object") {
+    // bigint, and any other primitive JSON.stringify refuses to represent.
+    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
+  }
+  // Root sits at depth 0 and the maximum depth is inclusive, matching the
+  // `depth > maxDepth` rule the snapshot validator behind
+  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
+  // the persister never rejects a checkpoint that read-back would accept.
+  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
+  }
+  if (budget.nodes <= 0) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
+  }
+  budget.nodes -= 1;
+
+  if (isArray(value)) {
+    return detachJsonArray(value, depth, budget);
+  }
+
+  return detachJsonRecord(value as Record<string, unknown>, depth, budget);
+}
+
 /** Serialize the privileged append body without touching a shared prototype. */
 function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): string {
   const budget = { nodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES };
@@ -187,6 +198,15 @@ function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): st
   const body = createDetachedObject();
   body.events = events;
   return apply(jsonStringify, JSON, [body]) as string;
+}
+
+function serializeCheckpointAppendBodyOpaque(checkpoint: ProviderReplayCheckpoint): string {
+  try {
+    return serializeCheckpointAppendBody(checkpoint);
+  } catch (error) {
+    if (isPersistenceFailure(error)) throw error;
+    throw persistenceFailure("Provider replay checkpoint is not serializable");
+  }
 }
 
 function snapshotFetch(fetchImpl: Fetch): Fetch {
@@ -266,13 +286,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
     // may throw a tenant-controlled value. Only this module's own typed
     // failures may cross the boundary; everything else becomes opaque, exactly
     // as it did when the body was serialized inside the request's try block.
-    let body: string;
-    try {
-      body = serializeCheckpointAppendBody(checkpoint);
-    } catch (error) {
-      if (isPersistenceFailure(error)) throw error;
-      throw persistenceFailure("Provider replay checkpoint is not serializable");
-    }
+    const body = serializeCheckpointAppendBodyOpaque(checkpoint);
     const controller = new AbortController();
     const timeoutError = persistenceFailure("Provider replay checkpoint persistence timed out");
     const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);

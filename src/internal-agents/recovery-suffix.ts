@@ -145,6 +145,250 @@ export function recoverySuffixPayloadHash(payload: unknown): string {
   return privateSha256Hex(canonical(value));
 }
 
+type RecoverySuffixAdmission = NonNullable<
+  ReturnType<typeof getVerifiedControlPlaneRecoveryAdmission>
+>;
+type RecoverySuffixEqual = (left: unknown, right: unknown) => boolean;
+
+function assertRecoverySuffixOwnershipBinding(
+  target: RecoveryOwnershipReceipt,
+  admission: RecoverySuffixAdmission,
+  snapshot: RecoverySnapshot | undefined,
+  same: RecoverySuffixEqual,
+): void {
+  if (
+    target.identity.projectId !== admission.identity.projectId ||
+    target.identity.canonicalRunId !== admission.identity.canonicalRunId ||
+    target.identity.publicRunId !== admission.identity.publicRunId ||
+    target.identity.agentId !== admission.identity.agentId ||
+    target.identity.threadId !== admission.identity.threadId ||
+    !same(target.generation, admission.generation) ||
+    (snapshot !== undefined && (
+      !same(snapshot.binding.identity, admission.identity) ||
+      !same(snapshot.binding.sourceBinding, admission.sourceBinding) ||
+      snapshot.acknowledgedEventId > target.acknowledgedEventId ||
+      snapshot.acknowledgedExternalSequence > target.acknowledgedExternalSequence
+    ))
+  ) throw invalidSuffix();
+}
+
+function assertRecoverySuffixPageEnvelope(
+  page: RecoverySuffixPage,
+  bytes: number,
+  deadline: number,
+  pageStarted: number,
+  target: RecoveryOwnershipReceipt,
+  admission: RecoverySuffixAdmission,
+  same: RecoverySuffixEqual,
+): void {
+  if (
+    bytes > MAX_RECOVERY_SUFFIX_PAGE_BYTES &&
+    page.events.length + page.continuations.length !== 1
+  ) throw invalidSuffix();
+  if (
+    monotonicNow() >= Math.min(deadline, pageStarted + page.leaseRemainingMs) ||
+    !same(page.identity, target.identity) || !same(page.generation, admission.generation) ||
+    !same(page.source.sourceBinding, admission.sourceBinding) ||
+    page.source.sourceHash !== admission.identity.sourceHash ||
+    page.target.acknowledgedEventId !== target.acknowledgedEventId ||
+    page.target.acknowledgedExternalSequence !== target.acknowledgedExternalSequence
+  ) throw invalidSuffix();
+}
+
+function readRecoverySuffixSeed(
+  snapshot: RecoverySnapshot | undefined,
+  page: RecoverySuffixPage,
+  admission: RecoverySuffixAdmission,
+  target: RecoveryOwnershipReceipt,
+  same: RecoverySuffixEqual,
+): RecoverySnapshot | undefined {
+  const first = page.continuations[0];
+  if (!snapshot && first) {
+    snapshot = parseRecoverySnapshot(first.fact.snapshot);
+    if (
+      !same(snapshot.binding.identity, admission.identity) ||
+      !same(snapshot.binding.sourceBinding, admission.sourceBinding) ||
+      snapshot.acknowledgedExternalSequence !== 1 ||
+      snapshot.acknowledgedEventId > target.acknowledgedEventId
+    ) throw invalidSuffix();
+  }
+  return snapshot;
+}
+
+function appendRecoverySuffixEvents(
+  page: RecoverySuffixPage,
+  events: RecoverySuffixPage["events"],
+  afterEventId: number,
+  target: RecoveryOwnershipReceipt,
+  externalSequence: number,
+): { lastEventId: number; externalSequence: number } {
+  let lastEventId = afterEventId;
+  for (let eventIndex = 0; eventIndex < page.events.length; eventIndex++) {
+    const event = page.events[eventIndex]!;
+    if (
+      event.eventId <= lastEventId || event.eventId > target.acknowledgedEventId ||
+      event.dispatchFactEventId >= event.eventId ||
+      event.payloadHash !== recoverySuffixPayloadHash(event.payload)
+    ) throw invalidSuffix();
+    lastEventId = event.eventId;
+    if (event.externalSequence !== null && event.externalSequence !== ++externalSequence) {
+      throw invalidSuffix();
+    }
+    pushPrivateArray(events, event);
+  }
+  return { lastEventId, externalSequence };
+}
+
+function assertRecoverySuffixContinuationCursor(
+  continuation: RecoverySuffixPage["continuations"][number],
+  fact: RecoverySuffixPage["continuations"][number]["fact"],
+  snapshot: RecoverySnapshot,
+  previous: RecoverySuffixPage["continuations"][number]["fact"] | undefined,
+  target: RecoveryOwnershipReceipt,
+  lastCheckpointId: number,
+): void {
+  if (
+    continuation.checkpointEventId <= lastCheckpointId ||
+    continuation.checkpointEventId > target.acknowledgedEventId ||
+    fact.dispatchFactEventId >= fact.snapshotEventId ||
+    fact.snapshotEventId >= continuation.checkpointEventId ||
+    (previous !== undefined && (
+      fact.snapshotEventId < previous.snapshotEventId ||
+      fact.snapshotExternalSequence < previous.snapshotExternalSequence
+    )) ||
+    fact.snapshotEventId < snapshot.acknowledgedEventId ||
+    fact.snapshotExternalSequence < snapshot.acknowledgedExternalSequence ||
+    fact.snapshotExternalSequence > target.acknowledgedExternalSequence
+  ) throw invalidSuffix();
+}
+
+function assertRecoverySuffixContinuationIntegrity(
+  continuation: RecoverySuffixPage["continuations"][number],
+  fact: RecoverySuffixPage["continuations"][number]["fact"],
+  restored: RecoverySnapshot,
+  page: RecoverySuffixPage,
+  admission: RecoverySuffixAdmission,
+  same: RecoverySuffixEqual,
+): void {
+  if (
+    continuation.payloadHash !== recoverySuffixPayloadHash(fact) ||
+    !same(fact.source, page.source) ||
+    !same(restored.binding.generation, fact.generation) ||
+    !same(restored.binding.identity, admission.identity) ||
+    !same(restored.binding.sourceBinding, admission.sourceBinding) ||
+    restored.acknowledgedEventId !== fact.snapshotEventId ||
+    restored.acknowledgedExternalSequence !== fact.snapshotExternalSequence ||
+    !restored.runtimeContinuation ||
+    somePrivateArray(restored.toolBoundaries, (boundary) => boundary.kind === "admitted-intent")
+  ) throw invalidSuffix();
+}
+
+function sealAuthenticatedRecoverySuffix(
+  input: Parameters<typeof readAuthenticatedRecoverySuffix>[0],
+  state: {
+    snapshot: RecoverySnapshot;
+    events: RecoverySuffixPage["events"];
+    continuations: RecoverySuffixPage["continuations"];
+    bootstrap: boolean;
+    deadline: number;
+  },
+  page: RecoverySuffixPage,
+  same: RecoverySuffixEqual,
+) {
+  let { snapshot } = state;
+  const { events, continuations, bootstrap, deadline } = state;
+  const latest = continuations[continuations.length - 1];
+  const selected = latest ? parseRecoverySnapshot(latest.fact.snapshot) : snapshot;
+  const anchorGeneration = input.snapshot?.binding.generation;
+  // Discarding an earlier complete prefix does not waive its provenance:
+  // every generation must be the supplied local anchor or have its own
+  // authenticated sealed continuation and exact dispatch fact.
+  if (
+    somePrivateArray(
+      events,
+      (event) =>
+        !(anchorGeneration && same(event.appendGeneration, anchorGeneration)) &&
+        !somePrivateArray(continuations, ({ fact }) =>
+          same(event.appendGeneration, fact.generation) &&
+          event.dispatchFactEventId === fact.dispatchFactEventId),
+    )
+  ) throw invalidSuffix();
+  const generation = selected.binding.generation;
+  const selectedEventId = selected.acknowledgedEventId;
+  if (
+    somePrivateArray(events, (event) =>
+      event.eventId > selectedEventId &&
+      !same(event.appendGeneration, generation))
+  ) throw invalidSuffix();
+  if (bootstrap) {
+    if (!latest) throw invalidSuffix();
+    snapshot = selected;
+  }
+  if (monotonicNow() >= deadline) throw invalidSuffix();
+  const suffix = { snapshot, events, continuations, target: page.target };
+  authenticatedSuffixes.set(suffix, {
+    snapshot: privateJsonStringify(snapshot),
+    suffix: privateJsonStringify(suffix),
+  });
+  return suffix;
+}
+
+function appendRecoverySuffixContinuations(
+  page: RecoverySuffixPage,
+  continuations: RecoverySuffixPage["continuations"],
+  snapshot: RecoverySnapshot | undefined,
+  afterEventId: number,
+  target: RecoveryOwnershipReceipt,
+  admission: RecoverySuffixAdmission,
+  same: RecoverySuffixEqual,
+): number {
+  let lastCheckpointId = afterEventId;
+  for (
+    let continuationIndex = 0;
+    continuationIndex < page.continuations.length;
+    continuationIndex++
+  ) {
+    const continuation = page.continuations[continuationIndex]!;
+    if (!snapshot) throw invalidSuffix();
+    const fact = continuation.fact;
+    const restored = parseRecoverySnapshot(fact.snapshot);
+    const previous = continuations[continuations.length - 1]?.fact;
+    assertRecoverySuffixContinuationCursor(
+      continuation,
+      fact,
+      snapshot,
+      previous,
+      target,
+      lastCheckpointId,
+    );
+    assertRecoverySuffixContinuationIntegrity(
+      continuation,
+      fact,
+      restored,
+      page,
+      admission,
+      same,
+    );
+    lastCheckpointId = continuation.checkpointEventId;
+    pushPrivateArray(continuations, continuation);
+  }
+  return lastCheckpointId;
+}
+
+function assertRecoverySuffixFinalOwnership(
+  final: RecoveryOwnershipReceipt,
+  target: RecoveryOwnershipReceipt,
+  deadline: number,
+  same: RecoverySuffixEqual,
+): void {
+  if (
+    monotonicNow() >= deadline || !same(final.identity, target.identity) ||
+    !same(final.generation, target.generation) ||
+    final.acknowledgedEventId !== target.acknowledgedEventId ||
+    final.acknowledgedExternalSequence !== target.acknowledgedExternalSequence
+  ) throw invalidSuffix();
+}
+
 /**
  * Reads only authenticated, bounded raw suffix pages. It never derives continuation
  * state from transcript length, a tool result, or a global database cursor.
@@ -176,20 +420,7 @@ export async function readAuthenticatedRecoverySuffix(input: {
   const deadline = Math.min(initialStarted + target.leaseRemainingMs, initialStarted + 10_000);
   const same = (left: unknown, right: unknown) =>
     privateJsonStringify(left) === privateJsonStringify(right);
-  if (
-    target.identity.projectId !== admission.identity.projectId ||
-    target.identity.canonicalRunId !== admission.identity.canonicalRunId ||
-    target.identity.publicRunId !== admission.identity.publicRunId ||
-    target.identity.agentId !== admission.identity.agentId ||
-    target.identity.threadId !== admission.identity.threadId ||
-    !same(target.generation, admission.generation) ||
-    (snapshot !== undefined && (
-      !same(snapshot.binding.identity, admission.identity) ||
-      !same(snapshot.binding.sourceBinding, admission.sourceBinding) ||
-      snapshot.acknowledgedEventId > target.acknowledgedEventId ||
-      snapshot.acknowledgedExternalSequence > target.acknowledgedExternalSequence
-    ))
-  ) throw invalidSuffix();
+  assertRecoverySuffixOwnershipBinding(target, admission, snapshot, same);
   let afterEventId = snapshot?.acknowledgedEventId ?? 0;
   let externalSequence = snapshot?.acknowledgedExternalSequence ?? 0;
   let totalBytes = 0;
@@ -213,126 +444,41 @@ export async function readAuthenticatedRecoverySuffix(input: {
       throw invalidSuffix();
     }
     const page = getRecoverySuffixPageSchema().parse(raw);
-    if (
-      bytes > MAX_RECOVERY_SUFFIX_PAGE_BYTES &&
-      page.events.length + page.continuations.length !== 1
-    ) throw invalidSuffix();
-    if (
-      monotonicNow() >= Math.min(deadline, pageStarted + page.leaseRemainingMs) ||
-      !same(page.identity, target.identity) || !same(page.generation, admission.generation) ||
-      !same(page.source.sourceBinding, admission.sourceBinding) ||
-      page.source.sourceHash !== admission.identity.sourceHash ||
-      page.target.acknowledgedEventId !== target.acknowledgedEventId ||
-      page.target.acknowledgedExternalSequence !== target.acknowledgedExternalSequence
-    ) throw invalidSuffix();
+    assertRecoverySuffixPageEnvelope(page, bytes, deadline, pageStarted, target, admission, same);
     // A large transcript and its sealed continuation may occupy separate
     // bounded pages. Buffer authenticated rows until the first sealed seed;
     // complete prefix provenance is checked before selecting the latest seed.
-    const first = page.continuations[0];
-    if (!snapshot && first) {
-      snapshot = parseRecoverySnapshot(first.fact.snapshot);
-      if (
-        !same(snapshot.binding.identity, admission.identity) ||
-        !same(snapshot.binding.sourceBinding, admission.sourceBinding) ||
-        snapshot.acknowledgedExternalSequence !== 1 ||
-        snapshot.acknowledgedEventId > target.acknowledgedEventId
-      ) throw invalidSuffix();
-    }
-    let lastEventId = afterEventId;
-    for (let eventIndex = 0; eventIndex < page.events.length; eventIndex++) {
-      const event = page.events[eventIndex]!;
-      if (
-        event.eventId <= lastEventId || event.eventId > target.acknowledgedEventId ||
-        event.dispatchFactEventId >= event.eventId ||
-        event.payloadHash !== recoverySuffixPayloadHash(event.payload)
-      ) throw invalidSuffix();
-      lastEventId = event.eventId;
-      if (event.externalSequence !== null && event.externalSequence !== ++externalSequence) {
-        throw invalidSuffix();
-      }
-      pushPrivateArray(events, event);
-    }
-    let lastCheckpointId = afterEventId;
-    for (
-      let continuationIndex = 0;
-      continuationIndex < page.continuations.length;
-      continuationIndex++
-    ) {
-      const continuation = page.continuations[continuationIndex]!;
-      if (!snapshot) throw invalidSuffix();
-      const fact = continuation.fact;
-      const restored = parseRecoverySnapshot(fact.snapshot);
-      const previous = continuations[continuations.length - 1]?.fact;
-      if (
-        continuation.checkpointEventId <= lastCheckpointId ||
-        continuation.checkpointEventId > target.acknowledgedEventId ||
-        fact.dispatchFactEventId >= fact.snapshotEventId ||
-        fact.snapshotEventId >= continuation.checkpointEventId ||
-        (previous !== undefined && (
-          fact.snapshotEventId < previous.snapshotEventId ||
-          fact.snapshotExternalSequence < previous.snapshotExternalSequence
-        )) ||
-        fact.snapshotEventId < snapshot.acknowledgedEventId ||
-        fact.snapshotExternalSequence < snapshot.acknowledgedExternalSequence ||
-        fact.snapshotExternalSequence > target.acknowledgedExternalSequence ||
-        continuation.payloadHash !== recoverySuffixPayloadHash(fact) ||
-        !same(fact.source, page.source) ||
-        !same(restored.binding.generation, fact.generation) ||
-        !same(restored.binding.identity, admission.identity) ||
-        !same(restored.binding.sourceBinding, admission.sourceBinding) ||
-        restored.acknowledgedEventId !== fact.snapshotEventId ||
-        restored.acknowledgedExternalSequence !== fact.snapshotExternalSequence ||
-        !restored.runtimeContinuation ||
-        somePrivateArray(restored.toolBoundaries, (boundary) => boundary.kind === "admitted-intent")
-      ) throw invalidSuffix();
-      lastCheckpointId = continuation.checkpointEventId;
-      pushPrivateArray(continuations, continuation);
-    }
+    snapshot = readRecoverySuffixSeed(snapshot, page, admission, target, same);
+    const appended = appendRecoverySuffixEvents(
+      page,
+      events,
+      afterEventId,
+      target,
+      externalSequence,
+    );
+    const lastEventId = appended.lastEventId;
+    externalSequence = appended.externalSequence;
+    const lastCheckpointId = appendRecoverySuffixContinuations(
+      page,
+      continuations,
+      snapshot,
+      afterEventId,
+      target,
+      admission,
+      same,
+    );
     if (page.nextAfterEventId === null) {
       if (!snapshot || externalSequence !== target.acknowledgedExternalSequence) {
         throw invalidSuffix();
       }
       const final = await input.assertCurrentOwnership();
-      if (
-        monotonicNow() >= deadline || !same(final.identity, target.identity) ||
-        !same(final.generation, target.generation) ||
-        final.acknowledgedEventId !== target.acknowledgedEventId ||
-        final.acknowledgedExternalSequence !== target.acknowledgedExternalSequence
-      ) throw invalidSuffix();
-      const latest = continuations[continuations.length - 1];
-      const selected = latest ? parseRecoverySnapshot(latest.fact.snapshot) : snapshot;
-      const anchorGeneration = input.snapshot?.binding.generation;
-      // Discarding an earlier complete prefix does not waive its provenance:
-      // every generation must be the supplied local anchor or have its own
-      // authenticated sealed continuation and exact dispatch fact.
-      if (
-        somePrivateArray(
-          events,
-          (event) =>
-            !(anchorGeneration && same(event.appendGeneration, anchorGeneration)) &&
-            !somePrivateArray(continuations, ({ fact }) =>
-              same(event.appendGeneration, fact.generation) &&
-              event.dispatchFactEventId === fact.dispatchFactEventId),
-        )
-      ) throw invalidSuffix();
-      const generation = selected.binding.generation;
-      const selectedEventId = selected.acknowledgedEventId;
-      if (
-        somePrivateArray(events, (event) =>
-          event.eventId > selectedEventId &&
-          !same(event.appendGeneration, generation))
-      ) throw invalidSuffix();
-      if (bootstrap) {
-        if (!latest) throw invalidSuffix();
-        snapshot = selected;
-      }
-      if (monotonicNow() >= deadline) throw invalidSuffix();
-      const suffix = { snapshot, events, continuations, target: page.target };
-      authenticatedSuffixes.set(suffix, {
-        snapshot: privateJsonStringify(snapshot),
-        suffix: privateJsonStringify(suffix),
-      });
-      return suffix;
+      assertRecoverySuffixFinalOwnership(final, target, deadline, same);
+      return sealAuthenticatedRecoverySuffix(
+        input,
+        { snapshot, events, continuations, bootstrap, deadline },
+        page,
+        same,
+      );
     }
     if (
       page.nextAfterEventId <= afterEventId || page.nextAfterEventId < lastEventId ||
@@ -342,6 +488,25 @@ export async function readAuthenticatedRecoverySuffix(input: {
     afterEventId = page.nextAfterEventId;
   }
   throw invalidSuffix();
+}
+
+function hasAuthenticatedRecoverySuffixProof(
+  proof: ReturnType<typeof authenticatedSuffixes.get>,
+  snapshot: RecoverySnapshot,
+  input: Parameters<typeof materializeAuthenticatedRecoverySuffix>[0],
+): boolean {
+  if (!proof) return false;
+  return proof.snapshot === privateJsonStringify(snapshot) &&
+    proof.suffix === privateJsonStringify(input.suffix);
+}
+
+function assertRecoverySuffixStepPayload(event: RecoverySuffixPage["events"][number]): void {
+  const payload = event.payload;
+  if (
+    payload === null || typeof payload !== "object" || isArray(payload) ||
+    typeof payload.stepName !== "string" || payload.stepName.length === 0 ||
+    payload.stepName.length > 256
+  ) throw invalidSuffix();
 }
 
 /** Restore only an authenticated complete safe fact, then non-state-changing step observations. */
@@ -355,10 +520,7 @@ export function materializeAuthenticatedRecoverySuffix(input: {
 }): RecoverySnapshot {
   const proof = authenticatedSuffixes.get(input.suffix);
   let snapshot = parseRecoverySnapshot(input.snapshot);
-  if (
-    !proof || proof.snapshot !== privateJsonStringify(snapshot) ||
-    proof.suffix !== privateJsonStringify(input.suffix)
-  ) throw invalidSuffix();
+  if (!hasAuthenticatedRecoverySuffixProof(proof, snapshot, input)) throw invalidSuffix();
   const latest = input.suffix.continuations[input.suffix.continuations.length - 1];
   if (latest) snapshot = parseRecoverySnapshot(latest.fact.snapshot);
   if (!snapshot.runtimeContinuation) throw invalidSuffix();
@@ -375,12 +537,7 @@ export function materializeAuthenticatedRecoverySuffix(input: {
     if (event.eventType !== "STEP_STARTED" && event.eventType !== "STEP_FINISHED") {
       throw invalidSuffix();
     }
-    const payload = event.payload;
-    if (
-      payload === null || typeof payload !== "object" || isArray(payload) ||
-      typeof payload.stepName !== "string" || payload.stepName.length === 0 ||
-      payload.stepName.length > 256
-    ) throw invalidSuffix();
+    assertRecoverySuffixStepPayload(event);
   }
   return parseRecoverySnapshot({
     ...snapshot,
