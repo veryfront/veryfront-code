@@ -7,7 +7,9 @@ interface FileInputPart {
 }
 
 function describeFileInput({ filename, mediaType }: FileInputPart): string {
-  return `file input${filename ? ` ${JSON.stringify(filename)}` : ""} (${mediaType})`;
+  // Errors reach users, so a filename that is a local path shows only its base name.
+  const name = filename?.split(/[/\\]/).pop();
+  return `file input${name ? ` ${JSON.stringify(name)}` : ""} (${mediaType})`;
 }
 
 function fileInputError(message: string): TypeError {

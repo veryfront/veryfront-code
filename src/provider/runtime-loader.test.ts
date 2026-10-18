@@ -662,6 +662,26 @@ describe("document input capability", () => {
   });
 });
 
+describe("document input capability: error filenames", () => {
+  it("names only the base name of a file part whose filename is a path", () => {
+    const error = assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [{
+            type: "file",
+            url: "data:application/pdf;base64,JVBERi0=",
+            mediaType: "application/pdf",
+            filename: "/home/user/private/report.pdf",
+          }],
+        }]),
+      TypeError,
+      'file input "report.pdf" (application/pdf)',
+    );
+    assertEquals((error as Error).message.includes("/home/user"), false);
+  });
+});
+
 describe("document input capability: MIME case", () => {
   it("keeps image files whose media type is upper case", () => {
     const messages = toOpenAICompatibleMessages([{
