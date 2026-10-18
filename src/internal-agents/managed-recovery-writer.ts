@@ -418,24 +418,45 @@ export async function createManagedRecoveryWriter(input: {
     }
   };
 
-  const collectRecoveryToolBoundaries = async (
+  const collectRecoveryToolBoundaries = (
     messages: RecoveryBoundaryMessages,
     history: ReadonlySet<string>,
     toolBoundaries: unknown[],
   ): Promise<void> => {
-    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-      const message = messages[messageIndex]!;
-      if (message.role !== "assistant" || history.has(message.id)) continue;
-      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    const collectMessageParts = (
+      messageIndex: number,
+      message: RecoveryBoundaryMessages[number],
+      firstPartIndex: number,
+    ): Promise<void> => {
+      for (let partIndex = firstPartIndex; partIndex < message.parts.length; partIndex++) {
         const part = message.parts[partIndex]!;
         if (
           !("toolCallId" in part) || !("toolName" in part) ||
           !("args" in part || "input" in part) ||
           ("providerExecuted" in part && part.providerExecuted === true)
         ) continue;
-        await recoveryToolBoundary(messages, messageIndex, message, part, toolBoundaries);
+        // Keep the current message until its receipt settles. The private chain
+        // resumes indexed scanning without rereading its role or history membership.
+        return chainPrivatePromise(
+          recoveryToolBoundary(messages, messageIndex, message, part, toolBoundaries),
+          () => collectMessageParts(messageIndex, message, partIndex + 1),
+        );
       }
-    }
+      // Empty turns also resume through a protected reaction, bounding the stack.
+      return chainPrivatePromise(
+        resolvePrivatePromise(),
+        () => collectMessage(messageIndex + 1),
+      );
+    };
+    const collectMessage = (firstMessageIndex: number): Promise<void> => {
+      for (let messageIndex = firstMessageIndex; messageIndex < messages.length; messageIndex++) {
+        const message = messages[messageIndex]!;
+        if (message.role !== "assistant" || history.has(message.id)) continue;
+        return collectMessageParts(messageIndex, message, 0);
+      }
+      return resolvePrivatePromise();
+    };
+    return collectMessage(0);
   };
 
   const recoveryBoundaryModelTurns = (
