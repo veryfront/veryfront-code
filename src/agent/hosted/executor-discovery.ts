@@ -78,6 +78,12 @@ export interface ExecutorDiscovery {
   close(): Promise<void>;
 }
 
+function assertDiscoveryLocalPath(localPath: string): void {
+  if (localPath === ".." || localPath.startsWith(`..${sep}`) || isAbsolute(localPath)) {
+    throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+  }
+}
+
 /**
  * One allocation's executor-local metadata owner. Construction does not load
  * project configuration. Cleanup is not a process-reuse guarantee: the owning
@@ -131,7 +137,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     if (lifetime.signal.aborted) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLOSED");
   }
   function close(): Promise<void> {
-    if (closing) return closing;
+    if (closing !== undefined) return closing;
     // Memoize before synchronous abort listeners can reenter close().
     closing = chain(tail, async () => {
       try {
@@ -223,9 +229,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
         const root = await realpath(projectDir);
         const file = await realpath(join(root, "agents", `${agentId}.md`));
         const localPath = relative(root, file);
-        if (localPath === ".." || localPath.startsWith(`..${sep}`) || isAbsolute(localPath)) {
-          throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
-        }
+        assertDiscoveryLocalPath(localPath);
         const { parseRuntimeAgentMarkdownDefinition } = await import(
           "#veryfront/agent/runtime/agent-definition.ts"
         );
@@ -241,10 +245,14 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
     }
     assertActive();
-    const parsed = parseDiscoveryData(agentDefinitionSchema, definition, true);
-    if (parsed.id !== agentId) {
-      throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
-    }
+    const parseDefinition = () => {
+      const parsed = parseDiscoveryData(agentDefinitionSchema, definition, true);
+      if (parsed.id !== agentId) {
+        throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      }
+      return parsed;
+    };
+    const parsed = parseDefinition();
     apply(mapSet, definitions, [agentId, parsed]);
     return parsed;
   }
