@@ -2542,6 +2542,12 @@ async function destroyWorkflowClient(
 }
 
 interface RuntimeApiClient {
+  putBytes<T>(
+    path: string,
+    bytes: Uint8Array,
+    headers: Record<string, string>,
+    options?: { signal?: AbortSignal },
+  ): Promise<T>;
   postRaw<T>(
     path: string,
     body: string,
@@ -3919,6 +3925,7 @@ function createRuntimeApiClient(
     signal: AbortSignal | undefined = defaultSignal,
     retainedWireBody?: string,
     retainedIdempotencyKey?: string,
+    raw?: { bytes: Uint8Array; headers: Record<string, string> },
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -3933,7 +3940,8 @@ function createRuntimeApiClient(
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
-          "Content-Type": "application/json",
+          ...(raw?.headers ?? {}),
+          "Content-Type": raw ? "application/octet-stream" : "application/json",
           ...(retainedIdempotencyKey ? { "Idempotency-Key": retainedIdempotencyKey } : {}),
           ...(writerToken &&
               (canonicalMutation ||
@@ -3941,8 +3949,9 @@ function createRuntimeApiClient(
             ? { "X-Veryfront-Run-Event-Token": writerToken }
             : {}),
         },
-        body: retainedWireBody ??
+        body: raw ? new Uint8Array(raw.bytes) : retainedWireBody ??
           (body === undefined ? undefined : capturedArtifactJsonStringify(body)),
+        ...(raw ? { redirect: "error" } : {}),
         signal,
       }),
     );
@@ -3951,6 +3960,7 @@ function createRuntimeApiClient(
       const status = ReflectApply(ResponseStatusGetter, response, []) as number;
       const error = API_CLIENT_ERROR.create({
         detail: `Veryfront API request failed: ${status} ${response.statusText}`,
+        status,
       });
       throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }
@@ -3963,6 +3973,28 @@ function createRuntimeApiClient(
   }
 
   return {
+    putBytes<T>(
+      path: string,
+      bytes: Uint8Array,
+      headers: Record<string, string>,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      if (!/^\/projects\/[^/]+\/knowledge\/assets\/[^/?#]+(?:\?[^#]*)?$/.test(path)) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Binary writes require a scoped knowledge asset endpoint",
+        });
+      }
+      return requestJson<T>(
+        "PUT",
+        path,
+        undefined,
+        undefined,
+        options?.signal ?? defaultSignal,
+        undefined,
+        undefined,
+        { bytes, headers },
+      );
+    },
     postRaw<T>(
       path: string,
       body: string,
@@ -4464,6 +4496,9 @@ async function executeKnowledgeIngestRun(input: {
     } = await import("#cli/commands/knowledge/command");
     const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
     const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
+    const { putBinaryKnowledgeAsset } = await import(
+      "../../../../cli/commands/knowledge/binary-assets.ts"
+    );
     const { indexKnowledgeDocument } = await import(
       "../../../../cli/commands/knowledge/indexing.ts"
     );
@@ -4623,16 +4658,26 @@ async function executeKnowledgeIngestRun(input: {
           ),
           destinationBranch: outputDestination?.branchId ?? "main",
           indexKnowledgeDocument: indexCanonical,
-          uploadKnowledgeFile: (remotePath, localPath, metadata) =>
-            putRemoteFileFromLocal(
-              client,
-              projectReference,
-              remotePath,
-              localPath,
-              input.signal,
-              outputDestination,
-              metadata,
-            ),
+          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+            storageKind === "binary"
+              ? putBinaryKnowledgeAsset({
+                client,
+                project: projectReference,
+                path: remotePath,
+                localPath,
+                branch: outputDestination?.branchId ?? "main",
+                expected: { kind: "absent" },
+                signal: input.signal,
+              })
+              : putRemoteFileFromLocal(
+                client,
+                projectReference,
+                remotePath,
+                localPath,
+                input.signal,
+                outputDestination,
+                metadata,
+              ),
           signal: input.signal,
         });
       } finally {

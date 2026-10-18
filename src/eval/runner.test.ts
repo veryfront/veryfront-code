@@ -1750,10 +1750,16 @@ describe("expected outcome gates", () => {
               },
             }]
             : [],
-          async check({ expect }) {
+          async check({ expect, signal }) {
             if (grading === "assertion") expect.completed().gate();
             if (grading === "check-throw") throw new Error("Grading failed");
-            if (grading === "timeout") await new Promise((resolve) => setTimeout(resolve, 30));
+            if (grading === "timeout") {
+              assertExists(signal);
+              await new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener("abort", () => resolve(), { once: true });
+              });
+            }
           },
         });
         const report = await runEval(definition, {

@@ -54,3 +54,11 @@ it("excludes read POST batches, lists, arbitrary endpoints and wrong methods", (
     assertEquals(isRuntimeFileMutationRequest("POST", path), false);
   }
 });
+
+it("selects raw knowledge asset PUTs for canonical writer authority", () => {
+  const path = "/projects/p/knowledge/assets/knowledge%2Fa.bin?branch_id=b";
+  assertEquals(isRuntimeFileMutationRequest("PUT", path), true);
+  for (const method of ["GET", "POST", "PATCH", "DELETE"]) {
+    assertEquals(isRuntimeFileMutationRequest(method, path), false);
+  }
+});
