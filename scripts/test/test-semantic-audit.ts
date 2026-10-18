@@ -4729,6 +4729,16 @@ function collectRuntimeParameterDefaults(
   }
 }
 
+function runtimeDefaultPatternPropertyValue(property: unknown): unknown {
+  return isNode(property) && isNode(property.value) ? property.value : property;
+}
+
+function runtimeDestructuringPatternChildren(pattern: Node): unknown {
+  if (pattern.type === "ObjectPattern") return pattern.properties;
+  if (pattern.type === "ArrayPattern") return pattern.elements;
+  return undefined;
+}
+
 function bindRuntimeDefaultPattern(
   pattern: unknown,
   imports: ImportBindings,
@@ -4762,9 +4772,7 @@ function bindRuntimeDefaultPattern(
         ? pattern.elements
         : []
     ) {
-      const value = isNode(property) && isNode(property.value)
-        ? property.value
-        : property;
+      const value = runtimeDefaultPatternPropertyValue(property);
       bindRuntimeDefaultPattern(value, imports, scopes, scope);
     }
   }
@@ -6463,6 +6471,29 @@ function runtimeIntegrityLevelForMutation(
   return undefined;
 }
 
+function runtimePropertyOperationAllowsOwnAbsence(
+  operation: NamespacePropertyOperation,
+  property: string,
+  pending: RuntimeBinding[],
+): boolean {
+  if (operation.kind === "spread") {
+    pending.push(operation.binding);
+    return true;
+  }
+  if (operation.kind === "define") {
+    if (operation.name === property) return false;
+    return true;
+  }
+  if (operation.fallbackOnly === true) return true;
+  const propertyIndex = runtimeArrayIndex(property);
+  if (
+    operation.minimumArrayIndex === undefined ||
+    propertyIndex !== undefined &&
+      propertyIndex >= operation.minimumArrayIndex
+  ) return false;
+  return true;
+}
+
 function runtimeOwnPropertyDefinitelyAbsent(
   binding: RuntimeBinding,
   property: string,
@@ -6478,23 +6509,13 @@ function runtimeOwnPropertyDefinitelyAbsent(
       pending.push(...candidate.bindings);
       continue;
     }
-    if (candidate.kind !== "namespace-object") return false;
-    if (candidate.properties.has(property)) return false;
+    if (
+      candidate.kind !== "namespace-object" ||
+      candidate.properties.has(property)
+    ) return false;
     for (const operation of candidate.propertyOperations ?? []) {
-      if (operation.kind === "spread") {
-        pending.push(operation.binding);
-        continue;
-      }
-      if (operation.kind === "define") {
-        if (operation.name === property) return false;
-        continue;
-      }
-      if (operation.fallbackOnly === true) continue;
-      const propertyIndex = runtimeArrayIndex(property);
       if (
-        operation.minimumArrayIndex === undefined ||
-        propertyIndex !== undefined &&
-          propertyIndex >= operation.minimumArrayIndex
+        !runtimePropertyOperationAllowsOwnAbsence(operation, property, pending)
       ) return false;
     }
   }
@@ -8068,16 +8089,29 @@ function bindRuntimePatternDefaults(
     bindRuntimePatternDefaults(pattern.argument, imports, scopes, bind);
     return;
   }
-  const children = pattern.type === "ObjectPattern"
-    ? pattern.properties
-    : pattern.type === "ArrayPattern"
-    ? pattern.elements
-    : undefined;
+  const children = runtimeDestructuringPatternChildren(pattern);
   for (const child of Array.isArray(children) ? children : []) {
     const value = isNode(child) && isNode(child.value) ? child.value : child;
     if (isNode(value)) {
       bindRuntimePatternDefaults(value, imports, scopes, bind);
     }
+  }
+}
+
+function clearRuntimeAssignmentPatternChild(
+  property: unknown,
+  pattern: Node,
+  scopes: readonly Scope[],
+): void {
+  if (
+    isNode(property) && property.type === "RestElement" &&
+    isNode(property.argument)
+  ) {
+    clearCurrentScopeRuntimeAssignmentPattern(property.argument, scopes);
+  } else if (isNode(property) && isNode(property.value)) {
+    clearCurrentScopeRuntimeAssignmentPattern(property.value, scopes);
+  } else if (pattern.type === "ArrayPattern" && isNode(property)) {
+    clearCurrentScopeRuntimeAssignmentPattern(property, scopes);
   }
 }
 
@@ -8100,22 +8134,9 @@ function clearCurrentScopeRuntimeAssignmentPattern(
     clearCurrentScopeRuntimeAssignmentPattern(pattern.argument, scopes);
     return;
   }
-  const children = pattern.type === "ObjectPattern"
-    ? pattern.properties
-    : pattern.type === "ArrayPattern"
-    ? pattern.elements
-    : undefined;
+  const children = runtimeDestructuringPatternChildren(pattern);
   for (const property of Array.isArray(children) ? children : []) {
-    if (
-      isNode(property) && property.type === "RestElement" &&
-      isNode(property.argument)
-    ) {
-      clearCurrentScopeRuntimeAssignmentPattern(property.argument, scopes);
-    } else if (isNode(property) && isNode(property.value)) {
-      clearCurrentScopeRuntimeAssignmentPattern(property.value, scopes);
-    } else if (pattern.type === "ArrayPattern" && isNode(property)) {
-      clearCurrentScopeRuntimeAssignmentPattern(property, scopes);
-    }
+    clearRuntimeAssignmentPatternChild(property, pattern, scopes);
   }
 }
 
@@ -8191,6 +8212,25 @@ function runtimeTryEntryPrefixClearingCall(
   return isObjectAssign ? call : undefined;
 }
 
+function runtimeTryEntryIdentifierIsNonThrowing(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  const resolved = resolveLocalBinding(value.name as string, scopes);
+  const binding = resolved.declared
+    ? resolved.binding
+    : runtimeBindingForExpression(value, imports, scopes);
+  // A partial binding can hide a nullish alternative. TypeScript's `!`
+  // changes no runtime evaluation, so it cannot make a member read safe.
+  return binding !== undefined &&
+    (!resolved.declared ||
+      (resolved.definitelyInitialized === true &&
+        resolved.definitelyNonUndefined === true &&
+        resolved.crossesFunctionBoundary !== true)) &&
+    !runtimeBindingHasPartialAlternative(binding);
+}
+
 function runtimeTryEntryArgumentEvaluationIsNonThrowing(
   value: unknown,
   imports: ImportBindings,
@@ -8206,18 +8246,7 @@ function runtimeTryEntryArgumentEvaluationIsNonThrowing(
     return true;
   }
   if (value.type === "Identifier") {
-    const resolved = resolveLocalBinding(value.name as string, scopes);
-    const binding = resolved.declared
-      ? resolved.binding
-      : runtimeBindingForExpression(value, imports, scopes);
-    // A partial binding can hide a nullish alternative. TypeScript's `!`
-    // changes no runtime evaluation, so it cannot make a member read safe.
-    return binding !== undefined &&
-      (!resolved.declared ||
-        (resolved.definitelyInitialized === true &&
-          resolved.definitelyNonUndefined === true &&
-          resolved.crossesFunctionBoundary !== true)) &&
-      !runtimeBindingHasPartialAlternative(binding);
+    return runtimeTryEntryIdentifierIsNonThrowing(value, imports, scopes);
   }
   if (
     value.type === "TSAsExpression" || value.type === "TSTypeAssertion" ||
@@ -8995,6 +9024,28 @@ function runtimeGetterResolution(
   };
 }
 
+function runtimeCompoundExpressionMayBeUndefined(
+  value: Node,
+  nestedMayBeUndefined: (candidate: unknown) => boolean,
+): boolean | undefined {
+  if (value.type === "ConditionalExpression") {
+    return nestedMayBeUndefined(value.consequent) ||
+      nestedMayBeUndefined(value.alternate);
+  }
+  if (value.type === "LogicalExpression") {
+    return value.operator === "&&"
+      ? nestedMayBeUndefined(value.left) || nestedMayBeUndefined(value.right)
+      : nestedMayBeUndefined(value.right);
+  }
+  if (value.type === "SequenceExpression") {
+    const expressions = Array.isArray(value.expressions)
+      ? value.expressions
+      : [];
+    return nestedMayBeUndefined(expressions.at(-1));
+  }
+  return undefined;
+}
+
 function expressionMayBeUndefined(
   expression: unknown,
   binding: RuntimeBinding | undefined,
@@ -9016,21 +9067,11 @@ function expressionMayBeUndefined(
       imports,
       scopes,
     );
-  if (value.type === "ConditionalExpression") {
-    return nestedMayBeUndefined(value.consequent) ||
-      nestedMayBeUndefined(value.alternate);
-  }
-  if (value.type === "LogicalExpression") {
-    return value.operator === "&&"
-      ? nestedMayBeUndefined(value.left) || nestedMayBeUndefined(value.right)
-      : nestedMayBeUndefined(value.right);
-  }
-  if (value.type === "SequenceExpression") {
-    const expressions = Array.isArray(value.expressions)
-      ? value.expressions
-      : [];
-    return nestedMayBeUndefined(expressions.at(-1));
-  }
+  const compoundMayBeUndefined = runtimeCompoundExpressionMayBeUndefined(
+    value,
+    nestedMayBeUndefined,
+  );
+  if (compoundMayBeUndefined !== undefined) return compoundMayBeUndefined;
   if (value.type === "Identifier") {
     const resolved = resolveLocalBinding(value.name as string, scopes);
     return resolved.declared
@@ -10378,6 +10419,15 @@ function runtimeBindingHasPartialAlternative(
       binding.bindings.some(runtimeBindingHasPartialAlternative));
 }
 
+function enqueueRuntimeNamespacePropertySpreads(
+  candidate: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+  pending: RuntimeBinding[],
+): void {
+  for (const operation of candidate.propertyOperations ?? []) {
+    if (operation.kind === "spread") pending.push(operation.binding);
+  }
+}
+
 function runtimeBindingHasUnknownOwnProperties(
   binding: RuntimeBinding | undefined,
 ): boolean {
@@ -10397,9 +10447,7 @@ function runtimeBindingHasUnknownOwnProperties(
     }
     if (candidate.kind !== "namespace-object") continue;
     if (candidate.hasUnknownOwnProperties === true) return true;
-    for (const operation of candidate.propertyOperations ?? []) {
-      if (operation.kind === "spread") pending.push(operation.binding);
-    }
+    enqueueRuntimeNamespacePropertySpreads(candidate, pending);
   }
   return false;
 }
@@ -10506,6 +10554,10 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
   if (binding.kind === "effect-object") {
     return `effect-object:${binding.effect}`;
   }
+  return runtimeStructuralBindingKey(binding);
+}
+
+function runtimeStructuralBindingKey(binding: RuntimeBinding): string {
   if (binding.kind === "property-getter-effect") {
     return `property-getter-effect:${binding.enumerable ?? "unknown"}:${
       runtimeBindingKey(binding.binding)
@@ -10794,6 +10846,16 @@ function unwrapTruthinessProofExpression(value: unknown): Node | undefined {
   return current;
 }
 
+function collectObjectPatternNames(value: Node, names: Set<string>): void {
+  for (
+    const property of Array.isArray(value.properties) ? value.properties : []
+  ) {
+    if (isNode(property) && isNode(property.value)) {
+      collectPatternNames(property.value, names);
+    }
+  }
+}
+
 function collectPatternNames(target: unknown, names: Set<string>): void {
   // `(X as any) = null` and `X! = null` keep X as the runtime write target.
   const value = unwrapTruthinessProofExpression(target);
@@ -10807,13 +10869,7 @@ function collectPatternNames(target: unknown, names: Set<string>): void {
     return;
   }
   if (value.type === "ObjectPattern") {
-    for (
-      const property of Array.isArray(value.properties) ? value.properties : []
-    ) {
-      if (isNode(property) && isNode(property.value)) {
-        collectPatternNames(property.value, names);
-      }
-    }
+    collectObjectPatternNames(value, names);
     return;
   }
   if (value.type === "ArrayPattern") {
@@ -10994,32 +11050,47 @@ function isRuntimeEffectModule(source: string): boolean {
     isTestingRuntimeSpecifier(source);
 }
 
+function effectForTestingRuntimeMethod(
+  method: string,
+): SemanticEffect | undefined {
+  if (READ_METHODS.has(method)) return "filesystem-read";
+  if (
+    WRITE_METHODS.has(method) || TESTING_RUNTIME_WRITE_METHODS.has(method)
+  ) {
+    return "filesystem-write";
+  }
+  if (SHARED_CWD_METHODS.has(method)) return "shared-cwd";
+  if (
+    isProcessEffectMethod(method) ||
+    TESTING_RUNTIME_PROCESS_METHODS.has(method)
+  ) {
+    return "process";
+  }
+  if (TESTING_RUNTIME_NETWORK_METHODS.has(method)) return "network";
+  if (TESTING_RUNTIME_SERVER_METHODS.has(method)) return "server";
+  return undefined;
+}
+
 function effectForModuleMethod(
   source: string,
   method: string,
 ): SemanticEffect | undefined {
   if (isTestingRuntimeSpecifier(source)) {
-    if (READ_METHODS.has(method)) return "filesystem-read";
-    if (
-      WRITE_METHODS.has(method) || TESTING_RUNTIME_WRITE_METHODS.has(method)
-    ) {
-      return "filesystem-write";
-    }
-    if (SHARED_CWD_METHODS.has(method)) return "shared-cwd";
-    if (
-      isProcessEffectMethod(method) ||
-      TESTING_RUNTIME_PROCESS_METHODS.has(method)
-    ) {
-      return "process";
-    }
-    if (TESTING_RUNTIME_NETWORK_METHODS.has(method)) return "network";
-    if (TESTING_RUNTIME_SERVER_METHODS.has(method)) return "server";
+    const effect = effectForTestingRuntimeMethod(method);
+    if (effect !== undefined) return effect;
   }
   if (isFilesystemSpecifier(source)) {
     if (WATCH_METHODS.has(method)) return "filesystem-watch";
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
   }
+  return effectForExternalModuleMethod(source, method);
+}
+
+function effectForExternalModuleMethod(
+  source: string,
+  method: string,
+): SemanticEffect | undefined {
   if (isProcessEffectSpecifier(source) && SHARED_CWD_METHODS.has(method)) {
     return "shared-cwd";
   }
