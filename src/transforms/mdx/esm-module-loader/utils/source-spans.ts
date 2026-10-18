@@ -65,6 +65,30 @@ interface RawJsxTagOptions {
   lookaheadCache?: RawJsxLookaheadCache;
 }
 
+type ModuleDeclarationBefore = (
+  end: number,
+) => { keyword: "import" | "export"; index: number } | null;
+
+interface BraceScanContext {
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>;
+  currentParen: OpenParenContext | undefined;
+  enclosingOpenBrace: OpenBraceContext | undefined;
+  completedRegexLiteralEnds?: ReadonlySet<number>;
+}
+
+interface RegexScanContext {
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>;
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>;
+  currentParen: OpenParenContext | undefined;
+  previousTokenIndex: number;
+  moduleDeclarationBefore: ModuleDeclarationBefore;
+}
+
+interface ExpressionScanContext extends RegexScanContext {
+  rawJsxLookaheadCache?: RawJsxLookaheadCache;
+  completedRegexLiteralEnds?: Set<number>;
+}
+
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD = 64 * 1024;
 const IntrinsicMap = Map;
@@ -504,101 +528,127 @@ function isLineTerminator(char: string): boolean {
   return char === "\r" || char === "\n" || char === "\u2028" || char === "\u2029";
 }
 
+interface LiteralDecodeState {
+  result: string;
+  cursor: number;
+}
+
+function appendLiteralCharacter(
+  source: string,
+  char: string,
+  allowLineTerminators: boolean,
+  state: LiteralDecodeState,
+): void {
+  if (isLineTerminator(char)) {
+    if (!allowLineTerminators) invalidEscapedSpecifier();
+    if (char === "\r") {
+      state.result += "\n";
+      state.cursor += source[state.cursor + 1] === "\n" ? 2 : 1;
+      return;
+    }
+  }
+  state.result += char;
+  state.cursor++;
+}
+
+function appendUnicodeLiteralEscape(
+  source: string,
+  end: number,
+  state: LiteralDecodeState,
+): void {
+  if (source[state.cursor + 2] === "{") {
+    let escapeEnd = state.cursor + 3;
+    let value = 0;
+    let digitCount = 0;
+    while (escapeEnd < end && source[escapeEnd] !== "}") {
+      const digit = hexDigitValue(source[escapeEnd]);
+      if (digit === -1) invalidEscapedSpecifier();
+      value = value * 16 + digit;
+      digitCount++;
+      escapeEnd++;
+    }
+    if (
+      digitCount === 0 || source[escapeEnd] !== "}" || value > 0x10ffff
+    ) invalidEscapedSpecifier();
+    state.result += StringFromCodePoint(value);
+    state.cursor = escapeEnd + 1;
+    return;
+  }
+
+  const value = decodeHexEscape(source, state.cursor + 2, 4);
+  if (value === null || state.cursor + 6 > end) invalidEscapedSpecifier();
+  state.result += StringFromCodePoint(value);
+  state.cursor += 6;
+}
+
+function appendLiteralEscape(
+  source: string,
+  end: number,
+  state: LiteralDecodeState,
+): void {
+  const escaped = source[state.cursor + 1];
+  if (escaped === undefined || state.cursor + 1 >= end) invalidEscapedSpecifier();
+
+  if (isLineTerminator(escaped)) {
+    state.cursor += escaped === "\r" && source[state.cursor + 2] === "\n" ? 3 : 2;
+    return;
+  }
+
+  const simpleEscape = {
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+  }[escaped];
+  if (simpleEscape !== undefined) {
+    state.result += simpleEscape;
+    state.cursor += 2;
+    return;
+  }
+
+  if (escaped === "0") {
+    if (regexpTest(/\d/, source[state.cursor + 2] ?? "")) invalidEscapedSpecifier();
+    state.result += "\0";
+    state.cursor += 2;
+    return;
+  }
+  if (regexpTest(/[1-9]/, escaped)) invalidEscapedSpecifier();
+
+  if (escaped === "x") {
+    const value = decodeHexEscape(source, state.cursor + 2, 2);
+    if (value === null || state.cursor + 4 > end) invalidEscapedSpecifier();
+    state.result += StringFromCodePoint(value);
+    state.cursor += 4;
+    return;
+  }
+
+  if (escaped === "u") {
+    appendUnicodeLiteralEscape(source, end, state);
+    return;
+  }
+
+  state.result += escaped;
+  state.cursor += 2;
+}
+
 function decodeLiteralContents(
   source: string,
   start: number,
   end: number,
   allowLineTerminators: boolean,
 ): string {
-  let result = "";
-  let cursor = start;
-
-  while (cursor < end) {
-    const char = source[cursor]!;
+  const state: LiteralDecodeState = { result: "", cursor: start };
+  while (state.cursor < end) {
+    const char = source[state.cursor]!;
     if (char !== "\\") {
-      if (isLineTerminator(char)) {
-        if (!allowLineTerminators) invalidEscapedSpecifier();
-        if (char === "\r") {
-          result += "\n";
-          cursor += source[cursor + 1] === "\n" ? 2 : 1;
-          continue;
-        }
-      }
-      result += char;
-      cursor++;
+      appendLiteralCharacter(source, char, allowLineTerminators, state);
       continue;
     }
-
-    const escaped = source[cursor + 1];
-    if (escaped === undefined || cursor + 1 >= end) invalidEscapedSpecifier();
-
-    if (isLineTerminator(escaped)) {
-      cursor += escaped === "\r" && source[cursor + 2] === "\n" ? 3 : 2;
-      continue;
-    }
-
-    const simpleEscape = {
-      b: "\b",
-      f: "\f",
-      n: "\n",
-      r: "\r",
-      t: "\t",
-      v: "\v",
-    }[escaped];
-    if (simpleEscape !== undefined) {
-      result += simpleEscape;
-      cursor += 2;
-      continue;
-    }
-
-    if (escaped === "0") {
-      if (regexpTest(/\d/, source[cursor + 2] ?? "")) invalidEscapedSpecifier();
-      result += "\0";
-      cursor += 2;
-      continue;
-    }
-    if (regexpTest(/[1-9]/, escaped)) invalidEscapedSpecifier();
-
-    if (escaped === "x") {
-      const value = decodeHexEscape(source, cursor + 2, 2);
-      if (value === null || cursor + 4 > end) invalidEscapedSpecifier();
-      result += StringFromCodePoint(value);
-      cursor += 4;
-      continue;
-    }
-
-    if (escaped === "u") {
-      if (source[cursor + 2] === "{") {
-        let escapeEnd = cursor + 3;
-        let value = 0;
-        let digitCount = 0;
-        while (escapeEnd < end && source[escapeEnd] !== "}") {
-          const digit = hexDigitValue(source[escapeEnd]);
-          if (digit === -1) invalidEscapedSpecifier();
-          value = value * 16 + digit;
-          digitCount++;
-          escapeEnd++;
-        }
-        if (
-          digitCount === 0 || source[escapeEnd] !== "}" || value > 0x10ffff
-        ) invalidEscapedSpecifier();
-        result += StringFromCodePoint(value);
-        cursor = escapeEnd + 1;
-        continue;
-      }
-
-      const value = decodeHexEscape(source, cursor + 2, 4);
-      if (value === null || cursor + 6 > end) invalidEscapedSpecifier();
-      result += StringFromCodePoint(value);
-      cursor += 6;
-      continue;
-    }
-
-    result += escaped;
-    cursor += 2;
+    appendLiteralEscape(source, end, state);
   }
-
-  return result;
+  return state.result;
 }
 
 function readQuotedSpecifier(
@@ -1476,11 +1526,10 @@ function openBraceContext(
   rangeStart: number,
   index: number,
   previousTokenIndex: number,
-  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
-  currentParen: OpenParenContext | undefined,
-  enclosingOpenBrace: OpenBraceContext | undefined,
-  completedRegexLiteralEnds?: ReadonlySet<number>,
+  context: BraceScanContext,
 ): OpenBraceContext {
+  const { matchingOpenParens, currentParen, enclosingOpenBrace, completedRegexLiteralEnds } =
+    context;
   return {
     index,
     previousTokenIndex,
@@ -1759,18 +1808,49 @@ function isCompletedTypeArgumentListBefore(
   return false;
 }
 
+function regexPunctuationDecision(
+  source: string,
+  previous: number,
+  rangeStart: number,
+  char: string | undefined,
+): boolean | undefined {
+  if (
+    (char === "+" || char === "-") &&
+    previous - 1 >= rangeStart &&
+    source[previous - 1] === char
+  ) {
+    return false;
+  }
+  if (
+    char === "." &&
+    previous - 2 >= rangeStart &&
+    source[previous - 1] === "." &&
+    source[previous - 2] === "."
+  ) {
+    return true;
+  }
+  if (char === "!") return !isPostfixNonNullAssertionBefore(source, previous, rangeStart);
+  if (char === ">" && isCompletedTypeArgumentListBefore(source, previous, rangeStart)) {
+    return false;
+  }
+  if (char !== undefined && stringIncludes("([{=,:;~?&|+-*%^<>", char)) return true;
+
+  return undefined;
+}
+
 function canStartRegexLiteral(
   source: string,
   index: number,
   rangeStart: number,
-  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
-  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
-  currentParen: OpenParenContext | undefined,
-  previousTokenIndex: number,
-  moduleDeclarationBefore: (
-    end: number,
-  ) => { keyword: "import" | "export"; index: number } | null,
+  context: RegexScanContext,
 ): boolean {
+  const {
+    matchingOpenBraces,
+    matchingOpenParens,
+    currentParen,
+    previousTokenIndex,
+    moduleDeclarationBefore,
+  } = context;
   const previous = previousTokenIndex;
   if (previous < rangeStart) return true;
   if (
@@ -1806,26 +1886,8 @@ function canStartRegexLiteral(
         matchingOpenBraces,
       ))
   ) return true;
-  if (
-    (char === "+" || char === "-") &&
-    previous - 1 >= rangeStart &&
-    source[previous - 1] === char
-  ) {
-    return false;
-  }
-  if (
-    char === "." &&
-    previous - 2 >= rangeStart &&
-    source[previous - 1] === "." &&
-    source[previous - 2] === "."
-  ) {
-    return true;
-  }
-  if (char === "!") return !isPostfixNonNullAssertionBefore(source, previous, rangeStart);
-  if (char === ">" && isCompletedTypeArgumentListBefore(source, previous, rangeStart)) {
-    return false;
-  }
-  if (char !== undefined && stringIncludes("([{=,:;~?&|+-*%^<>", char)) return true;
+  const punctuationDecision = regexPunctuationDecision(source, previous, rangeStart, char);
+  if (punctuationDecision !== undefined) return punctuationDecision;
 
   const keyword = keywordBefore(source, index, previous);
   // One gate for every keyword in the list below, rather than a guard per
@@ -1964,41 +2026,65 @@ function createRawJsxLookaheadCache(): RawJsxLookaheadCache {
   };
 }
 
+function cachedStatementEndBefore(
+  start: number,
+  ranges: RawJsxLookaheadCache["statementEnds"],
+  rangeIndex: number,
+  cache: RawJsxLookaheadCache,
+): number | undefined {
+  let low = 0;
+  let high = rangeIndex;
+  while (low <= high) {
+    const mid = MathFloor((low + high) / 2);
+    const range = ranges[mid]!;
+    if (start < range.start) high = mid - 1;
+    else if (start >= range.end) low = mid + 1;
+    else {
+      cache.statementEndCursor = mid;
+      return range.end;
+    }
+  }
+  return undefined;
+}
+
+function cachedStatementEndAtOrAfter(
+  start: number,
+  ranges: RawJsxLookaheadCache["statementEnds"],
+  rangeIndex: number,
+  cache: RawJsxLookaheadCache,
+): number | undefined {
+  while (rangeIndex < ranges.length && start >= ranges[rangeIndex]!.end) rangeIndex++;
+  if (
+    rangeIndex < ranges.length &&
+    start >= ranges[rangeIndex]!.start &&
+    start < ranges[rangeIndex]!.end
+  ) {
+    cache.statementEndCursor = rangeIndex;
+    return ranges[rangeIndex]!.end;
+  }
+  return undefined;
+}
+
+function cachedStatementEndAfter(start: number, cache: RawJsxLookaheadCache): number | undefined {
+  const ranges = cache.statementEnds;
+  const rangeIndex = MathMin(cache.statementEndCursor, ranges.length - 1);
+  if (rangeIndex >= 0) {
+    if (start < ranges[rangeIndex]!.start) {
+      return cachedStatementEndBefore(start, ranges, rangeIndex, cache);
+    }
+    return cachedStatementEndAtOrAfter(start, ranges, rangeIndex, cache);
+  }
+  return undefined;
+}
+
 function statementEndAfter(
   source: string,
   start: number,
   cache?: RawJsxLookaheadCache,
 ): number {
   if (cache !== undefined) {
-    const ranges = cache.statementEnds;
-    let rangeIndex = MathMin(cache.statementEndCursor, ranges.length - 1);
-
-    if (rangeIndex >= 0) {
-      if (start < ranges[rangeIndex]!.start) {
-        let low = 0;
-        let high = rangeIndex;
-        while (low <= high) {
-          const mid = MathFloor((low + high) / 2);
-          const range = ranges[mid]!;
-          if (start < range.start) high = mid - 1;
-          else if (start >= range.end) low = mid + 1;
-          else {
-            cache.statementEndCursor = mid;
-            return range.end;
-          }
-        }
-      } else {
-        while (rangeIndex < ranges.length && start >= ranges[rangeIndex]!.end) rangeIndex++;
-        if (
-          rangeIndex < ranges.length &&
-          start >= ranges[rangeIndex]!.start &&
-          start < ranges[rangeIndex]!.end
-        ) {
-          cache.statementEndCursor = rangeIndex;
-          return ranges[rangeIndex]!.end;
-        }
-      }
-    }
+    const cached = cachedStatementEndAfter(start, cache);
+    if (cached !== undefined) return cached;
   }
 
   const end = nextStatementCursor(source, start);
@@ -2160,6 +2246,54 @@ function looksLikeTypeScriptAngleConstruct(
   return false;
 }
 
+interface RawJsxAttributeCursor {
+  cursor: number;
+  quote: string | null;
+}
+
+function advanceRawJsxAttributeQuote(
+  char: string | undefined,
+  state: RawJsxAttributeCursor,
+): boolean {
+  if (state.quote !== null) {
+    if (char === "\\") {
+      state.cursor += 2;
+      return true;
+    }
+    if (char === state.quote) state.quote = null;
+    state.cursor++;
+    return true;
+  }
+  if (char === '"' || char === "'") {
+    state.quote = char;
+    state.cursor++;
+    return true;
+  }
+  return false;
+}
+
+function readRawJsxAttributes(
+  source: string,
+  nameStart: number,
+): { end: number; expressionRanges: RawJsxTagSkip["expressionRanges"] } | null {
+  const state: RawJsxAttributeCursor = { cursor: nameStart, quote: null };
+  const expressionRanges: RawJsxTagSkip["expressionRanges"] = [];
+  while (state.cursor < source.length) {
+    const char = source[state.cursor];
+    if (advanceRawJsxAttributeQuote(char, state)) continue;
+    if (char === "{") {
+      const expressionEnd = findTemplateExpressionEnd(source, state.cursor + 1);
+      if (expressionEnd === null) return null;
+      primordialArrayPush(expressionRanges, { start: state.cursor + 1, end: expressionEnd });
+      state.cursor = expressionEnd + 1;
+      continue;
+    }
+    if (char === ">") return { end: state.cursor + 1, expressionRanges };
+    state.cursor++;
+  }
+  return null;
+}
+
 function readRawJsxTag(
   source: string,
   index: number,
@@ -2179,59 +2313,21 @@ function readRawJsxTag(
   if (source[nameStart] !== ">" && !isIdentifierStartAt(source, nameStart)) return null;
   const name = rawJsxTagName(source, nameStart).name;
 
-  let cursor = nameStart;
-  let quote: string | null = null;
-  const expressionRanges: RawJsxTagSkip["expressionRanges"] = [];
-  while (cursor < source.length) {
-    const char = source[cursor];
-
-    if (quote !== null) {
-      if (char === "\\") {
-        cursor += 2;
-        continue;
-      }
-      if (char === quote) quote = null;
-      cursor++;
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      quote = char;
-      cursor++;
-      continue;
-    }
-
-    if (char === "{") {
-      const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
-      if (expressionEnd === null) return null;
-      primordialArrayPush(expressionRanges, { start: cursor + 1, end: expressionEnd });
-      cursor = expressionEnd + 1;
-      continue;
-    }
-
-    if (char === ">") {
-      const beforeClose = previousSignificantIndex(source, cursor);
-      const isSelfClosingTag = !isClosingTag && source[beforeClose] === "/";
-      if (
-        !isClosingTag &&
-        !isSelfClosingTag &&
-        looksLikeTypeScriptAngleConstruct(source, index, cursor + 1, name, options.lookaheadCache)
-      ) {
-        return null;
-      }
-      return {
-        end: cursor + 1,
-        expressionRanges,
-        name,
-        isClosingTag,
-        isSelfClosingTag,
-      };
-    }
-
-    cursor++;
-  }
-
-  return null;
+  const attributes = readRawJsxAttributes(source, nameStart);
+  if (attributes === null) return null;
+  const beforeClose = previousSignificantIndex(source, attributes.end - 1);
+  const isSelfClosingTag = !isClosingTag && source[beforeClose] === "/";
+  if (
+    !isClosingTag && !isSelfClosingTag &&
+    looksLikeTypeScriptAngleConstruct(source, index, attributes.end, name, options.lookaheadCache)
+  ) return null;
+  return {
+    end: attributes.end,
+    expressionRanges: attributes.expressionRanges,
+    name,
+    isClosingTag,
+    isSelfClosingTag,
+  };
 }
 
 function skipRawJsxTag(
@@ -2255,16 +2351,17 @@ function skipExpressionIgnored(
   index: number,
   rangeStart: number,
   depth: number,
-  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
-  matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
-  currentParen: OpenParenContext | undefined,
-  previousTokenIndex: number,
-  moduleDeclarationBefore: (
-    end: number,
-  ) => { keyword: "import" | "export"; index: number } | null,
-  rawJsxLookaheadCache?: RawJsxLookaheadCache,
-  completedRegexLiteralEnds?: Set<number>,
+  context: ExpressionScanContext,
 ): number {
+  const {
+    matchingOpenBraces,
+    matchingOpenParens,
+    currentParen,
+    previousTokenIndex,
+    moduleDeclarationBefore,
+    rawJsxLookaheadCache,
+    completedRegexLiteralEnds,
+  } = context;
   const char = source[index];
   const next = source[index + 1];
 
@@ -2284,16 +2381,13 @@ function skipExpressionIgnored(
   if (char === "`") return skipFullTemplateLiteral(source, index, depth + 1);
   if (
     char === "/" &&
-    canStartRegexLiteral(
-      source,
-      index,
-      rangeStart,
+    canStartRegexLiteral(source, index, rangeStart, {
       matchingOpenBraces,
       matchingOpenParens,
       currentParen,
       previousTokenIndex,
       moduleDeclarationBefore,
-    )
+    })
   ) {
     const end = skipRegexLiteral(source, index);
     if (completedRegexLiteralEnds !== undefined) setAdd(completedRegexLiteralEnds, end - 1);
@@ -2328,6 +2422,247 @@ function isPropertyAccessBeforeImport(
   return !isSpread;
 }
 
+interface SourceWalkState {
+  cursor: number;
+  atStatementStart: boolean;
+  openBraces: OpenBraceContext[];
+  matchingOpenBraces: Map<number, OpenBraceContext>;
+  openParens: OpenParenContext[];
+  matchingOpenParens: Map<number, OpenParenContext>;
+  previousTokenIndex: number;
+  moduleDeclarationBefore: ModuleDeclarationBefore;
+  completedRegexLiteralEnds: Set<number>;
+  rawJsxTextDepth: number;
+  rawJsxExpressionBraceDepth: number;
+  rawJsxExpressionBraceStack: boolean[];
+  rawJsxLookaheadCache: RawJsxLookaheadCache;
+}
+
+function createSourceWalkState(source: string, start: number): SourceWalkState {
+  return {
+    cursor: start,
+    atStatementStart: true,
+    openBraces: [],
+    matchingOpenBraces: new IntrinsicMap<number, OpenBraceContext>(),
+    openParens: [],
+    matchingOpenParens: new IntrinsicMap<number, OpenParenContext>(),
+    previousTokenIndex: start - 1,
+    moduleDeclarationBefore: createModuleDeclarationTracker(source, start),
+    completedRegexLiteralEnds: new IntrinsicSet<number>(),
+    rawJsxTextDepth: 0,
+    rawJsxExpressionBraceDepth: 0,
+    rawJsxExpressionBraceStack: [],
+    rawJsxLookaheadCache: createRawJsxLookaheadCache(),
+  };
+}
+
+function rawJsxTagAtCursor(source: string, state: SourceWalkState): RawJsxTagSkip | null {
+  return readRawJsxTag(source, state.cursor, {
+    allowClosingTagAfterText: isInRawJsxText(
+      state.rawJsxTextDepth,
+      state.rawJsxExpressionBraceDepth,
+    ),
+    lookaheadCache: state.rawJsxLookaheadCache,
+  });
+}
+
+function advancePastRawJsxTag(tag: RawJsxTagSkip, state: SourceWalkState): void {
+  if (tag.isClosingTag) {
+    state.rawJsxTextDepth = MathMax(0, state.rawJsxTextDepth - 1);
+  } else if (!tag.isSelfClosingTag) {
+    state.rawJsxTextDepth++;
+  }
+  state.atStatementStart = false;
+  state.previousTokenIndex = tag.end - 1;
+  state.cursor = tag.end;
+}
+
+function advanceRawJsxText(source: string, state: SourceWalkState): boolean {
+  if (!isInRawJsxText(state.rawJsxTextDepth, state.rawJsxExpressionBraceDepth)) return false;
+  const textEnd = skipRawJsxText(source, state.cursor);
+  if (textEnd === state.cursor) return false;
+  state.atStatementStart = false;
+  state.cursor = textEnd;
+  return true;
+}
+
+function recordOpeningBrace(source: string, rangeStart: number, state: SourceWalkState): void {
+  const isRawJsxExpressionBrace = isInRawJsxText(
+    state.rawJsxTextDepth,
+    state.rawJsxExpressionBraceDepth,
+  );
+  primordialArrayPush(state.rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
+  if (isRawJsxExpressionBrace) state.rawJsxExpressionBraceDepth++;
+  primordialArrayPush(
+    state.openBraces,
+    openBraceContext(source, rangeStart, state.cursor, state.previousTokenIndex, {
+      matchingOpenParens: state.matchingOpenParens,
+      currentParen: primordialArrayAt(state.openParens, -1),
+      enclosingOpenBrace: primordialArrayAt(state.openBraces, -1),
+      completedRegexLiteralEnds: state.completedRegexLiteralEnds,
+    }),
+  );
+}
+
+function recordClosingBrace(state: SourceWalkState): void {
+  const isRawJsxExpressionBrace = primordialArrayPop(state.rawJsxExpressionBraceStack);
+  if (isRawJsxExpressionBrace) {
+    state.rawJsxExpressionBraceDepth = MathMax(0, state.rawJsxExpressionBraceDepth - 1);
+  }
+  const openBrace = primordialArrayPop(state.openBraces);
+  if (openBrace !== undefined) mapSet(state.matchingOpenBraces, state.cursor, openBrace);
+}
+
+function recordOpeningParen(source: string, state: SourceWalkState): void {
+  primordialArrayPush(
+    state.openParens,
+    openParenContext(source, state.cursor, state.previousTokenIndex),
+  );
+}
+
+function recordClosingParen(state: SourceWalkState): void {
+  const openParen = primordialArrayPop(state.openParens);
+  if (openParen !== undefined) mapSet(state.matchingOpenParens, state.cursor, openParen);
+}
+
+function recordForHeaderSemicolon(char: string | undefined, state: SourceWalkState): void {
+  if (char === ";" && primordialArrayAt(state.openParens, -1)?.isForHeader) {
+    primordialArrayAt(state.openParens, -1)!.hasSemicolon = true;
+  }
+}
+
+function advancePastToken(state: SourceWalkState): void {
+  state.previousTokenIndex = state.cursor;
+  state.cursor++;
+}
+
+function advanceDelimiter(
+  source: string,
+  rangeStart: number,
+  char: string | undefined,
+  state: SourceWalkState,
+): boolean {
+  if (char === "{") recordOpeningBrace(source, rangeStart, state);
+  else if (char === "}") recordClosingBrace(state);
+  else if (char === "(") recordOpeningParen(source, state);
+  else if (char === ")") recordClosingParen(state);
+  else return false;
+  state.atStatementStart = char === "}";
+  advancePastToken(state);
+  return true;
+}
+
+function advancePastIgnored(source: string, skipped: number, state: SourceWalkState): void {
+  state.previousTokenIndex = tokenIndexAfterIgnored(
+    source,
+    state.cursor,
+    skipped,
+    state.previousTokenIndex,
+  );
+  state.cursor = skipped;
+}
+
+function updateStatementStartAfterIgnored(
+  source: string,
+  char: string | undefined,
+  skipped: number,
+  state: SourceWalkState,
+): void {
+  if (char === "/" && source[state.cursor + 1] === "/") state.atStatementStart = true;
+  else if (char === "/" && source[state.cursor + 1] === "*") {
+    if (hasLineTerminatorBetween(source, state.cursor + 2, skipped - 2)) {
+      state.atStatementStart = true;
+    }
+  } else state.atStatementStart = false;
+}
+
+function advanceStaticImportTrivia(
+  source: string,
+  char: string | undefined,
+  state: SourceWalkState,
+): boolean {
+  const jsxTag = rawJsxTagAtCursor(source, state);
+  if (jsxTag !== null) {
+    advancePastRawJsxTag(jsxTag, state);
+    return true;
+  }
+  if (advanceRawJsxText(source, state)) return true;
+  const skipped = skipExpressionIgnored(source, state.cursor, 0, 0, {
+    matchingOpenBraces: state.matchingOpenBraces,
+    matchingOpenParens: state.matchingOpenParens,
+    currentParen: primordialArrayAt(state.openParens, -1),
+    previousTokenIndex: state.previousTokenIndex,
+    moduleDeclarationBefore: state.moduleDeclarationBefore,
+    rawJsxLookaheadCache: state.rawJsxLookaheadCache,
+    completedRegexLiteralEnds: state.completedRegexLiteralEnds,
+  });
+  if (skipped !== state.cursor) {
+    updateStatementStartAfterIgnored(source, char, skipped, state);
+    advancePastIgnored(source, skipped, state);
+    return true;
+  }
+  if (advanceDelimiter(source, 0, char, state)) return true;
+  recordForHeaderSemicolon(char, state);
+  if (char === ";" || (char !== undefined && isLineTerminator(char))) {
+    state.atStatementStart = true;
+    if (char === ";") state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return true;
+  }
+  if (regexpTest(/\s/, char ?? "")) {
+    state.cursor++;
+    return true;
+  }
+  return false;
+}
+
+interface TemplateWalkState extends SourceWalkState {
+  braceDepth: number;
+}
+
+function advanceTemplateExpressionToken(
+  source: string,
+  expressionIndex: number,
+  state: TemplateWalkState,
+): number | null {
+  if (source[state.cursor] === "{") {
+    recordOpeningBrace(source, expressionIndex, state);
+    state.braceDepth++;
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return null;
+  }
+
+  if (source[state.cursor] === "}") {
+    state.braceDepth--;
+    if (state.braceDepth === 0) return state.cursor;
+    recordClosingBrace(state);
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return null;
+  }
+
+  if (source[state.cursor] === "(") {
+    recordOpeningParen(source, state);
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return null;
+  }
+
+  if (source[state.cursor] === ")") {
+    recordClosingParen(state);
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return null;
+  }
+
+  recordForHeaderSemicolon(source[state.cursor], state);
+
+  if (!regexpTest(/\s/, source[state.cursor] ?? "")) state.previousTokenIndex = state.cursor;
+  state.cursor++;
+  return null;
+}
+
 function findTemplateExpressionEnd(
   source: string,
   expressionIndex: number,
@@ -2335,132 +2670,136 @@ function findTemplateExpressionEnd(
 ): number | null {
   assertTemplateLiteralDepth(depth);
 
-  let cursor = expressionIndex;
-  let braceDepth = 1;
-  const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
-  const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
-  let previousTokenIndex = expressionIndex - 1;
-  const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
-  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-  const completedRegexLiteralEnds = new IntrinsicSet<number>();
-  let rawJsxTextDepth = 0;
-  let rawJsxExpressionBraceDepth = 0;
-  const rawJsxExpressionBraceStack: boolean[] = [];
+  const state: TemplateWalkState = {
+    ...createSourceWalkState(source, expressionIndex),
+    braceDepth: 1,
+  };
 
-  while (cursor < source.length) {
-    const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
-      lookaheadCache: rawJsxLookaheadCache,
-    });
+  while (state.cursor < source.length) {
+    const jsxTag = rawJsxTagAtCursor(source, state);
     if (jsxTag !== null) {
-      if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
-      } else if (!jsxTag.isSelfClosingTag) {
-        rawJsxTextDepth++;
-      }
-      previousTokenIndex = jsxTag.end - 1;
-      cursor = jsxTag.end;
+      advancePastRawJsxTag(jsxTag, state);
       continue;
     }
+    if (advanceRawJsxText(source, state)) continue;
 
-    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
-      const textEnd = skipRawJsxText(source, cursor);
-      if (textEnd !== cursor) {
-        cursor = textEnd;
-        continue;
-      }
-    }
-
-    const skipped = skipExpressionIgnored(
-      source,
-      cursor,
-      expressionIndex,
-      depth,
-      matchingOpenBraces,
-      matchingOpenParens,
-      primordialArrayAt(openParens, -1),
-      previousTokenIndex,
-      moduleDeclarationBefore,
-      rawJsxLookaheadCache,
-      completedRegexLiteralEnds,
-    );
-    if (skipped !== cursor) {
-      previousTokenIndex = tokenIndexAfterIgnored(
+    const skipped = skipExpressionIgnored(source, state.cursor, expressionIndex, depth, {
+      matchingOpenBraces: state.matchingOpenBraces,
+      matchingOpenParens: state.matchingOpenParens,
+      currentParen: primordialArrayAt(state.openParens, -1),
+      previousTokenIndex: state.previousTokenIndex,
+      moduleDeclarationBefore: state.moduleDeclarationBefore,
+      rawJsxLookaheadCache: state.rawJsxLookaheadCache,
+      completedRegexLiteralEnds: state.completedRegexLiteralEnds,
+    });
+    if (skipped !== state.cursor) {
+      state.previousTokenIndex = tokenIndexAfterIgnored(
         source,
-        cursor,
+        state.cursor,
         skipped,
-        previousTokenIndex,
+        state.previousTokenIndex,
       );
-      cursor = skipped;
+      state.cursor = skipped;
       continue;
     }
 
-    if (source[cursor] === "{") {
-      const isRawJsxExpressionBrace = isInRawJsxText(
-        rawJsxTextDepth,
-        rawJsxExpressionBraceDepth,
-      );
-      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
-      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      primordialArrayPush(
-        openBraces,
-        openBraceContext(
-          source,
-          expressionIndex,
-          cursor,
-          previousTokenIndex,
-          matchingOpenParens,
-          primordialArrayAt(openParens, -1),
-          primordialArrayAt(openBraces, -1),
-          completedRegexLiteralEnds,
-        ),
-      );
-      braceDepth++;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
+    const end = advanceTemplateExpressionToken(source, expressionIndex, state);
+    if (end !== null) return end;
+  }
+  return null;
+}
 
-    if (source[cursor] === "}") {
-      braceDepth--;
-      if (braceDepth === 0) return cursor;
-      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
-      if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
-      }
-      const openBrace = primordialArrayPop(openBraces);
-      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
+interface FromSpanSearchState {
+  cursor: number;
+  previousTokenIndex: number;
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>;
+  matchingOpenParens: ReadonlyMap<number, OpenParenContext>;
+  moduleDeclarationBefore: ModuleDeclarationBefore;
+  result: StaticImportSpan | null | undefined;
+}
 
-    if (source[cursor] === "(") {
-      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (source[cursor] === ")") {
-      const openParen = primordialArrayPop(openParens);
-      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (source[cursor] === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
-      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
-    }
-
-    if (!regexpTest(/\s/, source[cursor] ?? "")) previousTokenIndex = cursor;
-    cursor++;
+function advanceFromSpanSearch(
+  source: string,
+  statementStart: number,
+  matcher: SpecifierMatcher,
+  isExportDeclaration: boolean,
+  state: FromSpanSearchState,
+): void {
+  const skipped = skipIgnored(source, state.cursor);
+  if (skipped !== state.cursor) {
+    state.previousTokenIndex = tokenIndexAfterIgnored(
+      source,
+      state.cursor,
+      skipped,
+      state.previousTokenIndex,
+    );
+    state.cursor = skipped;
+    return;
   }
 
-  return null;
+  if (source[state.cursor] === ";") {
+    state.result = null;
+    return;
+  }
+
+  if (
+    isExportDeclaration &&
+    source[state.cursor] === "/" &&
+    isCompletedLocalExportListBeforeRegex(
+      source,
+      state.cursor,
+      state.previousTokenIndex,
+      statementStart,
+    )
+  ) {
+    state.result = null;
+    return;
+  }
+
+  if (
+    source[state.cursor] === "/" &&
+    canStartRegexLiteral(source, state.cursor, statementStart, {
+      matchingOpenBraces: state.matchingOpenBraces,
+      matchingOpenParens: state.matchingOpenParens,
+      currentParen: undefined,
+      previousTokenIndex: state.previousTokenIndex,
+      moduleDeclarationBefore: state.moduleDeclarationBefore,
+    })
+  ) {
+    state.cursor = skipRegexLiteral(source, state.cursor);
+    state.previousTokenIndex = state.cursor - 1;
+    return;
+  }
+
+  if (
+    stringStartsWith(source, "from", state.cursor) &&
+    !isIdentifierPartAt(source, state.cursor - 1) &&
+    !isIdentifierPartAt(source, state.cursor + 4)
+  ) {
+    const quoteIndex = skipWhitespaceAndComments(source, state.cursor + 4);
+    const quoted = readQuotedSpecifier(source, quoteIndex);
+    if (!quoted) {
+      state.cursor++;
+      return;
+    }
+
+    const matchedPath = matcher(quoted.specifier);
+    if (!matchedPath) {
+      state.result = null;
+      return;
+    }
+
+    state.result = {
+      original: stringSlice(source, state.cursor, quoted.end),
+      path: matchedPath,
+      start: state.cursor,
+      end: quoted.end,
+    };
+    return;
+  }
+
+  if (!regexpTest(/\s/, source[state.cursor] ?? "")) state.previousTokenIndex = state.cursor;
+  state.cursor++;
 }
 
 function findFromSpan(
@@ -2469,80 +2808,18 @@ function findFromSpan(
   matcher: SpecifierMatcher,
   isExportDeclaration: boolean,
 ): StaticImportSpan | null {
-  let cursor = statementStart;
-  let previousTokenIndex = previousSignificantIndexBeforeIgnored(source, statementStart);
-  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
-  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
-  const moduleDeclarationBefore = () => null;
-
-  while (cursor < source.length) {
-    const skipped = skipIgnored(source, cursor);
-    if (skipped !== cursor) {
-      previousTokenIndex = tokenIndexAfterIgnored(source, cursor, skipped, previousTokenIndex);
-      cursor = skipped;
-      continue;
-    }
-
-    if (source[cursor] === ";") return null;
-
-    if (
-      isExportDeclaration &&
-      source[cursor] === "/" &&
-      isCompletedLocalExportListBeforeRegex(
-        source,
-        cursor,
-        previousTokenIndex,
-        statementStart,
-      )
-    ) {
-      return null;
-    }
-
-    if (
-      source[cursor] === "/" &&
-      canStartRegexLiteral(
-        source,
-        cursor,
-        statementStart,
-        matchingOpenBraces,
-        matchingOpenParens,
-        undefined,
-        previousTokenIndex,
-        moduleDeclarationBefore,
-      )
-    ) {
-      cursor = skipRegexLiteral(source, cursor);
-      previousTokenIndex = cursor - 1;
-      continue;
-    }
-
-    if (
-      stringStartsWith(source, "from", cursor) &&
-      !isIdentifierPartAt(source, cursor - 1) &&
-      !isIdentifierPartAt(source, cursor + 4)
-    ) {
-      const quoteIndex = skipWhitespaceAndComments(source, cursor + 4);
-      const quoted = readQuotedSpecifier(source, quoteIndex);
-      if (!quoted) {
-        cursor++;
-        continue;
-      }
-
-      const matchedPath = matcher(quoted.specifier);
-      if (!matchedPath) return null;
-
-      return {
-        original: stringSlice(source, cursor, quoted.end),
-        path: matchedPath,
-        start: cursor,
-        end: quoted.end,
-      };
-    }
-
-    if (!regexpTest(/\s/, source[cursor] ?? "")) previousTokenIndex = cursor;
-    cursor++;
+  const state: FromSpanSearchState = {
+    cursor: statementStart,
+    previousTokenIndex: previousSignificantIndexBeforeIgnored(source, statementStart),
+    matchingOpenBraces: new IntrinsicMap<number, OpenBraceContext>(),
+    matchingOpenParens: new IntrinsicMap<number, OpenParenContext>(),
+    moduleDeclarationBefore: () => null,
+    result: undefined,
+  };
+  while (state.cursor < source.length) {
+    advanceFromSpanSearch(source, statementStart, matcher, isExportDeclaration, state);
+    if (state.result !== undefined) return state.result;
   }
-
   return null;
 }
 
@@ -2631,6 +2908,63 @@ function assertMaxMatches(maxMatches: number): void {
   }
 }
 
+function advanceStaticFromImport(
+  source: string,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+  state: SourceWalkState,
+): boolean {
+  const isImport = isStatementKeywordAt(source, state.cursor, "import", state.atStatementStart);
+  const isExport = isStatementKeywordAt(source, state.cursor, "export", state.atStatementStart);
+  if (!isImport && !isExport) {
+    state.atStatementStart = false;
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return false;
+  }
+
+  const keywordLength = isImport ? "import".length : "export".length;
+  const afterKeyword = skipWhitespaceAndComments(source, state.cursor + keywordLength);
+  if (isImport && source[afterKeyword] === "(") {
+    state.atStatementStart = false;
+    primordialArrayPush(state.openParens, {
+      index: afterKeyword,
+      isControlCondition: false,
+      isForHeader: false,
+      hasSemicolon: false,
+    });
+    state.previousTokenIndex = afterKeyword;
+    state.cursor = afterKeyword + 1;
+    return false;
+  }
+
+  if (isExport && !canExportHaveFromClause(source, afterKeyword)) {
+    state.atStatementStart = false;
+    state.previousTokenIndex = state.cursor + keywordLength - 1;
+    state.cursor = afterKeyword;
+    return false;
+  }
+
+  const span = findFromSpan(source, afterKeyword, matcher, isExport);
+  if (span) {
+    primordialArrayPush(spans, {
+      ...span,
+      typeOnly: isTypeOnlyModuleClause(source, afterKeyword, span.start),
+    });
+    if (spans.length >= maxMatches) return true;
+    state.atStatementStart = false;
+    state.previousTokenIndex = span.end - 1;
+    state.cursor = span.end;
+    return false;
+  }
+
+  state.atStatementStart = true;
+  state.cursor = nextStatementCursor(source, afterKeyword);
+  state.previousTokenIndex = MathMax(state.previousTokenIndex, state.cursor - 1);
+  return false;
+}
+
 export function findStaticImportFromSpans(
   source: string,
   matcher: SpecifierMatcher,
@@ -2639,190 +2973,12 @@ export function findStaticImportFromSpans(
   assertMaxMatches(maxMatches);
 
   const spans: StaticImportSpan[] = [];
-  let cursor = 0;
-  let atStatementStart = true;
-  const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
-  const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
-  let previousTokenIndex = -1;
-  const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
-  const completedRegexLiteralEnds = new IntrinsicSet<number>();
-  let rawJsxTextDepth = 0;
-  let rawJsxExpressionBraceDepth = 0;
-  const rawJsxExpressionBraceStack: boolean[] = [];
-  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-
-  while (cursor < source.length) {
-    const char = source[cursor];
-    const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
-      lookaheadCache: rawJsxLookaheadCache,
-    });
-    if (jsxTag !== null) {
-      if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
-      } else if (!jsxTag.isSelfClosingTag) {
-        rawJsxTextDepth++;
-      }
-      atStatementStart = false;
-      previousTokenIndex = jsxTag.end - 1;
-      cursor = jsxTag.end;
-      continue;
-    }
-
-    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
-      const textEnd = skipRawJsxText(source, cursor);
-      if (textEnd !== cursor) {
-        atStatementStart = false;
-        cursor = textEnd;
-        continue;
-      }
-    }
-
-    const skipped = skipExpressionIgnored(
-      source,
-      cursor,
-      0,
-      0,
-      matchingOpenBraces,
-      matchingOpenParens,
-      primordialArrayAt(openParens, -1),
-      previousTokenIndex,
-      moduleDeclarationBefore,
-      rawJsxLookaheadCache,
-      completedRegexLiteralEnds,
-    );
-    if (skipped !== cursor) {
-      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (char === "/" && source[cursor + 1] === "*") {
-        if (hasLineTerminatorBetween(source, cursor + 2, skipped - 2)) atStatementStart = true;
-      } else atStatementStart = false;
-      previousTokenIndex = tokenIndexAfterIgnored(
-        source,
-        cursor,
-        skipped,
-        previousTokenIndex,
-      );
-      cursor = skipped;
-      continue;
-    }
-
-    if (char === "{") {
-      const isRawJsxExpressionBrace = isInRawJsxText(
-        rawJsxTextDepth,
-        rawJsxExpressionBraceDepth,
-      );
-      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
-      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      primordialArrayPush(
-        openBraces,
-        openBraceContext(
-          source,
-          0,
-          cursor,
-          previousTokenIndex,
-          matchingOpenParens,
-          primordialArrayAt(openParens, -1),
-          primordialArrayAt(openBraces, -1),
-          completedRegexLiteralEnds,
-        ),
-      );
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === "}") {
-      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
-      if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
-      }
-      const openBrace = primordialArrayPop(openBraces);
-      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
-      atStatementStart = true;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === "(") {
-      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === ")") {
-      const openParen = primordialArrayPop(openParens);
-      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
-      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
-    }
-    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
-      atStatementStart = true;
-      if (char === ";") previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (regexpTest(/\s/, char ?? "")) {
-      cursor++;
-      continue;
-    }
-
-    const isImport = isStatementKeywordAt(source, cursor, "import", atStatementStart);
-    const isExport = isStatementKeywordAt(source, cursor, "export", atStatementStart);
-    if (!isImport && !isExport) {
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    const keywordLength = isImport ? "import".length : "export".length;
-    const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
-    if (isImport && source[afterKeyword] === "(") {
-      atStatementStart = false;
-      primordialArrayPush(openParens, {
-        index: afterKeyword,
-        isControlCondition: false,
-        isForHeader: false,
-        hasSemicolon: false,
-      });
-      previousTokenIndex = afterKeyword;
-      cursor = afterKeyword + 1;
-      continue;
-    }
-
-    if (isExport && !canExportHaveFromClause(source, afterKeyword)) {
-      atStatementStart = false;
-      previousTokenIndex = cursor + keywordLength - 1;
-      cursor = afterKeyword;
-      continue;
-    }
-
-    const span = findFromSpan(source, afterKeyword, matcher, isExport);
-    if (span) {
-      primordialArrayPush(spans, {
-        ...span,
-        typeOnly: isTypeOnlyModuleClause(source, afterKeyword, span.start),
-      });
-      if (spans.length >= maxMatches) return spans;
-      atStatementStart = false;
-      previousTokenIndex = span.end - 1;
-      cursor = span.end;
-      continue;
-    }
-
-    atStatementStart = true;
-    cursor = nextStatementCursor(source, afterKeyword);
-    previousTokenIndex = MathMax(previousTokenIndex, cursor - 1);
+  const state = createSourceWalkState(source, 0);
+  while (state.cursor < source.length) {
+    const char = source[state.cursor];
+    if (advanceStaticImportTrivia(source, char, state)) continue;
+    if (advanceStaticFromImport(source, matcher, maxMatches, spans, state)) break;
   }
-
   return spans;
 }
 
@@ -2862,6 +3018,203 @@ function scanTemplateExpressionDynamicImports(
   return source.length;
 }
 
+function advanceDynamicIgnored(
+  source: string,
+  rangeStart: number,
+  char: string | undefined,
+  next: string | undefined,
+  state: SourceWalkState,
+): boolean {
+  if (
+    (char === "/" && (next === "/" || next === "*")) ||
+    char === '"' ||
+    char === "'"
+  ) {
+    const skipped = skipIgnored(source, state.cursor);
+    state.previousTokenIndex = tokenIndexAfterIgnored(
+      source,
+      state.cursor,
+      skipped,
+      state.previousTokenIndex,
+    );
+    state.cursor = skipped;
+    return true;
+  }
+
+  if (
+    char === "/" &&
+    canStartRegexLiteral(source, state.cursor, rangeStart, {
+      matchingOpenBraces: state.matchingOpenBraces,
+      matchingOpenParens: state.matchingOpenParens,
+      currentParen: primordialArrayAt(state.openParens, -1),
+      previousTokenIndex: state.previousTokenIndex,
+      moduleDeclarationBefore: state.moduleDeclarationBefore,
+    })
+  ) {
+    state.cursor = skipRegexLiteral(source, state.cursor);
+    state.previousTokenIndex = state.cursor - 1;
+    setAdd(state.completedRegexLiteralEnds, state.previousTokenIndex);
+    return true;
+  }
+
+  return false;
+}
+
+function finishDynamicImport(
+  source: string,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+  state: SourceWalkState,
+  candidate: { index: number; literal: NonNullable<ReturnType<typeof readLiteralSpecifier>> },
+): boolean {
+  const { index: literalIndex, literal } = candidate;
+  // The literal must be the whole first argument. `)` closes the call and `,`
+  // starts the import-attributes argument; anything else (`+`, a template
+  // continuation, a ternary) means the runtime specifier is not this string.
+  const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
+  const isWholeArgument = afterSpecifier < rangeEnd &&
+    (source[afterSpecifier] === ")" || source[afterSpecifier] === ",");
+
+  const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
+  if (matchedPath) {
+    primordialArrayPush(spans, {
+      original: stringSlice(source, literalIndex, literal.end),
+      path: matchedPath,
+      start: literalIndex,
+      end: literal.end,
+    });
+    if (spans.length >= maxMatches) return true;
+  }
+
+  state.previousTokenIndex = literal.end - 1;
+  state.cursor = literal.end;
+  return false;
+}
+
+function advanceDynamicImport(
+  source: string,
+  rangeStart: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+  state: SourceWalkState,
+): boolean {
+  // `import` used as an expression: not preceded by an identifier char or a
+  // dot (which would make it `foo.import` or part of a longer word).
+  if (
+    !stringStartsWith(source, "import", state.cursor) ||
+    isIdentifierBoundaryBefore(source, state.cursor) ||
+    isPropertyAccessBeforeImport(source, state.previousTokenIndex, rangeStart) ||
+    isIdentifierBoundaryAfter(source, state.cursor + "import".length)
+  ) {
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return false;
+  }
+
+  const parenIndex = skipWhitespaceAndComments(source, state.cursor + "import".length);
+  if (parenIndex >= rangeEnd || source[parenIndex] !== "(") {
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return false;
+  }
+  // The scanner jumps directly from `import` to its argument, so record the
+  // opening parenthesis that the ordinary character walk does not visit.
+  primordialArrayPush(state.openParens, {
+    index: parenIndex,
+    isControlCondition: false,
+    isForHeader: false,
+    hasSemicolon: false,
+  });
+
+  const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
+  if (literalIndex >= rangeEnd) {
+    state.previousTokenIndex = parenIndex;
+    state.cursor = parenIndex + 1;
+    return false;
+  }
+
+  const literal = readLiteralSpecifier(source, literalIndex);
+  if (!literal || literal.end > rangeEnd) {
+    state.previousTokenIndex = parenIndex;
+    state.cursor = parenIndex + 1;
+    return false;
+  }
+
+  return finishDynamicImport(source, rangeEnd, matcher, maxMatches, spans, state, {
+    index: literalIndex,
+    literal,
+  });
+}
+
+function scanRawJsxAttributeImports(
+  source: string,
+  tag: RawJsxTagSkip,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+): boolean {
+  for (const range of primordialArrayValues(tag.expressionRanges)) {
+    scanDynamicImportRange(source, range.start, range.end, matcher, maxMatches, spans);
+    if (spans.length >= maxMatches) return true;
+  }
+  return false;
+}
+
+function advanceDynamicImportRange(
+  source: string,
+  rangeStart: number,
+  rangeEnd: number,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+  state: SourceWalkState,
+): boolean {
+  const char = source[state.cursor];
+  const next = source[state.cursor + 1];
+
+  const jsxTag = rawJsxTagAtCursor(source, state);
+  if (jsxTag !== null) {
+    if (scanRawJsxAttributeImports(source, jsxTag, matcher, maxMatches, spans)) return true;
+    advancePastRawJsxTag(jsxTag, state);
+    return false;
+  }
+
+  if (advanceRawJsxText(source, state)) return false;
+
+  if (advanceDynamicIgnored(source, rangeStart, char, next, state)) return false;
+
+  if (char === "`") {
+    state.cursor = scanTemplateExpressionDynamicImports(
+      source,
+      state.cursor,
+      rangeEnd,
+      matcher,
+      maxMatches,
+      spans,
+    );
+    if (spans.length >= maxMatches) return true;
+    state.previousTokenIndex = state.cursor - 1;
+    return false;
+  }
+
+  if (advanceDelimiter(source, rangeStart, char, state)) return false;
+  recordForHeaderSemicolon(char, state);
+
+  if (regexpTest(/\s/, char ?? "")) {
+    state.cursor++;
+    return false;
+  }
+
+  if (advanceDynamicImport(source, rangeStart, rangeEnd, matcher, maxMatches, spans, state)) {
+    return true;
+  }
+  return false;
+}
+
 function scanDynamicImportRange(
   source: string,
   rangeStart: number,
@@ -2870,222 +3223,12 @@ function scanDynamicImportRange(
   maxMatches: number,
   spans: StaticImportSpan[],
 ): void {
-  let cursor = rangeStart;
-  const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
-  const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
-  let previousTokenIndex = rangeStart - 1;
-  let rawJsxTextDepth = 0;
-  let rawJsxExpressionBraceDepth = 0;
-  const rawJsxExpressionBraceStack: boolean[] = [];
-  const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
-  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-  const completedRegexLiteralEnds = new IntrinsicSet<number>();
+  const state = createSourceWalkState(source, rangeStart);
 
-  while (cursor < rangeEnd) {
-    const char = source[cursor];
-    const next = source[cursor + 1];
-
-    const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
-      lookaheadCache: rawJsxLookaheadCache,
-    });
-    if (jsxTag !== null) {
-      for (const range of primordialArrayValues(jsxTag.expressionRanges)) {
-        scanDynamicImportRange(source, range.start, range.end, matcher, maxMatches, spans);
-        if (spans.length >= maxMatches) return;
-      }
-      if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
-      } else if (!jsxTag.isSelfClosingTag) {
-        rawJsxTextDepth++;
-      }
-      previousTokenIndex = jsxTag.end - 1;
-      cursor = jsxTag.end;
-      continue;
-    }
-
-    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
-      const textEnd = skipRawJsxText(source, cursor);
-      if (textEnd !== cursor) {
-        cursor = textEnd;
-        continue;
-      }
-    }
-
+  while (state.cursor < rangeEnd) {
     if (
-      (char === "/" && (next === "/" || next === "*")) ||
-      char === '"' ||
-      char === "'"
-    ) {
-      const skipped = skipIgnored(source, cursor);
-      previousTokenIndex = tokenIndexAfterIgnored(
-        source,
-        cursor,
-        skipped,
-        previousTokenIndex,
-      );
-      cursor = skipped;
-      continue;
-    }
-
-    if (
-      char === "/" &&
-      canStartRegexLiteral(
-        source,
-        cursor,
-        rangeStart,
-        matchingOpenBraces,
-        matchingOpenParens,
-        primordialArrayAt(openParens, -1),
-        previousTokenIndex,
-        moduleDeclarationBefore,
-      )
-    ) {
-      cursor = skipRegexLiteral(source, cursor);
-      previousTokenIndex = cursor - 1;
-      setAdd(completedRegexLiteralEnds, previousTokenIndex);
-      continue;
-    }
-
-    if (char === "`") {
-      cursor = scanTemplateExpressionDynamicImports(
-        source,
-        cursor,
-        rangeEnd,
-        matcher,
-        maxMatches,
-        spans,
-      );
-      if (spans.length >= maxMatches) return;
-      previousTokenIndex = cursor - 1;
-      continue;
-    }
-
-    if (char === "{") {
-      const isRawJsxExpressionBrace = isInRawJsxText(
-        rawJsxTextDepth,
-        rawJsxExpressionBraceDepth,
-      );
-      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
-      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      primordialArrayPush(
-        openBraces,
-        openBraceContext(
-          source,
-          rangeStart,
-          cursor,
-          previousTokenIndex,
-          matchingOpenParens,
-          primordialArrayAt(openParens, -1),
-          primordialArrayAt(openBraces, -1),
-          completedRegexLiteralEnds,
-        ),
-      );
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (char === "}") {
-      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
-      if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
-      }
-      const openBrace = primordialArrayPop(openBraces);
-      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (char === "(") {
-      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (char === ")") {
-      const openParen = primordialArrayPop(openParens);
-      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
-      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
-    }
-
-    if (regexpTest(/\s/, char ?? "")) {
-      cursor++;
-      continue;
-    }
-
-    // `import` used as an expression: not preceded by an identifier char or a
-    // dot (which would make it `foo.import` or part of a longer word).
-    if (
-      !stringStartsWith(source, "import", cursor) ||
-      isIdentifierBoundaryBefore(source, cursor) ||
-      isPropertyAccessBeforeImport(source, previousTokenIndex, rangeStart) ||
-      isIdentifierBoundaryAfter(source, cursor + "import".length)
-    ) {
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
-    if (parenIndex >= rangeEnd || source[parenIndex] !== "(") {
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    // The scanner jumps directly from `import` to its argument, so record the
-    // opening parenthesis that the ordinary character walk does not visit.
-    primordialArrayPush(openParens, {
-      index: parenIndex,
-      isControlCondition: false,
-      isForHeader: false,
-      hasSemicolon: false,
-    });
-
-    const literalIndex = skipWhitespaceAndComments(source, parenIndex + 1);
-    if (literalIndex >= rangeEnd) {
-      previousTokenIndex = parenIndex;
-      cursor = parenIndex + 1;
-      continue;
-    }
-
-    const literal = readLiteralSpecifier(source, literalIndex);
-    if (!literal || literal.end > rangeEnd) {
-      previousTokenIndex = parenIndex;
-      cursor = parenIndex + 1;
-      continue;
-    }
-
-    // The literal must be the whole first argument. `)` closes the call and `,`
-    // starts the import-attributes argument; anything else (`+`, a template
-    // continuation, a ternary) means the runtime specifier is not this string.
-    const afterSpecifier = skipWhitespaceAndComments(source, literal.end);
-    const isWholeArgument = afterSpecifier < rangeEnd &&
-      (source[afterSpecifier] === ")" || source[afterSpecifier] === ",");
-
-    const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
-    if (matchedPath) {
-      primordialArrayPush(spans, {
-        original: stringSlice(source, literalIndex, literal.end),
-        path: matchedPath,
-        start: literalIndex,
-        end: literal.end,
-      });
-      if (spans.length >= maxMatches) return;
-    }
-
-    previousTokenIndex = literal.end - 1;
-    cursor = literal.end;
+      advanceDynamicImportRange(source, rangeStart, rangeEnd, matcher, maxMatches, spans, state)
+    ) return;
   }
 }
 
@@ -3120,6 +3263,46 @@ export function findDynamicImportSpans(
   return spans;
 }
 
+function advanceStaticSideEffectImport(
+  source: string,
+  matcher: SpecifierMatcher,
+  maxMatches: number,
+  spans: StaticImportSpan[],
+  state: SourceWalkState,
+): boolean {
+  if (!isStatementKeywordAt(source, state.cursor, "import", state.atStatementStart)) {
+    state.atStatementStart = false;
+    state.previousTokenIndex = state.cursor;
+    state.cursor++;
+    return false;
+  }
+
+  const literalIndex = skipWhitespaceAndComments(source, state.cursor + "import".length);
+  const literal = readLiteralSpecifier(source, literalIndex);
+  if (!literal) {
+    state.atStatementStart = true;
+    state.cursor = nextStatementCursor(source, literalIndex);
+    state.previousTokenIndex = MathMax(state.previousTokenIndex, state.cursor - 1);
+    return false;
+  }
+
+  const matchedPath = matcher(literal.specifier);
+  if (matchedPath) {
+    primordialArrayPush(spans, {
+      original: stringSlice(source, state.cursor, literal.end),
+      path: matchedPath,
+      start: state.cursor,
+      end: literal.end,
+    });
+    if (spans.length >= maxMatches) return true;
+  }
+
+  state.atStatementStart = false;
+  state.previousTokenIndex = literal.end - 1;
+  state.cursor = literal.end;
+  return false;
+}
+
 /**
  * Find bare `import "…"` side-effect statements.
  *
@@ -3134,172 +3317,11 @@ export function findStaticSideEffectImportSpans(
   assertMaxMatches(maxMatches);
 
   const spans: StaticImportSpan[] = [];
-  let cursor = 0;
-  let atStatementStart = true;
-  const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
-  const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
-  let previousTokenIndex = -1;
-  const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
-  const completedRegexLiteralEnds = new IntrinsicSet<number>();
-  let rawJsxTextDepth = 0;
-  let rawJsxExpressionBraceDepth = 0;
-  const rawJsxExpressionBraceStack: boolean[] = [];
-  const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-
-  while (cursor < source.length) {
-    const char = source[cursor];
-    const jsxTag = readRawJsxTag(source, cursor, {
-      allowClosingTagAfterText: isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth),
-      lookaheadCache: rawJsxLookaheadCache,
-    });
-    if (jsxTag !== null) {
-      if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
-      } else if (!jsxTag.isSelfClosingTag) {
-        rawJsxTextDepth++;
-      }
-      atStatementStart = false;
-      previousTokenIndex = jsxTag.end - 1;
-      cursor = jsxTag.end;
-      continue;
-    }
-
-    if (isInRawJsxText(rawJsxTextDepth, rawJsxExpressionBraceDepth)) {
-      const textEnd = skipRawJsxText(source, cursor);
-      if (textEnd !== cursor) {
-        atStatementStart = false;
-        cursor = textEnd;
-        continue;
-      }
-    }
-
-    const skipped = skipExpressionIgnored(
-      source,
-      cursor,
-      0,
-      0,
-      matchingOpenBraces,
-      matchingOpenParens,
-      primordialArrayAt(openParens, -1),
-      previousTokenIndex,
-      moduleDeclarationBefore,
-      rawJsxLookaheadCache,
-      completedRegexLiteralEnds,
-    );
-    if (skipped !== cursor) {
-      if (char === "/" && source[cursor + 1] === "/") atStatementStart = true;
-      else if (char === "/" && source[cursor + 1] === "*") {
-        if (hasLineTerminatorBetween(source, cursor + 2, skipped - 2)) atStatementStart = true;
-      } else atStatementStart = false;
-      previousTokenIndex = tokenIndexAfterIgnored(
-        source,
-        cursor,
-        skipped,
-        previousTokenIndex,
-      );
-      cursor = skipped;
-      continue;
-    }
-
-    if (char === "{") {
-      const isRawJsxExpressionBrace = isInRawJsxText(
-        rawJsxTextDepth,
-        rawJsxExpressionBraceDepth,
-      );
-      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
-      if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      primordialArrayPush(
-        openBraces,
-        openBraceContext(
-          source,
-          0,
-          cursor,
-          previousTokenIndex,
-          matchingOpenParens,
-          primordialArrayAt(openParens, -1),
-          primordialArrayAt(openBraces, -1),
-          completedRegexLiteralEnds,
-        ),
-      );
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === "}") {
-      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
-      if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
-      }
-      const openBrace = primordialArrayPop(openBraces);
-      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
-      atStatementStart = true;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === "(") {
-      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === ")") {
-      const openParen = primordialArrayPop(openParens);
-      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
-      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
-    }
-    if (char === ";" || (char !== undefined && isLineTerminator(char))) {
-      atStatementStart = true;
-      if (char === ";") previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-    if (regexpTest(/\s/, char ?? "")) {
-      cursor++;
-      continue;
-    }
-
-    if (!isStatementKeywordAt(source, cursor, "import", atStatementStart)) {
-      atStatementStart = false;
-      previousTokenIndex = cursor;
-      cursor++;
-      continue;
-    }
-
-    const literalIndex = skipWhitespaceAndComments(source, cursor + "import".length);
-    const literal = readLiteralSpecifier(source, literalIndex);
-    if (!literal) {
-      atStatementStart = true;
-      cursor = nextStatementCursor(source, literalIndex);
-      previousTokenIndex = MathMax(previousTokenIndex, cursor - 1);
-      continue;
-    }
-
-    const matchedPath = matcher(literal.specifier);
-    if (matchedPath) {
-      primordialArrayPush(spans, {
-        original: stringSlice(source, cursor, literal.end),
-        path: matchedPath,
-        start: cursor,
-        end: literal.end,
-      });
-      if (spans.length >= maxMatches) return spans;
-    }
-
-    atStatementStart = false;
-    previousTokenIndex = literal.end - 1;
-    cursor = literal.end;
+  const state = createSourceWalkState(source, 0);
+  while (state.cursor < source.length) {
+    const char = source[state.cursor];
+    if (advanceStaticImportTrivia(source, char, state)) continue;
+    if (advanceStaticSideEffectImport(source, matcher, maxMatches, spans, state)) break;
   }
-
   return spans;
 }
