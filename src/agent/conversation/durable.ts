@@ -276,6 +276,14 @@ function validateAppendModelCallCaptureReceipts(input: {
     );
   }
 
+  validateModelCallCaptureReceiptIdentities(input, receipts, expectedIds);
+}
+
+function validateModelCallCaptureReceiptIdentities(
+  input: Parameters<typeof validateAppendModelCallCaptureReceipts>[0],
+  receipts: NonNullable<AppendConversationRunEventsResponse["modelCallCaptures"]>,
+  expectedIds: ReturnType<typeof createPrivateSet<string>>,
+): void {
   const receivedIds = createPrivateSet<string>();
   const receivedEventIds = createPrivateSet<string>();
   const canonicalRunId = normalizeReceiptId(input.canonicalRunId);
@@ -474,6 +482,14 @@ function validateAppendToolCallAdmissionReceipts(input: {
     );
   }
 
+  validateToolCallAdmissionReceiptIdentities(input, receipts, expectedByOccurrence);
+}
+
+function validateToolCallAdmissionReceiptIdentities(
+  input: Parameters<typeof validateAppendToolCallAdmissionReceipts>[0],
+  receipts: NonNullable<AppendConversationRunEventsResponse["toolCallAdmissions"]>,
+  expectedByOccurrence: Map<string, SubmittedToolCallAdmissionStart>,
+): void {
   const seenOccurrences = createPrivateSet<string>();
   const seenDurableEventIds = createPrivateSet<string>();
   const canonicalRunId = normalizeReceiptId(input.canonicalRunId);
@@ -775,6 +791,28 @@ export async function recoverConversationRunCursorMismatch(input: {
   };
 }
 
+type ConversationRunAppendDisableReason =
+  | "cursor_resyncs_exhausted"
+  | "cursor_mismatch_ambiguous"
+  | "non_appendable"
+  | "ignorable_append_rejection"
+  | "run_terminal"
+  | "payload_too_large"
+  | "auth_rejected";
+
+function stoppedAppendFailureReason(
+  input: { error: unknown },
+): ConversationRunAppendDisableReason | undefined {
+  // veryfront-issue-inbox#743: terminal runs cannot be finalized, whereas other
+  // ignorable rejections retain the generic stop reason.
+  if (isTerminalRunConversationRunAppendError(input.error)) return "run_terminal";
+  if (isIgnorableConversationRunAppendError(input.error)) return "ignorable_append_rejection";
+  if (isPermanentAuthConversationRunAppendError(input.error)) return "auth_rejected";
+  // The same oversized bytes fail every retry, so stop instead of retrying.
+  if (isPayloadTooLargeConversationRunAppendError(input.error)) return "payload_too_large";
+  return undefined;
+}
+
 /** Recover conversation run append failure helper. */
 export async function recoverConversationRunAppendFailure(input: {
   error: unknown;
@@ -794,14 +832,7 @@ export async function recoverConversationRunAppendFailure(input: {
   outcome: ConversationRunAppendFailureOutcome;
   latestEventId: number;
   latestExternalEventSequence: number;
-  disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "cursor_mismatch_ambiguous"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "run_terminal"
-    | "payload_too_large"
-    | "auth_rejected";
+  disableReason?: ConversationRunAppendDisableReason;
   errorMessage?: string;
   retryCause?: "timeout";
   run?: ConversationRunProjection;
@@ -840,50 +871,13 @@ export async function recoverConversationRunAppendFailure(input: {
     };
   }
 
-  // veryfront-issue-inbox#743: a terminal-run rejection is the API telling the
-  // runtime the run is finished and its row may already be gone (a project delete
-  // cancels its in-flight runs first). Classify it distinctly from the other
-  // ignorable rejections so finalization can skip completing a run that can only
-  // 400 -- other missing-resource responses and runs waiting for a tool result
-  // keep the generic stop; every other rejection must still retry or surface.
-  if (isTerminalRunConversationRunAppendError(input.error)) {
+  const disableReason = stoppedAppendFailureReason(input);
+  if (disableReason) {
     return {
       outcome: "stopped",
       latestEventId: cursorRecovery.latestEventId,
       latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
-      disableReason: "run_terminal",
-      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
-    };
-  }
-
-  if (isIgnorableConversationRunAppendError(input.error)) {
-    return {
-      outcome: "stopped",
-      latestEventId: cursorRecovery.latestEventId,
-      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
-      disableReason: "ignorable_append_rejection",
-      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
-    };
-  }
-
-  if (isPermanentAuthConversationRunAppendError(input.error)) {
-    return {
-      outcome: "stopped",
-      latestEventId: cursorRecovery.latestEventId,
-      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
-      disableReason: "auth_rejected",
-      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
-    };
-  }
-
-  // Permanent: the same bytes fail every retry. Stop instead of retry-storming the
-  // API (the runtime normalizes under the limit before appending, so this is a bug).
-  if (isPayloadTooLargeConversationRunAppendError(input.error)) {
-    return {
-      outcome: "stopped",
-      latestEventId: cursorRecovery.latestEventId,
-      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
-      disableReason: "payload_too_large",
+      disableReason,
       ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
     };
   }
@@ -936,14 +930,7 @@ export async function recoverConversationRunAppendExecution(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?:
-      | "cursor_resyncs_exhausted"
-      | "cursor_mismatch_ambiguous"
-      | "non_appendable"
-      | "ignorable_append_rejection"
-      | "run_terminal"
-      | "payload_too_large"
-      | "auth_rejected";
+    disableReason?: ConversationRunAppendDisableReason;
   }
   | {
     outcome: "retry_scheduled";
@@ -1015,6 +1002,52 @@ export async function recoverConversationRunAppendExecution(input: {
   };
 }
 
+function notifyConversationRunAppendAcknowledged(
+  input: Parameters<typeof flushConversationRunEventBatches>[0],
+  response: AppendConversationRunEventsResponse,
+): void {
+  if (response.modelCallCaptures && response.modelCallCaptures.length > 0) {
+    input.onModelCallCaptureReceipts?.(response.modelCallCaptures);
+  }
+  if (response.toolCallAdmissions && response.toolCallAdmissions.length > 0) {
+    input.onToolCallAdmissionReceipts?.(response.toolCallAdmissions);
+  }
+  input.onAppendAcknowledged?.(response);
+}
+
+function formatConversationRunBatchRecovery(
+  recovered: Awaited<ReturnType<typeof recoverConversationRunAppendExecution>>,
+): Exclude<Awaited<ReturnType<typeof flushConversationRunEventBatches>>, { outcome: "flushed" }> {
+  if (recovered.outcome === "stopped") {
+    return {
+      outcome: "stopped",
+      latestEventId: recovered.latestEventId,
+      latestExternalEventSequence: recovered.latestExternalEventSequence,
+      ...(recovered.disableReason ? { disableReason: recovered.disableReason } : {}),
+    };
+  }
+
+  return {
+    outcome: recovered.outcome,
+    latestEventId: recovered.latestEventId,
+    latestExternalEventSequence: recovered.latestExternalEventSequence,
+    pendingEvents: recovered.pendingEvents,
+    ...(recovered.pendingToolCallStarts && recovered.pendingToolCallStarts.length > 0
+      ? { pendingToolCallStarts: recovered.pendingToolCallStarts }
+      : {}),
+    ...(recovered.pendingRuntimeObservations && recovered.pendingRuntimeObservations.length > 0
+      ? { pendingRuntimeObservations: recovered.pendingRuntimeObservations }
+      : {}),
+    consecutiveFailures: recovered.consecutiveFailures,
+    ...(recovered.outcome === "retry_scheduled"
+      ? {
+        errorMessage: recovered.errorMessage,
+        ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
+      }
+      : {}),
+  };
+}
+
 /** Flush conversation run event batches. */
 export async function flushConversationRunEventBatches(input: {
   authToken: string;
@@ -1064,14 +1097,7 @@ export async function flushConversationRunEventBatches(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?:
-      | "cursor_resyncs_exhausted"
-      | "cursor_mismatch_ambiguous"
-      | "non_appendable"
-      | "ignorable_append_rejection"
-      | "run_terminal"
-      | "payload_too_large"
-      | "auth_rejected";
+    disableReason?: ConversationRunAppendDisableReason;
   }
 > {
   const batches = buildConversationRunEventBatches({
@@ -1121,13 +1147,7 @@ export async function flushConversationRunEventBatches(input: {
         abortSignal: input.abortSignal,
         fetch: input.fetch,
       });
-      if (response.modelCallCaptures && response.modelCallCaptures.length > 0) {
-        input.onModelCallCaptureReceipts?.(response.modelCallCaptures);
-      }
-      if (response.toolCallAdmissions && response.toolCallAdmissions.length > 0) {
-        input.onToolCallAdmissionReceipts?.(response.toolCallAdmissions);
-      }
-      input.onAppendAcknowledged?.(response);
+      notifyConversationRunAppendAcknowledged(input, response);
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
       batchStartIndex += batch.length;
@@ -1166,34 +1186,7 @@ export async function flushConversationRunEventBatches(input: {
         fetch: input.fetch,
       });
 
-      if (recovered.outcome === "stopped") {
-        return {
-          outcome: "stopped",
-          latestEventId: recovered.latestEventId,
-          latestExternalEventSequence: recovered.latestExternalEventSequence,
-          ...(recovered.disableReason ? { disableReason: recovered.disableReason } : {}),
-        };
-      }
-
-      return {
-        outcome: recovered.outcome,
-        latestEventId: recovered.latestEventId,
-        latestExternalEventSequence: recovered.latestExternalEventSequence,
-        pendingEvents: recovered.pendingEvents,
-        ...(recovered.pendingToolCallStarts && recovered.pendingToolCallStarts.length > 0
-          ? { pendingToolCallStarts: recovered.pendingToolCallStarts }
-          : {}),
-        ...(recovered.pendingRuntimeObservations && recovered.pendingRuntimeObservations.length > 0
-          ? { pendingRuntimeObservations: recovered.pendingRuntimeObservations }
-          : {}),
-        consecutiveFailures: recovered.consecutiveFailures,
-        ...(recovered.outcome === "retry_scheduled"
-          ? {
-            errorMessage: recovered.errorMessage,
-            ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
-          }
-          : {}),
-      };
+      return formatConversationRunBatchRecovery(recovered);
     }
   }
 
@@ -1201,6 +1194,38 @@ export async function flushConversationRunEventBatches(input: {
     outcome: "flushed",
     latestEventId,
     latestExternalEventSequence,
+  };
+}
+
+function formatConversationRunQueueFailure(
+  flushed: Exclude<
+    Awaited<ReturnType<typeof flushConversationRunEventBatches>>,
+    { outcome: "flushed" }
+  >,
+): Exclude<Awaited<ReturnType<typeof flushConversationRunEventQueue>>, { outcome: "flushed" }> {
+  if (flushed.outcome === "stopped") {
+    return {
+      outcome: "stopped",
+      latestEventId: flushed.latestEventId,
+      latestExternalEventSequence: flushed.latestExternalEventSequence,
+      ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
+    };
+  }
+
+  return {
+    outcome: "retry_scheduled",
+    latestEventId: flushed.latestEventId,
+    latestExternalEventSequence: flushed.latestExternalEventSequence,
+    pendingEvents: flushed.pendingEvents,
+    ...(flushed.pendingToolCallStarts && flushed.pendingToolCallStarts.length > 0
+      ? { pendingToolCallStarts: flushed.pendingToolCallStarts }
+      : {}),
+    ...(flushed.pendingRuntimeObservations && flushed.pendingRuntimeObservations.length > 0
+      ? { pendingRuntimeObservations: flushed.pendingRuntimeObservations }
+      : {}),
+    consecutiveFailures: flushed.consecutiveFailures,
+    errorMessage: flushed.errorMessage ?? "Conversation run append failed",
+    ...(flushed.retryCause ? { retryCause: flushed.retryCause } : {}),
   };
 }
 
@@ -1236,14 +1261,7 @@ export async function flushConversationRunEventQueue(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?:
-      | "cursor_resyncs_exhausted"
-      | "cursor_mismatch_ambiguous"
-      | "non_appendable"
-      | "ignorable_append_rejection"
-      | "run_terminal"
-      | "payload_too_large"
-      | "auth_rejected";
+    disableReason?: ConversationRunAppendDisableReason;
   }
   | {
     outcome: "retry_scheduled";
@@ -1316,30 +1334,7 @@ export async function flushConversationRunEventQueue(input: {
       continue;
     }
 
-    if (flushed.outcome === "stopped") {
-      return {
-        outcome: "stopped",
-        latestEventId: flushed.latestEventId,
-        latestExternalEventSequence: flushed.latestExternalEventSequence,
-        ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
-      };
-    }
-
-    return {
-      outcome: "retry_scheduled",
-      latestEventId: flushed.latestEventId,
-      latestExternalEventSequence: flushed.latestExternalEventSequence,
-      pendingEvents: flushed.pendingEvents,
-      ...(flushed.pendingToolCallStarts && flushed.pendingToolCallStarts.length > 0
-        ? { pendingToolCallStarts: flushed.pendingToolCallStarts }
-        : {}),
-      ...(flushed.pendingRuntimeObservations && flushed.pendingRuntimeObservations.length > 0
-        ? { pendingRuntimeObservations: flushed.pendingRuntimeObservations }
-        : {}),
-      consecutiveFailures: flushed.consecutiveFailures,
-      errorMessage: flushed.errorMessage ?? "Conversation run append failed",
-      ...(flushed.retryCause ? { retryCause: flushed.retryCause } : {}),
-    };
+    return formatConversationRunQueueFailure(flushed);
   }
 
   return {
@@ -1710,7 +1705,7 @@ async function controlPlaneJson<T>(input: {
 }
 
 /** @deprecated Use getCanonicalRunStatus with the canonical UUID. Legacy projection reads are removed. */
-export async function getConversationRun(input: {
+export async function getConversationRun(_input: {
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -1719,7 +1714,6 @@ export async function getConversationRun(input: {
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<ConversationRunProjection> {
-  void input;
   throw new Error(
     "Legacy durable projection reads were removed. Use getCanonicalRunStatus with the canonical UUID; append cursors are supplied by admission and authenticated append receipts.",
   );
@@ -1750,6 +1744,14 @@ export async function getCanonicalRunStatus(input: {
   return { runId: input.runId, status: run.status === "waiting" ? "waiting_for_tool" : run.status };
 }
 
+function shouldStopConversationRunPoll(
+  abortSignal: AbortSignal | undefined,
+  error: unknown,
+): boolean {
+  if (abortSignal?.aborted) return true;
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 /** Monitor conversation run status helper. */
 export async function monitorConversationRunStatus(input: {
   authToken: string;
@@ -1778,11 +1780,7 @@ export async function monitorConversationRunStatus(input: {
         abortSignal: input.abortSignal,
       });
     } catch (error) {
-      if (input.abortSignal?.aborted) {
-        return;
-      }
-
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (shouldStopConversationRunPoll(input.abortSignal, error)) {
         return;
       }
 
@@ -1808,6 +1806,143 @@ export async function monitorConversationRunStatus(input: {
     }
     return;
   }
+}
+
+function normalizeModelCallCaptureWireReceipt(receipt: unknown): unknown {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+    return receipt;
+  }
+  const rawReceipt = receipt as Record<string, unknown>;
+  return {
+    eventId: rawReceipt.event_id,
+    projectId: rawReceipt.project_id,
+    runId: rawReceipt.run_id,
+    modelCallId: rawReceipt.model_call_id,
+  };
+}
+
+function normalizeModelCallCaptureWireReceipts(receipts: unknown): unknown {
+  if (!Array.isArray(receipts)) return receipts;
+  return receipts.map((receipt) => normalizeModelCallCaptureWireReceipt(receipt));
+}
+
+function normalizeAppendWireResponse(
+  responseBody: unknown,
+  canonicalRunId: string,
+  input: Parameters<typeof appendConversationRunEvents>[0],
+): unknown {
+  if (typeof responseBody === "object" && responseBody !== null && "run_id" in responseBody) {
+    const wireResponse = responseBody as Record<string, unknown>;
+    if (
+      typeof wireResponse.run_id !== "string" ||
+      IntrinsicReflectApply(StringPrototypeToLowerCase, wireResponse.run_id, []) !==
+        IntrinsicReflectApply(StringPrototypeToLowerCase, canonicalRunId, [])
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Append receipt identifies a different canonical run",
+      );
+    }
+    const hasRawModelCallCaptures = Object.hasOwn(wireResponse, "model_call_captures");
+    const rawModelCallCaptures = wireResponse.model_call_captures;
+    const hasRawToolCallAdmissions = Object.hasOwn(wireResponse, "tool_call_admissions");
+    const rawToolCallAdmissions = wireResponse.tool_call_admissions;
+    return {
+      latestEventId: wireResponse.latest_event_id,
+      latestExternalEventSequence: wireResponse.latest_external_event_sequence ??
+        input.expectedPreviousExternalEventSequence,
+      appendedCount: wireResponse.appended_count,
+      ...(Object.hasOwn(wireResponse, "acknowledged_event_ids")
+        ? { acknowledgedEventIds: wireResponse.acknowledged_event_ids }
+        : {}),
+      ...(hasRawModelCallCaptures
+        ? {
+          modelCallCaptures: normalizeModelCallCaptureWireReceipts(rawModelCallCaptures),
+        }
+        : {}),
+      ...(hasRawToolCallAdmissions
+        ? {
+          toolCallAdmissions: Array.isArray(rawToolCallAdmissions)
+            ? rawToolCallAdmissions.map((receipt) =>
+              getToolCallAdmissionWireReceiptSchema().parse(receipt)
+            )
+            : rawToolCallAdmissions,
+        }
+        : {}),
+      run: {
+        runId: input.runId,
+        conversationId: input.conversationId,
+        latestEventId: wireResponse.latest_event_id,
+        latestExternalEventSequence: wireResponse.latest_external_event_sequence ??
+          input.expectedPreviousExternalEventSequence,
+      },
+    };
+  }
+  return responseBody;
+}
+
+function validateNormalizedAppendSidecars(
+  normalizedEvents: unknown[],
+  submittedToolCallAdmissionStarts: SubmittedToolCallAdmissionStart[],
+  submittedRuntimeObservations: ConversationRunRuntimeObservation[],
+): void {
+  for (const start of submittedToolCallAdmissionStarts) {
+    const normalizedEvent = normalizedEvents[start.eventIndex];
+    if (
+      !isToolCallStartEvent(normalizedEvent) ||
+      normalizedEvent.toolCallId !== start.toolCallId
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Tool call admission sidecar event_index changed during normalization",
+      );
+    }
+  }
+  for (const observation of submittedRuntimeObservations) {
+    if (normalizedEvents[observation.eventIndex] === undefined) {
+      throw new DurableRunEventPersistenceError(
+        "Runtime observation sidecar event_index changed during normalization",
+      );
+    }
+  }
+}
+
+function serializeConversationRunAppendRequest(
+  input: Parameters<typeof appendConversationRunEvents>[0],
+  requiresDurableCursor: boolean,
+  submittedToolCallAdmissionStarts: SubmittedToolCallAdmissionStart[],
+  submittedRuntimeObservations: ConversationRunRuntimeObservation[],
+  normalizedEvents: unknown[],
+): string {
+  const requestBody = privateJsonStringify(
+    {
+      ...(input.expectedPreviousEventId !== undefined
+        ? { expected_previous_event_id: input.expectedPreviousEventId }
+        : {}),
+      ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
+        ? {
+          expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
+        }
+        : {}),
+      ...(submittedToolCallAdmissionStarts.length > 0
+        ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
+        : {}),
+      ...(submittedRuntimeObservations.length > 0
+        ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
+        : {}),
+      events: normalizedEvents,
+    },
+    null,
+    undefined,
+    MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  );
+  if (
+    privateByteLength(encodePrivateText(requestBody)) >
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
+  ) {
+    throw new DurableRunEventPersistenceError(
+      "Run event append request exceeds the supported payload size",
+    );
+  }
+  return requestBody;
 }
 
 /** Append conversation run events. */
@@ -1850,24 +1985,11 @@ export async function appendConversationRunEvents(input: {
     hasPrivateSidecars: submittedToolCallAdmissionStarts.length > 0 ||
       submittedRuntimeObservations.length > 0,
   });
-  for (const start of submittedToolCallAdmissionStarts) {
-    const normalizedEvent = normalizedEvents[start.eventIndex];
-    if (
-      !isToolCallStartEvent(normalizedEvent) ||
-      normalizedEvent.toolCallId !== start.toolCallId
-    ) {
-      throw new DurableRunEventPersistenceError(
-        "Tool call admission sidecar event_index changed during normalization",
-      );
-    }
-  }
-  for (const observation of submittedRuntimeObservations) {
-    if (normalizedEvents[observation.eventIndex] === undefined) {
-      throw new DurableRunEventPersistenceError(
-        "Runtime observation sidecar event_index changed during normalization",
-      );
-    }
-  }
+  validateNormalizedAppendSidecars(
+    normalizedEvents,
+    submittedToolCallAdmissionStarts,
+    submittedRuntimeObservations,
+  );
   const submittedModelCallCaptureIds = readSubmittedModelCallCaptureIds(normalizedEvents);
   requireUniqueSubmittedModelCallCaptureIds(submittedModelCallCaptureIds);
   const requiresDurableCursor = normalizedEvents.some(isPrivateConversationRunEvent);
@@ -1892,36 +2014,13 @@ export async function appendConversationRunEvents(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const requestBody = privateJsonStringify(
-      {
-        ...(input.expectedPreviousEventId !== undefined
-          ? { expected_previous_event_id: input.expectedPreviousEventId }
-          : {}),
-        ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
-          ? {
-            expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
-          }
-          : {}),
-        ...(submittedToolCallAdmissionStarts.length > 0
-          ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
-          : {}),
-        ...(submittedRuntimeObservations.length > 0
-          ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
-          : {}),
-        events: normalizedEvents,
-      },
-      null,
-      undefined,
-      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    const requestBody = serializeConversationRunAppendRequest(
+      input,
+      requiresDurableCursor,
+      submittedToolCallAdmissionStarts,
+      submittedRuntimeObservations,
+      normalizedEvents,
     );
-    if (
-      privateByteLength(encodePrivateText(requestBody)) >
-        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
-    ) {
-      throw new DurableRunEventPersistenceError(
-        "Run event append request exceeds the supported payload size",
-      );
-    }
     const response = await resolveConversationRunFetch(input.fetch)(
       `${input.apiUrl}/runs/${canonicalRunId}/events`,
       {
@@ -1948,64 +2047,7 @@ export async function appendConversationRunEvents(input: {
     }
 
     let responseBody = await response.json();
-    if (typeof responseBody === "object" && responseBody !== null && "run_id" in responseBody) {
-      if (
-        typeof responseBody.run_id !== "string" ||
-        IntrinsicReflectApply(StringPrototypeToLowerCase, responseBody.run_id, []) !==
-          IntrinsicReflectApply(StringPrototypeToLowerCase, canonicalRunId, [])
-      ) {
-        throw new DurableRunEventPersistenceError(
-          "Append receipt identifies a different canonical run",
-        );
-      }
-      const hasRawModelCallCaptures = Object.hasOwn(responseBody, "model_call_captures");
-      const rawModelCallCaptures = responseBody.model_call_captures;
-      const hasRawToolCallAdmissions = Object.hasOwn(responseBody, "tool_call_admissions");
-      const rawToolCallAdmissions = responseBody.tool_call_admissions;
-      responseBody = {
-        latestEventId: responseBody.latest_event_id,
-        latestExternalEventSequence: responseBody.latest_external_event_sequence ??
-          input.expectedPreviousExternalEventSequence,
-        appendedCount: responseBody.appended_count,
-        ...(Object.hasOwn(responseBody, "acknowledged_event_ids")
-          ? { acknowledgedEventIds: responseBody.acknowledged_event_ids }
-          : {}),
-        ...(hasRawModelCallCaptures
-          ? {
-            modelCallCaptures: Array.isArray(rawModelCallCaptures)
-              ? rawModelCallCaptures.map((receipt) => {
-                if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
-                  return receipt;
-                }
-                const rawReceipt = receipt as Record<string, unknown>;
-                return {
-                  eventId: rawReceipt.event_id,
-                  projectId: rawReceipt.project_id,
-                  runId: rawReceipt.run_id,
-                  modelCallId: rawReceipt.model_call_id,
-                };
-              })
-              : rawModelCallCaptures,
-          }
-          : {}),
-        ...(hasRawToolCallAdmissions
-          ? {
-            toolCallAdmissions: Array.isArray(rawToolCallAdmissions)
-              ? rawToolCallAdmissions.map((receipt) =>
-                getToolCallAdmissionWireReceiptSchema().parse(receipt)
-              )
-              : rawToolCallAdmissions,
-          }
-          : {}),
-        run: {
-          runId: input.runId,
-          conversationId: input.conversationId,
-          latestEventId: responseBody.latest_event_id,
-          latestExternalEventSequence: responseBody.latest_external_event_sequence ??
-            input.expectedPreviousExternalEventSequence,
-        },
-      };
-    }
+    responseBody = normalizeAppendWireResponse(responseBody, canonicalRunId, input);
     // Pure private-event appends do not advance the external cursor and the API
     // intentionally omits it. Preserve the caller's known cursor so the shared
     // queue result remains total; mixed batches return the advanced API value.
@@ -2044,9 +2086,8 @@ export async function appendConversationRunEvents(input: {
 
 /** @deprecated Use canonical POST /runs admission and its API-issued runtime descriptor. */
 export async function createConversationAgentRun(
-  input: CreateConversationAgentRunInput,
+  _input: CreateConversationAgentRunInput,
 ): Promise<ConversationRunProjection> {
-  void input;
   throw new Error(
     "Standalone durable self-admission was removed. Create a canonical run through POST /runs and execute only the API-issued durable_root_run descriptor; local inherited children require the bound admission capability.",
   );
@@ -2058,6 +2099,23 @@ export function requireBoundConversationAgentRunFinalizer(
 ): BoundConversationAgentRunFinalizer {
   if (!finalize) throw new Error("Current run terminal authority is required");
   return finalize;
+}
+
+function conversationAgentRunTerminalBody(
+  input: FinalizeConversationAgentRunInput,
+  cancelled: boolean,
+) {
+  if (cancelled) return undefined;
+  if (input.status === "completed") {
+    return { status: "completed", output: input.output ?? null };
+  }
+  return {
+    status: "failed",
+    error: {
+      code: input.terminalErrorCode ?? "RUNTIME_FAILED",
+      message: input.terminalErrorMessage ?? "Runtime execution failed",
+    },
+  };
 }
 
 /** Finalize conversation agent run helper. */
@@ -2076,17 +2134,7 @@ export async function finalizeConversationAgentRun(
         `${route.id}:${route.generation}:${input.status}`,
       )}`,
     },
-    body: cancelled
-      ? undefined
-      : input.status === "completed"
-      ? { status: "completed", output: input.output ?? null }
-      : {
-        status: "failed",
-        error: {
-          code: input.terminalErrorCode ?? "RUNTIME_FAILED",
-          message: input.terminalErrorMessage ?? "Runtime execution failed",
-        },
-      },
+    body: conversationAgentRunTerminalBody(input, cancelled),
     responseSchema: FinalizedCanonicalRunSchema,
     operation: "Finalize canonical durable run",
     fetch: input.fetch,
