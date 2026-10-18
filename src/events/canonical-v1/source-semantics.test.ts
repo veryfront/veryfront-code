@@ -62,6 +62,36 @@ const check = (value: unknown, definition: string) =>
   );
 
 describe("canonical source annotations", () => {
+  it("accepts supported hosted service identities while preserving project ownership constraints", () => {
+    const schema = { $ref: "#/$defs/ServiceIdentityAuthorizationBinding" };
+    for (
+      const integration of [
+        "github",
+        "jira",
+        "salesforce",
+        "outlook",
+        "onedrive",
+        "sharepoint",
+        "confluence",
+        "servicenow",
+        "box",
+      ]
+    ) {
+      const binding = {
+        kind: "service_identity",
+        integration,
+        ownerKind: "project",
+        ownerId: "11111111-1111-4111-8111-111111111111",
+        targetEnvironmentId: "production",
+        policyGenerationId: null,
+      };
+      assertEquals(matchesSync(binding, schema), true, integration);
+      assertEquals(matchesSync({ ...binding, ownerKind: "user" }, schema), false);
+      assertEquals(matchesSync({ ...binding, ownerId: "" }, schema), false);
+      assertEquals(matchesSync({ ...binding, integration: "unknown-provider" }, schema), false);
+    }
+  });
+
   it("enforces serialized JSON context byte limits including encoding and escaping", async () => {
     for (const data of [{ x: "x".repeat(16376) }, { x: "é".repeat(8188) }]) {
       await check({ type: "json", data }, "AgentStreamContextItem");

@@ -1011,7 +1011,13 @@
           "enum": [
             "github",
             "jira",
-            "salesforce"
+            "salesforce",
+            "outlook",
+            "onedrive",
+            "sharepoint",
+            "confluence",
+            "servicenow",
+            "box"
           ]
         },
         "ownerKind": {
