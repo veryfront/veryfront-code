@@ -29,7 +29,7 @@ import {
 } from "./indexing.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import {
-  isOkfTextCompanionPath,
+  isOkfTextCompanion,
   type KnowledgeParserResult,
   runKnowledgeParser,
   validateOkfTextCompanionBytes,
@@ -836,16 +836,39 @@ export async function ingestResolvedSources(
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
     : new Set<string>();
+  let hasBinaryCompanion = false;
   for (const source of sources) {
     const relativePath = okfRelativePaths.get(source);
-    if (
-      relativePath && okfCompanionPaths.has(relativePath) && isOkfTextCompanionPath(relativePath)
-    ) {
+    if (relativePath && okfCompanionPaths.has(relativePath)) {
       deps.signal?.throwIfAborted();
-      validateOkfTextCompanionBytes(relativePath, await Deno.readFile(source.localPath));
+      const bytes = await Deno.readFile(source.localPath);
+      if (isOkfTextCompanion(relativePath, bytes)) {
+        validateOkfTextCompanionBytes(relativePath, bytes);
+      } else hasBinaryCompanion = true;
     }
   }
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
+  const preflightParsers = new Map<KnowledgeSource, KnowledgeParserResult>();
+  if (options.okfBundle && hasBinaryCompanion) {
+    // Validate the complete bundle before committing any immutable absent-only asset.
+    for (const [index, source] of sources.entries()) {
+      deps.signal?.throwIfAborted();
+      preflightParsers.set(
+        source,
+        await deps.runParser({
+          filePath: source.localPath,
+          outputDir: deps.outputDir,
+          description: options.description,
+          slug: slugs[index],
+          sourceReference: buildSourceReference(source),
+          okfRelativePath: okfRelativePaths.get(source),
+          ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
+            ? { okfRole: "companion" as const }
+            : {}),
+        }, { signal: deps.signal }),
+      );
+    }
+  }
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
   const recordSourceFailure = (
@@ -921,7 +944,7 @@ export async function ingestResolvedSources(
           }
           : {}),
       };
-      parser = await deps.runParser({
+      parser = preflightParsers.get(source) ?? await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,

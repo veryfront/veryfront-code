@@ -2359,13 +2359,18 @@ it("preserves structured UTF-8 companions at custom destinations and preflights 
   const files = new Map([
     [
       "topic.md",
-      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\n    id: scripts/orphan.js\n    label: viz.html\n    description: viz.html\nattester:\n  resource: references/check.json\n  id: scripts/orphan.js\n  description: viz.html\n---\nRevenue\n",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: notes.csv\n  - resource: script.py\n  - resource: query.sql\n  - resource: run.sh\n  - resource: data.yaml\n  - resource: references/raw.json\n    id: scripts/orphan.js\n    label: viz.html\n    description: viz.html\nattester:\n  resource: references/check.json\n  id: scripts/orphan.js\n  description: viz.html\n---\nRevenue\n[CSV](notes.csv) [Python](script.py) [SQL](query.sql) [Shell](run.sh) [YAML](data.yaml)\n",
     ],
     ["scripts/revenue.js", "export const revenue = 42;\r\n"],
     ["bin/run", "#!/bin/sh\necho run\n"],
     ["references/check.json", '{"ok":true}\n'],
     ["references/schema.json", '\ufeff{"type":"object"}\r\n'],
     ["references/raw.json", '{"value":42}\n'],
+    ["notes.csv", "key,value\r\na,1\r\n"],
+    ["script.py", "print(42)\n"],
+    ["query.sql", "SELECT 42;\n"],
+    ["run.sh", "echo ok\n"],
+    ["data.yaml", "value: 42\n"],
   ]);
   try {
     for (const [path, content] of files) {
@@ -2389,12 +2394,17 @@ it("preserves structured UTF-8 companions at custom destinations and preflights 
       collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
       [
         "bin/run",
+        "notes.csv",
+        "script.py",
+        "query.sql",
+        "run.sh",
+        "data.yaml",
         "references/check.json",
         "references/raw.json",
         "references/schema.json",
         "scripts/revenue.js",
         "topic.md",
-      ],
+      ].sort(),
     );
     assertEquals(
       collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
@@ -2408,7 +2418,7 @@ it("preserves structured UTF-8 companions at custom destinations and preflights 
       runParser: runKnowledgeParser,
       indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath, localPath, _metadata, storageKind) => {
-        if (/\.(?:js|json)$/.test(remotePath)) assertEquals(storageKind, undefined);
+        assertEquals(storageKind, undefined);
         uploaded.set(remotePath, await Deno.readTextFile(localPath));
         return { path: remotePath };
       },
@@ -2434,6 +2444,31 @@ it("preserves structured UTF-8 companions at custom destinations and preflights 
         }),
       Error,
       "UTF-8",
+    );
+    assertEquals(writes, 0);
+    await Deno.writeTextFile(join(bundle, "references/schema.json"), '{"valid":true}');
+    await Deno.writeFile(join(bundle, "image.bin"), new Uint8Array([255, 0]));
+    await Deno.writeTextFile(
+      join(bundle, "topic.md"),
+      "---\ntype: Concept\nresource: image.bin\n---\nBinary asset\n",
+    );
+    await Deno.writeTextFile(join(bundle, "bad.md"), "---\ntype: [\n---\ninvalid\n");
+    const withBinary = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    await assertRejects(() =>
+      ingestResolvedSources(withBinary.sources, options, {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir,
+        runParser: runKnowledgeParser,
+        uploadKnowledgeFile: async () => {
+          writes++;
+          return { path: "unexpected" };
+        },
+      })
     );
     assertEquals(writes, 0);
   } finally {

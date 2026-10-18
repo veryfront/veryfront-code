@@ -127,6 +127,8 @@ export async function readKnowledgeBundle(input: {
     ? { type: "main_branch", id: input.project }
     : { type: "preview_branch", id: input.scope.branchId };
   if (
+    !("project_id" in manifest) || manifest.project_id !== input.project ||
+    !("root_path" in manifest) || manifest.root_path !== root ||
     !("selector" in manifest) || !manifest.selector || typeof manifest.selector !== "object" ||
     !("type" in manifest.selector) || manifest.selector.type !== expectedSelector.type ||
     !("id" in manifest.selector) || manifest.selector.id !== expectedSelector.id ||

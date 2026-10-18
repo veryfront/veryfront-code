@@ -402,3 +402,45 @@ it("exports the default knowledge root", async () => {
     [],
   );
 });
+
+it("rejects misrouted inline text manifests before accepting bytes", async () => {
+  for (
+    const changed of [{ project_id: "22222222-2222-4222-8222-222222222222" }, {
+      root_path: "other/root",
+    }]
+  ) {
+    const text = "valid bytes";
+    const client = createApiClient(
+      { apiUrl: "https://api.example.test", apiToken: "test", projectSlug: ID },
+      async () =>
+        Response.json({
+          project_id: ID,
+          root_path: "docs/imports",
+          selector: { type: "preview_branch", id: ID },
+          file_count: 1,
+          total_bytes: 11,
+          files: [{
+            kind: "text",
+            path: "docs/imports/topic.md",
+            file_id: ID,
+            file_version_id: ID,
+            content: text,
+            byte_size: 11,
+            content_hash: await hashAssetBytes(new TextEncoder().encode(text)),
+          }],
+          ...changed,
+        }),
+    );
+    await assertRejects(
+      () =>
+        readKnowledgeBundle({
+          client,
+          project: ID,
+          rootPath: "docs/imports",
+          scope: { kind: "branch", branchId: ID },
+        }),
+      Error,
+      "owner",
+    );
+  }
+});

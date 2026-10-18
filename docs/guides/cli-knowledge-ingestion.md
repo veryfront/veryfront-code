@@ -110,7 +110,7 @@ diagnostics.
 IDs, labels and descriptions in companion objects remain metadata;
 only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.
 
-Markdown documents and source-like companions (`.mdx`, `.ts`, `.tsx`, `.js`, `.jsx`, `.json`, `.yaml`, `.yml`) must be valid UTF-8 and retain their authored bytes through text publication. Invalid UTF-8 in these referenced files fails preflight before bundle publication. Other companions retain raw bytes. Custom `--knowledge-path` destinations use the same portable project path validation and scoped binary publication.
+Markdown documents and existing text companion formats (including code, JSON, YAML, CSV, XML and notebooks) must be valid UTF-8 and retain their authored bytes through text publication. UTF-8 extensionless executors also use text storage. Invalid UTF-8 in these referenced files fails preflight before bundle publication. Other companions retain raw bytes. Mixed binary bundles are parsed completely before their first publication. Custom `--knowledge-path` destinations use the same portable project path validation and scoped binary publication.
 Binary assets do not use ordinary text project uploads. Native bundle export verifies scoped immutable
 versions and content digests before returning bytes; source-only project pull retains its existing scope.
 Ordinary conversion retains its informational `source`

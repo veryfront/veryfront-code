@@ -7,6 +7,7 @@ import type {
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 import { VERSION } from "#cli/utils";
+import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -234,7 +235,18 @@ function validateOkfCompanionRelativePath(path: string): string {
 }
 
 export function isOkfTextCompanionPath(path: string): boolean {
-  return /\.(?:md|mdx|tsx?|jsx?|json|ya?ml)$/i.test(path);
+  return isTextKnowledgeCompanionPath(path);
+}
+
+export function isOkfTextCompanion(path: string, bytes: Uint8Array): boolean {
+  if (!isOkfTextCompanionPath(path)) return false;
+  if (extname(path)) return true;
+  try {
+    decodeOkfUtf8(path, bytes);
+    return !bytes.includes(0);
+  } catch {
+    return false;
+  }
 }
 
 export function validateOkfTextCompanionBytes(path: string, bytes: Uint8Array): void {
@@ -293,7 +305,7 @@ async function preserveOkfCompanion(input: {
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
-  if (isOkfTextCompanionPath(relativePath)) validateOkfTextCompanionBytes(relativePath, bytes);
+  if (isOkfTextCompanion(relativePath, bytes)) validateOkfTextCompanionBytes(relativePath, bytes);
   if (relativePath.toLowerCase().endsWith(".md")) {
     const source = decodeOkfUtf8(relativePath, bytes);
     const inspected = inspectOkfDocument(relativePath, source);
@@ -314,7 +326,7 @@ async function preserveOkfCompanion(input: {
     source_path: input.filePath,
     source_filename: basename(input.filePath),
     source_type: "okf_companion",
-    storage_kind: isOkfTextCompanionPath(relativePath) ? undefined : "binary",
+    storage_kind: isOkfTextCompanion(relativePath, bytes) ? undefined : "binary",
     slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
     sandbox_output_path: outputPath,
     suggested_project_path: `knowledge/${relativePath}`,
