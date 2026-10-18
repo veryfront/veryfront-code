@@ -1,5 +1,9 @@
 import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
-import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedSourceApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
 import {
@@ -9,14 +13,16 @@ import {
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
   terminalToolCallIdHeaderValue,
 } from "#veryfront/agent/runtime/terminal-run-control.ts";
-import { createRemoteMCPToolSource, type RemoteMCPToolSourceConfig } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSourceFactoryWithTransport,
+  type RemoteMCPToolSourceConfig,
+} from "#veryfront/tool";
 import type { RemoteToolSource } from "#veryfront/tool";
 import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
 } from "#veryfront/security/http/ingress-credentials.ts";
 
-const StringSlice = String.prototype.slice;
 const ReflectApply = Reflect.apply;
 
 /**
@@ -28,19 +34,21 @@ const ReflectApply = Reflect.apply;
 export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
   terminal: { token: string; runId: string } | null,
-  createSource: (config: RemoteMCPToolSourceConfig) => RemoteToolSource = createRemoteMCPToolSource,
+  createSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
   fileWriter: { readonly apiBaseUrl: string; readonly token: string } | null = null,
 ): RemoteToolSource {
+  const hostApi = resolveHostOwnedSourceApiBaseUrl();
+  createSource ??= createRemoteMCPToolSourceFactoryWithTransport({
+    trustedEndpoints: [`${hostApi}/mcp`],
+    requestFetch: createVeryfrontApiOriginBoundOutboundFetch(hostApi),
+  });
   const ordinary = createSource(config);
   let mutationSource: RemoteToolSource | null = null;
   if (fileWriter) {
     const trustedApi = requireHostPrivateApiHttps(fileWriter.apiBaseUrl);
-    if (
-      ReflectApply(StringSlice, trustedApi, [0, 8]) !== "https://" ||
-      config.endpoint !== `${trustedApi}/mcp`
-    ) {
+    if (config.endpoint !== `${trustedApi}/mcp`) {
       throw new TypeError(
-        "Canonical mutation authority requires the trusted HTTPS API MCP endpoint",
+        "Canonical mutation authority requires the trusted API MCP endpoint",
       );
     }
     mutationSource = createSource({
