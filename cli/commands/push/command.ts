@@ -11,9 +11,16 @@ import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join, relative } from "veryfront/platform/path";
-import { cliLogger } from "#cli/utils";
-import { cwd } from "veryfront/platform";
-import { createFileSystem, VeryfrontApiClient } from "veryfront/platform";
+import {
+  cliLogger,
+  confirmPrompt,
+  isTTY,
+  isVerbose,
+  logInfo,
+  logSuccess,
+  logWarning,
+} from "#cli/utils";
+import { createFileSystem, cwd, VeryfrontApiClient } from "veryfront/platform";
 import {
   type ApiClient,
   createApiClient,
@@ -35,7 +42,6 @@ import {
   staleProjectReferenceContext,
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { confirmPrompt, isTTY, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import {
   DEPLOYMENT_ERROR,
   INVALID_ARGUMENT,

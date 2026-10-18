@@ -187,6 +187,27 @@ export function isDependencyPinningEnabled(): boolean {
   return getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
 }
 
+function prepareQueuedResolutionBatch(
+  queueKey: string,
+  queuedBatch: QueuedPlatformResolutionBatch | undefined,
+  projectId: string,
+  target: DependencyWritebackTarget,
+  options: DependencyResolutionScheduleOptions,
+): QueuedPlatformResolutionBatch {
+  if (!queuedBatch) {
+    queuedBatch = {
+      projectId,
+      target,
+      authToken: options.authToken,
+      resolutions: new Map(),
+    };
+    queuedPlatformResolutions.set(queueKey, queuedBatch);
+  } else if (options.authToken) {
+    queuedBatch.authToken = options.authToken;
+  }
+  return queuedBatch;
+}
+
 /**
  * Schedule a non-blocking platform resolution. Declared ranges/tags are sent
  * verbatim as `package@declaration`; undeclared dependencies are sent as the
@@ -252,17 +273,7 @@ export function schedulePlatformDependencyResolution(
   platformResolutionAttempts.set(key, now);
   pendingPlatformResolutionAttempts.add(key);
 
-  if (!queuedBatch) {
-    queuedBatch = {
-      projectId,
-      target,
-      authToken: options.authToken,
-      resolutions: new Map(),
-    };
-    queuedPlatformResolutions.set(queueKey, queuedBatch);
-  } else if (options.authToken) {
-    queuedBatch.authToken = options.authToken;
-  }
+  queuedBatch = prepareQueuedResolutionBatch(queueKey, queuedBatch, projectId, target, options);
   queuedBatch.resolutions.set(packageName, {
     packageName,
     rawSpecifier,
