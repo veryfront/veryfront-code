@@ -186,7 +186,7 @@ export async function readKnowledgeBundle(input: {
       ) {
         throw new Error("Binary bundle entry is not bound to its owner and immutable version");
       }
-      const stream = await input.client.getStream(entry.content_path, {
+      const stream = await input.client.getStream(`${url.pathname}${url.search}`, {
         signal: input.signal,
         retryPolicy: "none",
       });

@@ -151,6 +151,17 @@ it("exports BOM Markdown and binary companions with exact bytes and scoped immut
   });
   assertEquals(files.map((file) => file.bytes), [textBytes, raw]);
   assertEquals(calls[1], `https://api.example.test${contentPath}`);
+  const relativeEntry = manifest.files[1];
+  if (!relativeEntry) throw new Error("Missing binary fixture");
+  relativeEntry.content_path = contentPath.slice(1);
+  const relativeFiles = await readKnowledgeBundle({
+    client,
+    project: ID,
+    rootPath: "knowledge/bundle",
+    scope: { kind: "branch", branchId: ID },
+  });
+  assertEquals(relativeFiles[1]?.bytes, raw);
+  assertEquals(calls[3], `https://api.example.test${contentPath}`);
   const binaryEntry = manifest.files[1];
   if (!binaryEntry) throw new Error("Missing binary fixture");
   binaryEntry.content_path = contentPath.replace(ID, "22222222-2222-4222-8222-222222222222");
