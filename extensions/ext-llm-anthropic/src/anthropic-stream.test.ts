@@ -1,4 +1,9 @@
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   ProviderOutputTruncatedError,
@@ -1755,4 +1760,45 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       },
     ]);
   });
+});
+
+it("preserves consumer errors when closing event iterators throws", async () => {
+  let canceled = false;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"type":"message_start","message":{}}\n\n' +
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"hello"}}\n\n',
+      ));
+    },
+    cancel() {
+      canceled = true;
+    },
+  });
+  const iterator = streamAnthropicCompatibleParts(source)[Symbol.asyncIterator]();
+  await iterator.next();
+  const prototype = Object.getPrototypeOf([][Symbol.iterator]());
+  const originalReturn = Object.getOwnPropertyDescriptor(prototype, "return");
+  const injected = new Error("consumer failure");
+  const closing = new Error("iterator cleanup failure");
+  let actual: unknown;
+  Object.defineProperty(prototype, "return", {
+    configurable: true,
+    value() {
+      throw closing;
+    },
+  });
+  try {
+    try {
+      await iterator.throw!(injected);
+    } catch (error) {
+      actual = error;
+    }
+  } finally {
+    if (originalReturn) Object.defineProperty(prototype, "return", originalReturn);
+    else Reflect.deleteProperty(prototype, "return");
+  }
+  assertStrictEquals(actual, injected);
+  assertEquals(canceled, true);
+  assertEquals(source.locked, false);
 });

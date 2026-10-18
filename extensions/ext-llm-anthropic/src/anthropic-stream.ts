@@ -32,6 +32,29 @@ export {
   parseAnthropicServerToolResult,
 } from "./anthropic-native-content.ts";
 
+type AnthropicOwnedParts = Generator<unknown, void, unknown>;
+
+const anthropicEmptyParts = (function* (): AnthropicOwnedParts {})();
+const anthropicGeneratorNext = anthropicEmptyParts.next;
+const anthropicGeneratorReturn = anthropicEmptyParts.return;
+const anthropicGeneratorThrow = anthropicEmptyParts.throw;
+const applyAnthropicGeneratorOperation = Reflect.apply;
+
+// Private synchronous generators preserve the original suspension points without
+// adding promise boundaries or consulting mutable iterator protocol methods.
+function advanceAnthropicOwnedParts(parts: AnthropicOwnedParts): IteratorResult<unknown, void> {
+  return applyAnthropicGeneratorOperation(anthropicGeneratorNext, parts, []);
+}
+
+function throwAnthropicOwnedParts(parts: AnthropicOwnedParts, error: unknown): never {
+  applyAnthropicGeneratorOperation(anthropicGeneratorThrow, parts, [error]);
+  throw error;
+}
+
+function closeAnthropicOwnedParts(parts: AnthropicOwnedParts): void {
+  applyAnthropicGeneratorOperation(anthropicGeneratorReturn, parts, []);
+}
+
 // Web timers use a signed 32-bit millisecond delay across the supported
 // runtimes. Validate here because this extension is published independently
 // and cannot rely on a private core utility subpath.
@@ -389,6 +412,31 @@ class BoundedAnthropicSseParser {
   }
 }
 
+function malformedAnthropicProviderToolResultIssue(blockType: string): string {
+  if (blockType === "web_search_tool_result") return "web-search result block was malformed";
+  if (blockType === "web_fetch_tool_result") return "web-fetch result block was malformed";
+  return "provider tool-result content block was malformed";
+}
+
+function anthropicSseErrorStatus(type: string): number {
+  switch (type) {
+    case "authentication_error":
+      return 401;
+    case "billing_error":
+      return 402;
+    case "permission_error":
+      return 403;
+    case "not_found_error":
+      return 404;
+    case "request_too_large":
+      return 413;
+    case "api_error":
+      return 500;
+    default:
+      return 400;
+  }
+}
+
 function buildAnthropicSseError(record: Record<string, unknown>): Error {
   const error = readRecord(record.error) ?? record;
   const type = typeof error.type === "string" ? error.type : "unknown_error";
@@ -410,19 +458,7 @@ function buildAnthropicSseError(record: Record<string, unknown>): Error {
     });
   }
 
-  const status = type === "authentication_error"
-    ? 401
-    : type === "billing_error"
-    ? 402
-    : type === "permission_error"
-    ? 403
-    : type === "not_found_error"
-    ? 404
-    : type === "request_too_large"
-    ? 413
-    : type === "api_error"
-    ? 500
-    : 400;
+  const status = anthropicSseErrorStatus(type);
   return new ProviderRequestError({
     provider: "anthropic",
     status,
@@ -458,22 +494,106 @@ function sanitizeUsage(usage: RuntimeUsage | undefined): RuntimeUsage | undefine
   return sanitized && Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
+function combineAnthropicUsageLabel<T extends string>(
+  left: T | undefined,
+  right: T | undefined,
+): T | "partial" | undefined {
+  if (left === undefined) return right;
+  if (right === undefined || left === right) return left;
+  return "partial";
+}
+
 function combineCostSource(
   left: RuntimeUsage["costSource"],
   right: RuntimeUsage["costSource"],
 ): RuntimeUsage["costSource"] {
-  if (left === undefined) return right;
-  if (right === undefined || left === right) return left;
-  return "partial";
+  return combineAnthropicUsageLabel(left, right);
 }
 
 function combineCaptureStatus(
   left: RuntimeUsage["usageCaptureStatus"],
   right: RuntimeUsage["usageCaptureStatus"],
 ): RuntimeUsage["usageCaptureStatus"] {
-  if (left === undefined) return right;
-  if (right === undefined || left === right) return left;
-  return "partial";
+  return combineAnthropicUsageLabel(left, right);
+}
+
+function anthropicUsageTokenFields(
+  sums: Pick<
+    RuntimeUsage,
+    | "inputTokens"
+    | "outputTokens"
+    | "totalTokens"
+    | "cacheCreationInputTokens"
+    | "cacheCreation1hInputTokens"
+    | "cacheReadInputTokens"
+    | "reasoningTokens"
+    | "billableInputTokens"
+    | "billableOutputTokens"
+  >,
+): RuntimeUsage {
+  return {
+    ...(sums.inputTokens === undefined ? {} : { inputTokens: sums.inputTokens }),
+    ...(sums.outputTokens === undefined ? {} : { outputTokens: sums.outputTokens }),
+    ...(sums.totalTokens === undefined ? {} : { totalTokens: sums.totalTokens }),
+    ...(sums.cacheCreationInputTokens === undefined
+      ? {}
+      : { cacheCreationInputTokens: sums.cacheCreationInputTokens }),
+    ...(sums.cacheCreation1hInputTokens === undefined
+      ? {}
+      : { cacheCreation1hInputTokens: sums.cacheCreation1hInputTokens }),
+    ...(sums.cacheReadInputTokens === undefined
+      ? {}
+      : { cacheReadInputTokens: sums.cacheReadInputTokens }),
+    ...(sums.cacheReadInputTokens === undefined
+      ? {}
+      : { cachedInputTokens: sums.cacheReadInputTokens }),
+    ...(sums.reasoningTokens === undefined ? {} : { reasoningTokens: sums.reasoningTokens }),
+    ...(sums.billableInputTokens === undefined
+      ? {}
+      : { billableInputTokens: sums.billableInputTokens }),
+    ...(sums.billableOutputTokens === undefined
+      ? {}
+      : { billableOutputTokens: sums.billableOutputTokens }),
+  };
+}
+
+function anthropicUsageCostFields(
+  sums: Pick<
+    RuntimeUsage,
+    | "costUsd"
+    | "providerInputCostUsd"
+    | "providerOutputCostUsd"
+    | "providerCostUsd"
+    | "veryfrontInputChargeUsd"
+    | "veryfrontOutputChargeUsd"
+    | "veryfrontChargeUsd"
+    | "veryfrontBilledUsd"
+    | "costCredits"
+  >,
+): RuntimeUsage {
+  return {
+    ...(sums.costUsd === undefined ? {} : { costUsd: sums.costUsd }),
+    ...(sums.providerInputCostUsd === undefined
+      ? {}
+      : { providerInputCostUsd: sums.providerInputCostUsd }),
+    ...(sums.providerOutputCostUsd === undefined
+      ? {}
+      : { providerOutputCostUsd: sums.providerOutputCostUsd }),
+    ...(sums.providerCostUsd === undefined ? {} : { providerCostUsd: sums.providerCostUsd }),
+    ...(sums.veryfrontInputChargeUsd === undefined
+      ? {}
+      : { veryfrontInputChargeUsd: sums.veryfrontInputChargeUsd }),
+    ...(sums.veryfrontOutputChargeUsd === undefined
+      ? {}
+      : { veryfrontOutputChargeUsd: sums.veryfrontOutputChargeUsd }),
+    ...(sums.veryfrontChargeUsd === undefined
+      ? {}
+      : { veryfrontChargeUsd: sums.veryfrontChargeUsd }),
+    ...(sums.veryfrontBilledUsd === undefined
+      ? {}
+      : { veryfrontBilledUsd: sums.veryfrontBilledUsd }),
+    ...(sums.costCredits === undefined ? {} : { costCredits: sums.costCredits }),
+  };
 }
 
 /** Add independently billed Anthropic attempts, such as pause_turn continuations. */
@@ -573,25 +693,28 @@ export function addAnthropicUsage(
   );
 
   const aggregate: RuntimeUsage = {
-    ...(inputTokens === undefined ? {} : { inputTokens }),
-    ...(outputTokens === undefined ? {} : { outputTokens }),
-    ...(totalTokens === undefined ? {} : { totalTokens }),
-    ...(cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
-    ...(cacheCreation1hInputTokens === undefined ? {} : { cacheCreation1hInputTokens }),
-    ...(cacheReadInputTokens === undefined ? {} : { cacheReadInputTokens }),
-    ...(cacheReadInputTokens === undefined ? {} : { cachedInputTokens: cacheReadInputTokens }),
-    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-    ...(billableInputTokens === undefined ? {} : { billableInputTokens }),
-    ...(billableOutputTokens === undefined ? {} : { billableOutputTokens }),
-    ...(costUsd === undefined ? {} : { costUsd }),
-    ...(providerInputCostUsd === undefined ? {} : { providerInputCostUsd }),
-    ...(providerOutputCostUsd === undefined ? {} : { providerOutputCostUsd }),
-    ...(providerCostUsd === undefined ? {} : { providerCostUsd }),
-    ...(veryfrontInputChargeUsd === undefined ? {} : { veryfrontInputChargeUsd }),
-    ...(veryfrontOutputChargeUsd === undefined ? {} : { veryfrontOutputChargeUsd }),
-    ...(veryfrontChargeUsd === undefined ? {} : { veryfrontChargeUsd }),
-    ...(veryfrontBilledUsd === undefined ? {} : { veryfrontBilledUsd }),
-    ...(costCredits === undefined ? {} : { costCredits }),
+    ...anthropicUsageTokenFields({
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cacheCreationInputTokens,
+      cacheCreation1hInputTokens,
+      cacheReadInputTokens,
+      reasoningTokens,
+      billableInputTokens,
+      billableOutputTokens,
+    }),
+    ...anthropicUsageCostFields({
+      costUsd,
+      providerInputCostUsd,
+      providerOutputCostUsd,
+      providerCostUsd,
+      veryfrontInputChargeUsd,
+      veryfrontOutputChargeUsd,
+      veryfrontChargeUsd,
+      veryfrontBilledUsd,
+      costCredits,
+    }),
     ...(costSource === undefined ? {} : { costSource }),
     ...(billingMode === undefined ? {} : { billingMode }),
     ...(usageCaptureStatus === undefined ? {} : { usageCaptureStatus }),
@@ -760,7 +883,7 @@ async function drainStreamReaderAfterTimeout(
   timeoutMs: number,
 ): Promise<void> {
   const timeoutId = setTimeout(() => {
-    void cancelStreamReader(
+    cancelStreamReader(
       reader,
       "Timed out draining trailing Anthropic tool-use usage metadata",
     );
@@ -787,6 +910,17 @@ async function drainStreamReaderAfterTimeout(
   }
 }
 
+function assertAnthropicTrailingUsageTimeouts(
+  trailingUsageGraceMs: number,
+  trailingUsageDrainTimeoutMs: number,
+): void {
+  if (trailingUsageGraceMs === 0 || trailingUsageDrainTimeoutMs === 0) {
+    throw new RangeError(
+      "Anthropic trailing usage timeouts must be greater than zero",
+    );
+  }
+}
+
 export async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
   options: AnthropicStreamOptions = {},
@@ -804,11 +938,7 @@ export async function* streamAnthropicCompatibleParts(
       DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS,
     "clientToolUseTrailingUsageDrainTimeoutMs",
   );
-  if (trailingUsageGraceMs === 0 || trailingUsageDrainTimeoutMs === 0) {
-    throw new RangeError(
-      "Anthropic trailing usage timeouts must be greater than zero",
-    );
-  }
+  assertAnthropicTrailingUsageTimeouts(trailingUsageGraceMs, trailingUsageDrainTimeoutMs);
   const reader = stream.getReader();
   const allowPostTerminalUsage = options.allowPostTerminalUsage === true;
   const providerToolNamesById = options.providerToolNamesById ?? new Map<string, string>();
@@ -852,18 +982,44 @@ export async function* streamAnthropicCompatibleParts(
     usage = mergeUsage(usage, extractAnthropicUsage(record));
   };
 
+  const applyTrailingStopReason = (delta: Record<string, unknown>): void => {
+    if (
+      delta.stop_reason !== undefined &&
+      delta.stop_reason !== null &&
+      (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
+    }
+    if (typeof delta.stop_reason === "string") {
+      if (sawStopReason) {
+        throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
+      }
+      sawStopReason = true;
+      rawStopReason = delta.stop_reason;
+      finishReason = normalizeAnthropicFinishReason(delta.stop_reason);
+    }
+  };
+
+  const assertTrailingTerminalMarker = (messageStop: boolean): void => {
+    if (
+      sawDoneMarker ||
+      (messageStop && sawMessageStop) ||
+      !sawMessageStart ||
+      !sawStopReason ||
+      openContentBlocks.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      toolCalls.size > 0
+    ) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        messageStop ? "message_stop was out of sequence" : "terminal marker was out of sequence",
+      );
+    }
+  };
+
   const applyTrailingLifecycleEvent = (event: unknown | "[DONE]") => {
     if (event === "[DONE]") {
-      if (
-        sawDoneMarker ||
-        !sawMessageStart ||
-        !sawStopReason ||
-        openContentBlocks.size > 0 ||
-        reasoningBlocks.size > 0 ||
-        toolCalls.size > 0
-      ) {
-        throw invalidAnthropicStream(providerLabel, "terminal marker was out of sequence");
-      }
+      assertTrailingTerminalMarker(false);
       sawDoneMarker = true;
       return;
     }
@@ -882,17 +1038,7 @@ export async function* streamAnthropicCompatibleParts(
       return;
     }
     if (eventType === "message_stop") {
-      if (
-        sawDoneMarker ||
-        sawMessageStop ||
-        !sawMessageStart ||
-        !sawStopReason ||
-        openContentBlocks.size > 0 ||
-        reasoningBlocks.size > 0 ||
-        toolCalls.size > 0
-      ) {
-        throw invalidAnthropicStream(providerLabel, "message_stop was out of sequence");
-      }
+      assertTrailingTerminalMarker(true);
       sawMessageStop = true;
       return;
     }
@@ -929,21 +1075,7 @@ export async function* streamAnthropicCompatibleParts(
     ) {
       throw invalidAnthropicStream(providerLabel, "message_delta was out of sequence");
     }
-    if (
-      delta.stop_reason !== undefined &&
-      delta.stop_reason !== null &&
-      (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
-    ) {
-      throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
-    }
-    if (typeof delta.stop_reason === "string") {
-      if (sawStopReason) {
-        throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
-      }
-      sawStopReason = true;
-      rawStopReason = delta.stop_reason;
-      finishReason = normalizeAnthropicFinishReason(delta.stop_reason);
-    }
+    applyTrailingStopReason(delta);
     mergeRecordUsage(record);
   };
 
@@ -1014,6 +1146,750 @@ export async function* streamAnthropicCompatibleParts(
     });
   };
 
+  function prepareAnthropicContentStart(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): { index: number; contentBlock: Record<string, unknown>; blockType: string } {
+    if (!sawMessageStart || sawStopReason) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "content_block_start was out of sequence",
+      );
+    }
+    const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+    const contentBlock = readRecord(record.content_block);
+    const blockType = typeof contentBlock?.type === "string" && contentBlock.type.length > 0
+      ? contentBlock.type
+      : undefined;
+    if (!contentBlock || !blockType) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "content_block_start content block was malformed",
+      );
+    }
+    if (seenContentBlocks.has(index)) {
+      throw invalidAnthropicStream(providerLabel, "content block index was reused");
+    }
+    seenContentBlocks.add(index);
+    openContentBlocks.add(index);
+    clientToolUseIdleDeadlineMs = null;
+    clientToolUseTerminalDeadlineMs = null;
+    try {
+      retainedContentBudget.retainItem(
+        stringifyJsonValue(contentBlock),
+        "content block",
+      );
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw invalidAnthropicStream(providerLabel, error.message, error);
+      }
+      throw invalidAnthropicStream(
+        providerLabel,
+        "content block could not be retained safely",
+      );
+    }
+    rawContentBlocks.set(index, { ...contentBlock });
+
+    return { index, contentBlock, blockType };
+  }
+
+  function* emitAnthropicTextStart(
+    index: number,
+    contentBlock: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (typeof contentBlock.text !== "string") {
+      throw invalidAnthropicStream(providerLabel, "text content block was malformed");
+    }
+    supportedContentBlocks.add(index);
+    rawTextChunks.set(index, new StreamFragmentBuffer(contentBlock.text));
+    if (contentBlock.text.length > 0) {
+      yield { type: "text-delta", delta: contentBlock.text };
+    }
+  }
+
+  function* emitAnthropicThinkingStart(
+    index: number,
+    contentBlock: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (
+      (contentBlock.thinking !== undefined &&
+        typeof contentBlock.thinking !== "string") ||
+      (contentBlock.signature !== undefined &&
+        typeof contentBlock.signature !== "string")
+    ) {
+      throw invalidAnthropicStream(providerLabel, "thinking content block was malformed");
+    }
+    supportedContentBlocks.add(index);
+    const reasoningId = `thinking-${index}`;
+    reasoningBlocks.set(index, {
+      id: reasoningId,
+      ...(typeof contentBlock.signature === "string" ? { signature: contentBlock.signature } : {}),
+    });
+    rawThinkingChunks.set(index, new StreamFragmentBuffer(contentBlock.thinking ?? ""));
+    yield {
+      type: "reasoning-start",
+      id: reasoningId,
+    };
+
+    if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
+      yield {
+        type: "reasoning-delta",
+        id: reasoningId,
+        delta: contentBlock.thinking,
+      };
+    }
+  }
+
+  function* emitAnthropicRedactedThinkingStart(
+    index: number,
+    contentBlock: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (typeof contentBlock.data !== "string" || contentBlock.data.length === 0) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "redacted thinking content block was malformed",
+      );
+    }
+    supportedContentBlocks.add(index);
+    const reasoningId = `thinking-${index}`;
+    reasoningBlocks.set(index, {
+      id: reasoningId,
+      redactedData: contentBlock.data,
+    });
+    yield {
+      type: "reasoning-start",
+      id: reasoningId,
+    };
+  }
+
+  function* emitAnthropicToolStart(
+    index: number,
+    contentBlock: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (
+      typeof contentBlock.id !== "string" ||
+      contentBlock.id.length === 0 ||
+      typeof contentBlock.name !== "string" ||
+      contentBlock.name.length === 0 ||
+      (contentBlock.input !== undefined && !readRecord(contentBlock.input))
+    ) {
+      throw invalidAnthropicStream(providerLabel, "tool-use content block was malformed");
+    }
+    supportedContentBlocks.add(index);
+    const current: AnthropicStreamToolCallState = {
+      id: contentBlock.id,
+      name: contentBlock.name,
+      input: new StreamFragmentBuffer(),
+      inputBudget: createStreamRetentionBudget(),
+    };
+
+    toolCalls.set(index, current);
+    clientToolUseIdleDeadlineMs = null;
+    clientToolUseTerminalDeadlineMs = null;
+    yield {
+      type: "tool-input-start",
+      id: current.id,
+      toolName: current.name,
+    };
+
+    const initialInput = contentBlock.input;
+    if (initialInput !== undefined && !isEmptyRecord(initialInput)) {
+      const serializedInput = stringifyJsonValue(initialInput);
+      appendAnthropicToolInput(current, serializedInput);
+      yield {
+        type: "tool-input-delta",
+        id: current.id,
+        delta: serializedInput,
+      };
+    }
+  }
+
+  function* emitAnthropicProviderToolStart(
+    index: number,
+    contentBlock: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    const providerToolUse = parseAnthropicProviderToolUse(contentBlock);
+    if (
+      !providerToolUse ||
+      providerToolNamesById.has(providerToolUse.toolCallId)
+    ) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "provider tool-use content block was malformed",
+      );
+    }
+    providerToolNamesById.set(
+      providerToolUse.toolCallId,
+      providerToolUse.toolName,
+    );
+    supportedContentBlocks.add(index);
+    const current: AnthropicStreamToolCallState = {
+      id: providerToolUse.toolCallId,
+      name: providerToolUse.toolName,
+      input: new StreamFragmentBuffer(),
+      inputBudget: createStreamRetentionBudget(),
+      providerExecuted: true,
+    };
+    toolCalls.set(index, current);
+    yield {
+      type: "tool-input-start",
+      id: current.id,
+      toolName: current.name,
+      providerExecuted: true,
+    };
+
+    if (!isEmptyRecord(providerToolUse.input)) {
+      const serializedInput = stringifyJsonValue(providerToolUse.input);
+      appendAnthropicToolInput(current, serializedInput);
+      yield {
+        type: "tool-input-delta",
+        id: current.id,
+        delta: serializedInput,
+      };
+    }
+  }
+
+  function* emitAnthropicProviderToolResult(
+    index: number,
+    contentBlock: Record<string, unknown>,
+    blockType: string,
+  ): AnthropicOwnedParts {
+    const parsedResult = parseAnthropicServerToolResult(
+      contentBlock,
+      providerToolNamesById,
+    );
+    if (!parsedResult) {
+      const issue = malformedAnthropicProviderToolResultIssue(blockType);
+      throw invalidAnthropicStream(
+        providerLabel,
+        issue,
+      );
+    }
+    providerToolNamesById.delete(parsedResult.toolCallId);
+    supportedContentBlocks.add(index);
+    yield parsedResult.isError === true
+      ? {
+        type: "tool-error",
+        toolCallId: parsedResult.toolCallId,
+        toolName: parsedResult.toolName,
+        error: parsedResult.result,
+        isError: true,
+        providerExecuted: true,
+      }
+      : {
+        type: "tool-result",
+        ...parsedResult,
+        providerExecuted: true,
+      };
+  }
+
+  function createAnthropicContentStart(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): AnthropicOwnedParts {
+    const { index, contentBlock, blockType } = prepareAnthropicContentStart(record, eventType);
+    if (blockType === "text") return emitAnthropicTextStart(index, contentBlock);
+    if (blockType === "thinking") return emitAnthropicThinkingStart(index, contentBlock);
+    if (blockType === "redacted_thinking") {
+      return emitAnthropicRedactedThinkingStart(index, contentBlock);
+    }
+    if (blockType === "tool_use") return emitAnthropicToolStart(index, contentBlock);
+    if (blockType === "server_tool_use" || blockType === "mcp_tool_use") {
+      return emitAnthropicProviderToolStart(index, contentBlock);
+    }
+    if (isAnthropicProviderToolResultBlockType(blockType)) {
+      return emitAnthropicProviderToolResult(index, contentBlock, blockType);
+    }
+    throw invalidAnthropicStream(providerLabel, "unsupported content block type");
+  }
+
+  function prepareAnthropicContentDelta(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): { index: number; delta: Record<string, unknown>; deltaType: string } {
+    const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+    if (!openContentBlocks.has(index)) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "content block delta referenced an unopened block",
+      );
+    }
+    const delta = readRecord(record.delta);
+    const deltaType = typeof delta?.type === "string" && delta.type.length > 0
+      ? delta.type
+      : undefined;
+    if (!delta || !deltaType) {
+      throw invalidAnthropicStream(providerLabel, "content block delta was malformed");
+    }
+
+    return { index, delta, deltaType };
+  }
+
+  function* emitAnthropicTextDelta(
+    index: number,
+    delta: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (typeof delta.text !== "string") {
+      throw invalidAnthropicStream(providerLabel, "text delta was malformed");
+    }
+    const rawBlock = rawContentBlocks.get(index);
+    if (!rawBlock || rawBlock.type !== "text") {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "text delta did not match its content block",
+      );
+    }
+    const chunks = rawTextChunks.get(index);
+    if (!chunks) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "text delta retention state was missing",
+      );
+    }
+    try {
+      retainedContentBudget.retainDelta(delta.text, "text delta");
+    } catch (error) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        error instanceof Error ? error.message : "text retention budget was exceeded",
+        error,
+      );
+    }
+    chunks.append(delta.text);
+    if (delta.text.length > 0) {
+      yield { type: "text-delta", delta: delta.text };
+    }
+  }
+
+  function* emitAnthropicThinkingDelta(
+    index: number,
+    delta: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (typeof delta.thinking !== "string") {
+      throw invalidAnthropicStream(providerLabel, "thinking delta was malformed");
+    }
+    const current = reasoningBlocks.get(index);
+    if (!current) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "thinking delta did not match its content block",
+      );
+    }
+
+    const rawBlock = rawContentBlocks.get(index);
+    const chunks = rawThinkingChunks.get(index);
+    if (!rawBlock || !chunks) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "thinking delta retention state was missing",
+      );
+    }
+    try {
+      retainedContentBudget.retainDelta(delta.thinking, "thinking delta");
+    } catch (error) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        error instanceof Error ? error.message : "thinking retention budget was exceeded",
+        error,
+      );
+    }
+    chunks.append(delta.thinking);
+    if (delta.thinking.length > 0) {
+      yield {
+        type: "reasoning-delta",
+        id: current.id,
+        delta: delta.thinking,
+      };
+    }
+  }
+
+  function applyAnthropicSignatureDelta(index: number, delta: Record<string, unknown>): void {
+    if (typeof delta.signature !== "string") {
+      throw invalidAnthropicStream(providerLabel, "signature delta was malformed");
+    }
+    const current = reasoningBlocks.get(index);
+    if (!current) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "signature delta did not match its content block",
+      );
+    }
+    current.signature = delta.signature;
+    const rawBlock = rawContentBlocks.get(index);
+    if (rawBlock) rawBlock.signature = delta.signature;
+  }
+
+  function applyAnthropicCitationDelta(
+    index: number,
+    citation: Record<string, unknown> | undefined,
+  ): void {
+    if (!citation || !normalizeAnthropicCitation(citation)) {
+      throw invalidAnthropicStream(providerLabel, "citation delta was malformed");
+    }
+    const rawBlock = rawContentBlocks.get(index);
+    if (!rawBlock || rawBlock.type !== "text") {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "citation delta did not match its content block",
+      );
+    }
+    const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
+    try {
+      retainedContentBudget.retainItem(
+        stringifyJsonValue(citation),
+        "citation delta",
+      );
+    } catch (error) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        error instanceof Error ? error.message : "citation retention budget was exceeded",
+        error,
+      );
+    }
+    citations.push(citation);
+    rawBlock.citations = citations;
+  }
+
+  function* emitAnthropicToolInputDelta(
+    index: number,
+    delta: Record<string, unknown>,
+  ): AnthropicOwnedParts {
+    if (typeof delta.partial_json !== "string") {
+      throw invalidAnthropicStream(providerLabel, "tool-input delta was malformed");
+    }
+    const current = toolCalls.get(index);
+    if (!current) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "tool-input delta did not match its content block",
+      );
+    }
+
+    appendAnthropicToolInput(current, delta.partial_json, true);
+    yield {
+      type: "tool-input-delta",
+      id: current.id,
+      delta: delta.partial_json,
+    };
+  }
+
+  function createAnthropicContentDelta(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): AnthropicOwnedParts | undefined {
+    const { index, delta, deltaType } = prepareAnthropicContentDelta(record, eventType);
+    if (deltaType === "text_delta") return emitAnthropicTextDelta(index, delta);
+    if (deltaType === "thinking_delta") return emitAnthropicThinkingDelta(index, delta);
+    if (deltaType === "signature_delta") {
+      applyAnthropicSignatureDelta(index, delta);
+      return undefined;
+    }
+    const citation = readRecord(delta?.citation);
+    if (deltaType === "citations_delta") {
+      applyAnthropicCitationDelta(index, citation);
+      return undefined;
+    }
+    if (deltaType === "input_json_delta") return emitAnthropicToolInputDelta(index, delta);
+    throw invalidAnthropicStream(providerLabel, "unsupported content block delta type");
+  }
+
+  function prepareAnthropicContentStop(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): {
+    index: number;
+    rawBlock: Record<string, unknown> | undefined;
+    reasoning: AnthropicStreamReasoningState | undefined;
+  } {
+    const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+    if (!openContentBlocks.delete(index)) {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "content block stop referenced an unopened block",
+      );
+    }
+    if (supportedContentBlocks.delete(index)) {
+      completedSupportedContentBlocks++;
+    }
+    const rawBlock = rawContentBlocks.get(index);
+    const textChunks = rawTextChunks.get(index);
+    if (rawBlock && textChunks) {
+      rawBlock.text = textChunks.toString();
+      rawTextChunks.delete(index);
+    }
+    const thinkingChunks = rawThinkingChunks.get(index);
+    if (rawBlock && thinkingChunks) {
+      rawBlock.thinking = thinkingChunks.toString();
+      rawThinkingChunks.delete(index);
+    }
+    const reasoning = reasoningBlocks.get(index);
+
+    return { index, rawBlock, reasoning };
+  }
+
+  function* emitAnthropicReasoningEnd(
+    index: number,
+    reasoning: AnthropicStreamReasoningState,
+  ): AnthropicOwnedParts {
+    yield {
+      type: "reasoning-end",
+      id: reasoning.id,
+      ...(reasoning.signature ? { signature: reasoning.signature } : {}),
+      ...(reasoning.redactedData ? { redactedData: reasoning.redactedData } : {}),
+    };
+    reasoningBlocks.delete(index);
+  }
+
+  function parseAnthropicStoppedToolInput(
+    index: number,
+    current: AnthropicStreamToolCallState,
+    rawBlock: Record<string, unknown> | undefined,
+  ): string | undefined {
+    const input = joinAnthropicToolInput(current) || "{}";
+    let parsedInput: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(input) as unknown;
+      const parsedRecord = readRecord(parsed);
+      if (!parsedRecord) {
+        throw new TypeError("tool input was not an object");
+      }
+      parsedInput = parsedRecord;
+    } catch {
+      // Defer: `stop_reason` decides whether this is a truncated response
+      // or a malformed stream, and it only arrives in `message_delta`.
+      // Drop the block so no partial tool call reaches the caller or a
+      // replay checkpoint, where a `tool_use` without a `tool_result`
+      // would invalidate the next provider request.
+      sawUnparsableToolInput = true;
+      toolCalls.delete(index);
+      rawContentBlocks.delete(index);
+      return undefined;
+    }
+
+    if (rawBlock) rawBlock.input = parsedInput;
+
+    return input;
+  }
+
+  function* emitAnthropicToolCall(
+    index: number,
+    current: AnthropicStreamToolCallState,
+    input: string,
+  ): AnthropicOwnedParts {
+    yield {
+      type: "tool-call",
+      toolCallId: current.id,
+      toolName: current.name,
+      input,
+      ...(current.providerExecuted ? { providerExecuted: true } : {}),
+    };
+    if (!current.providerExecuted) {
+      completedClientToolUseStep = true;
+      clientToolUseIdleDeadlineMs = null;
+    }
+    toolCalls.delete(index);
+  }
+
+  function createAnthropicContentStop(
+    record: Record<string, unknown>,
+    eventType: string,
+  ): AnthropicOwnedParts | undefined {
+    const { index, rawBlock, reasoning } = prepareAnthropicContentStop(record, eventType);
+    if (reasoning) return emitAnthropicReasoningEnd(index, reasoning);
+    const current = toolCalls.get(index);
+    if (!current) {
+      return undefined;
+    }
+    if (sawUnparsableToolInput) {
+      // The stream is already going to throw once `stop_reason` arrives.
+      // Before the deferral the first unparsable input threw right here,
+      // so no later tool call was ever yielded; keep that guarantee so a
+      // consumer can never dispatch a tool call from a doomed turn.
+      toolCalls.delete(index);
+      rawContentBlocks.delete(index);
+      return undefined;
+    }
+    const input = parseAnthropicStoppedToolInput(index, current, rawBlock);
+    if (input === undefined) return undefined;
+    return emitAnthropicToolCall(index, current, input);
+  }
+
+  function applyAnthropicMessageStart(record: Record<string, unknown>): void {
+    if (
+      sawMessageStart ||
+      seenContentBlocks.size > 0 ||
+      sawStopReason
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message_start was out of sequence");
+    }
+    const message = readRecord(record.message);
+    if (!message) {
+      throw invalidAnthropicStream(providerLabel, "message_start message was malformed");
+    }
+    sawMessageStart = true;
+    mergeRecordUsage(message);
+  }
+
+  function applyAnthropicMessageDelta(record: Record<string, unknown>): void {
+    if (
+      !sawMessageStart ||
+      openContentBlocks.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      toolCalls.size > 0
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message_delta was out of sequence");
+    }
+    const delta = readRecord(record.delta);
+    if (!delta) {
+      throw invalidAnthropicStream(providerLabel, "message delta was malformed");
+    }
+    if (
+      delta.stop_reason !== undefined &&
+      delta.stop_reason !== null &&
+      (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
+    }
+    if (typeof delta.stop_reason === "string") {
+      if (sawStopReason) {
+        throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
+      }
+      rawStopReason = delta.stop_reason;
+      sawStopReason = true;
+    }
+    const normalizedFinishReason = normalizeAnthropicFinishReason(delta.stop_reason);
+    if (normalizedFinishReason) {
+      finishReason = normalizedFinishReason;
+    }
+    // Only decide once a stop reason has actually arrived. A usage-only
+    // message_delta carries no stop_reason, and resolving here would
+    // classify the deferred failure as a malformed stream before the
+    // later delta that says max_tokens -- turning the truncation this
+    // change exists to identify back into the generic error.
+    if (sawStopReason) {
+      const deferredToolInputFailure = resolveDeferredToolInputFailure();
+      if (deferredToolInputFailure) {
+        throw deferredToolInputFailure;
+      }
+    }
+  }
+
+  function applyAnthropicMessageStop(): void {
+    if (
+      !sawMessageStart ||
+      !sawStopReason ||
+      openContentBlocks.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      toolCalls.size > 0
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message_stop was out of sequence");
+    }
+    sawMessageStop = true;
+  }
+
+  function createAnthropicEventParts(event: unknown): AnthropicOwnedParts | undefined {
+    if (event === "[DONE]") {
+      applyTrailingLifecycleEvent(event);
+      return undefined;
+    }
+
+    const record = readRecord(event);
+    if (!record) {
+      throw invalidAnthropicStream(providerLabel, "event was not an object");
+    }
+    const eventType = typeof record.type === "string" && record.type.length > 0
+      ? record.type
+      : undefined;
+    if (!eventType) {
+      throw invalidAnthropicStream(providerLabel, "event type was missing");
+    }
+
+    if (sawMessageStop || sawDoneMarker) {
+      applyTrailingLifecycleEvent(event);
+      return undefined;
+    }
+    mergeRecordUsage(record);
+
+    if (eventType === "error") {
+      throw buildAnthropicSseError(record);
+    }
+
+    if (eventType === "message_start") {
+      applyAnthropicMessageStart(record);
+      return undefined;
+    }
+
+    if (eventType === "content_block_start") return createAnthropicContentStart(record, eventType);
+
+    if (eventType === "content_block_delta") return createAnthropicContentDelta(record, eventType);
+
+    if (eventType === "content_block_stop") return createAnthropicContentStop(record, eventType);
+
+    if (eventType === "message_delta") {
+      applyAnthropicMessageDelta(record);
+      return undefined;
+    }
+
+    if (eventType === "message_stop") {
+      applyAnthropicMessageStop();
+      return undefined;
+    }
+
+    if (eventType === "ping") {
+      return undefined;
+    }
+    throw invalidAnthropicStream(
+      providerLabel,
+      "unsupported event type",
+    );
+  }
+
+  function* processAnthropicEvents(events: unknown[]): AnthropicOwnedParts {
+    for (const event of events) {
+      const parts = createAnthropicEventParts(event);
+      if (!parts) continue;
+      try {
+        let part = advanceAnthropicOwnedParts(parts);
+        while (!part.done) {
+          yield part.value;
+          part = advanceAnthropicOwnedParts(parts);
+        }
+      } catch (error) {
+        throwAnthropicOwnedParts(parts, error);
+      } finally {
+        closeAnthropicOwnedParts(parts);
+      }
+    }
+  }
+
+  function updateAnthropicClientToolDeadline(): void {
+    if (
+      completedClientToolUseStep &&
+      toolCalls.size === 0 &&
+      reasoningBlocks.size === 0 &&
+      openContentBlocks.size === 0
+    ) {
+      if (isToolCallsFinishReason(finishReason)) {
+        clientToolUseIdleDeadlineMs = null;
+        clientToolUseTerminalDeadlineMs ??= Date.now() + trailingUsageGraceMs;
+      } else {
+        clientToolUseIdleDeadlineMs ??= Date.now() + trailingUsageGraceMs;
+      }
+    } else {
+      clientToolUseIdleDeadlineMs = null;
+      clientToolUseTerminalDeadlineMs = null;
+    }
+  }
+
+  function releaseAnthropicStreamReader(): void {
+    if (!readerReleased) {
+      if (!sourceSettled) {
+        cancelStreamReader(reader, "Anthropic stream consumer returned before completion");
+      }
+      reader.releaseLock();
+    }
+  }
+
   try {
     while (true) {
       const read = await readStreamChunk(
@@ -1039,627 +1915,26 @@ export async function* streamAnthropicCompatibleParts(
       }
 
       const events = reachedEndOfStream ? sseParser.flush() : sseParser.push(read.chunk);
-      for (const event of events) {
-        if (event === "[DONE]") {
-          applyTrailingLifecycleEvent(event);
-          continue;
+      const eventParts = processAnthropicEvents(events);
+      try {
+        let part = advanceAnthropicOwnedParts(eventParts);
+        while (!part.done) {
+          yield part.value;
+          part = advanceAnthropicOwnedParts(eventParts);
         }
-
-        const record = readRecord(event);
-        if (!record) {
-          throw invalidAnthropicStream(providerLabel, "event was not an object");
-        }
-        const eventType = typeof record.type === "string" && record.type.length > 0
-          ? record.type
-          : undefined;
-        if (!eventType) {
-          throw invalidAnthropicStream(providerLabel, "event type was missing");
-        }
-
-        if (sawMessageStop || sawDoneMarker) {
-          applyTrailingLifecycleEvent(event);
-          continue;
-        }
-        mergeRecordUsage(record);
-
-        if (eventType === "error") {
-          throw buildAnthropicSseError(record);
-        }
-
-        if (eventType === "message_start") {
-          if (
-            sawMessageStart ||
-            seenContentBlocks.size > 0 ||
-            sawStopReason
-          ) {
-            throw invalidAnthropicStream(providerLabel, "message_start was out of sequence");
-          }
-          const message = readRecord(record.message);
-          if (!message) {
-            throw invalidAnthropicStream(providerLabel, "message_start message was malformed");
-          }
-          sawMessageStart = true;
-          mergeRecordUsage(message);
-          continue;
-        }
-
-        if (eventType === "content_block_start") {
-          if (!sawMessageStart || sawStopReason) {
-            throw invalidAnthropicStream(
-              providerLabel,
-              "content_block_start was out of sequence",
-            );
-          }
-          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
-          const contentBlock = readRecord(record.content_block);
-          const blockType = typeof contentBlock?.type === "string" && contentBlock.type.length > 0
-            ? contentBlock.type
-            : undefined;
-          if (!contentBlock || !blockType) {
-            throw invalidAnthropicStream(
-              providerLabel,
-              "content_block_start content block was malformed",
-            );
-          }
-          if (seenContentBlocks.has(index)) {
-            throw invalidAnthropicStream(providerLabel, "content block index was reused");
-          }
-          seenContentBlocks.add(index);
-          openContentBlocks.add(index);
-          clientToolUseIdleDeadlineMs = null;
-          clientToolUseTerminalDeadlineMs = null;
-          try {
-            retainedContentBudget.retainItem(
-              stringifyJsonValue(contentBlock),
-              "content block",
-            );
-          } catch (error) {
-            if (error instanceof RangeError) {
-              throw invalidAnthropicStream(providerLabel, error.message, error);
-            }
-            throw invalidAnthropicStream(
-              providerLabel,
-              "content block could not be retained safely",
-            );
-          }
-          rawContentBlocks.set(index, { ...contentBlock });
-
-          if (blockType === "text") {
-            if (typeof contentBlock.text !== "string") {
-              throw invalidAnthropicStream(providerLabel, "text content block was malformed");
-            }
-            supportedContentBlocks.add(index);
-            rawTextChunks.set(index, new StreamFragmentBuffer(contentBlock.text));
-            if (contentBlock.text.length > 0) {
-              yield { type: "text-delta", delta: contentBlock.text };
-            }
-            continue;
-          }
-
-          if (blockType === "thinking") {
-            if (
-              (contentBlock.thinking !== undefined &&
-                typeof contentBlock.thinking !== "string") ||
-              (contentBlock.signature !== undefined &&
-                typeof contentBlock.signature !== "string")
-            ) {
-              throw invalidAnthropicStream(providerLabel, "thinking content block was malformed");
-            }
-            supportedContentBlocks.add(index);
-            const reasoningId = `thinking-${index}`;
-            reasoningBlocks.set(index, {
-              id: reasoningId,
-              ...(typeof contentBlock.signature === "string"
-                ? { signature: contentBlock.signature }
-                : {}),
-            });
-            rawThinkingChunks.set(index, new StreamFragmentBuffer(contentBlock.thinking ?? ""));
-            yield {
-              type: "reasoning-start",
-              id: reasoningId,
-            };
-
-            if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
-              yield {
-                type: "reasoning-delta",
-                id: reasoningId,
-                delta: contentBlock.thinking,
-              };
-            }
-            continue;
-          }
-
-          // Redacted thinking blocks arrive as opaque encrypted payloads when
-          // Claude's safety classifier flags the reasoning trace. Surface them
-          // as a zero-length reasoning block so callers know thinking happened
-          // without leaking the (legitimately hidden) contents.
-          if (blockType === "redacted_thinking") {
-            if (typeof contentBlock.data !== "string" || contentBlock.data.length === 0) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "redacted thinking content block was malformed",
-              );
-            }
-            supportedContentBlocks.add(index);
-            const reasoningId = `thinking-${index}`;
-            reasoningBlocks.set(index, {
-              id: reasoningId,
-              redactedData: contentBlock.data,
-            });
-            yield {
-              type: "reasoning-start",
-              id: reasoningId,
-            };
-            continue;
-          }
-
-          if (blockType === "tool_use") {
-            if (
-              typeof contentBlock.id !== "string" ||
-              contentBlock.id.length === 0 ||
-              typeof contentBlock.name !== "string" ||
-              contentBlock.name.length === 0 ||
-              (contentBlock.input !== undefined && !readRecord(contentBlock.input))
-            ) {
-              throw invalidAnthropicStream(providerLabel, "tool-use content block was malformed");
-            }
-            supportedContentBlocks.add(index);
-            const current: AnthropicStreamToolCallState = {
-              id: contentBlock.id,
-              name: contentBlock.name,
-              input: new StreamFragmentBuffer(),
-              inputBudget: createStreamRetentionBudget(),
-            };
-
-            toolCalls.set(index, current);
-            clientToolUseIdleDeadlineMs = null;
-            clientToolUseTerminalDeadlineMs = null;
-            yield {
-              type: "tool-input-start",
-              id: current.id,
-              toolName: current.name,
-            };
-
-            const initialInput = contentBlock.input;
-            if (initialInput !== undefined && !isEmptyRecord(initialInput)) {
-              const serializedInput = stringifyJsonValue(initialInput);
-              appendAnthropicToolInput(current, serializedInput);
-              yield {
-                type: "tool-input-delta",
-                id: current.id,
-                delta: serializedInput,
-              };
-            }
-            continue;
-          }
-
-          if (blockType === "server_tool_use" || blockType === "mcp_tool_use") {
-            const providerToolUse = parseAnthropicProviderToolUse(contentBlock);
-            if (
-              !providerToolUse ||
-              providerToolNamesById.has(providerToolUse.toolCallId)
-            ) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "provider tool-use content block was malformed",
-              );
-            }
-            providerToolNamesById.set(
-              providerToolUse.toolCallId,
-              providerToolUse.toolName,
-            );
-            supportedContentBlocks.add(index);
-            const current: AnthropicStreamToolCallState = {
-              id: providerToolUse.toolCallId,
-              name: providerToolUse.toolName,
-              input: new StreamFragmentBuffer(),
-              inputBudget: createStreamRetentionBudget(),
-              providerExecuted: true,
-            };
-            toolCalls.set(index, current);
-            yield {
-              type: "tool-input-start",
-              id: current.id,
-              toolName: current.name,
-              providerExecuted: true,
-            };
-
-            if (!isEmptyRecord(providerToolUse.input)) {
-              const serializedInput = stringifyJsonValue(providerToolUse.input);
-              appendAnthropicToolInput(current, serializedInput);
-              yield {
-                type: "tool-input-delta",
-                id: current.id,
-                delta: serializedInput,
-              };
-            }
-            continue;
-          }
-
-          if (isAnthropicProviderToolResultBlockType(blockType)) {
-            const parsedResult = parseAnthropicServerToolResult(
-              contentBlock,
-              providerToolNamesById,
-            );
-            if (!parsedResult) {
-              const issue = blockType === "web_search_tool_result"
-                ? "web-search result block was malformed"
-                : blockType === "web_fetch_tool_result"
-                ? "web-fetch result block was malformed"
-                : "provider tool-result content block was malformed";
-              throw invalidAnthropicStream(
-                providerLabel,
-                issue,
-              );
-            }
-            providerToolNamesById.delete(parsedResult.toolCallId);
-            supportedContentBlocks.add(index);
-            yield parsedResult.isError === true
-              ? {
-                type: "tool-error",
-                toolCallId: parsedResult.toolCallId,
-                toolName: parsedResult.toolName,
-                error: parsedResult.result,
-                isError: true,
-                providerExecuted: true,
-              }
-              : {
-                type: "tool-result",
-                ...parsedResult,
-                providerExecuted: true,
-              };
-            continue;
-          }
-
-          throw invalidAnthropicStream(
-            providerLabel,
-            "unsupported content block type",
-          );
-        }
-
-        if (eventType === "content_block_delta") {
-          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
-          if (!openContentBlocks.has(index)) {
-            throw invalidAnthropicStream(
-              providerLabel,
-              "content block delta referenced an unopened block",
-            );
-          }
-          const delta = readRecord(record.delta);
-          const deltaType = typeof delta?.type === "string" && delta.type.length > 0
-            ? delta.type
-            : undefined;
-          if (!delta || !deltaType) {
-            throw invalidAnthropicStream(providerLabel, "content block delta was malformed");
-          }
-          if (deltaType === "text_delta") {
-            if (typeof delta.text !== "string") {
-              throw invalidAnthropicStream(providerLabel, "text delta was malformed");
-            }
-            const rawBlock = rawContentBlocks.get(index);
-            if (!rawBlock || rawBlock.type !== "text") {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "text delta did not match its content block",
-              );
-            }
-            const chunks = rawTextChunks.get(index);
-            if (!chunks) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "text delta retention state was missing",
-              );
-            }
-            try {
-              retainedContentBudget.retainDelta(delta.text, "text delta");
-            } catch (error) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                error instanceof Error ? error.message : "text retention budget was exceeded",
-                error,
-              );
-            }
-            chunks.append(delta.text);
-            if (delta.text.length > 0) {
-              yield { type: "text-delta", delta: delta.text };
-            }
-            continue;
-          }
-
-          if (deltaType === "thinking_delta") {
-            if (typeof delta.thinking !== "string") {
-              throw invalidAnthropicStream(providerLabel, "thinking delta was malformed");
-            }
-            const current = reasoningBlocks.get(index);
-            if (!current) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "thinking delta did not match its content block",
-              );
-            }
-
-            const rawBlock = rawContentBlocks.get(index);
-            const chunks = rawThinkingChunks.get(index);
-            if (!rawBlock || !chunks) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "thinking delta retention state was missing",
-              );
-            }
-            try {
-              retainedContentBudget.retainDelta(delta.thinking, "thinking delta");
-            } catch (error) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                error instanceof Error ? error.message : "thinking retention budget was exceeded",
-                error,
-              );
-            }
-            chunks.append(delta.thinking);
-            if (delta.thinking.length > 0) {
-              yield {
-                type: "reasoning-delta",
-                id: current.id,
-                delta: delta.thinking,
-              };
-            }
-            continue;
-          }
-
-          if (deltaType === "signature_delta") {
-            if (typeof delta.signature !== "string") {
-              throw invalidAnthropicStream(providerLabel, "signature delta was malformed");
-            }
-            const current = reasoningBlocks.get(index);
-            if (!current) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "signature delta did not match its content block",
-              );
-            }
-            current.signature = delta.signature;
-            const rawBlock = rawContentBlocks.get(index);
-            if (rawBlock) rawBlock.signature = delta.signature;
-            continue;
-          }
-
-          const citation = readRecord(delta?.citation);
-          if (deltaType === "citations_delta") {
-            if (!citation || !normalizeAnthropicCitation(citation)) {
-              throw invalidAnthropicStream(providerLabel, "citation delta was malformed");
-            }
-            const rawBlock = rawContentBlocks.get(index);
-            if (!rawBlock || rawBlock.type !== "text") {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "citation delta did not match its content block",
-              );
-            }
-            const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
-            try {
-              retainedContentBudget.retainItem(
-                stringifyJsonValue(citation),
-                "citation delta",
-              );
-            } catch (error) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                error instanceof Error ? error.message : "citation retention budget was exceeded",
-                error,
-              );
-            }
-            citations.push(citation);
-            rawBlock.citations = citations;
-            continue;
-          }
-
-          if (deltaType === "input_json_delta") {
-            if (typeof delta.partial_json !== "string") {
-              throw invalidAnthropicStream(providerLabel, "tool-input delta was malformed");
-            }
-            const current = toolCalls.get(index);
-            if (!current) {
-              throw invalidAnthropicStream(
-                providerLabel,
-                "tool-input delta did not match its content block",
-              );
-            }
-
-            appendAnthropicToolInput(current, delta.partial_json, true);
-            yield {
-              type: "tool-input-delta",
-              id: current.id,
-              delta: delta.partial_json,
-            };
-            continue;
-          }
-
-          throw invalidAnthropicStream(
-            providerLabel,
-            "unsupported content block delta type",
-          );
-        }
-
-        if (eventType === "content_block_stop") {
-          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
-          if (!openContentBlocks.delete(index)) {
-            throw invalidAnthropicStream(
-              providerLabel,
-              "content block stop referenced an unopened block",
-            );
-          }
-          if (supportedContentBlocks.delete(index)) {
-            completedSupportedContentBlocks++;
-          }
-          const rawBlock = rawContentBlocks.get(index);
-          const textChunks = rawTextChunks.get(index);
-          if (rawBlock && textChunks) {
-            rawBlock.text = textChunks.toString();
-            rawTextChunks.delete(index);
-          }
-          const thinkingChunks = rawThinkingChunks.get(index);
-          if (rawBlock && thinkingChunks) {
-            rawBlock.thinking = thinkingChunks.toString();
-            rawThinkingChunks.delete(index);
-          }
-          const reasoning = reasoningBlocks.get(index);
-          if (reasoning) {
-            yield {
-              type: "reasoning-end",
-              id: reasoning.id,
-              ...(reasoning.signature ? { signature: reasoning.signature } : {}),
-              ...(reasoning.redactedData ? { redactedData: reasoning.redactedData } : {}),
-            };
-            reasoningBlocks.delete(index);
-            continue;
-          }
-
-          const current = toolCalls.get(index);
-          if (!current) {
-            continue;
-          }
-          if (sawUnparsableToolInput) {
-            // The stream is already going to throw once `stop_reason` arrives.
-            // Before the deferral the first unparsable input threw right here,
-            // so no later tool call was ever yielded; keep that guarantee so a
-            // consumer can never dispatch a tool call from a doomed turn.
-            toolCalls.delete(index);
-            rawContentBlocks.delete(index);
-            continue;
-          }
-          const input = joinAnthropicToolInput(current) || "{}";
-          let parsedInput: Record<string, unknown>;
-          try {
-            const parsed = JSON.parse(input) as unknown;
-            const parsedRecord = readRecord(parsed);
-            if (!parsedRecord) {
-              throw new TypeError("tool input was not an object");
-            }
-            parsedInput = parsedRecord;
-          } catch {
-            // Defer: `stop_reason` decides whether this is a truncated response
-            // or a malformed stream, and it only arrives in `message_delta`.
-            // Drop the block so no partial tool call reaches the caller or a
-            // replay checkpoint, where a `tool_use` without a `tool_result`
-            // would invalidate the next provider request.
-            sawUnparsableToolInput = true;
-            toolCalls.delete(index);
-            rawContentBlocks.delete(index);
-            continue;
-          }
-
-          if (rawBlock) rawBlock.input = parsedInput;
-
-          yield {
-            type: "tool-call",
-            toolCallId: current.id,
-            toolName: current.name,
-            input,
-            ...(current.providerExecuted ? { providerExecuted: true } : {}),
-          };
-          if (!current.providerExecuted) {
-            completedClientToolUseStep = true;
-            clientToolUseIdleDeadlineMs = null;
-          }
-          toolCalls.delete(index);
-          continue;
-        }
-
-        if (eventType === "message_delta") {
-          if (
-            !sawMessageStart ||
-            openContentBlocks.size > 0 ||
-            reasoningBlocks.size > 0 ||
-            toolCalls.size > 0
-          ) {
-            throw invalidAnthropicStream(providerLabel, "message_delta was out of sequence");
-          }
-          const delta = readRecord(record.delta);
-          if (!delta) {
-            throw invalidAnthropicStream(providerLabel, "message delta was malformed");
-          }
-          if (
-            delta.stop_reason !== undefined &&
-            delta.stop_reason !== null &&
-            (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
-          ) {
-            throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
-          }
-          if (typeof delta.stop_reason === "string") {
-            if (sawStopReason) {
-              throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
-            }
-            rawStopReason = delta.stop_reason;
-            sawStopReason = true;
-          }
-          const normalizedFinishReason = normalizeAnthropicFinishReason(delta.stop_reason);
-          if (normalizedFinishReason) {
-            finishReason = normalizedFinishReason;
-          }
-          // Only decide once a stop reason has actually arrived. A usage-only
-          // message_delta carries no stop_reason, and resolving here would
-          // classify the deferred failure as a malformed stream before the
-          // later delta that says max_tokens -- turning the truncation this
-          // change exists to identify back into the generic error.
-          if (sawStopReason) {
-            const deferredToolInputFailure = resolveDeferredToolInputFailure();
-            if (deferredToolInputFailure) {
-              throw deferredToolInputFailure;
-            }
-          }
-          continue;
-        }
-
-        if (eventType === "message_stop") {
-          if (
-            !sawMessageStart ||
-            !sawStopReason ||
-            openContentBlocks.size > 0 ||
-            reasoningBlocks.size > 0 ||
-            toolCalls.size > 0
-          ) {
-            throw invalidAnthropicStream(providerLabel, "message_stop was out of sequence");
-          }
-          sawMessageStop = true;
-          continue;
-        }
-
-        if (eventType === "ping") {
-          continue;
-        }
-        throw invalidAnthropicStream(
-          providerLabel,
-          "unsupported event type",
-        );
+      } catch (error) {
+        throwAnthropicOwnedParts(eventParts, error);
+      } finally {
+        closeAnthropicOwnedParts(eventParts);
       }
 
-      if (
-        completedClientToolUseStep &&
-        toolCalls.size === 0 &&
-        reasoningBlocks.size === 0 &&
-        openContentBlocks.size === 0
-      ) {
-        if (isToolCallsFinishReason(finishReason)) {
-          clientToolUseIdleDeadlineMs = null;
-          clientToolUseTerminalDeadlineMs ??= Date.now() + trailingUsageGraceMs;
-        } else {
-          clientToolUseIdleDeadlineMs ??= Date.now() + trailingUsageGraceMs;
-        }
-      } else {
-        clientToolUseIdleDeadlineMs = null;
-        clientToolUseTerminalDeadlineMs = null;
-      }
+      updateAnthropicClientToolDeadline();
       if (reachedEndOfStream) {
         break;
       }
     }
   } finally {
-    if (!readerReleased) {
-      if (!sourceSettled) {
-        cancelStreamReader(reader, "Anthropic stream consumer returned before completion");
-      }
-      reader.releaseLock();
-    }
+    releaseAnthropicStreamReader();
   }
 
   mergeTrailingBufferUsage();
