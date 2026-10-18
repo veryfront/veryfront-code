@@ -680,18 +680,18 @@ export function readVeryfrontCloudModelFacts(
   return builtModelFacts.get(model as ModelRuntime)?.();
 }
 
-/** Transport one call uses, given whether that call carries a hosted tool. */
+/** Transport one call uses, given whether it needs Responses (a hosted tool or a document). */
 export function resolveVeryfrontCloudOpenAICallTransport(
   provider: string,
   upstreamModelId: string,
-  usesHostedTool: boolean,
+  requiresResponses: boolean,
 ): "chat-completions" | "responses" {
   const plan = resolveVeryfrontCloudOpenAITransportPlan(
     provider,
     upstreamModelId,
   );
   if (plan.pinned) return plan.transport;
-  return usesHostedTool ? "responses" : "chat-completions";
+  return requiresResponses ? "responses" : "chat-completions";
 }
 
 /**

@@ -566,14 +566,16 @@ obtain bytes before passing them to trusted server code.
 The framework encodes bytes internally. OpenAI Responses receives `file_data`,
 Anthropic receives a base64 `document` source for PDFs, and Google receives
 `inlineData`. OpenAI Responses and Anthropic also accept PDF URLs. Google
-accepts URLs for images only, so send other files to Google as inline data.
+accepts URLs for images and Gemini Files API URIs only, so send other files to
+Google as inline data.
 
 A file part that a transport cannot send fails before inference with an error
 that names the file and MIME type. Chat Completions transports reject all
 non-image files, and Anthropic rejects files other than images and PDFs. OpenAI
-models on the default `auto` transport send requests with non-image files
-through Responses; set `openAITransport: "responses"` when a model is pinned to
-Chat Completions. Select a model that supports the file type. The helper does
+and Veryfront Cloud OpenAI models on the default `auto` transport send requests
+with non-image files through Responses. Mistral and custom OpenAI-compatible
+base URLs stay on Chat Completions. Set `openAITransport: "responses"` when a
+model is pinned to Chat Completions. Select a model that supports the file type. The helper does
 not add model capabilities. The check covers stored chat history too, so a
 conversation with a document attachment needs a document-capable model on every
 later turn.
@@ -582,3 +584,5 @@ later turn.
 budget before building a message. Base64 adds about one third to request size;
 provider request and model limits still apply. The helper does not validate file
 contents or extract text. Filenames and MIME types must describe the actual file.
+The filename must be a base name such as `report.pdf`, not a path, because
+providers receive it.

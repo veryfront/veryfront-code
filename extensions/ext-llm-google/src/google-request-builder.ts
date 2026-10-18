@@ -639,6 +639,14 @@ function toGoogleContents(
   };
 }
 
+/** A URI the Gemini Files API returned; Gemini reads any supported type from it. */
+function isGeminiFileUri(url: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const { protocol, hostname, pathname } = new URL(url);
+  return protocol === "https:" && hostname === "generativelanguage.googleapis.com" &&
+    /^\/v1[a-z0-9]*\/files\/[^/]+$/.test(pathname);
+}
+
 function toGoogleUserParts(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -656,13 +664,13 @@ function toGoogleUserParts(
     const data = readInlineFileData(part);
     if (data !== undefined) {
       content.push({ inlineData: { mimeType, data } });
-    } else if (isImageFileInput(part)) {
+    } else if (isImageFileInput(part) || isGeminiFileUri(part.url)) {
       content.push({ fileData: { mimeType, fileUri: part.url } });
     } else {
       throw unsupportedFileInputError(
         "Google",
         part,
-        "Send non-image files as inline data, for example with fileFromBytes.",
+        "Send non-image files as inline data, for example with fileFromBytes, or as a Gemini Files API URI.",
       );
     }
   }

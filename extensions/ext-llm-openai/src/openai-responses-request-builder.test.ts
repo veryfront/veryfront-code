@@ -93,6 +93,22 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     }]);
   });
 
+  it("recognizes an upper-case data URL scheme as inline data, not a file URL", () => {
+    const body = buildWithFile({
+      url: "DATA:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "request.pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "request.pdf",
+      }],
+    }]);
+  });
+
   it("rejects an inline file without a filename when its type has no known extension", () => {
     assertThrows(
       () =>

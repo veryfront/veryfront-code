@@ -51,6 +51,8 @@ describe("fileFromBytes", () => {
     const cases: Array<[Partial<typeof input> & { maxBytes?: number }, string]> = [
       [{ filename: " " }, "File filename must be non-empty"],
       [{ filename: "a\nb.pdf" }, "control characters (CR, LF, NUL)"],
+      [{ filename: "/home/user/report.pdf" }, "File filename must be a base name"],
+      [{ filename: "C:\\Users\\report.pdf" }, "File filename must be a base name"],
       [{ mediaType: "application/pdf;base64,secret" }, "File mediaType must be a MIME type"],
       [{ maxBytes: 0 }, "File maxBytes must be a positive safe integer"],
       [{ maxBytes: NaN }, "File maxBytes must be a positive safe integer"],

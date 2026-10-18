@@ -158,6 +158,20 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  it("sends Gemini Files API URIs for non-image files as fileData", () => {
+    const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{ type: "file", url: fileUri, mediaType: "application/pdf" }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ fileData: { mimeType: "application/pdf", fileUri } }],
+    }]);
+  });
+
   it("rejects remote non-image file URLs instead of sending them as fileData", () => {
     assertThrows(
       () =>

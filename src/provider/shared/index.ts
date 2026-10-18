@@ -53,7 +53,9 @@ export {
 // Inline file parts: data URL payloads and actionable unsupported-input errors.
 export {
   isImageFileInput,
+  promptHasDocumentInput,
   readInlineFileData,
+  routesOpenAIDocumentInputToResponses,
   unsupportedFileInputError,
 } from "../runtime-loader/inline-file.ts";
 

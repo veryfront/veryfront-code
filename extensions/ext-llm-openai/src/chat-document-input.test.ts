@@ -45,6 +45,63 @@ describe("OpenAI-compatible Chat Completions document input", () => {
     }
   });
 
+  for (const providerName of ["mistral", "openai-compatible"]) {
+    it(`auto transport keeps a ${providerName} PDF off Responses and fails before inference`, async () => {
+      const requests: string[] = [];
+      const runtime = new OpenAIProvider().createModel("compatible-model", {
+        credential: "test-local-key",
+        baseURL: "https://example.compatible.test/v1",
+        providerName,
+        fetch: (input) => {
+          requests.push(String(input));
+          return Promise.resolve(Response.json({}, { status: 400 }));
+        },
+      });
+      await assertRejects(
+        () =>
+          runtime.doGenerate({
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: "data:application/pdf;base64,JVBERi0xLjQK",
+                mediaType: "application/pdf",
+                filename: "request.pdf",
+              }],
+            }],
+          }),
+        TypeError,
+        'Chat Completions does not support file input "request.pdf" (application/pdf)',
+      );
+      assertEquals(requests, []);
+    });
+  }
+
+  it("auto transport sends a veryfront-cloud PDF to /responses", async () => {
+    const requests: string[] = [];
+    const runtime = new OpenAIProvider().createModel("gpt-4.1", {
+      credential: "test-local-key",
+      baseURL: "https://example.gateway.test/v1",
+      providerName: "veryfront-cloud",
+      fetch: (input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}, { status: 400 }));
+      },
+    });
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:application/pdf;base64,JVBERi0xLjQK",
+          mediaType: "application/pdf",
+          filename: "request.pdf",
+        }],
+      }],
+    }).catch(() => undefined);
+    assertEquals(requests, ["https://example.gateway.test/v1/responses"]);
+  });
+
   for (
     const [label, file, endpoint] of [
       ["a PDF", {

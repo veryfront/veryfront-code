@@ -21,6 +21,28 @@ export function isImageFileInput(
   return part.type === "image" || part.mediaType.toLowerCase().startsWith("image/");
 }
 
+/** Whether a prompt carries a non-image file in a user message. */
+export function promptHasDocumentInput(prompt: unknown): boolean {
+  if (!Array.isArray(prompt)) return false;
+  return prompt.some((message) =>
+    message?.role === "user" && Array.isArray(message.content) &&
+    message.content.some((part: { type?: unknown; mediaType?: unknown } | null) =>
+      (part?.type === "file" || part?.type === "image") &&
+      typeof part.mediaType === "string" &&
+      !isImageFileInput(part as { type: string; mediaType: string })
+    )
+  );
+}
+
+/**
+ * Whether an OpenAI-wire provider serves document input on Responses, so the
+ * `auto` transport may move a request with a document there. Mistral and
+ * generic compatible servers do not, and keep the local Chat Completions error.
+ */
+export function routesOpenAIDocumentInputToResponses(providerName: string | undefined): boolean {
+  return providerName === "openai" || providerName === "veryfront-cloud";
+}
+
 /** Error for a file part that a provider transport cannot send. */
 export function unsupportedFileInputError(
   transport: string,
@@ -35,8 +57,9 @@ export function unsupportedFileInputError(
  * Returns `undefined` for remote URLs. MIME types compare case-insensitively.
  */
 export function readInlineFileData(part: FileInputPart): string | undefined {
-  if (!part.url.startsWith("data:")) return undefined;
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(part.url);
+  // URL schemes are case-insensitive, so `DATA:` is inline data too.
+  if (!/^data:/i.test(part.url)) return undefined;
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(part.url);
   if (
     !match?.[2] || match[2].length % 4 !== 0 ||
     match[1]!.toLowerCase() !== part.mediaType.toLowerCase()

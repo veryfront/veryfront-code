@@ -15,9 +15,10 @@ non-image files on Chat Completions transports, non-image and non-PDF files on
 Anthropic, and remote non-image URLs on Google. MIME types compare
 case-insensitively.
 
-OpenAI models on the default `auto` transport now send a request that carries a
-non-image file to the Responses API, as they already did for hosted tools, so
-those requests keep working. OpenAI Responses sends inline `data:` files as
+OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
+send a request that carries a non-image file to the Responses API, as they
+already did for hosted tools, so those requests keep working. Mistral and
+custom OpenAI-compatible base URLs stay on Chat Completions and reject the file. OpenAI Responses sends inline `data:` files as
 `file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
 files as `inlineData`. Use `fileFromBytes` from `veryfront/llm` to build inline
 file parts from local bytes.
@@ -26,7 +27,7 @@ The check applies to every message in the prompt, including stored chat
 history. A conversation that already holds a document attachment now fails on a
 transport that cannot read it, instead of continuing without the file. To
 recover, set `openAITransport: "responses"` for an OpenAI model pinned to Chat
-Completions, switch to a document-capable provider, or remove the file parts
+Completions or served by a compatible server that implements Responses, switch to a document-capable provider, or remove the file parts
 from the history before the next turn.
 
 ### Changed: managed knowledge embeddings use the registered Gemini model
