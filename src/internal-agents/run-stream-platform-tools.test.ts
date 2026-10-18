@@ -51,11 +51,11 @@ async function mixedManifest(
 }
 
 describe("mixed platform and integration tool selection", () => {
-  it("retains selected bare platform tools alongside an explicit integration tool", async () => {
+  it("retains explicitly selected canonical platform tools alongside an explicit integration tool", async () => {
     assertEquals(
       await mixedManifest({
-        get_file: true,
-        create_file: true,
+        veryfront__get_file: true,
+        veryfront__create_file: true,
         outlook__get_email: true,
       }),
       ["outlook__get_email", "veryfront__create_file", "veryfront__get_file"],
@@ -65,19 +65,18 @@ describe("mixed platform and integration tool selection", () => {
   it("keeps unselected or denied platform tools out of the model manifest", async () => {
     assertEquals(
       await mixedManifest({
-        get_file: true,
-        create_file: false,
+        veryfront__get_file: true,
+        veryfront__create_file: false,
         outlook__get_email: true,
       }),
       ["outlook__get_email", "veryfront__get_file"],
     );
   });
 
-  it("honors an explicit canonical denial of a selected bare alias", async () => {
+  it("does not resolve bare platform shorthand", async () => {
     assertEquals(
       await mixedManifest({
         get_file: true,
-        veryfront__get_file: false,
         outlook__get_email: true,
       }),
       ["outlook__get_email"],
