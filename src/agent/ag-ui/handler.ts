@@ -49,7 +49,7 @@ import {
   normalizeAgUiMessages,
   parseAgUiRequestOrError,
 } from "./host-support.ts";
-import { extractRequest } from "./request-shared.ts";
+import { createAgUiSchemaValidationErrorResponse, extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
@@ -268,23 +268,8 @@ function createAgUiRequestErrorResponse(error: unknown): Response {
   if (error instanceof ConnectedLocalAdmissionError) {
     return Response.json({ error: error.message }, { status: error.status });
   }
-  if (
-    error instanceof Error &&
-    "issues" in error &&
-    Array.isArray((error as Record<string, unknown>).issues)
-  ) {
-    const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
-    return Response.json(
-      {
-        error: "Invalid AG-UI request",
-        details: issues.map((issue) => ({
-          path: issue.path,
-          message: issue.message,
-        })),
-      },
-      { status: 400 },
-    );
-  }
+  const validationError = createAgUiSchemaValidationErrorResponse(error, "Invalid AG-UI request");
+  if (validationError) return validationError;
 
   const vfError = fromError(error);
   if (isModelCredentialError(vfError)) {

@@ -3,6 +3,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   boundAgUiRequestBody,
   createAgUiBodyLimitErrorResponse,
+  createAgUiSchemaValidationErrorResponse,
   extractRequest,
   parseAgUiJsonBody,
 } from "./request-shared.ts";
@@ -140,24 +141,11 @@ export function createAgUiResumeHandler(
         "Invalid AG-UI resume request",
       );
       if (bodyLimitError) return bodyLimitError;
-
-      if (
-        error instanceof Error &&
-        "issues" in error &&
-        Array.isArray((error as Record<string, unknown>).issues)
-      ) {
-        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
-        return Response.json(
-          {
-            error: "Invalid AG-UI resume request",
-            details: issues.map((issue) => ({
-              path: issue.path,
-              message: issue.message,
-            })),
-          },
-          { status: 400 },
-        );
-      }
+      const validationError = createAgUiSchemaValidationErrorResponse(
+        error,
+        "Invalid AG-UI resume request",
+      );
+      if (validationError) return validationError;
 
       if (error instanceof WaitConflictError) {
         return Response.json({ error: "TOOL_RESULT_CONFLICT" }, { status: 409 });
