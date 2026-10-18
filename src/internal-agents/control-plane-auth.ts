@@ -196,6 +196,40 @@ function readPlatformDependencyScope(
   return { projectId, runId, agentId };
 }
 
+function readControlPlaneRequestContext(req: Request, ctx: HandlerContext) {
+  const projectSlug = ctx.projectSlug;
+  if (!projectSlug) {
+    throw new ControlPlaneRequestError(400, "Project context is unavailable");
+  }
+
+  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  if (!controlPlaneJws) {
+    throw new ControlPlaneRequestError(401, "Missing control-plane signature");
+  }
+
+  return { projectSlug, controlPlaneJws };
+}
+
+function requirePinnedRecoveryKey(pinnedKey: string | undefined): asserts pinnedKey is string {
+  if (!pinnedKey) throw new Error("Managed recovery requires the pinned operator signing key");
+}
+
+function retainRecoveryAdmission(
+  admission: RecoveryAdmission,
+  claims: ControlPlaneClaims,
+  verifiedClaims: VerifiedControlPlaneRequestClaims,
+): void {
+  if (
+    admission.identity.publicRunId !== claims.sub ||
+    admission.sourceBinding.projectId !== claims.project_id ||
+    admission.expiresAt > claims.exp || admission.expiresAt <= DateNow() / 1000
+  ) throw new Error("Managed recovery admission scope is invalid");
+  ObjectFreeze(admission.identity);
+  ObjectFreeze(admission.generation);
+  ObjectFreeze(admission.sourceBinding);
+  verifiedRecoveryGrants.set(verifiedClaims, ObjectFreeze(admission));
+}
+
 async function verifyOperatorSignature(
   signature: string,
   rawBody: string,
@@ -229,15 +263,7 @@ export async function verifyControlPlaneRequest(
     );
   }
 
-  const projectSlug = ctx.projectSlug;
-  if (!projectSlug) {
-    throw new ControlPlaneRequestError(400, "Project context is unavailable");
-  }
-
-  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
-  if (!controlPlaneJws) {
-    throw new ControlPlaneRequestError(401, "Missing control-plane signature");
-  }
+  const { projectSlug, controlPlaneJws } = readControlPlaneRequestContext(req, ctx);
 
   try {
     const requestMethod = req.method;
@@ -264,7 +290,7 @@ export async function verifyControlPlaneRequest(
     const body = readControlPlaneBody(rawBody);
     if (body && ObjectHasOwn(body, "managedRecoveryAdmission")) {
       // A recovery request may never fall back to ordinary execution authority.
-      if (!pinnedKey) throw new Error("Managed recovery requires the pinned operator signing key");
+      requirePinnedRecoveryKey(pinnedKey);
       // Adapter compatibility keys are not operator recovery authority.
       await verifyControlPlaneJws(controlPlaneJws, rawBody, {
         ...verificationOptions,
@@ -273,15 +299,7 @@ export async function verifyControlPlaneRequest(
       const admission = getRecoveryAdmissionSchema().parse(
         readOwnDataProperty(body, "managedRecoveryAdmission", "Managed recovery admission"),
       );
-      if (
-        admission.identity.publicRunId !== claims.sub ||
-        admission.sourceBinding.projectId !== claims.project_id ||
-        admission.expiresAt > claims.exp || admission.expiresAt <= DateNow() / 1000
-      ) throw new Error("Managed recovery admission scope is invalid");
-      ObjectFreeze(admission.identity);
-      ObjectFreeze(admission.generation);
-      ObjectFreeze(admission.sourceBinding);
-      verifiedRecoveryGrants.set(verifiedClaims, ObjectFreeze(admission));
+      retainRecoveryAdmission(admission, claims, verifiedClaims);
     }
 
     if (body && ObjectHasOwn(body, "platformToolDependencies")) {
