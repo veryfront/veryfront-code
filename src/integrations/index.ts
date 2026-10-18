@@ -92,6 +92,12 @@ export {
 } from "./salesforce-service-account.ts";
 export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-service-account.ts";
 
+export {
+  createOutlookServiceAccountToolSource,
+  OUTLOOK_SERVICE_ACCOUNT_ENV_VARS,
+} from "./outlook-service-account.ts";
+export type { OutlookServiceAccountToolSourceOptions } from "./outlook-service-account.ts";
+
 export { createIntegrationClient, IntegrationApiError } from "./client.ts";
 export type {
   ConnectionDeletion,

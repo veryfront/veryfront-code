@@ -498,6 +498,10 @@ query-string credentials, GraphQL, response enrichment, multipart bodies, raw
 bodies, dynamic endpoint origins, and tools outside the exact grant. Use managed
 execution for per-user OAuth and other unsupported connector features.
 
+For unattended Outlook mail access, use `createOutlookServiceAccountToolSource`.
+It reads one configured mailbox with Microsoft Entra app-only credentials. See
+[Run Outlook integration tools locally](./self-hosting.md#run-outlook-integration-tools-locally).
+
 ## Prerequisites for agent tools
 
 - A Veryfront project with a configured agent (see [Agents](./agents.md)).
@@ -730,6 +734,7 @@ representative read has run against the real provider on a recorded release.
 | `twilio`         | Basic                                      | Fixture and published metadata only                           |
 | `personio`       | OAuth client credentials                   | Fixture and published metadata only                           |
 | `salesforce`     | OAuth client credentials (service account) | Fixture and published metadata only                           |
+| `outlook`        | Entra client credentials (app-only)        | Fixture only                                                  |
 
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.

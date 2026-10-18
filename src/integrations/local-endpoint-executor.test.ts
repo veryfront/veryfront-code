@@ -159,18 +159,23 @@ describe("local integration endpoint executor", () => {
   );
 
   it("returns null for a successful response with no representation", async () => {
-    const result = await executeLocalIntegrationEndpoint({
-      endpoint: endpoint({
-        method: "POST",
-        url: "https://api.example.test/items/item-1/pause",
-      }),
-      args: {},
-      authHeaders: {},
-      allowedOrigin: "https://api.example.test",
-      transport: () => Promise.resolve(new Response(null, { status: 204 })),
-    });
+    const execute = (status: number) =>
+      executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "POST",
+          url: "https://api.example.test/items/item-1/pause",
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(new Response(null, { status })),
+      });
 
-    assertEquals(result, null);
+    assertEquals(await execute(204), null);
+    // An accepted action, such as Microsoft Graph sendMail, has no body.
+    assertEquals(await execute(202), null);
+    // A 200 must still carry JSON.
+    await assertRejects(() => execute(200));
   });
 
   it("supports passthrough JSON bodies and Microsoft Graph query formatting", async () => {

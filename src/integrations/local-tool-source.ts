@@ -889,7 +889,8 @@ function inputPropertySchema(
   return schema as JsonSchema;
 }
 
-function toolDefinition(
+/** @internal Build a credential-free tool definition from one catalog endpoint. */
+export function toolDefinition(
   tool: IntegrationToolMeta & { id: string },
   endpoint: IntegrationEndpoint,
   credentialNames: readonly string[],
