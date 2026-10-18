@@ -35,9 +35,9 @@ export function fileFromBytes(
     });
   }
   // Providers receive the filename and errors echo it, so a local path must not leak.
-  if (/[/\\]/.test(filename) || filename === "." || filename === "..") {
+  if (/[/\\]|^[A-Za-z]:/.test(filename) || filename === "." || filename === "..") {
     throw INVALID_ARGUMENT.create({
-      message: "File filename must be a base name: no path separators (/ or \\), not . or ..",
+      message: "File filename must be a base name, not a path (/, \\ or a drive prefix), . or ..",
     });
   }
   if (typeof mediaType !== "string" || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(mediaType)) {

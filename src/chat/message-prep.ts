@@ -629,8 +629,8 @@ interface ToolCallInfo {
 
 /** Check whether the model supports the file media type. */
 export function isModelSupportedFileMediaType(mediaType: string): boolean {
-  return mediaType.startsWith("image/") || mediaType === "application/pdf" ||
-    mediaType === "text/plain";
+  const type = mediaType.toLowerCase();
+  return type.startsWith("image/") || type === "application/pdf" || type === "text/plain";
 }
 
 /** Normalizes message file part media types. */
@@ -695,6 +695,11 @@ export function rewriteUnsupportedFilePartsAsAnnotations(
         continue;
       }
 
+      // Inline data has no upload a tool could read, so the provider sends or rejects it.
+      if (/^data:/i.test(part.url ?? "")) {
+        kept.push(part);
+        continue;
+      }
       const normalizedMediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
       if (isModelSupportedFileMediaType(normalizedMediaType)) {
         kept.push({

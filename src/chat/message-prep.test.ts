@@ -2817,3 +2817,25 @@ Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool 
     },
   ]);
 });
+
+Deno.test("rewriteUnsupportedFilePartsAsAnnotations keeps inline data files for the provider to send or reject", () => {
+  const inline = {
+    type: "file" as const,
+    mediaType: "audio/mpeg",
+    filename: "memo.mp3",
+    url: "data:audio/mpeg;base64,SUQz",
+  };
+  const mixedCasePdf = {
+    type: "file" as const,
+    mediaType: "Application/PDF",
+    filename: "report.pdf",
+    url: "https://files.example.com/report.pdf",
+  };
+  const messages = [{ id: "user-1", role: "user" as const, parts: [inline, mixedCasePdf] }];
+
+  assertEquals(
+    rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts,
+    [inline, mixedCasePdf],
+    "inline data has no upload a tool could read, so it must not become base64 prompt text",
+  );
+});

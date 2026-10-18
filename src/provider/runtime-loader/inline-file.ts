@@ -11,7 +11,8 @@ interface FileInputPart {
  * Requests and errors leave the machine, so a local path must not.
  */
 export function fileInputBaseName(filename: string | undefined): string | undefined {
-  const name = filename?.split(/[/\\]/).pop();
+  // A Windows drive-relative name such as `C:report.pdf` is a path too.
+  const name = filename?.split(/[/\\]/).pop()?.replace(/^[A-Za-z]:/, "");
   return name && name !== "." && name !== ".." ? name : undefined;
 }
 

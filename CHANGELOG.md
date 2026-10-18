@@ -23,6 +23,11 @@ read still reach the provider, which rejects them.
 OpenAI Responses requests carry only the base name of a file part's filename,
 so a stored or hand-built part with a local path does not send that path.
 
+Chat and agent message preparation keeps inline `data:` file parts for the
+provider instead of rewriting unsupported types into `<uploaded_files>` text
+that carried the whole data URL. Uploaded files with an `https` URL are
+annotated as before.
+
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
 send a request that carries a non-image file to the Responses API, as they
 already did for hosted tools, so those requests keep working. Mistral and

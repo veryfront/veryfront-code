@@ -586,5 +586,5 @@ below that after base64 encoding. Apply your own aggregate attachment
 budget before building a message. Base64 adds about one third to request size;
 provider request and model limits still apply. The helper does not validate file
 contents or extract text. Filenames and MIME types must describe the actual file.
-The filename must be a base name such as `report.pdf`, not a path or `.`/`..`,
+The filename must be a base name such as `report.pdf`, not a path, a drive prefix such as `C:`, or `.`/`..`,
 without leading or trailing spaces, because providers receive it.

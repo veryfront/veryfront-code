@@ -53,6 +53,7 @@ describe("fileFromBytes", () => {
       [{ filename: "a\nb.pdf" }, "control characters (CR, LF, NUL)"],
       [{ filename: ".." }, "File filename must be a base name"],
       [{ filename: "." }, "File filename must be a base name"],
+      [{ filename: "C:private.pdf" }, "File filename must be a base name"],
       [{ filename: " report.pdf" }, "File filename must not start or end with whitespace"],
       [{ filename: "/home/user/report.pdf" }, "File filename must be a base name"],
       [{ filename: "C:\\Users\\report.pdf" }, "File filename must be a base name"],

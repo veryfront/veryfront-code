@@ -119,7 +119,13 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     }]);
   });
 
-  for (const filename of ["/home/user/secret/report.pdf", "C:\\Users\\user\\report.pdf"]) {
+  for (
+    const filename of [
+      "/home/user/secret/report.pdf",
+      "C:\\Users\\user\\report.pdf",
+      "C:report.pdf",
+    ]
+  ) {
     it(`sends only the base name of a path filename: ${filename}`, () => {
       const inline = buildWithFile({
         url: "data:application/pdf;base64,JVBERi0=",
