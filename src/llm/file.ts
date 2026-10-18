@@ -72,7 +72,10 @@ export function fileFromBytes(
 export type FilePartOmissionReason =
   /** The filename or MIME type is invalid. */
   | "invalid_metadata"
-  /** The bytes are empty, or an application/pdf file has no `%PDF-` header. */
+  /**
+   * The bytes are missing or empty, or a PDF (by `application/pdf` MIME type
+   * or `.pdf` filename) has no `%PDF-` header.
+   */
   | "invalid_content"
   /** The file is larger than `maxFileBytes`. */
   | "over_file_limit"
@@ -85,15 +88,18 @@ export type FilePartOmissionReason =
 export interface OmittedFilePart {
   /** Position of the file in the input list. */
   index: number;
+  /** The input filename, or "" when it is not a string. */
   filename: string;
+  /** The lowercased input MIME type, or "" when it is not a string. */
   mediaType: string;
-  /** Raw byte length before encoding. */
+  /** Raw byte length before encoding, or 0 when there are no bytes. */
   bytes: number;
   reason: FilePartOmissionReason;
 }
 
 /** Local files and optional raw-byte and count budgets for one message. */
 export interface PlanFilePartsInput {
+  /** Files to plan. A per-file `maxBytes` is not read; use `maxFileBytes`. */
   files: ReadonlyArray<Omit<FileBytesInput, "maxBytes">>;
   /** Largest raw size for one file. */
   maxFileBytes?: number;
@@ -123,19 +129,39 @@ function hasPdfHeader(bytes: Uint8Array): boolean {
   return false;
 }
 
-function omissionReason(
-  { bytes, filename, mediaType }: PlanFilePartsInput["files"][number],
-): FilePartOmissionReason | undefined {
+type PlanFile = PlanFilePartsInput["files"][number];
+
+function isPdf({ filename, mediaType }: PlanFile): boolean {
+  return mediaType.toLowerCase() === "application/pdf" || /\.pdf$/i.test(filename);
+}
+
+function omissionReason(file: PlanFile | null | undefined): FilePartOmissionReason | undefined {
   try {
-    assertFileMetadata(filename, mediaType);
+    assertFileMetadata(file?.filename, file?.mediaType);
   } catch {
     return "invalid_metadata";
   }
+  const { bytes } = file!;
   if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return "invalid_content";
-  if (mediaType.toLowerCase() === "application/pdf" && !hasPdfHeader(bytes)) {
-    return "invalid_content";
-  }
+  if (isPdf(file!) && !hasPdfHeader(bytes)) return "invalid_content";
   return undefined;
+}
+
+function omittedFile(
+  file: PlanFile | null | undefined,
+  index: number,
+  reason: FilePartOmissionReason,
+): OmittedFilePart {
+  const bytes: unknown = file?.bytes;
+  const filename = file?.filename;
+  const mediaType = file?.mediaType;
+  return {
+    index,
+    filename: typeof filename === "string" ? filename : "",
+    mediaType: typeof mediaType === "string" ? mediaType.toLowerCase() : "",
+    bytes: ArrayBuffer.isView(bytes) || bytes instanceof ArrayBuffer ? bytes.byteLength : 0,
+    reason,
+  };
 }
 
 /**
@@ -146,39 +172,39 @@ function omissionReason(
  * sent, and it fits the remaining `maxTotalBytes`. Omitted files do not use the
  * budget, so a later smaller file can still be sent. Unset budgets do not
  * limit. The plan counts raw bytes only; it does not infer page counts or
- * model context limits. Throws `INVALID_ARGUMENT` only for invalid budgets.
+ * model context limits. Throws `INVALID_ARGUMENT` only when `files` is not an
+ * array or a budget is invalid.
  */
 export function planFileParts(
   { files, maxFileBytes, maxTotalBytes, maxFiles }: PlanFilePartsInput,
 ): FilePartsPlan {
+  if (!Array.isArray(files)) {
+    throw INVALID_ARGUMENT.create({ message: "files must be an array" });
+  }
   assertBudget("maxFileBytes", maxFileBytes);
   assertBudget("maxTotalBytes", maxTotalBytes);
   assertBudget("maxFiles", maxFiles);
   const parts: FilePartsPlan["parts"] = [];
   const omitted: OmittedFilePart[] = [];
   let totalBytes = 0;
-  files.forEach((file, index) => {
-    const size = file.bytes instanceof Uint8Array ? file.bytes.byteLength : 0;
+  // An index loop, not forEach, so holes in a sparse array are reported too.
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
     let reason = omissionReason(file);
+    const size = reason ? 0 : file!.bytes.byteLength;
     if (!reason && maxFileBytes !== undefined && size > maxFileBytes) reason = "over_file_limit";
     if (!reason && maxFiles !== undefined && parts.length >= maxFiles) reason = "over_count_limit";
     if (!reason && maxTotalBytes !== undefined && totalBytes + size > maxTotalBytes) {
       reason = "over_total_budget";
     }
     if (reason) {
-      omitted.push({
-        index,
-        filename: String(file.filename),
-        mediaType: String(file.mediaType),
-        bytes: size,
-        reason,
-      });
-      return;
+      omitted.push(omittedFile(file, index, reason));
+      continue;
     }
     totalBytes += size;
     parts.push(
-      fileFromBytes({ bytes: file.bytes, filename: file.filename, mediaType: file.mediaType }),
+      fileFromBytes({ bytes: file!.bytes, filename: file!.filename, mediaType: file!.mediaType }),
     );
-  });
+  }
   return { parts, omitted, complete: omitted.length === 0 };
 }

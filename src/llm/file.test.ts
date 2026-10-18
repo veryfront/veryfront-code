@@ -168,6 +168,58 @@ describe("planFileParts", () => {
     assertEquals(plan.complete, false);
   });
 
+  it("checks the PDF header for a .pdf filename whatever the MIME type", () => {
+    const text = new TextEncoder().encode("hello, not a pdf");
+    const real = pdf("real.pdf", 8).bytes;
+    const plan = planFileParts({
+      files: [
+        { bytes: text, filename: "a.pdf", mediaType: "application/octet-stream" },
+        { bytes: text, filename: "B.PDF", mediaType: "application/x-pdf" },
+        { bytes: real, filename: "c.pdf", mediaType: "application/octet-stream" },
+        { bytes: text, filename: "pdf.txt", mediaType: "text/plain" },
+      ],
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["c.pdf", "pdf.txt"]);
+    assertEquals(
+      plan.omitted.map(({ index, reason }) => [index, reason]),
+      [[0, "invalid_content"], [1, "invalid_content"]],
+    );
+  });
+
+  it("reports malformed entries from untyped callers as omissions", () => {
+    const files = [
+      ,
+      null,
+      { bytes: new ArrayBuffer(8), filename: "buffer.pdf", mediaType: "Application/PDF" },
+      { bytes: new Uint8Array(4), filename: { name: "x" }, mediaType: 7 },
+      pdf("ok.pdf", 8),
+    ] as unknown as Parameters<typeof planFileParts>[0]["files"];
+    const plan = planFileParts({ files });
+    assertEquals(plan.parts.map((part) => part.filename), ["ok.pdf"]);
+    assertEquals(plan.omitted, [
+      { index: 0, filename: "", mediaType: "", bytes: 0, reason: "invalid_metadata" },
+      { index: 1, filename: "", mediaType: "", bytes: 0, reason: "invalid_metadata" },
+      {
+        index: 2,
+        filename: "buffer.pdf",
+        mediaType: "application/pdf",
+        bytes: 8,
+        reason: "invalid_content",
+      },
+      { index: 3, filename: "", mediaType: "", bytes: 4, reason: "invalid_metadata" },
+    ]);
+    assertEquals(plan.complete, false);
+  });
+
+  it("rejects a files value that is not an array", () => {
+    for (const files of [undefined, null, {}, "a.pdf"]) {
+      assertInvalidArgument(
+        () => planFileParts({ files } as unknown as Parameters<typeof planFileParts>[0]),
+        "files must be an array",
+      );
+    }
+  });
+
   it("rejects invalid budget options", () => {
     const files = [pdf("a.pdf", 8)];
     for (const option of ["maxFileBytes", "maxTotalBytes", "maxFiles"]) {

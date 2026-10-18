@@ -616,11 +616,15 @@ later smaller file can still be sent. An unset budget does not limit. Reasons ar
 
 | Reason              | Meaning                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------- |
-| `invalid_metadata`  | The filename or MIME type is invalid.                                                          |
-| `invalid_content`   | The file is empty, or an `application/pdf` file has no `%PDF-` header in its first 1024 bytes. |
+| `invalid_metadata`  | The entry is missing, or its filename or MIME type is invalid.                                 |
+| `invalid_content`   | The bytes are missing or empty, or a PDF has no `%PDF-` header in its first 1024 bytes.        |
 | `over_file_limit`   | The file is larger than `maxFileBytes`.                                                        |
 | `over_count_limit`  | `maxFiles` files were already sent.                                                            |
 | `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                          |
+
+A file is a PDF when its MIME type is `application/pdf` or its filename ends in
+`.pdf`. Omitted entries report the lowercased MIME type. Only a non-array `files`
+value or an invalid budget throws `INVALID_ARGUMENT`.
 
 Budgets count raw bytes only. The helper does not infer page counts or model
 context limits from file size, so a file within budget can still exceed a

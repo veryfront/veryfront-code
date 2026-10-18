@@ -12,8 +12,8 @@ versions are listed at
 budgets to local files in input order without throwing for file data. It returns
 the file parts to send, each omitted file with a reason (`invalid_metadata`,
 `invalid_content`, `over_file_limit`, `over_count_limit`, or
-`over_total_budget`), and `complete`. An `application/pdf` file without a
-`%PDF-` header is omitted as `invalid_content`. Budgets count raw bytes and do
+`over_total_budget`), and `complete`. A PDF (by `application/pdf` MIME type or
+`.pdf` filename) without a `%PDF-` header is omitted as `invalid_content`. Budgets count raw bytes and do
 not infer page or context limits.
 
 ### Breaking: unsupported file parts fail before inference
