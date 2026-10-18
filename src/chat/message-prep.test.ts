@@ -2840,7 +2840,7 @@ Deno.test("rewriteUnsupportedFilePartsAsAnnotations keeps inline data files for 
   );
 });
 
-Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's MIME type matching its data URL", () => {
+Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's data URL matching its normalized MIME type", () => {
   const url = "data:application/json;base64,e30=";
   const prepared = prepareProviderModelMessagesFromUiMessages([{
     id: "user-1",
@@ -2851,6 +2851,12 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's MIM
   const content = prepared[0]!.content;
   assertEquals(
     Array.isArray(content) ? content.find((part) => part.type === "file") : undefined,
-    { type: "file", mediaType: "application/json", filename: "data.json", data: url, url },
+    {
+      type: "file",
+      mediaType: "text/plain",
+      filename: "data.json",
+      data: "data:text/plain;base64,e30=",
+      url: "data:text/plain;base64,e30=",
+    },
   );
 });

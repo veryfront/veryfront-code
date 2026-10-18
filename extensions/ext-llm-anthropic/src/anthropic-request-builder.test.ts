@@ -111,6 +111,27 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }]);
   });
+  it("sends an image/jpg inline image as image/jpeg", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: "data:image/jpeg;base64,/9j/", mediaType: "image/jpg" }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: "/9j/" },
+      }],
+    }]);
+  });
   it("matches inline data MIME types case-insensitively", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-5",

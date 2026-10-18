@@ -16,6 +16,27 @@ function isInlineDataFilePart(part: { readonly url?: string }): boolean {
   return /^data:/i.test(part.url ?? "");
 }
 
+type FilePart = Extract<ChatUiMessagePart, { type: "file" }>;
+
+const INLINE_BASE64_PREFIX = /^data:[^,]*;base64,/i;
+
+/**
+ * Normalize a file part's MIME type. An inline base64 data URL is rewritten to
+ * the same type, so the provider sees matching data; other inline data keeps
+ * the MIME type its data URL names.
+ */
+function normalizeFilePart(part: FilePart): FilePart {
+  const inline = isInlineDataFilePart(part);
+  if (inline && !INLINE_BASE64_PREFIX.test(part.url)) return part;
+  const mediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
+  if (mediaType === part.mediaType) return part;
+  return {
+    ...part,
+    mediaType,
+    ...(inline ? { url: part.url.replace(INLINE_BASE64_PREFIX, `data:${mediaType};base64,`) } : {}),
+  };
+}
+
 /** Normalizes message file part media types. */
 export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
   return messages.map((message) => {
@@ -23,22 +44,9 @@ export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): C
       return message;
     }
 
-    const parts = message.parts.map((part) => {
-      // Inline data must keep the MIME type its data URL names.
-      if (part.type !== "file" || isInlineDataFilePart(part)) {
-        return part;
-      }
-
-      const mediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (mediaType === part.mediaType) {
-        return part;
-      }
-
-      return {
-        ...part,
-        mediaType,
-      };
-    });
+    const parts = message.parts.map((part) =>
+      part.type === "file" ? normalizeFilePart(part) : part
+    );
 
     return { ...message, parts };
   });
@@ -79,24 +87,22 @@ export function rewriteUnsupportedFilePartsAsAnnotations(
         continue;
       }
 
-      // Inline data has no upload a tool could read, so the provider sends or rejects it.
-      if (isInlineDataFilePart(part)) {
-        kept.push(part);
-        continue;
-      }
-      const normalizedMediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (isModelSupportedFileMediaType(normalizedMediaType)) {
-        kept.push({
-          ...part,
-          mediaType: normalizedMediaType,
-        });
+      const normalized = normalizeFilePart(part);
+      // Inline data has no upload a tool could read, so the provider sends or
+      // rejects it. Runtimes send files only from user messages.
+      if (
+        isModelSupportedFileMediaType(normalized.mediaType) ||
+        (message.role === "user" && isInlineDataFilePart(part))
+      ) {
+        kept.push(normalized);
         continue;
       }
 
       dataFiles.push({
         name: part.filename || "file",
-        mediaType: normalizedMediaType,
-        ...(part.url ? { url: part.url } : {}),
+        mediaType: normalized.mediaType,
+        // A data URL would put the file's base64 into prompt text.
+        ...(part.url && !isInlineDataFilePart(part) ? { url: part.url } : {}),
         ...(part.uploadId ? { uploadId: part.uploadId } : {}),
         ...(part.uploadPath ? { path: part.uploadPath } : {}),
       });

@@ -16,9 +16,19 @@ export function fileInputBaseName(filename: string | undefined): string | undefi
   return name && name !== "." && name !== ".." ? name : undefined;
 }
 
+// A MIME type without parameters. Anything else is not echoed into errors.
+const MEDIA_TYPE = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
+
 function describeFileInput({ filename, mediaType }: FileInputPart): string {
   const name = fileInputBaseName(filename);
-  return `file input${name ? ` ${JSON.stringify(name)}` : ""} (${mediaType})`;
+  const type = MEDIA_TYPE.test(mediaType) ? mediaType : "invalid media type";
+  return `file input${name ? ` ${JSON.stringify(name)}` : ""} (${type})`;
+}
+
+// `image/jpg` is a common non-standard alias for `image/jpeg`.
+function canonicalMediaType(mediaType: string): string {
+  const type = mediaType.toLowerCase();
+  return type === "image/jpg" ? "image/jpeg" : type;
 }
 
 function fileInputError(message: string): TypeError {
@@ -70,10 +80,11 @@ export function unsupportedFileInputError(
 export function readInlineFileData(part: FileInputPart): string | undefined {
   // URL schemes are case-insensitive, so `DATA:` is inline data too.
   if (!/^data:/i.test(part.url)) return undefined;
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(part.url);
+  // RFC 2397 allows parameters, such as `;name=a.png`, before `;base64`.
+  const match = /^data:([^;,]+)(?:;[^;,=]+=[^;,]*)*;base64,([A-Za-z0-9+/]*={0,2})$/i.exec(part.url);
   if (
     !match?.[2] || match[2].length % 4 !== 0 ||
-    match[1]!.toLowerCase() !== part.mediaType.toLowerCase()
+    canonicalMediaType(match[1]!) !== canonicalMediaType(part.mediaType)
   ) {
     throw fileInputError(
       `Inline ${describeFileInput(part)} must be base64 data with a matching MIME type`,

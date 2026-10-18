@@ -1079,7 +1079,8 @@ function toAnthropicUserContent(
     // Image URLs keep their existing pass-through; a document URL must be remote.
     const source = data === undefined
       ? { type: "url", url: image ? part.url : readRemoteFileUrl("Anthropic", part) }
-      : { type: "base64", media_type: mediaType, data };
+      // Anthropic accepts only the standard `image/jpeg` spelling.
+      : { type: "base64", media_type: mediaType === "image/jpg" ? "image/jpeg" : mediaType, data };
     content.push({ type: image ? "image" : "document", source });
   }
   return content;

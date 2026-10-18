@@ -15,19 +15,22 @@ non-image files on Chat Completions transports, non-image and non-PDF files on
 Anthropic, remote non-image URLs on Google, and document URLs that are not
 `http` or `https` on OpenAI Responses and Anthropic. Audio and video files on
 OpenAI Responses fail the same way. An inline `data:` part must be
-`data:<mime>;base64,<payload>` with the part's MIME type and no other
-parameters, or it fails before inference on every provider. MIME types compare
-case-insensitively. Other formats that a transport accepts but a model cannot
+`data:<mime>[;<param>=<value>];base64,<payload>` with the part's MIME type, or
+it fails before inference on every provider. MIME types compare
+case-insensitively, and `image/jpg` matches `image/jpeg`. Errors show an invalid
+MIME type as `invalid media type`. Other formats that a transport accepts but a model cannot
 read still reach the provider, which rejects them.
 
 OpenAI Responses requests carry only the base name of a file part's filename,
 so a stored or hand-built part with a local path does not send that path. A
 filename without an extension gets one from the MIME type.
 
-Chat and agent message preparation keeps inline `data:` file parts for the
-provider instead of rewriting unsupported types into `<uploaded_files>` text
-that carried the whole data URL. Uploaded files with an `https` URL are
-annotated as before.
+Chat and agent message preparation keeps inline `data:` file parts in user
+messages for the provider instead of rewriting unsupported types into
+`<uploaded_files>` text that carried the whole data URL. It normalizes their MIME
+type as before, for example a `.ts` file to `text/plain`, and rewrites a base64
+data URL to match. Inline files in other roles, which runtimes do not send, are
+annotated without their data URL. Uploaded `https` files are annotated as before.
 
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
 send a request that carries a non-image file to the Responses API, as they
