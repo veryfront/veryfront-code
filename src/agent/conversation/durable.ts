@@ -8,8 +8,8 @@ import { createInstrumentedFetch } from "#veryfront/observability/auto-instrumen
 import { isGlobalTracerProviderInstalled } from "#veryfront/observability/tracing/api-shim.ts";
 import { isVeryfrontError, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
-  AppendConversationRunEventsResponseSchema,
   FinalizedCanonicalRunSchema,
+  getAppendConversationRunEventsResponseSchema,
 } from "./durable-contracts.ts";
 import type {
   ActiveConversationRunStatus,
@@ -1705,7 +1705,7 @@ async function controlPlaneJson<T>(input: {
 }
 
 /** @deprecated Use getCanonicalRunStatus with the canonical UUID. Legacy projection reads are removed. */
-export async function getConversationRun(_input: {
+export async function getConversationRun(input: {
   authToken: string;
   apiUrl: string;
   conversationId: string;
@@ -1714,6 +1714,7 @@ export async function getConversationRun(_input: {
   /** Host-owned transport used by trusted capability-backed callers. */
   fetch?: ConversationRunApiFetch;
 }): Promise<ConversationRunProjection> {
+  void input;
   throw new Error(
     "Legacy durable projection reads were removed. Use getCanonicalRunStatus with the canonical UUID; append cursors are supplied by admission and authenticated append receipts.",
   );
@@ -2057,7 +2058,7 @@ export async function appendConversationRunEvents(input: {
         input.expectedPreviousExternalEventSequence,
       );
     }
-    const parsed = AppendConversationRunEventsResponseSchema.parse(responseBody);
+    const parsed = getAppendConversationRunEventsResponseSchema().parse(responseBody);
     validateAppendModelCallCaptureReceipts({
       response: parsed,
       submittedModelCallIds: submittedModelCallCaptureIds,
@@ -2086,8 +2087,9 @@ export async function appendConversationRunEvents(input: {
 
 /** @deprecated Use canonical POST /runs admission and its API-issued runtime descriptor. */
 export async function createConversationAgentRun(
-  _input: CreateConversationAgentRunInput,
+  input: CreateConversationAgentRunInput,
 ): Promise<ConversationRunProjection> {
+  void input;
   throw new Error(
     "Standalone durable self-admission was removed. Create a canonical run through POST /runs and execute only the API-issued durable_root_run descriptor; local inherited children require the bound admission capability.",
   );
