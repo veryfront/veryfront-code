@@ -12,6 +12,9 @@ export interface FileBytesInput {
   maxBytes?: number;
 }
 
+// A MIME type without parameters.
+const MEDIA_TYPE = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
+
 function assertFileMetadata(filename: unknown, mediaType: unknown): void {
   if (typeof filename !== "string" || !filename.trim() || /[\r\n\0]/.test(filename)) {
     throw INVALID_ARGUMENT.create({
@@ -29,7 +32,7 @@ function assertFileMetadata(filename: unknown, mediaType: unknown): void {
       message: "File filename must be a base name, not a path (/, \\ or a drive prefix), . or ..",
     });
   }
-  if (typeof mediaType !== "string" || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(mediaType)) {
+  if (typeof mediaType !== "string" || !MEDIA_TYPE.test(mediaType)) {
     throw INVALID_ARGUMENT.create({
       message: "File mediaType must be a MIME type without parameters",
     });
@@ -88,9 +91,9 @@ export type FilePartOmissionReason =
 export interface OmittedFilePart {
   /** Position of the file in the input list. */
   index: number;
-  /** The input filename, or "" when it is not a string. */
+  /** The input file's base name, without any path, or "" when none is safe to report. */
   filename: string;
-  /** The lowercased input MIME type, or "" when it is not a string. */
+  /** The lowercased input MIME type, or "" when it is not a valid MIME type. */
   mediaType: string;
   /** Raw byte length before encoding, or 0 when there are no bytes. */
   bytes: number;
@@ -147,6 +150,14 @@ function omissionReason(file: PlanFile | null | undefined): FilePartOmissionReas
   return undefined;
 }
 
+/** The base name of a filename, or "" when none is safe to report. */
+function reportedFilename(filename: unknown): string {
+  if (typeof filename !== "string" || /[\r\n\0]/.test(filename)) return "";
+  // A local path must not leak into logs, so keep only the base name.
+  const name = filename.split(/[/\\]/).pop()!.replace(/^[A-Za-z]:/, "").trim();
+  return name === "." || name === ".." ? "" : name;
+}
+
 function omittedFile(
   file: PlanFile | null | undefined,
   index: number,
@@ -157,8 +168,10 @@ function omittedFile(
   const mediaType = file?.mediaType;
   return {
     index,
-    filename: typeof filename === "string" ? filename : "",
-    mediaType: typeof mediaType === "string" ? mediaType.toLowerCase() : "",
+    filename: reportedFilename(filename),
+    mediaType: typeof mediaType === "string" && MEDIA_TYPE.test(mediaType)
+      ? mediaType.toLowerCase()
+      : "",
     bytes: ArrayBuffer.isView(bytes) || bytes instanceof ArrayBuffer ? bytes.byteLength : 0,
     reason,
   };

@@ -13,7 +13,8 @@ budgets to local files in input order without throwing for file data. It returns
 the file parts to send, each omitted file with a reason (`invalid_metadata`,
 `invalid_content`, `over_file_limit`, `over_count_limit`, or
 `over_total_budget`), and `complete`. A PDF (by `application/pdf` MIME type or
-`.pdf` filename) without a `%PDF-` header is omitted as `invalid_content`. Budgets count raw bytes and do
+`.pdf` filename) without a `%PDF-` header is omitted as `invalid_content`. A path or padded filename
+is omitted as `invalid_metadata`, and omitted entries report only a base name. Budgets count raw bytes and do
 not infer page or context limits.
 
 ### Breaking: unsupported file parts fail before inference

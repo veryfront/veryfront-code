@@ -623,8 +623,10 @@ later smaller file can still be sent. An unset budget does not limit. Reasons ar
 | `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                          |
 
 A file is a PDF when its MIME type is `application/pdf` or its filename ends in
-`.pdf`. Omitted entries report the lowercased MIME type. Only a non-array `files`
-value or an invalid budget throws `INVALID_ARGUMENT`.
+`.pdf`. The filename must be a base name, as for `fileFromBytes`. Omitted
+entries report only the base name of a filename and the lowercased MIME type,
+or `""` when either is invalid, so logging them does not leak local paths. Only
+a non-array `files` value or an invalid budget throws `INVALID_ARGUMENT`.
 
 Budgets count raw bytes only. The helper does not infer page counts or model
 context limits from file size, so a file within budget can still exceed a

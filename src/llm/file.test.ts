@@ -211,6 +211,32 @@ describe("planFileParts", () => {
     assertEquals(plan.complete, false);
   });
 
+  it("omits path and padded names, and keeps paths and invalid MIME types out of omissions", () => {
+    const text = new TextEncoder().encode("notes");
+    const plan = planFileParts({
+      files: [
+        pdf("/home/user/private/a.pdf", 8),
+        pdf(" b.pdf", 8),
+        pdf("C:\\Users\\x\\c\nd.pdf", 8),
+        pdf("..", 8),
+        { bytes: text, filename: "notes.txt", mediaType: "text/plain; secret=tok\n" },
+        pdf("ok.pdf", 8),
+      ],
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["ok.pdf"]);
+    assertEquals(
+      plan.omitted.map(({ filename, mediaType, reason }) => [filename, mediaType, reason]),
+      [
+        ["a.pdf", "application/pdf", "invalid_metadata"],
+        ["b.pdf", "application/pdf", "invalid_metadata"],
+        ["", "application/pdf", "invalid_metadata"],
+        ["", "application/pdf", "invalid_metadata"],
+        ["notes.txt", "", "invalid_metadata"],
+      ],
+    );
+    assertEquals(plan.complete, false);
+  });
+
   it("rejects a files value that is not an array", () => {
     for (const files of [undefined, null, {}, "a.pdf"]) {
       assertInvalidArgument(
