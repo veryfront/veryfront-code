@@ -244,7 +244,8 @@ function validateExtensionPackageName(value: unknown): string | undefined {
 }
 
 function compareDeterministically(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function expectedPackageNameForManifestPath(
@@ -268,6 +269,161 @@ interface CapabilityValidationBudget {
   utf16CodeUnits: number;
 }
 
+type PendingCapabilityNode = { value: unknown; depth: number };
+
+function validateCapabilityString(
+  field: string,
+  value: string,
+  budget: CapabilityValidationBudget,
+): string | undefined {
+  if (!isWellFormedUnicode(value)) {
+    return `${field} contains a string without well-formed Unicode`;
+  }
+  if (containsUnicodeControlOrLineSeparator(value)) {
+    return `${field} contains a string with Unicode control characters or line separators`;
+  }
+  if (value.length > MAX_CAPABILITY_STRING_CHARACTERS) {
+    return `${field} contains a string longer than ${MAX_CAPABILITY_STRING_CHARACTERS} characters`;
+  }
+  budget.utf8Bytes += utf8ByteLength(value);
+  budget.utf16CodeUnits += value.length;
+  if (
+    budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
+    budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
+  ) {
+    return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
+  }
+  return undefined;
+}
+
+function validateCapabilityProperty(
+  field: string,
+  key: string,
+  descriptor: PropertyDescriptor,
+  budget: CapabilityValidationBudget,
+): string | undefined {
+  if (key === "__proto__") {
+    return `${field} must not declare __proto__`;
+  }
+  if (!isWellFormedUnicode(key)) {
+    return `${field} contains a key without well-formed Unicode`;
+  }
+  if (containsUnicodeControlOrLineSeparator(key)) {
+    return `${field} contains a key with Unicode control characters or line separators`;
+  }
+  if (key.length > MAX_CAPABILITY_KEY_CHARACTERS) {
+    return `${field} contains a key longer than ${MAX_CAPABILITY_KEY_CHARACTERS} characters`;
+  }
+  budget.utf8Bytes += utf8ByteLength(key);
+  budget.utf16CodeUnits += key.length;
+  if (
+    budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
+    budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
+  ) {
+    return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
+  }
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    return `${field} contains a non-data or non-enumerable property`;
+  }
+  return undefined;
+}
+
+function queueCapabilityArray(
+  field: string,
+  value: unknown[],
+  depth: number,
+  budget: CapabilityValidationBudget,
+  pending: PendingCapabilityNode[],
+): string | undefined {
+  budget.entries += value.length;
+  if (budget.entries > MAX_CAPABILITY_CONTAINER_ENTRIES) {
+    return `${field} exceeds ${MAX_CAPABILITY_CONTAINER_ENTRIES} aggregate properties and items`;
+  }
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    if (!Object.hasOwn(value, index)) {
+      return `${field} contains an array hole`;
+    }
+    pending.push({ value: value[index], depth: depth + 1 });
+  }
+  return undefined;
+}
+
+function queueCapabilityObject(
+  field: string,
+  value: unknown,
+  depth: number,
+  budget: CapabilityValidationBudget,
+  pending: PendingCapabilityNode[],
+): string | undefined {
+  let prototype: object | null;
+  let descriptors: Record<string, PropertyDescriptor>;
+  let symbols: symbol[];
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+    symbols = Object.getOwnPropertySymbols(value);
+  } catch {
+    return `${field} contains an uninspectable object`;
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    return `${field} contains a non-JSON object`;
+  }
+  if (symbols.length > 0) {
+    return `${field} contains symbol properties`;
+  }
+  const entries = Object.entries(descriptors);
+  budget.entries += entries.length;
+  if (budget.entries > MAX_CAPABILITY_CONTAINER_ENTRIES) {
+    return `${field} exceeds ${MAX_CAPABILITY_CONTAINER_ENTRIES} aggregate properties and items`;
+  }
+  for (const [key, descriptor] of entries) {
+    const issue = validateCapabilityProperty(field, key, descriptor, budget);
+    if (issue) return issue;
+    pending.push({ value: descriptor.value, depth: depth + 1 });
+  }
+  return undefined;
+}
+
+function validateCapabilityNode(
+  field: string,
+  node: PendingCapabilityNode,
+  budget: CapabilityValidationBudget,
+  pending: PendingCapabilityNode[],
+  seen: Set<object>,
+): string | undefined {
+  const { value, depth } = node;
+
+  budget.nodes += 1;
+  if (budget.nodes > MAX_CAPABILITY_VALUE_NODES) {
+    return `${field} exceeds ${MAX_CAPABILITY_VALUE_NODES} aggregate value nodes`;
+  }
+  if (depth > MAX_CAPABILITY_NESTING_DEPTH) {
+    return `${field} exceeds maximum nesting depth ${MAX_CAPABILITY_NESTING_DEPTH}`;
+  }
+  if (value === null || typeof value === "boolean") return undefined;
+  if (typeof value === "string") {
+    return validateCapabilityString(field, value, budget);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return `${field} contains a non-finite number`;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") {
+    return `${field} must contain only JSON-safe values`;
+  }
+  if (seen.has(value)) {
+    return `${field} must be an unshared acyclic JSON tree`;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return queueCapabilityArray(field, value, depth, budget, pending);
+  }
+  return queueCapabilityObject(field, value, depth, budget, pending);
+}
+
 function validateCapabilityJsonTree(
   field: string,
   root: unknown,
@@ -279,110 +435,14 @@ function validateCapabilityJsonTree(
   }];
   const seen = new Set<object>();
   while (pending.length > 0) {
-    const { value, depth } = pending.pop()!;
-    budget.nodes += 1;
-    if (budget.nodes > MAX_CAPABILITY_VALUE_NODES) {
-      return `${field} exceeds ${MAX_CAPABILITY_VALUE_NODES} aggregate value nodes`;
-    }
-    if (depth > MAX_CAPABILITY_NESTING_DEPTH) {
-      return `${field} exceeds maximum nesting depth ${MAX_CAPABILITY_NESTING_DEPTH}`;
-    }
-    if (value === null || typeof value === "boolean") continue;
-    if (typeof value === "string") {
-      if (!isWellFormedUnicode(value)) {
-        return `${field} contains a string without well-formed Unicode`;
-      }
-      if (containsUnicodeControlOrLineSeparator(value)) {
-        return `${field} contains a string with Unicode control characters or line separators`;
-      }
-      if (value.length > MAX_CAPABILITY_STRING_CHARACTERS) {
-        return `${field} contains a string longer than ${MAX_CAPABILITY_STRING_CHARACTERS} characters`;
-      }
-      budget.utf8Bytes += utf8ByteLength(value);
-      budget.utf16CodeUnits += value.length;
-      if (
-        budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
-        budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
-      ) {
-        return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
-      }
-      continue;
-    }
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) {
-        return `${field} contains a non-finite number`;
-      }
-      continue;
-    }
-    if (typeof value !== "object") {
-      return `${field} must contain only JSON-safe values`;
-    }
-    if (seen.has(value)) {
-      return `${field} must be an unshared acyclic JSON tree`;
-    }
-    seen.add(value);
-
-    if (Array.isArray(value)) {
-      budget.entries += value.length;
-      if (budget.entries > MAX_CAPABILITY_CONTAINER_ENTRIES) {
-        return `${field} exceeds ${MAX_CAPABILITY_CONTAINER_ENTRIES} aggregate properties and items`;
-      }
-      for (let index = value.length - 1; index >= 0; index -= 1) {
-        if (!Object.hasOwn(value, index)) {
-          return `${field} contains an array hole`;
-        }
-        pending.push({ value: value[index], depth: depth + 1 });
-      }
-      continue;
-    }
-
-    let prototype: object | null;
-    let descriptors: Record<string, PropertyDescriptor>;
-    let symbols: symbol[];
-    try {
-      prototype = Object.getPrototypeOf(value);
-      descriptors = Object.getOwnPropertyDescriptors(value);
-      symbols = Object.getOwnPropertySymbols(value);
-    } catch {
-      return `${field} contains an uninspectable object`;
-    }
-    if (prototype !== Object.prototype && prototype !== null) {
-      return `${field} contains a non-JSON object`;
-    }
-    if (symbols.length > 0) {
-      return `${field} contains symbol properties`;
-    }
-    const entries = Object.entries(descriptors);
-    budget.entries += entries.length;
-    if (budget.entries > MAX_CAPABILITY_CONTAINER_ENTRIES) {
-      return `${field} exceeds ${MAX_CAPABILITY_CONTAINER_ENTRIES} aggregate properties and items`;
-    }
-    for (const [key, descriptor] of entries) {
-      if (key === "__proto__") {
-        return `${field} must not declare __proto__`;
-      }
-      if (!isWellFormedUnicode(key)) {
-        return `${field} contains a key without well-formed Unicode`;
-      }
-      if (containsUnicodeControlOrLineSeparator(key)) {
-        return `${field} contains a key with Unicode control characters or line separators`;
-      }
-      if (key.length > MAX_CAPABILITY_KEY_CHARACTERS) {
-        return `${field} contains a key longer than ${MAX_CAPABILITY_KEY_CHARACTERS} characters`;
-      }
-      budget.utf8Bytes += utf8ByteLength(key);
-      budget.utf16CodeUnits += key.length;
-      if (
-        budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
-        budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
-      ) {
-        return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
-      }
-      if (!descriptor.enumerable || !("value" in descriptor)) {
-        return `${field} contains a non-data or non-enumerable property`;
-      }
-      pending.push({ value: descriptor.value, depth: depth + 1 });
-    }
+    const issue = validateCapabilityNode(
+      field,
+      pending.pop()!,
+      budget,
+      pending,
+      seen,
+    );
+    if (issue) return issue;
   }
   return undefined;
 }
@@ -466,16 +526,16 @@ function isValidNetworkHost(
   }
   const colon = value.indexOf(":");
   if (colon < 0) return isValidDnsOrIpv4Host(value);
-  if (!allowPort || value.indexOf(":", colon + 1) >= 0) return false;
+  if (!allowPort || value.includes(":", colon + 1)) return false;
   return isValidDnsOrIpv4Host(value.slice(0, colon)) &&
     isValidPermissionPort(value.slice(colon + 1));
 }
 
-function validateKnownCapabilitySchema(
+function validateCapabilityFields(
   field: string,
   capability: Capability,
-): string[] {
-  const issues: string[] = [];
+  issues: string[],
+): void {
   const allowedFields = ALLOWED_CAPABILITY_FIELDS_BY_TYPE.get(capability.type);
   if (allowedFields) {
     for (const key of Object.keys(capability).sort(compareDeterministically)) {
@@ -486,6 +546,32 @@ function validateKnownCapabilitySchema(
       }
     }
   }
+}
+
+function permissionScopeIssue(
+  field: string,
+  scope: unknown,
+): string | undefined {
+  if (typeof scope !== "string" || scope.trim().length === 0) {
+    return `${field} must be a non-empty string`;
+  }
+  if (scope.trim() !== scope) {
+    return `${field} must not have surrounding whitespace`;
+  }
+  if (!isWellFormedUnicode(scope)) {
+    return `${field} must contain well-formed Unicode`;
+  }
+  if (containsUnsafePermissionScopeSyntax(scope)) {
+    return `${field} must not contain commas or control characters, including Unicode C1 controls or line separators`;
+  }
+  return undefined;
+}
+
+function validateCapabilityScopes(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
   const scopeField = STRING_SCOPE_FIELD_BY_TYPE.get(capability.type);
   if (capability.type === "system:read" && !Object.hasOwn(capability, "apis")) {
     issues.push(`${field}.apis must be a non-empty array`);
@@ -497,27 +583,21 @@ function validateKnownCapabilitySchema(
     } else {
       for (let index = 0; index < scopes.length; index += 1) {
         const scope = scopes[index];
-        if (typeof scope !== "string" || scope.trim().length === 0) {
-          issues.push(
-            `${field}.${scopeField}[${index}] must be a non-empty string`,
-          );
-        } else if (scope.trim() !== scope) {
-          issues.push(
-            `${field}.${scopeField}[${index}] must not have surrounding whitespace`,
-          );
-        } else if (!isWellFormedUnicode(scope)) {
-          issues.push(
-            `${field}.${scopeField}[${index}] must contain well-formed Unicode`,
-          );
-        } else if (containsUnsafePermissionScopeSyntax(scope)) {
-          issues.push(
-            `${field}.${scopeField}[${index}] must not contain commas or control characters, including Unicode C1 controls or line separators`,
-          );
-        }
+        const issue = permissionScopeIssue(
+          `${field}.${scopeField}[${index}]`,
+          scope,
+        );
+        if (issue) issues.push(issue);
       }
     }
   }
+}
 
+function validateEnvironmentReadKeys(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
   if (capability.type === "env:read" && Array.isArray(capability.keys)) {
     for (let index = 0; index < capability.keys.length; index += 1) {
       const key = capability.keys[index];
@@ -526,6 +606,13 @@ function validateKnownCapabilitySchema(
       }
     }
   }
+}
+
+function validateSystemReadApis(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
   if (capability.type === "system:read" && Array.isArray(capability.apis)) {
     for (let index = 0; index < capability.apis.length; index += 1) {
       const api = capability.apis[index];
@@ -539,6 +626,13 @@ function validateKnownCapabilitySchema(
       }
     }
   }
+}
+
+function validateOutboundHosts(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
   if (
     capability.type === "net:outbound" && Array.isArray(capability.hosts)
   ) {
@@ -558,52 +652,131 @@ function validateKnownCapabilitySchema(
       }
     }
   }
+}
 
-  if (capability.type === "net:listen") {
-    const hasPorts = Object.hasOwn(capability, "ports");
-    const hasHost = Object.hasOwn(capability, "host");
-    if (hasPorts) {
-      const ports = capability.ports;
-      if (!Array.isArray(ports) || ports.length === 0) {
-        issues.push(`${field}.ports must be a non-empty array`);
-      } else {
-        for (let index = 0; index < ports.length; index += 1) {
-          const port = ports[index];
-          const validNumber = typeof port === "number" &&
-            Number.isInteger(port) && port >= 1 && port <= 65_535;
-          const validString = typeof port === "string" &&
-            /^(?:[1-9]\d{0,4})$/.test(port) && Number(port) <= 65_535;
-          if (!validNumber && !validString) {
-            issues.push(
-              `${field}.ports[${index}] must be an integer from 1 through 65535`,
-            );
-          }
-        }
-      }
-    }
-    if (hasHost) {
-      const host = capability.host;
-      if (typeof host !== "string" || host.trim().length === 0) {
-        issues.push(`${field}.host must be a non-empty string`);
-      } else if (host.trim() !== host) {
-        issues.push(`${field}.host must not have surrounding whitespace`);
-      } else if (!isWellFormedUnicode(host)) {
-        issues.push(`${field}.host must contain well-formed Unicode`);
-      } else if (containsUnsafePermissionScopeSyntax(host)) {
+function validateListenPorts(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
+  const ports = capability.ports;
+  if (!Array.isArray(ports) || ports.length === 0) {
+    issues.push(`${field}.ports must be a non-empty array`);
+  } else {
+    for (let index = 0; index < ports.length; index += 1) {
+      const port = ports[index];
+      const validNumber = typeof port === "number" &&
+        Number.isInteger(port) && port >= 1 && port <= 65_535;
+      const validString = typeof port === "string" &&
+        /^(?:[1-9]\d{0,4})$/.test(port) && Number(port) <= 65_535;
+      if (!validNumber && !validString) {
         issues.push(
-          `${field}.host must not contain commas or control characters, including Unicode C1 controls or line separators`,
+          `${field}.ports[${index}] must be an integer from 1 through 65535`,
         );
-      } else if (!isValidNetworkHost(host, false)) {
-        issues.push(
-          `${field}.host must be an ASCII DNS/IPv4 host or bracketed IPv6 host without an embedded port`,
-        );
-      }
-      if (!hasPorts) {
-        issues.push(`${field}.host requires a non-empty ports array`);
       }
     }
   }
+}
+
+function validateListenHost(
+  field: string,
+  capability: Capability,
+  hasPorts: boolean,
+  issues: string[],
+): void {
+  const host = capability.host;
+  if (typeof host !== "string" || host.trim().length === 0) {
+    issues.push(`${field}.host must be a non-empty string`);
+  } else if (host.trim() !== host) {
+    issues.push(`${field}.host must not have surrounding whitespace`);
+  } else if (!isWellFormedUnicode(host)) {
+    issues.push(`${field}.host must contain well-formed Unicode`);
+  } else if (containsUnsafePermissionScopeSyntax(host)) {
+    issues.push(
+      `${field}.host must not contain commas or control characters, including Unicode C1 controls or line separators`,
+    );
+  } else if (!isValidNetworkHost(host, false)) {
+    issues.push(
+      `${field}.host must be an ASCII DNS/IPv4 host or bracketed IPv6 host without an embedded port`,
+    );
+  }
+  if (!hasPorts) {
+    issues.push(`${field}.host requires a non-empty ports array`);
+  }
+}
+
+function validateListenCapability(
+  field: string,
+  capability: Capability,
+  issues: string[],
+): void {
+  if (capability.type === "net:listen") {
+    const hasPorts = Object.hasOwn(capability, "ports");
+    const hasHost = Object.hasOwn(capability, "host");
+    if (hasPorts) validateListenPorts(field, capability, issues);
+    if (hasHost) validateListenHost(field, capability, hasPorts, issues);
+  }
+}
+
+function validateKnownCapabilitySchema(
+  field: string,
+  capability: Capability,
+): string[] {
+  const issues: string[] = [];
+  validateCapabilityFields(field, capability, issues);
+  validateCapabilityScopes(field, capability, issues);
+  validateEnvironmentReadKeys(field, capability, issues);
+  validateSystemReadApis(field, capability, issues);
+  validateOutboundHosts(field, capability, issues);
+  validateListenCapability(field, capability, issues);
   return issues;
+}
+
+function validateCapabilityEntry(
+  field: string,
+  index: number,
+  entry: unknown,
+  budget: CapabilityValidationBudget,
+  values: Capability[],
+  issues: string[],
+): void {
+  if (!isRecord(entry)) {
+    issues.push(`${field}[${index}] must be an object`);
+    return;
+  }
+  const structureIssue = validateCapabilityJsonTree(
+    `${field}[${index}]`,
+    entry,
+    budget,
+  );
+  if (structureIssue) {
+    issues.push(structureIssue);
+  } else if (
+    typeof entry.type !== "string" || entry.type.trim().length === 0
+  ) {
+    issues.push(`${field}[${index}].type must be a non-empty string`);
+  } else if (entry.type.trim() !== entry.type) {
+    issues.push(
+      `${field}[${index}].type must not have surrounding whitespace`,
+    );
+  } else if (!isWellFormedUnicode(entry.type)) {
+    issues.push(`${field}[${index}].type must contain well-formed Unicode`);
+  } else if (containsUnicodeControlOrLineSeparator(entry.type)) {
+    issues.push(
+      `${field}[${index}].type must not contain Unicode control characters or line separators`,
+    );
+  } else if (entry.type.length > MAX_CAPABILITY_TYPE_CHARACTERS) {
+    issues.push(
+      `${field}[${index}].type must not exceed ${MAX_CAPABILITY_TYPE_CHARACTERS} characters`,
+    );
+  } else {
+    const schemaIssues = validateKnownCapabilitySchema(
+      `${field}[${index}]`,
+      entry as Capability,
+    );
+    if (schemaIssues.length > 0) issues.push(...schemaIssues);
+    else values.push(entry as Capability);
+  }
 }
 
 function validateCapabilityList(
@@ -630,44 +803,7 @@ function validateCapabilityList(
     utf16CodeUnits: 0,
   };
   for (let index = 0; index < value.length; index += 1) {
-    const entry = value[index];
-    if (!isRecord(entry)) {
-      issues.push(`${field}[${index}] must be an object`);
-      continue;
-    }
-    const structureIssue = validateCapabilityJsonTree(
-      `${field}[${index}]`,
-      entry,
-      budget,
-    );
-    if (structureIssue) {
-      issues.push(structureIssue);
-    } else if (
-      typeof entry.type !== "string" || entry.type.trim().length === 0
-    ) {
-      issues.push(`${field}[${index}].type must be a non-empty string`);
-    } else if (entry.type.trim() !== entry.type) {
-      issues.push(
-        `${field}[${index}].type must not have surrounding whitespace`,
-      );
-    } else if (!isWellFormedUnicode(entry.type)) {
-      issues.push(`${field}[${index}].type must contain well-formed Unicode`);
-    } else if (containsUnicodeControlOrLineSeparator(entry.type)) {
-      issues.push(
-        `${field}[${index}].type must not contain Unicode control characters or line separators`,
-      );
-    } else if (entry.type.length > MAX_CAPABILITY_TYPE_CHARACTERS) {
-      issues.push(
-        `${field}[${index}].type must not exceed ${MAX_CAPABILITY_TYPE_CHARACTERS} characters`,
-      );
-    } else {
-      const schemaIssues = validateKnownCapabilitySchema(
-        `${field}[${index}]`,
-        entry as Capability,
-      );
-      if (schemaIssues.length > 0) issues.push(...schemaIssues);
-      else values.push(entry as Capability);
-    }
+    validateCapabilityEntry(field, index, value[index], budget, values, issues);
   }
   if (issues.length === 0) {
     try {
@@ -788,23 +924,11 @@ function hasRequiredCapability(
   );
 }
 
-export function auditExtensionCapabilities(
-  inputs: ExtensionCapabilityAuditInput[],
-  options: ExtensionCapabilityAuditOptions = {},
-): ExtensionCapabilityAuditIssue[] {
-  const issues: ExtensionCapabilityAuditIssue[] = [];
-  const policyByPackage = new Map(
-    SENSITIVE_EXTENSION_CAPABILITY_POLICIES.map((policy) => [
-      policy.packageName,
-      policy,
-    ]),
-  );
-  const normalizedInputs = inputs.map((input) => ({
-    ...input,
-    manifestPath: canonicalExtensionManifestPath(input.manifestPath),
-  }));
-  const declaredPathsByPackage = new Map<string, string[]>();
-  const validPathsByPackage = new Map<string, string[]>();
+function indexCapabilityPackagePaths(
+  normalizedInputs: ExtensionCapabilityAuditInput[],
+  declaredPathsByPackage: Map<string, string[]>,
+  validPathsByPackage: Map<string, string[]>,
+): void {
   for (const input of normalizedInputs) {
     const packageName = validateExtensionPackageName(input.manifestName);
     if (!packageName) continue;
@@ -819,6 +943,12 @@ export function auditExtensionCapabilities(
       validPathsByPackage.set(packageName, validPaths);
     }
   }
+}
+
+function appendDuplicateCapabilityPackageIssues(
+  declaredPathsByPackage: Map<string, string[]>,
+  issues: ExtensionCapabilityAuditIssue[],
+): void {
   for (
     const [packageName, rawPaths] of [...declaredPathsByPackage].toSorted((
       [left],
@@ -836,139 +966,204 @@ export function auditExtensionCapabilities(
       }`,
     });
   }
+}
 
-  for (const input of normalizedInputs) {
-    const packageName = validateExtensionPackageName(input.manifestName);
-    if (!packageName) {
-      issues.push({
-        manifestPath: input.manifestPath,
-        message: `${input.manifestPath} name must be a canonical package name`,
-      });
-    } else {
-      const expectedPackageName = expectedPackageNameForManifestPath(
-        input.manifestPath,
-      );
-      if (!expectedPackageName) {
+function appendForbiddenCapabilityKeyIssues(
+  input: ExtensionCapabilityAuditInput,
+  packageName: string | undefined,
+  manifestCapabilities: Capability[],
+  factoryCapabilities: Capability[],
+  sourceResolutionIssues: string[],
+  issues: ExtensionCapabilityAuditIssue[],
+): void {
+  const forbiddenEnvKeys = packageName
+    ? FORBIDDEN_ENV_READ_KEYS_BY_PACKAGE.get(packageName) ?? []
+    : [];
+  for (const forbiddenKey of forbiddenEnvKeys) {
+    for (
+      const [label, capabilities] of [
+        ["manifest", manifestCapabilities],
+        ["factory", factoryCapabilities],
+      ] as const
+    ) {
+      if (
+        (label !== "factory" || sourceResolutionIssues.length === 0) &&
+        capabilities.some((capability) =>
+          capability.type === "env:read" &&
+          Array.isArray(capability.keys) &&
+          capability.keys.includes(forbiddenKey)
+        )
+      ) {
         issues.push({
           manifestPath: input.manifestPath,
           message:
-            `${input.manifestPath} must be a canonical extensions/ext-*/deno.json path`,
-        });
-      } else if (packageName !== expectedPackageName) {
-        issues.push({
-          manifestPath: input.manifestPath,
-          message:
-            `${input.manifestPath} name must be ${expectedPackageName}, received ${packageName}`,
+            `${input.manifestPath} ${label} capabilities must not register forbidden env key ${forbiddenKey}`,
         });
       }
     }
-    const manifestResult = validateCapabilityList(
-      "veryfront.capabilities",
-      input.manifestCapabilities,
-    );
-    const factoryResult = validateCapabilityList(
-      "factory capabilities",
-      input.factoryCapabilities,
-    );
-    for (const issue of [...manifestResult.issues, ...factoryResult.issues]) {
-      issues.push({
-        manifestPath: input.manifestPath,
-        message: `${input.manifestPath} ${issue}`,
-      });
-    }
-    const manifestCapabilities = manifestResult.values;
-    const factoryCapabilities = factoryResult.values;
-    const sourceResolutionIssues = [
-      ...new Set(
-        input.sourceResolutionIssues ?? [],
-      ),
-    ].sort(compareDeterministically);
-    for (const issue of sourceResolutionIssues) {
-      issues.push({
-        manifestPath: input.manifestPath,
-        message:
-          `${input.manifestPath} could not resolve factory capability metadata: ${issue}`,
-      });
-    }
+  }
+}
 
+function appendSensitiveCapabilityPolicyIssues(
+  input: ExtensionCapabilityAuditInput,
+  policy: SensitiveCapabilityPolicy,
+  manifestCapabilities: Capability[],
+  issues: ExtensionCapabilityAuditIssue[],
+): void {
+  if (policy.exactCapabilities) {
     if (
-      sourceResolutionIssues.length === 0 &&
-      manifestResult.issues.length === 0 && factoryResult.issues.length === 0 &&
-      !capabilitiesEqual(manifestCapabilities, factoryCapabilities)
+      !capabilitiesEqual(
+        manifestCapabilities,
+        policy.requiredCapabilities,
+      )
     ) {
       issues.push({
         manifestPath: input.manifestPath,
         message:
-          `${input.manifestPath} veryfront.capabilities differs from factory capabilities: manifest ${
-            formatCapabilities(manifestCapabilities)
-          }; factory ${formatCapabilities(factoryCapabilities)}`,
+          `${input.manifestPath} sensitive extension "${policy.label}" must declare exactly ${
+            formatCapabilities(policy.requiredCapabilities)
+          }; received ${formatCapabilities(manifestCapabilities)}`,
       });
     }
+    return;
+  }
 
-    const forbiddenEnvKeys = packageName
-      ? FORBIDDEN_ENV_READ_KEYS_BY_PACKAGE.get(packageName) ?? []
-      : [];
-    for (const forbiddenKey of forbiddenEnvKeys) {
-      for (
-        const [label, capabilities] of [
-          ["manifest", manifestCapabilities],
-          ["factory", factoryCapabilities],
-        ] as const
-      ) {
-        if (
-          (label !== "factory" || sourceResolutionIssues.length === 0) &&
-          capabilities.some((capability) =>
-            capability.type === "env:read" &&
-            Array.isArray(capability.keys) &&
-            capability.keys.includes(forbiddenKey)
-          )
-        ) {
-          issues.push({
-            manifestPath: input.manifestPath,
-            message:
-              `${input.manifestPath} ${label} capabilities must not register forbidden env key ${forbiddenKey}`,
-          });
-        }
-      }
+  for (const requiredCapability of policy.requiredCapabilities) {
+    if (
+      !hasRequiredCapability(
+        manifestCapabilities,
+        requiredCapability,
+      )
+    ) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message:
+          `${input.manifestPath} sensitive extension "${policy.label}" is missing capability ${
+            JSON.stringify(normalizeCapability(requiredCapability))
+          }`,
+      });
     }
+  }
+}
 
-    const policy = packageName ? policyByPackage.get(packageName) : undefined;
-    if (!policy || manifestResult.issues.length > 0) continue;
-
-    if (policy.exactCapabilities) {
-      if (
-        !capabilitiesEqual(
-          manifestCapabilities,
-          policy.requiredCapabilities,
-        )
-      ) {
-        issues.push({
-          manifestPath: input.manifestPath,
-          message:
-            `${input.manifestPath} sensitive extension "${policy.label}" must declare exactly ${
-              formatCapabilities(policy.requiredCapabilities)
-            }; received ${formatCapabilities(manifestCapabilities)}`,
-        });
-      }
-      continue;
+function auditCapabilityInput(
+  input: ExtensionCapabilityAuditInput,
+  policyByPackage: Map<string, SensitiveCapabilityPolicy>,
+  issues: ExtensionCapabilityAuditIssue[],
+): void {
+  const packageName = validateExtensionPackageName(input.manifestName);
+  if (!packageName) {
+    issues.push({
+      manifestPath: input.manifestPath,
+      message: `${input.manifestPath} name must be a canonical package name`,
+    });
+  } else {
+    const expectedPackageName = expectedPackageNameForManifestPath(
+      input.manifestPath,
+    );
+    if (!expectedPackageName) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message:
+          `${input.manifestPath} must be a canonical extensions/ext-*/deno.json path`,
+      });
+    } else if (packageName !== expectedPackageName) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message:
+          `${input.manifestPath} name must be ${expectedPackageName}, received ${packageName}`,
+      });
     }
+  }
+  const manifestResult = validateCapabilityList(
+    "veryfront.capabilities",
+    input.manifestCapabilities,
+  );
+  const factoryResult = validateCapabilityList(
+    "factory capabilities",
+    input.factoryCapabilities,
+  );
+  for (const issue of [...manifestResult.issues, ...factoryResult.issues]) {
+    issues.push({
+      manifestPath: input.manifestPath,
+      message: `${input.manifestPath} ${issue}`,
+    });
+  }
+  const manifestCapabilities = manifestResult.values;
+  const factoryCapabilities = factoryResult.values;
+  const sourceResolutionIssues = [
+    ...new Set(
+      input.sourceResolutionIssues ?? [],
+    ),
+  ].sort(compareDeterministically);
+  for (const issue of sourceResolutionIssues) {
+    issues.push({
+      manifestPath: input.manifestPath,
+      message:
+        `${input.manifestPath} could not resolve factory capability metadata: ${issue}`,
+    });
+  }
 
-    for (const requiredCapability of policy.requiredCapabilities) {
-      if (
-        !hasRequiredCapability(
-          manifestCapabilities,
-          requiredCapability,
-        )
-      ) {
-        issues.push({
-          manifestPath: input.manifestPath,
-          message:
-            `${input.manifestPath} sensitive extension "${policy.label}" is missing capability ${
-              JSON.stringify(normalizeCapability(requiredCapability))
-            }`,
-        });
-      }
-    }
+  if (
+    sourceResolutionIssues.length === 0 &&
+    manifestResult.issues.length === 0 && factoryResult.issues.length === 0 &&
+    !capabilitiesEqual(manifestCapabilities, factoryCapabilities)
+  ) {
+    issues.push({
+      manifestPath: input.manifestPath,
+      message:
+        `${input.manifestPath} veryfront.capabilities differs from factory capabilities: manifest ${
+          formatCapabilities(manifestCapabilities)
+        }; factory ${formatCapabilities(factoryCapabilities)}`,
+    });
+  }
+
+  appendForbiddenCapabilityKeyIssues(
+    input,
+    packageName,
+    manifestCapabilities,
+    factoryCapabilities,
+    sourceResolutionIssues,
+    issues,
+  );
+
+  const policy = packageName ? policyByPackage.get(packageName) : undefined;
+  if (!policy || manifestResult.issues.length > 0) return;
+
+  appendSensitiveCapabilityPolicyIssues(
+    input,
+    policy,
+    manifestCapabilities,
+    issues,
+  );
+}
+
+export function auditExtensionCapabilities(
+  inputs: ExtensionCapabilityAuditInput[],
+  options: ExtensionCapabilityAuditOptions = {},
+): ExtensionCapabilityAuditIssue[] {
+  const issues: ExtensionCapabilityAuditIssue[] = [];
+  const policyByPackage = new Map(
+    SENSITIVE_EXTENSION_CAPABILITY_POLICIES.map((policy) => [
+      policy.packageName,
+      policy,
+    ]),
+  );
+  const normalizedInputs = inputs.map((input) => ({
+    ...input,
+    manifestPath: canonicalExtensionManifestPath(input.manifestPath),
+  }));
+  const declaredPathsByPackage = new Map<string, string[]>();
+  const validPathsByPackage = new Map<string, string[]>();
+  indexCapabilityPackagePaths(
+    normalizedInputs,
+    declaredPathsByPackage,
+    validPathsByPackage,
+  );
+  appendDuplicateCapabilityPackageIssues(declaredPathsByPackage, issues);
+
+  for (const input of normalizedInputs) {
+    auditCapabilityInput(input, policyByPackage, issues);
   }
 
   if (options.requireSensitivePolicySubjects) {
@@ -1040,11 +1235,13 @@ async function loadAuditInput(
   };
 }
 
+function defaultCapabilityAuditOptions(): ExtensionCapabilityAuditOptions {
+  return { requireSensitivePolicySubjects: true };
+}
+
 export async function auditExtensionCapabilityWorkspace(
   root: string,
-  options: ExtensionCapabilityAuditOptions = {
-    requireSensitivePolicySubjects: true,
-  },
+  options: ExtensionCapabilityAuditOptions = defaultCapabilityAuditOptions(),
 ): Promise<ExtensionCapabilityAuditIssue[]> {
   const discovery = await discoverExtensionManifestPaths(root);
   const workspaceBudget = createExtensionMetadataWorkspaceBudget();
