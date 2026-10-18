@@ -9,7 +9,11 @@ import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.
 import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
 import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiDownloadOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
@@ -75,10 +79,6 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
 } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import {
-  createVeryfrontApiOriginBoundOutboundFetch,
-  trustedHostFetch,
-} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   createNativeRequestInit,
   readOwnInitField,
@@ -149,7 +149,7 @@ import type {
   RunEvalOptions,
 } from "#veryfront/eval/types.ts";
 import { type Logger, serverLogger } from "#veryfront/utils";
-import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { computeHash, computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
 import { createWorkflowClient, hasEventWaitSupport, RedisBackend } from "#veryfront/workflow";
@@ -186,7 +186,6 @@ import {
 import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
 import type { AgentRunRuntimeEventRecordedEvent } from "#veryfront/runtime/model-call-context.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
-import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -688,11 +687,7 @@ function isValidTaskDeadline(value: unknown): value is string {
   return NumberIsFinite(midnight) && new TaskDate(midnight).toISOString().slice(0, 10) === day;
 }
 
-function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
-  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
-
-  const runId = value.runId;
-  const canonicalRunId = value.canonicalRunId;
+function parseCanonicalProjectRunId(canonicalRunId: unknown): string | undefined {
   if (
     canonicalRunId !== undefined &&
     (typeof canonicalRunId !== "string" ||
@@ -700,6 +695,128 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   ) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid canonicalRunId" });
   }
+  return canonicalRunId;
+}
+
+function storeProjectRunModelCaptureReceipts(
+  captures: unknown,
+  receipts: ReturnType<
+    typeof createPrivateMap<string, ReturnType<typeof freezeProjectModelCallCaptureReceipt>>
+  >,
+): void {
+  if (captures !== undefined) {
+    if (!ArrayIsArray(captures)) {
+      throw new DurableRunEventPersistenceError(
+        "Project run observation model-call receipt is invalid",
+      );
+    }
+    for (const capture of primordialArrayValues(captures)) {
+      if (!capture || typeof capture !== "object" || ArrayIsArray(capture)) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation model-call receipt is invalid",
+        );
+      }
+      const value = capture as Record<string, unknown>;
+      if (
+        typeof value.event_id !== "string" || typeof value.project_id !== "string" ||
+        typeof value.run_id !== "string" || typeof value.model_call_id !== "string"
+      ) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation model-call receipt is invalid",
+        );
+      }
+      receipts.set(
+        IntrinsicReflectApply(StringToLowerCase, value.model_call_id, []) as string,
+        freezeProjectModelCallCaptureReceipt({
+          eventId: value.event_id,
+          projectId: value.project_id,
+          runId: value.run_id,
+          modelCallId: value.model_call_id,
+        }),
+      );
+    }
+  }
+}
+
+function encodeProjectRunObservationCandidate(
+  type: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents>[number]["event"],
+  payload: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents>[number]["payload"],
+  encoder: ReturnType<typeof createAgUiEncoderState>,
+) {
+  if (type === "RunError") {
+    return {
+      ...buildRuntimeEventRecordedEvent({
+        runtime: "veryfront",
+        kind: "agent_error",
+        value: {
+          ...resolveProjectRunObservationError(payload),
+          ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
+        },
+      }).durable,
+      ...(ObjectHasOwn(payload, "elapsedMs") ? { elapsedMs: payload.elapsedMs } : {}),
+      ...(ObjectHasOwn(payload, "emittedAt") ? { emittedAt: payload.emittedAt } : {}),
+    };
+  }
+  if (type === "ToolCallResult") return { type: "TOOL_CALL_RESULT", ...payload };
+  return coerceWireEvent(type, payload);
+}
+
+function parseProjectRunAttempt(attempt: unknown): number | undefined {
+  if (
+    attempt !== undefined &&
+    (typeof attempt !== "number" || !Number.isInteger(attempt) || attempt < 1)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid attempt" });
+  }
+
+  return attempt;
+}
+
+interface WorkflowWaitPollingState {
+  deadline: number;
+  result: WorkflowRunView | undefined;
+  previousKeys: string[] | undefined;
+  parkedOnNothingSince: number | undefined;
+}
+
+function hasUnpersistedWorkflowWait(
+  client: WorkflowClientView,
+  run: WorkflowRunView,
+  keys: string[],
+  polling: WorkflowWaitPollingState,
+  deps: ProjectRunExecuteHandlerDeps,
+): boolean {
+  if (keys.length === 0 && client.persistsEventWaits === false && !isParkedOnApproval(run)) {
+    polling.parkedOnNothingSince ??= deps.now();
+    return deps.now() - polling.parkedOnNothingSince >= WORKFLOW_UNPERSISTED_WAIT_GRACE_MS;
+  }
+  polling.parkedOnNothingSince = undefined;
+  return false;
+}
+
+function hasSettledWorkflowWait(
+  keys: string[],
+  releasedKeys: string[] | undefined,
+  previousKeys: string[] | undefined,
+): boolean {
+  return keys.length > 0 &&
+    !(releasedKeys && sameKeys(keys, releasedKeys)) &&
+    previousKeys !== undefined && sameKeys(keys, previousKeys);
+}
+
+function parseProjectRunDeadline(deadlineAt: unknown): string | undefined {
+  if (deadlineAt !== undefined && !isValidTaskDeadline(deadlineAt)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
+  }
+
+  return deadlineAt;
+}
+
+function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
+  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
+
+  const runId = value.runId;
+  const canonicalRunId = parseCanonicalProjectRunId(value.canonicalRunId);
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
@@ -732,18 +849,9 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid workflow target" });
   }
 
-  const deadlineAt = value.deadlineAt;
-  if (deadlineAt !== undefined && !isValidTaskDeadline(deadlineAt)) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
-  }
+  const deadlineAt = parseProjectRunDeadline(value.deadlineAt);
 
-  const attempt = value.attempt;
-  if (
-    attempt !== undefined &&
-    (typeof attempt !== "number" || !Number.isInteger(attempt) || attempt < 1)
-  ) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid attempt" });
-  }
+  const attempt = parseProjectRunAttempt(value.attempt);
 
   const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
   const runtimeTargetEnvironmentId = parseOptionalNullableString(
@@ -1271,6 +1379,97 @@ async function executeDiscoveredTaskRun(
   };
 }
 
+interface WorkflowWaitControls {
+  releasedKeys: string[] | undefined;
+  pollingStopped: AbortSignal | undefined;
+  cancelRun: (() => Promise<void>) | undefined;
+}
+
+async function inspectWaitingWorkflowRun(
+  client: WorkflowClientView,
+  runId: string,
+  run: WorkflowRunView,
+  deps: ProjectRunExecuteHandlerDeps,
+  polling: WorkflowWaitPollingState,
+  releasedKeys: string[] | undefined,
+): Promise<void> {
+  if (client.statePersistence !== "durable") {
+    polling.result = run;
+    return;
+  }
+  const parked = await readPendingWaits(client, runId, run);
+  if (isManualPause(run, parked)) {
+    polling.result = run;
+    return;
+  }
+  const keys = waitKeys(parked);
+  // A backend without event waits saves no record for a `waitForEvent()`
+  // or `delay()`, so nothing can ever resume the run: fail it instead of
+  // polling until the status timeout. An approval pause still saves its
+  // record on such a backend, so a slow write there is only awaited.
+  if (hasUnpersistedWorkflowWait(client, run, keys, polling, deps)) {
+    await client.cancel(runId);
+    polling.result = {
+      status: "failed",
+      output: run.output,
+      error: { message: UNPERSISTED_EVENT_WAIT_ERROR },
+    };
+    return;
+  }
+  const settled = hasSettledWorkflowWait(keys, releasedKeys, polling.previousKeys);
+  if (settled) {
+    polling.result = run;
+    return;
+  }
+  polling.previousKeys = keys;
+}
+
+async function pollWorkflowRun(
+  client: WorkflowClientView,
+  runId: string,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  polling: WorkflowWaitPollingState,
+  controls: WorkflowWaitControls,
+): Promise<void> {
+  const run = await client.getRun(runId);
+  if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
+
+  // A waiting run is resumable, so an aborted request cancels it too.
+  if (isAbortSignalAborted(signal) && !isTerminalWorkflowStatus(run.status)) {
+    await (controls.cancelRun ? controls.cancelRun() : client.cancel(runId));
+    polling.result = {
+      status: "cancelled",
+      output: run.output,
+      error: { message: "Workflow run cancelled" },
+    };
+    return;
+  }
+
+  if ((controls.pollingStopped !== undefined && isAbortSignalAborted(controls.pollingStopped))) {
+    throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
+  }
+
+  if (isTerminalWorkflowStatus(run.status)) {
+    polling.result = run;
+    return;
+  }
+
+  if (run.status === "waiting") {
+    await inspectWaitingWorkflowRun(client, runId, run, deps, polling, controls.releasedKeys);
+    if (polling.result !== undefined) return;
+  } else {
+    polling.previousKeys = undefined;
+    polling.parkedOnNothingSince = undefined;
+  }
+
+  if (deps.now() >= polling.deadline) {
+    throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
+  }
+
+  await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
+}
+
 /**
  * Polls a workflow run until it settles. When the control plane aborts the
  * request (the run was cancelled), the workflow run is cancelled instead of
@@ -1293,68 +1492,17 @@ async function waitForWorkflowResult(
   cancelRun?: () => Promise<void>,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
-  let previousKeys: string[] | undefined;
-  let parkedOnNothingSince: number | undefined;
+  const polling: WorkflowWaitPollingState = {
+    deadline,
+    result: undefined,
+    previousKeys: undefined,
+    parkedOnNothingSince: undefined,
+  };
 
+  const controls: WorkflowWaitControls = { releasedKeys, pollingStopped, cancelRun };
   while (true) {
-    const run = await client.getRun(runId);
-    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
-
-    // A waiting run is resumable, so an aborted request cancels it too.
-    if (isAbortSignalAborted(signal) && !isTerminalWorkflowStatus(run.status)) {
-      await (cancelRun ? cancelRun() : client.cancel(runId));
-      return {
-        status: "cancelled",
-        output: run.output,
-        error: { message: "Workflow run cancelled" },
-      };
-    }
-
-    if ((pollingStopped !== undefined && isAbortSignalAborted(pollingStopped))) {
-      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
-    }
-
-    if (isTerminalWorkflowStatus(run.status)) return run;
-
-    if (run.status === "waiting") {
-      if (client.statePersistence !== "durable") return run;
-      const parked = await readPendingWaits(client, runId, run);
-      if (isManualPause(run, parked)) return run;
-      const keys = waitKeys(parked);
-      // A backend without event waits saves no record for a `waitForEvent()`
-      // or `delay()`, so nothing can ever resume the run: fail it instead of
-      // polling until the status timeout. An approval pause still saves its
-      // record on such a backend, so a slow write there is only awaited.
-      if (
-        keys.length === 0 && client.persistsEventWaits === false && !isParkedOnApproval(run)
-      ) {
-        parkedOnNothingSince ??= deps.now();
-        if (deps.now() - parkedOnNothingSince >= WORKFLOW_UNPERSISTED_WAIT_GRACE_MS) {
-          await client.cancel(runId);
-          return {
-            status: "failed",
-            output: run.output,
-            error: { message: UNPERSISTED_EVENT_WAIT_ERROR },
-          };
-        }
-      } else {
-        parkedOnNothingSince = undefined;
-      }
-      const settled = keys.length > 0 &&
-        !(releasedKeys && sameKeys(keys, releasedKeys)) &&
-        previousKeys !== undefined && sameKeys(keys, previousKeys);
-      if (settled) return run;
-      previousKeys = keys;
-    } else {
-      previousKeys = undefined;
-      parkedOnNothingSince = undefined;
-    }
-
-    if (deps.now() >= deadline) {
-      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
-    }
-
-    await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
+    await pollWorkflowRun(client, runId, signal, deps, polling, controls);
+    if (polling.result !== undefined) return polling.result;
   }
 }
 
@@ -1759,7 +1907,8 @@ async function awaitRunPauseDecision(
     ...(pollingStopped ? [pollingStopped] : []),
   ]]) as AbortSignal;
   try {
-    for (let round = 1; !isAbortSignalAborted(stopped); round++) {
+    let round = 1;
+    while (!isAbortSignalAborted(stopped)) {
       const decision = await pauseAcknowledgementUntilStopped(acknowledge, stopped);
       // A late continue cannot release a boundary already reported as held.
       if (isAbortSignalAborted(stopped)) break;
@@ -1773,6 +1922,7 @@ async function awaitRunPauseDecision(
         WORKFLOW_PAUSE_CHECK_BACKOFF_MS,
         [stopped],
       );
+      round++;
     }
     return true;
   } finally {
@@ -2721,39 +2871,7 @@ function createProjectRunObservationMirror(input: {
           "Project run observation append receipt cursor is invalid",
         );
       }
-      const captures = receipt.model_call_captures;
-      if (captures !== undefined) {
-        if (!ArrayIsArray(captures)) {
-          throw new DurableRunEventPersistenceError(
-            "Project run observation model-call receipt is invalid",
-          );
-        }
-        for (const capture of primordialArrayValues(captures)) {
-          if (!capture || typeof capture !== "object" || ArrayIsArray(capture)) {
-            throw new DurableRunEventPersistenceError(
-              "Project run observation model-call receipt is invalid",
-            );
-          }
-          const value = capture as Record<string, unknown>;
-          if (
-            typeof value.event_id !== "string" || typeof value.project_id !== "string" ||
-            typeof value.run_id !== "string" || typeof value.model_call_id !== "string"
-          ) {
-            throw new DurableRunEventPersistenceError(
-              "Project run observation model-call receipt is invalid",
-            );
-          }
-          modelCallCaptureReceipts.set(
-            IntrinsicReflectApply(StringToLowerCase, value.model_call_id, []) as string,
-            freezeProjectModelCallCaptureReceipt({
-              eventId: value.event_id,
-              projectId: value.project_id,
-              runId: value.run_id,
-              modelCallId: value.model_call_id,
-            }),
-          );
-        }
-      }
+      storeProjectRunModelCaptureReceipts(receipt.model_call_captures, modelCallCaptureReceipts);
     } catch (error) {
       disabled = true;
       throw error;
@@ -3044,22 +3162,7 @@ async function withProjectRunRuntimeObservations<T>(
         ) {
           // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
           // agent's streamed failure as a native, nonterminal runtime observation.
-          const candidate = type === "RunError"
-            ? {
-              ...buildRuntimeEventRecordedEvent({
-                runtime: "veryfront",
-                kind: "agent_error",
-                value: {
-                  ...resolveProjectRunObservationError(payload),
-                  ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
-                },
-              }).durable,
-              ...(ObjectHasOwn(payload, "elapsedMs") ? { elapsedMs: payload.elapsedMs } : {}),
-              ...(ObjectHasOwn(payload, "emittedAt") ? { emittedAt: payload.emittedAt } : {}),
-            }
-            : type === "ToolCallResult"
-            ? { type: "TOOL_CALL_RESULT", ...payload }
-            : coerceWireEvent(type, payload);
+          const candidate = encodeProjectRunObservationCandidate(type, payload, encoder);
           if (typeof candidate.type !== "string") {
             throw new Error(
               "Invalid encoded project run observation event",
@@ -3238,6 +3341,62 @@ function readSealedBearerToken(req: Request): string | undefined {
   return IntrinsicReflectApply(StringSlice, authorization, [7]) as string;
 }
 
+async function rejectRunPauseAcknowledgement(
+  response: Response,
+  status: number,
+  runId: string,
+): Promise<boolean | undefined> {
+  if (status === 401 || status === 403 || status === 404) {
+    serverLogger.warn(
+      "[project-run-execute] Pause acknowledgement was rejected; holding the boundary",
+      {
+        runId,
+        status,
+      },
+    );
+    await cancelAcknowledgementBody(response);
+    return true;
+  }
+  await cancelAcknowledgementBody(response);
+  return undefined;
+}
+
+function isRunPauseAcknowledgementBody(
+  status: number,
+  body: unknown,
+): body is Record<string, unknown> & { stop: boolean } {
+  return status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
+    typeof body.stop === "boolean";
+}
+
+async function readRunPauseAcknowledgement(
+  response: Response,
+  runId: string,
+  afterPauseAcknowledged: (() => Promise<void>) | undefined,
+): Promise<boolean | undefined | "retry"> {
+  const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+  if (status < 500) {
+    if (!ReflectApply(ResponseOkGetter, response, [])) {
+      return await rejectRunPauseAcknowledgement(response, status, runId);
+    }
+    const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
+    if (isRunPauseAcknowledgementBody(status, body)) {
+      // Only the actual successful server acknowledgement may trigger the probe.
+      // Conservative stop decisions after rejection or cancellation are not pause evidence.
+      if (body.stop) {
+        try {
+          await afterPauseAcknowledged?.();
+        } catch {
+          // Diagnostic probe failures must not change the server acknowledgement decision.
+        }
+      }
+      return body.stop;
+    }
+  }
+  await cancelAcknowledgementBody(response);
+  return "retry";
+}
+
 /**
  * Ask the control plane whether this attempt should stop at a safe boundary.
  * A `{ "stop": true }` reply means the API confirmed a requested pause for this
@@ -3288,41 +3447,8 @@ function createRunPauseAcknowledger(
             ReflectApply(RunStopTimeout, AbortSignal, [WORKFLOW_PAUSE_ACK_TIMEOUT_MS]),
           ]]),
         });
-        const status = ReflectApply(ResponseStatusGetter, response, []) as number;
-        if (status < 500) {
-          if (!ReflectApply(ResponseOkGetter, response, [])) {
-            if (status === 401 || status === 403 || status === 404) {
-              serverLogger.warn(
-                "[project-run-execute] Pause acknowledgement was rejected; holding the boundary",
-                {
-                  runId,
-                  status,
-                },
-              );
-              await cancelAcknowledgementBody(response);
-              return true;
-            }
-            await cancelAcknowledgementBody(response);
-            return undefined;
-          }
-          const body: unknown = await ReflectApply(ResponsePrototypeJson, response, []);
-          if (
-            status === 200 && isRecord(body) && ObjectHasOwn(body, "stop") &&
-            typeof body.stop === "boolean"
-          ) {
-            // Only the actual successful server acknowledgement may trigger the probe.
-            // Conservative stop decisions after rejection or cancellation are not pause evidence.
-            if (body.stop) {
-              try {
-                await afterPauseAcknowledged?.();
-              } catch {
-                // Diagnostic probe failures must not change the server acknowledgement decision.
-              }
-            }
-            return body.stop;
-          }
-        }
-        await cancelAcknowledgementBody(response);
+        const decision = await readRunPauseAcknowledgement(response, runId, afterPauseAcknowledged);
+        if (decision !== "retry") return decision;
       } catch {
         // A transport failure or unreadable reply is retried like a 5xx.
       }
