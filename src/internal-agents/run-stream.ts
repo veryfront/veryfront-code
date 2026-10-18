@@ -622,14 +622,22 @@ export function buildMergedTools(
       const serverResolvedProjectTool = serverResolvedProjectToolNames.has(toolName)
         ? visibleRegistryTool
         : undefined;
+      const localTool = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
+        visibleRegistryTool;
+      const canonicalPlatformName = `veryfront__${toolName}`;
+      const remoteToolName = !toolName.includes("__") &&
+          sourceAllowedRemoteToolNames.includes(canonicalPlatformName)
+        ? canonicalPlatformName
+        : toolName;
       if (
-        serverResolvedProjectTool ||
-        visibleRegistryTool ||
-        availableLocalTools?.[toolName] ||
-        availableForwardedToolNames?.includes(toolName) ||
-        sourceAllowedRemoteToolNames.includes(toolName)
+        localTool || availableForwardedToolNames?.includes(toolName) ||
+        sourceAllowedRemoteToolNames.includes(remoteToolName)
       ) {
-        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
+        if (!localTool && explicitlyDeniedToolNames.has(remoteToolName)) continue;
+        const selectedName = localTool || availableForwardedToolNames?.includes(toolName)
+          ? toolName
+          : remoteToolName;
+        merged[selectedName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
           (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
       }
       continue;
