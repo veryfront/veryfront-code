@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
-import { fileFromBytes } from "./file.ts";
+import { fileFromBytes, planFileParts } from "./file.ts";
 
 function assertInvalidArgument(fn: () => unknown, message: string): void {
   const error = assertThrows(fn, VeryfrontError, message);
@@ -66,6 +66,195 @@ describe("fileFromBytes", () => {
     ];
     for (const [change, message] of cases) {
       assertInvalidArgument(() => fileFromBytes({ ...input, ...change }), message);
+    }
+  });
+});
+
+const PDF_HEADER = [0x25, 0x50, 0x44, 0x46, 0x2d];
+
+function pdf(filename: string, size: number) {
+  const bytes = new Uint8Array(size);
+  bytes.set(PDF_HEADER);
+  return { bytes, filename, mediaType: "application/pdf" };
+}
+
+describe("planFileParts", () => {
+  it("sends every file and reports complete when no budget applies", () => {
+    const plan = planFileParts({ files: [pdf("a.pdf", 8), pdf("b.pdf", 9)] });
+    assertEquals(plan.complete, true);
+    assertEquals(plan.omitted, []);
+    assertEquals(plan.parts.map((part) => part.filename), ["a.pdf", "b.pdf"]);
+    assertEquals(plan.parts[0], fileFromBytes(pdf("a.pdf", 8)));
+  });
+
+  it("sends a file at exactly maxFileBytes and omits one byte over", () => {
+    const plan = planFileParts({
+      files: [pdf("exact.pdf", 16), pdf("over.pdf", 17)],
+      maxFileBytes: 16,
+    });
+    assertEquals(plan.complete, false);
+    assertEquals(plan.parts.map((part) => part.filename), ["exact.pdf"]);
+    assertEquals(plan.omitted, [
+      {
+        index: 1,
+        filename: "over.pdf",
+        mediaType: "application/pdf",
+        bytes: 17,
+        reason: "over_file_limit",
+      },
+    ]);
+  });
+
+  it("applies count and total budgets in input order to sent files only", () => {
+    const plan = planFileParts({
+      files: [
+        pdf("a.pdf", 10),
+        pdf("too-big.pdf", 50),
+        pdf("b.pdf", 10),
+        pdf("c.pdf", 6),
+        pdf("d.pdf", 5),
+        pdf("e.pdf", 5),
+      ],
+      maxFileBytes: 40,
+      maxTotalBytes: 25,
+      maxFiles: 3,
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["a.pdf", "b.pdf", "d.pdf"]);
+    assertEquals(
+      plan.omitted.map(({ index, reason }) => [index, reason]),
+      [[1, "over_file_limit"], [3, "over_total_budget"], [5, "over_count_limit"]],
+    );
+    assertEquals(plan.complete, false);
+  });
+
+  it("sends files that exactly fill the total and count budgets", () => {
+    const plan = planFileParts({
+      files: [pdf("a.pdf", 10), pdf("b.pdf", 10)],
+      maxTotalBytes: 20,
+      maxFiles: 2,
+    });
+    assertEquals([plan.complete, plan.parts.length], [true, 2]);
+  });
+
+  it("omits PDFs without a PDF header and invalid metadata instead of throwing", () => {
+    const text = new TextEncoder().encode("hello, not a pdf");
+    const late = new Uint8Array(1100);
+    late.set(PDF_HEADER, 1030);
+    const leading = new Uint8Array(32);
+    leading.set(PDF_HEADER, 3);
+    const plan = planFileParts({
+      files: [
+        { bytes: text, filename: "fake.pdf", mediaType: "Application/PDF" },
+        { bytes: late, filename: "late.pdf", mediaType: "application/pdf" },
+        { bytes: leading, filename: "leading.pdf", mediaType: "application/pdf" },
+        { bytes: new Uint8Array(), filename: "empty.pdf", mediaType: "application/pdf" },
+        { bytes: text, filename: "a\nb.txt", mediaType: "text/plain" },
+        { bytes: text, filename: "notes.txt", mediaType: "text/plain;charset=utf-8" },
+        { bytes: text, filename: "notes.txt", mediaType: "text/plain" },
+      ],
+      maxFiles: 10,
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["leading.pdf", "notes.txt"]);
+    assertEquals(
+      plan.omitted.map(({ index, reason }) => [index, reason]),
+      [
+        [0, "invalid_content"],
+        [1, "invalid_content"],
+        [3, "invalid_content"],
+        [4, "invalid_metadata"],
+        [5, "invalid_metadata"],
+      ],
+    );
+    assertEquals(plan.complete, false);
+  });
+
+  it("checks the PDF header for a .pdf filename whatever the MIME type", () => {
+    const text = new TextEncoder().encode("hello, not a pdf");
+    const real = pdf("real.pdf", 8).bytes;
+    const plan = planFileParts({
+      files: [
+        { bytes: text, filename: "a.pdf", mediaType: "application/octet-stream" },
+        { bytes: text, filename: "B.PDF", mediaType: "application/x-pdf" },
+        { bytes: real, filename: "c.pdf", mediaType: "application/octet-stream" },
+        { bytes: text, filename: "pdf.txt", mediaType: "text/plain" },
+      ],
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["c.pdf", "pdf.txt"]);
+    assertEquals(
+      plan.omitted.map(({ index, reason }) => [index, reason]),
+      [[0, "invalid_content"], [1, "invalid_content"]],
+    );
+  });
+
+  it("reports malformed entries from untyped callers as omissions", () => {
+    const files = [
+      ,
+      null,
+      { bytes: new ArrayBuffer(8), filename: "buffer.pdf", mediaType: "Application/PDF" },
+      { bytes: new Uint8Array(4), filename: { name: "x" }, mediaType: 7 },
+      pdf("ok.pdf", 8),
+    ] as unknown as Parameters<typeof planFileParts>[0]["files"];
+    const plan = planFileParts({ files });
+    assertEquals(plan.parts.map((part) => part.filename), ["ok.pdf"]);
+    assertEquals(plan.omitted, [
+      { index: 0, filename: "", mediaType: "", bytes: 0, reason: "invalid_metadata" },
+      { index: 1, filename: "", mediaType: "", bytes: 0, reason: "invalid_metadata" },
+      {
+        index: 2,
+        filename: "buffer.pdf",
+        mediaType: "application/pdf",
+        bytes: 8,
+        reason: "invalid_content",
+      },
+      { index: 3, filename: "", mediaType: "", bytes: 4, reason: "invalid_metadata" },
+    ]);
+    assertEquals(plan.complete, false);
+  });
+
+  it("omits path and padded names, and keeps paths and invalid MIME types out of omissions", () => {
+    const text = new TextEncoder().encode("notes");
+    const plan = planFileParts({
+      files: [
+        pdf("/home/user/private/a.pdf", 8),
+        pdf(" b.pdf", 8),
+        pdf("C:\\Users\\x\\c\nd.pdf", 8),
+        pdf("..", 8),
+        { bytes: text, filename: "notes.txt", mediaType: "text/plain; secret=tok\n" },
+        pdf("ok.pdf", 8),
+      ],
+    });
+    assertEquals(plan.parts.map((part) => part.filename), ["ok.pdf"]);
+    assertEquals(
+      plan.omitted.map(({ filename, mediaType, reason }) => [filename, mediaType, reason]),
+      [
+        ["a.pdf", "application/pdf", "invalid_metadata"],
+        ["b.pdf", "application/pdf", "invalid_metadata"],
+        ["", "application/pdf", "invalid_metadata"],
+        ["", "application/pdf", "invalid_metadata"],
+        ["notes.txt", "", "invalid_metadata"],
+      ],
+    );
+    assertEquals(plan.complete, false);
+  });
+
+  it("rejects a files value that is not an array", () => {
+    for (const files of [undefined, null, {}, "a.pdf"]) {
+      assertInvalidArgument(
+        () => planFileParts({ files } as unknown as Parameters<typeof planFileParts>[0]),
+        "files must be an array",
+      );
+    }
+  });
+
+  it("rejects invalid budget options", () => {
+    const files = [pdf("a.pdf", 8)];
+    for (const option of ["maxFileBytes", "maxTotalBytes", "maxFiles"]) {
+      for (const value of [0, -1, 1.5, NaN]) {
+        assertInvalidArgument(
+          () => planFileParts({ files, [option]: value }),
+          `${option} must be a positive safe integer`,
+        );
+      }
     }
   });
 });
