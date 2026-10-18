@@ -1301,9 +1301,9 @@ async function executeTaskRun(
     ]);
     control.throwIfExpired();
     return result;
-  } catch (failure) {
+  } catch (error_) {
     if (!expired && clock.now() >= deadline) expire();
-    if (!expired) throw failure;
+    if (!expired) throw error_;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
     clock.clearTimer(timer);
@@ -2205,7 +2205,7 @@ async function runDiscoveredWorkflow(
   let stopped: Promise<boolean> | undefined;
   let stopAcknowledgement: Promise<void> | undefined;
   const acknowledgeSettledStop = () => {
-    if (!stopped || stopAcknowledgement) return;
+    if (stopped === undefined || stopAcknowledgement !== undefined) return;
     stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
       // Without ownership evidence this pod never ran the execution: retire, never acknowledge.
       if (confirmed) await acknowledgeStop?.();
@@ -2412,14 +2412,15 @@ async function runDiscoveredWorkflow(
           duration_ms: durationMs,
         };
       }
+      const resolveWaitingReason = (): "child_run" | "approval" | "event" => {
+        if (waitingOn.length > 0) return "child_run";
+        if (waiting.pending_approvals?.length) return "approval";
+        return "event";
+      };
       return {
         success: true,
         status: "waiting",
-        waiting_reason: waitingOn.length > 0
-          ? "child_run"
-          : waiting.pending_approvals?.length
-          ? "approval"
-          : "event",
+        waiting_reason: resolveWaitingReason(),
         ...(waitingOn.length > 0 ? { waiting_on: waitingOn } : {}),
         waiting,
         logs: null,
@@ -2469,7 +2470,7 @@ async function runDiscoveredWorkflow(
         return false;
       }
     };
-    if (activeResume) {
+    if (activeResume !== undefined) {
       // Capture ownership after resume admission, before cleanup can retire it.
       // Do not join this continuation to the timeout response.
       const finishResume = () => {
@@ -3269,7 +3270,8 @@ function createRunStopAcknowledger(
   let acknowledgement: Promise<void> | undefined;
   const reconcile = (): Promise<void> => {
     if (!stopped || !cancellationObserved) return primordialPromiseResolve(undefined);
-    return acknowledgement ??= sendAcknowledgement();
+    acknowledgement ??= sendAcknowledgement();
+    return acknowledgement;
   };
   const observeCancellation = () => {
     if (!isAbortSignalAborted(signal)) return;
@@ -3745,17 +3747,22 @@ function createDurableEvalAgentRunBody(
     environmentId: input.runtimeTargetEnvironmentId ?? null,
     branchId: input.runtimeTargetBranchId ?? null,
   });
+  function createRuntimeTarget() {
+    if (targets.runtimeTargetKind === "environment") {
+      return { type: "environment", id: targets.targetEnvironmentId };
+    }
+    if (targets.runtimeTargetKind === "preview_branch") {
+      return { type: "preview_branch", id: targets.targetBranchId };
+    }
+    return { type: "main_branch" };
+  }
   return {
     project_id: input.projectId,
     target: { type: "agent", id: input.agentId },
     parent_run_id: input.parentRunId,
     input: getEvalAgentPrompt(request),
     execution: {
-      runtime: targets.runtimeTargetKind === "environment"
-        ? { type: "environment", id: targets.targetEnvironmentId }
-        : targets.runtimeTargetKind === "preview_branch"
-        ? { type: "preview_branch", id: targets.targetBranchId }
-        : { type: "main_branch" },
+      runtime: createRuntimeTarget(),
     },
     config: {
       // Eval examples are isolated headless executions. A runtime service
@@ -4356,6 +4363,73 @@ function resolveRuntimeOwnershipCanonicalBranchId(
   return null;
 }
 
+function knowledgeIngestFailureMessage(failedCount: number, ingestedCount: number): string | null {
+  if (failedCount > 0) {
+    return `${failedCount} knowledge source${failedCount === 1 ? "" : "s"} failed`;
+  }
+  if (ingestedCount === 0) return "No knowledge sources were ingested";
+  return null;
+}
+
+function validateCanonicalKnowledgeChecksum(
+  checksum: string | null,
+  selectedChecksum: unknown,
+  computedChecksum: string,
+): boolean {
+  const legacyChecksum = checksum === null &&
+    (selectedChecksum === null || selectedChecksum === undefined);
+  if (
+    !legacyChecksum &&
+    (selectedChecksum !== checksum || computedChecksum !== checksum)
+  ) {
+    throw new Error("File read does not match the admitted canonical version.");
+  }
+  return legacyChecksum;
+}
+
+function readCanonicalKnowledgeSelection(
+  selected: unknown,
+  fileId: string,
+  versionId: string,
+  path: string,
+) {
+  if (!isRecord(selected)) {
+    throw new Error("File read does not match the admitted canonical version.");
+  }
+  const content = getOwnDataProperty(selected, "content");
+  if (
+    getOwnDataProperty(selected, "id") !== fileId ||
+    getOwnDataProperty(selected, "version_id") !== versionId ||
+    getOwnDataProperty(selected, "path") !== path ||
+    typeof content !== "string"
+  ) {
+    throw new Error("File read does not match the admitted canonical version.");
+  }
+  const selectedChecksum = getOwnDataProperty(selected, "checksum");
+  return { content, selectedChecksum };
+}
+
+function parseCanonicalKnowledgeIndexInput(config: Record<string, unknown>) {
+  const path = getOwnDataProperty(config, "file_path");
+  const fileId = getOwnDataProperty(config, "file_id");
+  const versionId = getOwnDataProperty(config, "expected_version_id");
+  const checksum = getOwnDataProperty(config, "checksum");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (
+    typeof path !== "string" || path.length === 0 ||
+    typeof fileId !== "string" || !uuid.test(fileId) ||
+    typeof versionId !== "string" || !uuid.test(versionId) ||
+    (checksum !== null &&
+      (typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)))
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum (or explicit null for a legacy version).",
+    });
+  }
+  return { path, fileId, versionId, checksum };
+}
+
 async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
@@ -4419,51 +4493,25 @@ async function executeKnowledgeIngestRun(input: {
     // Lifecycle work indexes an admitted immutable version without publishing again.
     // The branch comes only from the signed runtime target, never the task config.
     if (getOwnDataProperty(config, "mode") === "index_existing_canonical") {
-      const path = getOwnDataProperty(config, "file_path");
-      const fileId = getOwnDataProperty(config, "file_id");
-      const versionId = getOwnDataProperty(config, "expected_version_id");
-      const checksum = getOwnDataProperty(config, "checksum");
-      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (
-        typeof path !== "string" || path.length === 0 ||
-        typeof fileId !== "string" || !uuid.test(fileId) ||
-        typeof versionId !== "string" || !uuid.test(versionId) ||
-        (checksum !== null &&
-          (typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)))
-      ) {
-        throw INVALID_ARGUMENT.create({
-          detail:
-            "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum (or explicit null for a legacy version).",
-        });
-      }
+      const { path, fileId, versionId, checksum } = parseCanonicalKnowledgeIndexInput(config);
       const selected = await client.get<unknown>(
         `/projects/${encodeURIComponent(projectReference)}/files/${encodeURIComponent(path)}`,
         outputDestination ? { branch_id: outputDestination.branchId } : undefined,
         { signal: input.signal },
       );
       input.signal.throwIfAborted();
-      if (!isRecord(selected)) {
-        throw new Error("File read does not match the admitted canonical version.");
-      }
-      const content = getOwnDataProperty(selected, "content");
-      if (
-        getOwnDataProperty(selected, "id") !== fileId ||
-        getOwnDataProperty(selected, "version_id") !== versionId ||
-        getOwnDataProperty(selected, "path") !== path ||
-        typeof content !== "string"
-      ) {
-        throw new Error("File read does not match the admitted canonical version.");
-      }
-      const selectedChecksum = getOwnDataProperty(selected, "checksum");
+      const { content, selectedChecksum } = readCanonicalKnowledgeSelection(
+        selected,
+        fileId,
+        versionId,
+        path,
+      );
       const computedChecksum = await computeHash(content);
-      const legacyChecksum = checksum === null &&
-        (selectedChecksum === null || selectedChecksum === undefined);
-      if (
-        !legacyChecksum &&
-        (selectedChecksum !== checksum || computedChecksum !== checksum)
-      ) {
-        throw new Error("File read does not match the admitted canonical version.");
-      }
+      const legacyChecksum = validateCanonicalKnowledgeChecksum(
+        checksum,
+        selectedChecksum,
+        computedChecksum,
+      );
       const localPath = `${outputDir}/canonical.md`;
       input.signal.throwIfAborted();
       input.onExecutionOwned?.();
@@ -4607,11 +4655,7 @@ async function executeKnowledgeIngestRun(input: {
     return {
       success: failedCount === 0 && ingestedCount > 0,
       result,
-      error: failedCount > 0
-        ? `${failedCount} knowledge source${failedCount === 1 ? "" : "s"} failed`
-        : ingestedCount === 0
-        ? "No knowledge sources were ingested"
-        : null,
+      error: knowledgeIngestFailureMessage(failedCount, ingestedCount),
       logs: logLines.length > 0 ? logLines.join("\n") : null,
       duration_ms: Date.now() - startedAt,
     };
@@ -4727,6 +4771,26 @@ function createEvalAdapterConfig(input: {
   };
   const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
+  function resolveAdapterFetch() {
+    if (managedEndpointContext && agentId) {
+      return bindTrustedLocalEvalFetch(
+        createDurableEvalAgentFetch({
+          apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+          authToken,
+          projectId: input.request.projectId,
+          parentRunId: resolveCanonicalEvalParentRunId(input.request),
+          agentId,
+          runtimeTargetKind: input.request.runtimeTargetKind,
+          runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
+          runtimeTargetBranchId: input.request.runtimeTargetBranchId,
+        }),
+        agentId,
+      );
+    }
+    if (localFetch && agentId) return bindTrustedLocalEvalFetch(localFetch, agentId);
+    return undefined;
+  }
+
   return {
     endpoint,
     authToken,
@@ -4751,23 +4815,7 @@ function createEvalAdapterConfig(input: {
     model: getStringConfig(config, ["model"]),
     allowedTools,
     maxSteps,
-    fetch: managedEndpointContext && agentId
-      ? bindTrustedLocalEvalFetch(
-        createDurableEvalAgentFetch({
-          apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
-          authToken,
-          projectId: input.request.projectId,
-          parentRunId: resolveCanonicalEvalParentRunId(input.request),
-          agentId,
-          runtimeTargetKind: input.request.runtimeTargetKind,
-          runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
-          runtimeTargetBranchId: input.request.runtimeTargetBranchId,
-        }),
-        agentId,
-      )
-      : localFetch && agentId
-      ? bindTrustedLocalEvalFetch(localFetch, agentId)
-      : undefined,
+    fetch: resolveAdapterFetch(),
   };
 }
 
@@ -4832,6 +4880,24 @@ async function executeEvalRun(
 
   const config = request.config ?? {};
   const definition = withEvalRunConfig(evalItem.definition, config);
+  function createEvalProgressOptions(): Pick<RunEvalOptions, "signal" | "onProgress"> {
+    return {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.summaryOnly
+        ? {
+          onProgress: (event) => {
+            if (event.type !== "record-finished") return;
+            progressLogger?.info("Eval case completed", {
+              case_index: event.index + 1,
+              total_cases: event.total,
+              repetition: event.repetition,
+            });
+          },
+        }
+        : {}),
+    };
+  }
+
   const runOptions: RunEvalOptions = {
     adapters: evalItem.definition.targetKind === "agent"
       ? {
@@ -4842,19 +4908,7 @@ async function executeEvalRun(
       : {},
     baseDir: ctx.projectDir,
     runId: request.runId,
-    ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.summaryOnly
-      ? {
-        onProgress: (event) => {
-          if (event.type !== "record-finished") return;
-          progressLogger?.info("Eval case completed", {
-            case_index: event.index + 1,
-            total_cases: event.total,
-            repetition: event.repetition,
-          });
-        },
-      }
-      : {}),
+    ...createEvalProgressOptions(),
   };
   options.signal?.throwIfAborted();
   options.onExecutionOwned?.();
@@ -4885,18 +4939,23 @@ async function executeEvalRun(
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
   }
   options.signal?.throwIfAborted();
-  const result = options.summaryOnly
-    ? report.summary
-    : reportPath
-    ? { ...report, reportPath }
-    : report;
+  function selectEvalResult() {
+    if (options.summaryOnly) return report.summary;
+    if (reportPath) return { ...report, reportPath };
+    return report;
+  }
+  const result = selectEvalResult();
   const requiredUploadError = options.summaryOnly && !reportPath
     ? uploadError ?? "Eval report upload failed: report was not stored"
     : null;
-  const failureMessages = [
-    ...(failed > 0 ? [`${failed} eval record${failed === 1 ? "" : "s"} failed`] : []),
-    ...(requiredUploadError ? [requiredUploadError] : []),
-  ];
+  function createEvalFailureMessages() {
+    const failureMessages = [
+      ...(failed > 0 ? [`${failed} eval record${failed === 1 ? "" : "s"} failed`] : []),
+      ...(requiredUploadError ? [requiredUploadError] : []),
+    ];
+    return failureMessages;
+  }
+  const failureMessages = createEvalFailureMessages();
   const logs = [...progressLogs, ...(uploadError ? [uploadError] : [])].join("\n") || null;
 
   return {
@@ -5355,6 +5414,22 @@ async function resolveStyleArtifactSourceFiles(
   };
 }
 
+function findReleaseStyleConfigSource(
+  files: StyleArtifactSourceFile[],
+  fileNames: readonly import("#veryfront/config/config-files.ts").VeryfrontConfigFileName[],
+) {
+  let source: import("#veryfront/config/loader.ts").HostedConfigSource | null = null;
+  for (let index = 0; index < fileNames.length; index++) {
+    const fileName = fileNames[index]!;
+    const file = primordialArrayFilter(files, (file) => file.path === fileName)[0];
+    if (typeof file?.content === "string") {
+      source = { fileName, source: file.content };
+      break;
+    }
+  }
+  return source;
+}
+
 async function executeStyleArtifactBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
@@ -5419,15 +5494,7 @@ async function executeStyleArtifactBuildRun(input: {
       });
       const { VERYFRONT_CONFIG_FILES } = await import("#veryfront/config/config-files.ts");
       const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
-      let source: Parameters<typeof evaluateHostedConfigSource>[0]["source"] = null;
-      for (let index = 0; index < VERYFRONT_CONFIG_FILES.length; index++) {
-        const fileName = VERYFRONT_CONFIG_FILES[index]!;
-        const file = primordialArrayFilter(releaseFiles, (file) => file.path === fileName)[0];
-        if (typeof file?.content === "string") {
-          source = { fileName, source: file.content };
-          break;
-        }
-      }
+      const source = findReleaseStyleConfigSource(releaseFiles, VERYFRONT_CONFIG_FILES);
       styleConfig = await evaluateHostedConfigSource({
         cacheKey: `release-style:${projectReference}:${selector.releaseId}`,
         source,
@@ -5796,50 +5863,102 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         const runtimeOwnershipEventAuthorityCanonicalRunId = runtimeOwnershipProbe === undefined
           ? undefined
           : readRuntimeOwnershipEventAuthorityCanonicalRunId(request, eventToken);
-        const runtimeOwnershipProbeSession = runtimeOwnershipCanonicalBranchId === null
-          ? undefined
-          : runtimeOwnershipProbe?.createSession({
-            request: { ...request, resumedManually: request.resume?.type === "manual" },
-            ctx,
-            nowMs: hostObservedAt,
-            readNowMs: () => this.taskDeadlineClock.now(),
-            retainedEventToken: runtimeOwnershipEventAuthorityCanonicalRunId !== undefined,
-            eventAuthorityCanonicalRunId: runtimeOwnershipEventAuthorityCanonicalRunId,
-            authorityAttemptId: runtimeOwnershipEventAuthorityCanonicalRunId === undefined ||
+        const createOwnershipProbeSession = () => {
+          return runtimeOwnershipCanonicalBranchId === null
+            ? undefined
+            : runtimeOwnershipProbe?.createSession({
+              request: { ...request, resumedManually: request.resume?.type === "manual" },
+              ctx,
+              nowMs: hostObservedAt,
+              readNowMs: () => this.taskDeadlineClock.now(),
+              retainedEventToken: runtimeOwnershipEventAuthorityCanonicalRunId !== undefined,
+              eventAuthorityCanonicalRunId: runtimeOwnershipEventAuthorityCanonicalRunId,
+              authorityAttemptId: runtimeOwnershipEventAuthorityCanonicalRunId === undefined ||
+                  eventToken === undefined
+                ? undefined
+                : readProjectExecutionParent(eventToken, request.runId, request.projectId)
+                  .attemptId,
+              canonicalBranchId: runtimeOwnershipCanonicalBranchId,
+              createCanonicalClient: (signal) =>
+                createRuntimeApiClient(
+                  req,
+                  ctx,
+                  signal,
+                  true,
+                  eventToken,
+                  undefined,
+                  false,
+                  "canonical-source",
+                ),
+              ...(request.kind !== "task" || request.canonicalRunId === undefined ? {} : {
+                childProbe: createRuntimeOwnershipChildProbe({
+                  projectId: request.projectId,
+                  canonicalRunId: request.canonicalRunId,
+                  targetTaskId: "ce-runtime-proof-task",
+                  createWriter: (signal) =>
+                    createRuntimeApiClient(
+                      req,
+                      ctx,
+                      signal,
+                      true,
+                      eventToken,
+                      undefined,
+                      true,
+                      "child-admission",
+                    ),
+                  createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true),
+                  createEvents: (signal) =>
+                    createRuntimeApiClient(
+                      req,
+                      ctx,
+                      signal,
+                      true,
+                      undefined,
+                      eventToken,
+                      false,
+                      "run-events",
+                    ),
+                }),
+              }),
+              ...(inferenceToken === undefined ? {} : {
+                indexProbe: createRuntimeOwnershipIndexProbe({
+                  projectId: request.projectId,
+                  branchId: runtimeOwnershipCanonicalBranchId,
+                  createWriter: (signal) =>
+                    createRuntimeApiClient(
+                      req,
+                      ctx,
+                      signal,
+                      true,
+                      eventToken,
+                      undefined,
+                      false,
+                      "canonical-index",
+                    ),
+                  createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true),
+                  embed: async (text, signal) => {
+                    const { createEmbeddingFacade } = await import(
+                      "#veryfront/embedding/embedding.ts"
+                    );
+                    const modelId = "veryfront-cloud/google/gemini-embedding-001";
+                    const model = createProjectRunInferenceEmbeddingModel(modelId);
+                    if (!model) {
+                      throw new Error(
+                        "Runtime ownership indexing requires actual managed inference authority",
+                      );
+                    }
+                    return await runWithVeryfrontCloudContextAsync({
+                      projectSlug: ctx.projectSlug ?? request.projectId,
+                      serviceLayer: "cloud",
+                    }, () => createEmbeddingFacade({}, modelId, model).embed(text, { signal }));
+                  },
+                }),
+              }),
+              createReadbackClient: (signal) => createRuntimeApiClient(req, ctx, signal, true),
+              createEventAppendClient: (signal) =>
                 eventToken === undefined
-              ? undefined
-              : readProjectExecutionParent(eventToken, request.runId, request.projectId).attemptId,
-            canonicalBranchId: runtimeOwnershipCanonicalBranchId,
-            createCanonicalClient: (signal) =>
-              createRuntimeApiClient(
-                req,
-                ctx,
-                signal,
-                true,
-                eventToken,
-                undefined,
-                false,
-                "canonical-source",
-              ),
-            ...(request.kind !== "task" || request.canonicalRunId === undefined ? {} : {
-              childProbe: createRuntimeOwnershipChildProbe({
-                projectId: request.projectId,
-                canonicalRunId: request.canonicalRunId,
-                targetTaskId: "ce-runtime-proof-task",
-                createWriter: (signal) =>
-                  createRuntimeApiClient(
-                    req,
-                    ctx,
-                    signal,
-                    true,
-                    eventToken,
-                    undefined,
-                    true,
-                    "child-admission",
-                  ),
-                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
-                createEvents: (signal) =>
-                  createRuntimeApiClient(
+                  ? createRuntimeApiClient(req, ctx, signal, true)
+                  : createRuntimeApiClient(
                     req,
                     ctx,
                     signal,
@@ -5849,69 +5968,20 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     false,
                     "run-events",
                   ),
-              }),
-            }),
-            ...(inferenceToken === undefined ? {} : {
-              indexProbe: createRuntimeOwnershipIndexProbe({
-                projectId: request.projectId,
-                branchId: runtimeOwnershipCanonicalBranchId,
-                createWriter: (signal) =>
-                  createRuntimeApiClient(
-                    req,
-                    ctx,
-                    signal,
-                    true,
-                    eventToken,
-                    undefined,
-                    false,
-                    "canonical-index",
-                  ),
-                createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
-                embed: async (text, signal) => {
-                  const { createEmbeddingFacade } = await import(
-                    "#veryfront/embedding/embedding.ts"
-                  );
-                  const modelId = "veryfront-cloud/google/gemini-embedding-001";
-                  const model = createProjectRunInferenceEmbeddingModel(modelId);
-                  if (!model) {
-                    throw new Error(
-                      "Runtime ownership indexing requires actual managed inference authority",
-                    );
-                  }
-                  return await runWithVeryfrontCloudContextAsync({
-                    projectSlug: ctx.projectSlug ?? request.projectId,
-                    serviceLayer: "cloud",
-                  }, () => createEmbeddingFacade({}, modelId, model).embed(text, { signal }));
-                },
-              }),
-            }),
-            createReadbackClient: (signal) =>
-              createRuntimeApiClient(req, ctx, signal, true, undefined),
-            createEventAppendClient: (signal) =>
-              eventToken === undefined
-                ? createRuntimeApiClient(req, ctx, signal, true, undefined)
-                : createRuntimeApiClient(
+              createHeartbeatClient: (signal) =>
+                createRuntimeApiClient(
                   req,
                   ctx,
                   signal,
                   true,
                   undefined,
-                  eventToken,
+                  undefined,
                   false,
-                  "run-events",
+                  "run-heartbeat",
                 ),
-            createHeartbeatClient: (signal) =>
-              createRuntimeApiClient(
-                req,
-                ctx,
-                signal,
-                true,
-                undefined,
-                undefined,
-                false,
-                "run-heartbeat",
-              ),
-          });
+            });
+        };
+        const runtimeOwnershipProbeSession = createOwnershipProbeSession();
         const callback = createRunStopAcknowledger(
           req,
           request.runId,
