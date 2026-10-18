@@ -2839,3 +2839,18 @@ Deno.test("rewriteUnsupportedFilePartsAsAnnotations keeps inline data files for 
     "inline data has no upload a tool could read, so it must not become base64 prompt text",
   );
 });
+
+Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's MIME type matching its data URL", () => {
+  const url = "data:application/json;base64,e30=";
+  const prepared = prepareProviderModelMessagesFromUiMessages([{
+    id: "user-1",
+    role: "user",
+    parts: [{ type: "file", mediaType: "application/json", filename: "data.json", url }],
+  }]);
+
+  const content = prepared[0]!.content;
+  assertEquals(
+    Array.isArray(content) ? content.find((part) => part.type === "file") : undefined,
+    { type: "file", mediaType: "application/json", filename: "data.json", data: url, url },
+  );
+});

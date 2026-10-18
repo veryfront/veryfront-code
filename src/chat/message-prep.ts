@@ -633,6 +633,10 @@ export function isModelSupportedFileMediaType(mediaType: string): boolean {
   return type.startsWith("image/") || type === "application/pdf" || type === "text/plain";
 }
 
+function isInlineDataFilePart(part: { readonly url?: string }): boolean {
+  return /^data:/i.test(part.url ?? "");
+}
+
 /** Normalizes message file part media types. */
 export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
   return messages.map((message) => {
@@ -641,7 +645,8 @@ export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): C
     }
 
     const parts = message.parts.map((part) => {
-      if (part.type !== "file") {
+      // Inline data must keep the MIME type its data URL names.
+      if (part.type !== "file" || isInlineDataFilePart(part)) {
         return part;
       }
 
@@ -696,7 +701,7 @@ export function rewriteUnsupportedFilePartsAsAnnotations(
       }
 
       // Inline data has no upload a tool could read, so the provider sends or rejects it.
-      if (/^data:/i.test(part.url ?? "")) {
+      if (isInlineDataFilePart(part)) {
         kept.push(part);
         continue;
       }
