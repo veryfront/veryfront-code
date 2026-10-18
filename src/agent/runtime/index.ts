@@ -510,6 +510,12 @@ const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "veryfront__load_skill_reference",
 ] as const;
 
+function readSnapshotDescriptorValue(descriptor: PropertyDescriptor, receiver: unknown): unknown {
+  if ("value" in descriptor) return descriptor.value;
+  if (descriptor.get) return IntrinsicReflectApply(descriptor.get, receiver, []);
+  return undefined;
+}
+
 function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = false): T {
   class UnsafeInputCopyError extends TypeError {}
   const seen = new IntrinsicWeakMap<object, unknown>();
@@ -538,71 +544,112 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = 
       if (allowOpaqueObjects) return candidate;
       throw new UnsafeInputCopyError("Object input cannot be safely copied");
     }
-    if (isArray) {
-      const candidateArray = candidate as unknown[];
-      const array: unknown[] = [];
-      IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+    if (isArray) return cloneArray(candidate);
+    return cloneObject(candidate);
+  };
+  const cloneArrayFromDescriptors = (candidate: unknown, array: unknown[]): unknown => {
+    try {
+      // Read array descriptors without invoking a Proxy's indexed get
+      // traps. Provider-visible values must not retain the caller's array.
+      const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
+      const length = descriptors.length?.value;
+      if (typeof length !== "number") throw new TypeError("Invalid array length");
+      array.length = 0;
+      array.length = length;
+      for (let index = 0; index < length; index++) {
+        const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
+        array[index] = descriptor
+          ? clone(readSnapshotDescriptorValue(descriptor, candidate))
+          : undefined;
+      }
+    } catch (error) {
+      if (error instanceof UnsafeInputCopyError) throw error;
+      if (!allowOpaqueObjects) {
+        throw new UnsafeInputCopyError("Array input cannot be safely copied");
+      }
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+      return candidate;
+    }
+    return array;
+  };
+  const cloneArray = (candidate: unknown): unknown => {
+    const candidateArray = candidate as unknown[];
+    const array: unknown[] = [];
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+    try {
+      const length = candidateArray.length;
+      for (let index = 0; index < length; index++) {
+        array[index] = clone(candidateArray[index]);
+      }
+    } catch (error) {
+      if (error instanceof UnsafeInputCopyError) throw error;
+      return cloneArrayFromDescriptors(candidate, array);
+    }
+    return array;
+  };
+  const cloneObjectDescriptorValue = (
+    descriptor: PropertyDescriptor,
+    candidate: unknown,
+  ): unknown => {
+    if ("value" in descriptor) return clone(descriptor.value);
+    if (descriptor.get) return clone(IntrinsicReflectApply(descriptor.get, candidate, []));
+    return undefined;
+  };
+  const cloneObjectDescriptors = (
+    candidate: unknown,
+    descriptors: PropertyDescriptorMap,
+    object: Record<PropertyKey, unknown>,
+  ): unknown => {
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
+    for (const key of ReflectOwnKeys(descriptors)) {
+      const descriptor = descriptors[key as keyof typeof descriptors];
+      if (!descriptor?.enumerable) continue;
+      let detachedValue: unknown;
       try {
-        const length = candidateArray.length;
-        for (let index = 0; index < length; index++) {
-          array[index] = clone(candidateArray[index]);
-        }
+        detachedValue = cloneObjectDescriptorValue(descriptor, candidate);
+        ObjectDefineProperty(object, key, {
+          value: detachedValue,
+          enumerable: descriptor.enumerable,
+          configurable: true,
+          writable: true,
+        });
       } catch (error) {
         if (error instanceof UnsafeInputCopyError) throw error;
-        try {
-          // Read array descriptors without invoking a Proxy's indexed get
-          // traps. Provider-visible values must not retain the caller's array.
-          const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
-          const length = descriptors.length?.value;
-          if (typeof length !== "number") throw new TypeError("Invalid array length");
-          array.length = 0;
-          array.length = length;
-          for (let index = 0; index < length; index++) {
-            const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
-            array[index] = descriptor
-              ? clone(
-                "value" in descriptor
-                  ? descriptor.value
-                  : descriptor.get
-                  ? IntrinsicReflectApply(descriptor.get, candidate, [])
-                  : undefined,
-              )
-              : undefined;
-          }
-        } catch (error) {
-          if (error instanceof UnsafeInputCopyError) throw error;
-          if (!allowOpaqueObjects) {
-            throw new UnsafeInputCopyError("Array input cannot be safely copied");
-          }
-          IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-          return candidate;
-        }
+        continue;
       }
-      return array;
     }
+    return object;
+  };
+  const readSnapshotPrototype = (candidate: unknown): object | null => {
+    try {
+      return ObjectGetPrototypeOf(candidate);
+    } catch {
+      return ObjectPrototype;
+    }
+  };
+  const cloneSpecialObject = (candidate: unknown): unknown => {
+    const serialize = (candidate as { toJSON?: unknown }).toJSON;
+    if (typeof serialize === "function") {
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+      const serialized = IntrinsicReflectApply(serialize, candidate, []);
+      if (serialized !== candidate) {
+        const detached = clone(serialized);
+        IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+        return detached;
+      }
+    }
+    const detached = IntrinsicStructuredClone(candidate);
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+    return detached;
+  };
+  const cloneObject = (candidate: unknown): unknown => {
     let prototype: object | null;
     let descriptors: PropertyDescriptorMap;
     try {
-      try {
-        prototype = ObjectGetPrototypeOf(candidate);
-      } catch {
-        prototype = ObjectPrototype;
-      }
+      prototype = readSnapshotPrototype(candidate);
       if (prototype !== ObjectPrototype && prototype !== null) {
         try {
-          const serialize = (candidate as { toJSON?: unknown }).toJSON;
-          if (typeof serialize === "function") {
-            IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-            const serialized = IntrinsicReflectApply(serialize, candidate, []);
-            if (serialized !== candidate) {
-              const detached = clone(serialized);
-              IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
-              return detached;
-            }
-          }
-          const detached = IntrinsicStructuredClone(candidate);
-          IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
-          return detached;
+          return cloneSpecialObject(candidate);
         } catch (error) {
           if (error instanceof UnsafeInputCopyError) throw error;
           // A nested Proxy can report a native prototype while exposing an
@@ -619,30 +666,11 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = 
       }
       return candidate;
     }
-    const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
-    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
-    for (const key of ReflectOwnKeys(descriptors)) {
-      const descriptor = descriptors[key as keyof typeof descriptors];
-      if (!descriptor?.enumerable) continue;
-      let detachedValue: unknown;
-      try {
-        detachedValue = "value" in descriptor
-          ? clone(descriptor.value)
-          : descriptor.get
-          ? clone(IntrinsicReflectApply(descriptor.get, candidate, []))
-          : undefined;
-        ObjectDefineProperty(object, key, {
-          value: detachedValue,
-          enumerable: descriptor.enumerable,
-          configurable: true,
-          writable: true,
-        });
-      } catch (error) {
-        if (error instanceof UnsafeInputCopyError) throw error;
-        continue;
-      }
-    }
-    return object;
+    return cloneObjectDescriptors(
+      candidate,
+      descriptors,
+      ObjectCreate(prototype) as Record<PropertyKey, unknown>,
+    );
   };
   return clone(value) as T;
 }
@@ -713,27 +741,17 @@ function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
     : cloned;
 }
 
-function cloneMessagePartForCommit(part: MessagePart): MessagePart {
-  let descriptors: PropertyDescriptorMap;
-  try {
-    descriptors = ObjectGetOwnPropertyDescriptors(part);
-  } catch {
-    // A structurally valid Proxy can expose the fields consumed by provider
-    // conversion while refusing descriptor enumeration. Detach those known
-    // fields individually so persistence does not introduce a new failure.
-    return cloneKnownMessagePartFields(part);
-  }
-  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+function cloneOwnMessagePartFields(
+  part: MessagePart,
+  descriptors: PropertyDescriptorMap,
+  detached: Record<string, unknown>,
+): void {
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
     if (!descriptor) continue;
     let value: unknown;
     try {
-      value = "value" in descriptor
-        ? descriptor.value
-        : descriptor.get
-        ? IntrinsicReflectApply(descriptor.get, part, [])
-        : undefined;
+      value = readSnapshotDescriptorValue(descriptor, part);
     } catch {
       // Provider conversion ignores unrelated extension accessors. Preserve
       // valid structural fields when one of those accessors cannot be read.
@@ -749,6 +767,13 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       writable: true,
     });
   }
+}
+
+function cloneInheritedMessagePartFields(
+  part: MessagePart,
+  descriptors: PropertyDescriptorMap,
+  detached: Record<string, unknown>,
+): void {
   const source = part as Record<string, unknown>;
   for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
     if (ObjectHasOwn(descriptors, key)) continue;
@@ -767,6 +792,21 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       writable: true,
     });
   }
+}
+
+function cloneMessagePartForCommit(part: MessagePart): MessagePart {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(part);
+  } catch {
+    // A structurally valid Proxy can expose the fields consumed by provider
+    // conversion while refusing descriptor enumeration. Detach those known
+    // fields individually so persistence does not introduce a new failure.
+    return cloneKnownMessagePartFields(part);
+  }
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  cloneOwnMessagePartFields(part, descriptors, detached);
+  cloneInheritedMessagePartFields(part, descriptors, detached);
   const cloned = detached as MessagePart;
   return isToolResultPart(part) && isToolResultPart(cloned)
     ? inheritTrustedPlatformPolicyToolResultPart(part, cloned)
@@ -794,6 +834,18 @@ function cloneMessageForCommit(message: Message): Message {
   return snapshot;
 }
 
+function providerArraysEqual(
+  left: unknown[],
+  right: unknown[],
+  seen: WeakMap<object, object>,
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (!providerValuesEqual(left[index], right[index], seen)) return false;
+  }
+  return true;
+}
+
 function providerValuesEqual(
   left: unknown,
   right: unknown,
@@ -812,13 +864,7 @@ function providerValuesEqual(
   const leftIsArray = ArrayIsArray(left);
   if (leftIsArray !== ArrayIsArray(right)) return false;
   if (leftIsArray) {
-    const leftArray = left as unknown[];
-    const rightArray = right as unknown[];
-    if (leftArray.length !== rightArray.length) return false;
-    for (let index = 0; index < leftArray.length; index++) {
-      if (!providerValuesEqual(leftArray[index], rightArray[index], seen)) return false;
-    }
-    return true;
+    return providerArraysEqual(left as unknown[], right as unknown[], seen);
   }
 
   const leftPrototype = ObjectGetPrototypeOf(left);
@@ -992,6 +1038,86 @@ function isOrdinaryRecordPrototype(prototype: object | null): boolean {
   }
 }
 
+function copyRuntimeStateDescriptors(
+  clone: unknown[] | Record<PropertyKey, unknown>,
+  descriptors: PropertyDescriptorMap,
+  isArray: boolean,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): void {
+  const lengthDescriptor = isArray ? descriptors.length : undefined;
+  for (const key of ReflectOwnKeys(descriptors)) {
+    if (isArray && key === "length") {
+      continue;
+    }
+    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
+    if (!descriptor) {
+      continue;
+    }
+    if ("value" in descriptor) {
+      descriptor.value = cloneRuntimeStateMutableValue(
+        descriptor.value,
+        clones,
+        proxyDetectionAvailable,
+        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
+        providerOptionKey,
+      );
+    }
+    ObjectDefineProperty(clone, key, descriptor);
+  }
+  if (lengthDescriptor) {
+    ObjectDefineProperty(clone, "length", lengthDescriptor);
+  }
+}
+
+interface RuntimeStateContainerInput {
+  value: object;
+  isArray: boolean;
+}
+
+function cloneRuntimeStateContainer(
+  input: RuntimeStateContainerInput,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): unknown {
+  const { value, isArray } = input;
+  let prototype: object | null;
+  try {
+    prototype = ObjectGetPrototypeOf(value);
+  } catch {
+    return value;
+  }
+  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
+    return value;
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return value;
+  }
+
+  let clone: unknown[] | Record<PropertyKey, unknown>;
+  if (isArray) clone = [];
+  else clone = ObjectCreate(prototype === null ? null : ObjectPrototype);
+  clones.set(value, clone);
+  copyRuntimeStateDescriptors(
+    clone,
+    descriptors,
+    isArray,
+    clones,
+    proxyDetectionAvailable,
+    fallback,
+    providerOptionKey,
+  );
+  return clone;
+}
+
 function cloneRuntimeStateMutableValue(
   value: unknown,
   clones: WeakMap<object, unknown>,
@@ -1032,59 +1158,23 @@ function cloneRuntimeStateMutableValue(
       // structured-system containers are copied from descriptors before this
       // branch so metadata accessors stay inert. Unknown values still fail
       // closed without reflective Proxy probes.
-      if (isOpaqueProxyCloneFailure(error)) {
-        return value;
-      }
-      if (getStructuredCloneFailureFingerprint(error) === undefined) {
+      if (
+        isOpaqueProxyCloneFailure(error) ||
+        getStructuredCloneFailureFingerprint(error) === undefined
+      ) {
         return value;
       }
     }
   }
 
   const isArray = isArrayWithoutThrowing(value);
-  let prototype: object | null;
-  try {
-    prototype = ObjectGetPrototypeOf(value);
-  } catch {
-    return value;
-  }
-  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
-    return value;
-  }
-
-  let descriptors: PropertyDescriptorMap;
-  try {
-    descriptors = ObjectGetOwnPropertyDescriptors(value);
-  } catch {
-    return value;
-  }
-
-  const clone = isArray ? [] : ObjectCreate(prototype === null ? null : ObjectPrototype);
-  clones.set(value, clone);
-  const lengthDescriptor = isArray ? descriptors.length : undefined;
-  for (const key of ReflectOwnKeys(descriptors)) {
-    if (isArray && key === "length") {
-      continue;
-    }
-    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
-    if (!descriptor) {
-      continue;
-    }
-    if ("value" in descriptor) {
-      descriptor.value = cloneRuntimeStateMutableValue(
-        descriptor.value,
-        clones,
-        proxyDetectionAvailable,
-        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
-        providerOptionKey,
-      );
-    }
-    ObjectDefineProperty(clone, key, descriptor);
-  }
-  if (lengthDescriptor) {
-    ObjectDefineProperty(clone, "length", lengthDescriptor);
-  }
-  return clone;
+  return cloneRuntimeStateContainer(
+    { value, isArray },
+    clones,
+    proxyDetectionAvailable,
+    fallback,
+    providerOptionKey,
+  );
 }
 
 export function cloneRuntimeStateMutableData<T>(
@@ -1329,12 +1419,170 @@ function addOutputSchemaObservationReason(reasons: string[], reason: string): vo
   pushPrivateArray(reasons, reason);
 }
 
-function snapshotOutputSchemaObservationValue(
-  value: unknown,
-  context: OutputSchemaObservationSnapshotContext = {
+function createOutputSchemaSnapshotContext(): OutputSchemaObservationSnapshotContext {
+  return {
     seen: new IntrinsicWeakMap<object, true>(),
     remainingNodes: OUTPUT_SCHEMA_OBSERVATION_MAX_NODES,
-  },
+  };
+}
+
+function snapshotOutputSchemaArrayItem(
+  property: PropertyDescriptor | undefined,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+): OutputSchemaObservationSnapshot {
+  if (property && ObjectHasOwn(property, "value")) {
+    return snapshotOutputSchemaObservationValue(property.value, context, depth + 1);
+  }
+  if (property) {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
+      status: "partial",
+      reasons: ["accessor_property"],
+    };
+  }
+  return { value: null, status: "complete", reasons: [] };
+}
+
+function snapshotOutputSchemaArray(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  reasons: string[],
+): OutputSchemaObservationSnapshot {
+  const output: unknown[] = [];
+  const arrayValue = value as unknown[];
+  let length: number;
+  try {
+    length = arrayValue.length;
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
+  for (let index = 0; index < limit; index++) {
+    let property: PropertyDescriptor | undefined;
+    try {
+      property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    const item = snapshotOutputSchemaArrayItem(property, context, depth);
+    defineOwnDataProperty(output, index, item.value, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    forEachPrivateArray(
+      item.reasons,
+      (reason) => addOutputSchemaObservationReason(reasons, reason),
+    );
+    if (item.status === "unsupported") {
+      addOutputSchemaObservationReason(reasons, "unsupported_array_item");
+    }
+  }
+  if (length > limit) {
+    defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    addOutputSchemaObservationReason(reasons, "array_truncated");
+  }
+  return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+}
+
+interface OutputSchemaObjectSnapshotState {
+  output: Record<string, unknown>;
+  reasons: string[];
+  copiedKeys: number;
+}
+
+function snapshotOutputSchemaObjectProperty(
+  key: PropertyKey | undefined,
+  descriptors: PropertyDescriptorMap,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  state: OutputSchemaObjectSnapshotState,
+): boolean {
+  if (typeof key !== "string") {
+    addOutputSchemaObservationReason(state.reasons, "unsupported_property_key");
+    return false;
+  }
+  const descriptor = descriptors[key];
+  if (!descriptor?.enumerable) return false;
+  if (state.copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
+    addOutputSchemaObservationReason(state.reasons, "object_keys_truncated");
+    return true;
+  }
+  if (context.remainingNodes <= 0) {
+    addOutputSchemaObservationReason(state.reasons, "aggregate_budget_exhausted");
+    return true;
+  }
+  if (!ObjectHasOwn(descriptor, "value")) {
+    defineOwnDataProperty(state.output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    state.copiedKeys += 1;
+    addOutputSchemaObservationReason(state.reasons, "accessor_property");
+    return false;
+  }
+  const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
+  defineOwnDataProperty(state.output, key, item.value, {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  state.copiedKeys += 1;
+  forEachPrivateArray(
+    item.reasons,
+    (reason) => addOutputSchemaObservationReason(state.reasons, reason),
+  );
+  if (item.status === "unsupported") {
+    addOutputSchemaObservationReason(state.reasons, "unsupported_property");
+  }
+  return false;
+}
+
+function snapshotOutputSchemaObject(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  reasons: string[],
+): OutputSchemaObservationSnapshot {
+  const output = ObjectCreate(null) as Record<string, unknown>;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const state: OutputSchemaObjectSnapshotState = { output, reasons, copiedKeys: 0 };
+  const descriptorKeys = ReflectOwnKeys(descriptors);
+  for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
+    if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
+    const key = descriptorKeys[keyIndex];
+    if (snapshotOutputSchemaObjectProperty(key, descriptors, context, depth, state)) break;
+  }
+  return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+}
+
+function snapshotOutputSchemaObservationValue(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext = createOutputSchemaSnapshotContext(),
   depth = 0,
 ): OutputSchemaObservationSnapshot {
   const reasons: string[] = [];
@@ -1418,126 +1666,8 @@ function snapshotOutputSchemaObservationValue(
   }
 
   IntrinsicReflectApply(WeakMapSet, context.seen, [value, true]);
-  {
-    if (isArray) {
-      const output: unknown[] = [];
-      const arrayValue = value as unknown[];
-      let length: number;
-      try {
-        length = arrayValue.length;
-      } catch {
-        return {
-          value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-          status: "unsupported",
-          reasons: ["unsupported_object"],
-        };
-      }
-      const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
-      for (let index = 0; index < limit; index++) {
-        let property: PropertyDescriptor | undefined;
-        try {
-          property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
-        } catch {
-          return {
-            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-            status: "unsupported",
-            reasons: ["unsupported_object"],
-          };
-        }
-        const item = property && ObjectHasOwn(property, "value")
-          ? snapshotOutputSchemaObservationValue(property.value, context, depth + 1)
-          : property
-          ? {
-            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
-            status: "partial",
-            reasons: ["accessor_property"],
-          } satisfies OutputSchemaObservationSnapshot
-          : {
-            value: null,
-            status: "complete",
-            reasons: [],
-          } satisfies OutputSchemaObservationSnapshot;
-        defineOwnDataProperty(output, index, item.value, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        forEachPrivateArray(
-          item.reasons,
-          (reason) => addOutputSchemaObservationReason(reasons, reason),
-        );
-        if (item.status === "unsupported") {
-          addOutputSchemaObservationReason(reasons, "unsupported_array_item");
-        }
-      }
-      if (length > limit) {
-        defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        addOutputSchemaObservationReason(reasons, "array_truncated");
-      }
-      return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
-    }
-
-    const output = ObjectCreate(null) as Record<string, unknown>;
-    let descriptors: PropertyDescriptorMap;
-    try {
-      descriptors = ObjectGetOwnPropertyDescriptors(value);
-    } catch {
-      return {
-        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-        status: "unsupported",
-        reasons: ["unsupported_object"],
-      };
-    }
-    let copiedKeys = 0;
-    const descriptorKeys = ReflectOwnKeys(descriptors);
-    for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
-      if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
-      const key = descriptorKeys[keyIndex];
-      if (typeof key !== "string") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
-        continue;
-      }
-      const descriptor = descriptors[key];
-      if (!descriptor?.enumerable) continue;
-      if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
-        addOutputSchemaObservationReason(reasons, "object_keys_truncated");
-        break;
-      }
-      if (context.remainingNodes <= 0) {
-        addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
-        break;
-      }
-      if (!ObjectHasOwn(descriptor, "value")) {
-        defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        copiedKeys += 1;
-        addOutputSchemaObservationReason(reasons, "accessor_property");
-        continue;
-      }
-      const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
-      defineOwnDataProperty(output, key, item.value, {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      copiedKeys += 1;
-      forEachPrivateArray(
-        item.reasons,
-        (reason) => addOutputSchemaObservationReason(reasons, reason),
-      );
-      if (item.status === "unsupported") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property");
-      }
-    }
-    return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
-  }
+  if (isArray) return snapshotOutputSchemaArray(value, context, depth, reasons);
+  return snapshotOutputSchemaObject(value, context, depth, reasons);
 }
 
 function createOutputSchemaObservationFields(
