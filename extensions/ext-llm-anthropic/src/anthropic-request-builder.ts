@@ -1577,6 +1577,12 @@ function assertNoNestedAnthropicCacheJsonHooks(
   }
 }
 
+function anthropicCacheNestedRecordLabel(key: string, nested: unknown): string {
+  if (key === "cache_control") return "Anthropic cache_control";
+  if (key === "content" && ArrayIsArray(nested)) return "Anthropic message content";
+  return "Anthropic cache records";
+}
+
 function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
   if (isBoxedPrimitive(value)) {
     throw new TypeError("Anthropic cache records must not contain boxed primitive values");
@@ -1611,11 +1617,7 @@ function assertNoAnthropicCacheRecordSerializationHooks(value: object): void {
       nested !== null &&
       (typeof nested === "object" || typeof nested === "function")
     ) {
-      const nestedLabel = key === "cache_control"
-        ? "Anthropic cache_control"
-        : key === "content" && ArrayIsArray(nested)
-        ? "Anthropic message content"
-        : "Anthropic cache records";
+      const nestedLabel = anthropicCacheNestedRecordLabel(key, nested);
       assertNoNestedAnthropicCacheJsonHooks(
         nested,
         nestedLabel,
@@ -1940,6 +1942,33 @@ function snapshotAnthropicProviderBucket(
   return snapshot;
 }
 
+function snapshotAnthropicNamedProviderOptions(
+  providerOptions: Record<string, unknown>,
+  providerNames: string[],
+): Record<string, unknown> {
+  if (isProxyWithoutHooks(providerOptions)) {
+    throw new TypeError("Anthropic provider options could not be inspected");
+  }
+  const snapshot: Record<string, unknown> = {};
+  for (let index = 0; index < providerNames.length; index += 1) {
+    const providerName = providerNames[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
+    if (descriptor === undefined) continue;
+    if (!objectHasOwn(descriptor, "value")) {
+      throw new TypeError("Anthropic provider options could not be inspected");
+    }
+    const value = descriptor.value;
+    defineOwnEnumerableDataProperty(
+      snapshot,
+      providerName,
+      value !== null && typeof value === "object" && !ArrayIsArray(value)
+        ? snapshotAnthropicProviderBucket(value)
+        : value,
+    );
+  }
+  return snapshot;
+}
+
 function prepareAnthropicProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
   ...providerNames: string[]
@@ -1948,27 +1977,7 @@ function prepareAnthropicProviderOptions(
 
   try {
     if (canIdentifyProxyWithoutHooks) {
-      if (isProxyWithoutHooks(providerOptions)) {
-        throw new TypeError("Anthropic provider options could not be inspected");
-      }
-      const snapshot: Record<string, unknown> = {};
-      for (let index = 0; index < providerNames.length; index += 1) {
-        const providerName = providerNames[index]!;
-        const descriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
-        if (descriptor === undefined) continue;
-        if (!objectHasOwn(descriptor, "value")) {
-          throw new TypeError("Anthropic provider options could not be inspected");
-        }
-        const value = descriptor.value;
-        defineOwnEnumerableDataProperty(
-          snapshot,
-          providerName,
-          value !== null && typeof value === "object" && !ArrayIsArray(value)
-            ? snapshotAnthropicProviderBucket(value)
-            : value,
-        );
-      }
-      return snapshot;
+      return snapshotAnthropicNamedProviderOptions(providerOptions, providerNames);
     }
 
     const snapshot = snapshotProviderJsonValue(providerOptions, {
@@ -1982,6 +1991,25 @@ function prepareAnthropicProviderOptions(
   } catch {
     throw new TypeError("Anthropic provider options could not be inspected");
   }
+}
+
+function hasOnlyAnthropicCacheControlKeys(
+  cacheControl: Record<string, unknown>,
+  keys: string[],
+): boolean {
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    const property = readOwnEnumerableDataProperty(cacheControl, key);
+    if (!property) {
+      throw new TypeError(
+        "Anthropic cache_control must contain only enumerable data properties",
+      );
+    }
+    if (!isOmittedJsonObjectPropertyValue(property.value) && key !== "type" && key !== "ttl") {
+      return false;
+    }
+  }
+  return true;
 }
 
 function readEmittedAnthropicCacheTtl(
@@ -2014,18 +2042,7 @@ function readEmittedAnthropicCacheTtl(
   } catch {
     return undefined;
   }
-  for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index]!;
-    const property = readOwnEnumerableDataProperty(cacheControl, key);
-    if (!property) {
-      throw new TypeError(
-        "Anthropic cache_control must contain only enumerable data properties",
-      );
-    }
-    if (!isOmittedJsonObjectPropertyValue(property.value) && key !== "type" && key !== "ttl") {
-      return undefined;
-    }
-  }
+  if (!hasOnlyAnthropicCacheControlKeys(cacheControl, keys)) return undefined;
   const type = readOwnEnumerableDataProperty(cacheControl, "type");
   const ttl = readOwnEnumerableDataProperty(cacheControl, "ttl");
   const typeValue = type?.present ? readJsonSerializedAnthropicString(type.value) : undefined;
@@ -2083,6 +2100,39 @@ function normalizeAnthropicCacheTtls(
   return { values: normalized, requiresOneHourPrefix };
 }
 
+function normalizeAnthropicMessageContentCacheTtls(
+  content: unknown[],
+  requiresOneHourPrefix: boolean,
+): { content: unknown[]; requiresOneHourPrefix: boolean } {
+  let normalizedContent = content;
+  for (let contentIndex = content.length - 1; contentIndex >= 0; contentIndex -= 1) {
+    const block = content[contentIndex];
+    if (
+      !isAnthropicMessageCacheBlock(block) ||
+      !hasEmittedAnthropicCacheBreakpoint(block)
+    ) {
+      continue;
+    }
+    const ttl = readEmittedAnthropicCacheTtl(block as Record<string, unknown>);
+    if (ttl === "1h") {
+      requiresOneHourPrefix = true;
+    } else if (ttl === "5m" && requiresOneHourPrefix) {
+      if (normalizedContent === content) {
+        normalizedContent = snapshotAnthropicCacheArray(
+          content,
+          "Anthropic message content",
+        );
+      }
+      defineOwnEnumerableDataProperty(
+        normalizedContent,
+        `${contentIndex}`,
+        upgradeEmittedAnthropicCacheTtl(block),
+      );
+    }
+  }
+  return { content: normalizedContent, requiresOneHourPrefix };
+}
+
 function normalizeAnthropicMessageCacheTtls(
   messages: AnthropicCompatibleMessage[],
 ): { messages: AnthropicCompatibleMessage[]; requiresOneHourPrefix: boolean } {
@@ -2095,32 +2145,9 @@ function normalizeAnthropicMessageCacheTtls(
       continue;
     }
     const content = readEmittedAnthropicMessageContent(message);
-    let normalizedContent = content;
-    for (let contentIndex = content.length - 1; contentIndex >= 0; contentIndex -= 1) {
-      const block = content[contentIndex];
-      if (
-        !isAnthropicMessageCacheBlock(block) ||
-        !hasEmittedAnthropicCacheBreakpoint(block)
-      ) {
-        continue;
-      }
-      const ttl = readEmittedAnthropicCacheTtl(block as Record<string, unknown>);
-      if (ttl === "1h") {
-        requiresOneHourPrefix = true;
-      } else if (ttl === "5m" && requiresOneHourPrefix) {
-        if (normalizedContent === content) {
-          normalizedContent = snapshotAnthropicCacheArray(
-            content,
-            "Anthropic message content",
-          );
-        }
-        defineOwnEnumerableDataProperty(
-          normalizedContent,
-          `${contentIndex}`,
-          upgradeEmittedAnthropicCacheTtl(block),
-        );
-      }
-    }
+    const normalized = normalizeAnthropicMessageContentCacheTtls(content, requiresOneHourPrefix);
+    const normalizedContent = normalized.content;
+    requiresOneHourPrefix = normalized.requiresOneHourPrefix;
     if (normalizedContent !== content) {
       if (normalizedMessages === messages) {
         normalizedMessages = snapshotAnthropicCacheArray(
