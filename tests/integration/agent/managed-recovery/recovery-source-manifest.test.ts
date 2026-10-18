@@ -56,3 +56,100 @@ it("mutable array hooks cannot forge a pinned source manifest", () => {
     Array.prototype.sort = sort;
   }
 });
+
+const nativeBinary = {
+  kind: "binary",
+  path: "knowledge/raw.bin",
+  entityType: "virtual_file",
+  contentBase64: "AP+ACg==",
+  contentHash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
+  byteSize: 4,
+};
+const nativeText = { kind: "text", path: "a.ts", entityType: "function", content: "hello" };
+
+it("native mixed source hashes exact non-UTF8 bytes with the canonical v2 digest", () => {
+  const expected = {
+    version: 2,
+    hash: "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6",
+    fileCount: 2,
+    totalBytes: 9,
+  };
+  assertEquals(createRecoverySourceManifest([nativeBinary, nativeText]), expected);
+  assertEquals(createRecoverySourceManifest([nativeText, nativeBinary]), expected);
+  assertThrows(() =>
+    createRecoverySourceManifest([nativeBinary, { ...nativeText, kind: undefined }])
+  );
+});
+
+it("native source rejects malformed, truncated, noncanonical or corrupted binary content", () => {
+  for (
+    const contentBase64 of ["AP+ACg=", "AP+ACn==", "AP-ACg==", "AP+ACg==\n", "!!!!!!!!", "AP+ACw=="]
+  ) {
+    assertThrows(() => createRecoverySourceManifest([{ ...nativeBinary, contentBase64 }]));
+  }
+  assertThrows(() => createRecoverySourceManifest([{ ...nativeBinary, byteSize: 3 }]));
+  assertThrows(() =>
+    createRecoverySourceManifest([{ ...nativeBinary, contentHash: "a".repeat(64) }])
+  );
+  assertThrows(() => createRecoverySourceManifest([nativeBinary, nativeBinary]));
+  assertThrows(() => createRecoverySourceManifest([{ ...nativeBinary, entityType: "file" }]));
+  assertThrows(() =>
+    createRecoverySourceManifest([{ ...nativeBinary, byteSize: 8 * 1024 * 1024 + 1 }])
+  );
+});
+
+it("native raw totals are admitted before decoding any binary payload", () => {
+  assertThrows(
+    () =>
+      createRecoverySourceManifest(Array.from({ length: 9 }, (_, index) => ({
+        ...nativeBinary,
+        path: `knowledge/${index}.bin`,
+        byteSize: 8 * 1024 * 1024,
+        contentBase64: "", // deliberately invalid: aggregate admission must reject first
+      }))),
+    Error,
+    "release bytes exceed",
+  );
+});
+
+it("empty and all-text source retain v1 and cannot masquerade as native v2", () => {
+  assertEquals(createRecoverySourceManifest([]), {
+    version: 1,
+    hash: "ad301433f67ec7108b54797ac5d7a61df8c92f62fa52ae631da3f49731576ac3",
+    fileCount: 0,
+    totalBytes: 0,
+  });
+  assertThrows(() => createRecoverySourceManifest([nativeText]), Error, "binary source membership");
+});
+
+it("native binary validation does not expose payloads to project RegExp hooks", () => {
+  createRecoverySourceManifest([nativeBinary, nativeText]); // initialize trusted schemas before project hooks
+  const ceil = Math.ceil;
+  const test = RegExp.prototype.test;
+  const exec = RegExp.prototype.exec;
+  let exposures = 0;
+  try {
+    Math.ceil = () => {
+      exposures++;
+      throw new Error("project math hook");
+    };
+    RegExp.prototype.test = function () {
+      exposures++;
+      throw new Error("project test hook");
+    };
+    RegExp.prototype.exec = function () {
+      exposures++;
+      throw new Error("project exec hook");
+    };
+    const manifest = createRecoverySourceManifest([nativeBinary, nativeText]);
+    assertEquals(manifest.hash, "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6");
+    assertThrows(() =>
+      createRecoverySourceManifest([{ ...nativeBinary, contentBase64: "!!!!!!!!" }])
+    );
+  } finally {
+    Math.ceil = ceil;
+    RegExp.prototype.test = test;
+    RegExp.prototype.exec = exec;
+  }
+  assertEquals(exposures, 0);
+});

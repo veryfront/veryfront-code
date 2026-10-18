@@ -10,7 +10,7 @@ const update = Hash.prototype.update;
 const digest = Hash.prototype.digest;
 
 /** Hash host-owned recovery data without calling project-mutable prototype methods. */
-export function privateSha256Hex(value: string): string {
+export function privateSha256Hex(value: string | Uint8Array): string {
   if (nativeOneShotHash) return nativeOneShotHash("sha256", value, "hex");
   const hash = nativeCreateHash("sha256");
   apply(update, hash, [value, "utf8"]);
