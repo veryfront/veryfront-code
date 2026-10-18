@@ -657,7 +657,7 @@ describe("document input capability", () => {
           ],
         }]),
       TypeError,
-      "document",
+      "Chat Completions does not support file input (application/pdf)",
     );
   });
 });

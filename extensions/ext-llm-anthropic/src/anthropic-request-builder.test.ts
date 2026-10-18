@@ -111,8 +111,38 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }]);
   });
-  for (const url of ["data:application/pdf;base64,not-base64", "data:image/png;base64,AQ=="]) {
-    it("rejects malformed or mismatched inline PDF data", () => {
+  it("matches inline data MIME types case-insensitively", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{
+            type: "file",
+            url: "data:application/PDF;base64,JVBERi0=",
+            mediaType: "application/pdf",
+          }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" },
+      }],
+    }]);
+  });
+  for (
+    const [label, url] of [
+      ["malformed", "data:application/pdf;base64,not-base64"],
+      ["mismatched", "data:image/png;base64,AQ=="],
+    ] as const
+  ) {
+    it(`rejects ${label} inline PDF data`, () => {
       assertThrows(
         () =>
           buildAnthropicMessagesRequest(
@@ -145,6 +175,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
                 type: "file",
                 url: "data:application/zip;base64,AQ==",
                 mediaType: "application/zip",
+                filename: "notes.zip",
               }],
             }],
           },
@@ -152,7 +183,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           createWarningCollector(),
         ),
       TypeError,
-      "PDF",
+      'Anthropic does not support file input "notes.zip" (application/zip)',
     );
   });
 

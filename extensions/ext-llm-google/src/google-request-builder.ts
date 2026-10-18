@@ -1,4 +1,10 @@
-import { jsonValuesEqual, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
+import {
+  jsonValuesEqual,
+  readInlineFileData,
+  readRecord,
+  unsupportedFileInputError,
+  unwrapToolInputSchema,
+} from "veryfront/provider/shared";
 import type {
   ModelRuntimeCallOptions,
   ModelRuntimePromptMessage,
@@ -645,14 +651,17 @@ function toGoogleUserParts(
       continue;
     }
 
-    if (part.url.startsWith("data:")) {
-      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(part.url);
-      if (!match || match[1] !== part.mediaType || !match[2] || match[2].length % 4 !== 0) {
-        throw new TypeError("Inline files require base64 data with a matching MIME type");
-      }
-      content.push({ inlineData: { mimeType: part.mediaType, data: match[2] } });
-    } else {
+    const data = readInlineFileData(part);
+    if (data !== undefined) {
+      content.push({ inlineData: { mimeType: part.mediaType, data } });
+    } else if (part.type === "image" || part.mediaType.startsWith("image/")) {
       content.push({ fileData: { mimeType: part.mediaType, fileUri: part.url } });
+    } else {
+      throw unsupportedFileInputError(
+        "Google",
+        part,
+        "Send non-image files as inline data, for example with fileFromBytes.",
+      );
     }
   }
 

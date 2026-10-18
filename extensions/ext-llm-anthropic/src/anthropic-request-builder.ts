@@ -3,10 +3,12 @@ import {
   closeSchemaForOutputConfig,
   isProxyWithoutHooks,
   jsonValuesEqual,
+  readInlineFileData,
   readProviderOptions,
   readRecord,
   snapshotProviderJsonValue,
   stringifyToolResultValue,
+  unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -1066,18 +1068,15 @@ function toAnthropicUserContent(
       if (part.text.length > 0) content.push({ type: "text", text: part.text });
       continue;
     }
-    const image = part.type === "image" || part.mediaType.startsWith("image/");
-    if (!image && part.mediaType !== "application/pdf") {
-      throw new TypeError("Anthropic document inputs currently support PDF files only");
+    const mediaType = part.mediaType.toLowerCase();
+    const image = part.type === "image" || mediaType.startsWith("image/");
+    if (!image && mediaType !== "application/pdf") {
+      throw unsupportedFileInputError("Anthropic", part, "Use an image or a PDF file.");
     }
-    let source: Record<string, unknown> = { type: "url", url: part.url };
-    if (part.url.startsWith("data:")) {
-      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(part.url);
-      if (!match || match[1] !== part.mediaType || !match[2] || match[2].length % 4 !== 0) {
-        throw new TypeError("Inline files require base64 data with a matching MIME type");
-      }
-      source = { type: "base64", media_type: part.mediaType, data: match[2] };
-    }
+    const data = readInlineFileData(part);
+    const source = data === undefined
+      ? { type: "url", url: part.url }
+      : { type: "base64", media_type: mediaType, data };
     content.push({ type: image ? "image" : "document", source });
   }
   return content;

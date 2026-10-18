@@ -563,11 +563,15 @@ or file-upload service is required. Deno applications can use `Deno.readFile`,
 and browser applications can use `new Uint8Array(await file.arrayBuffer())` to
 obtain bytes before passing them to trusted server code.
 
-The framework encodes bytes internally. OpenAI Responses receives `file_data`;
-Anthropic receives a base64 `document` source for PDFs; Google receives `inlineData`. Existing URL file parts
-remain supported on these transports. The generic Chat Completions transport
-rejects document parts instead of silently dropping them. Select a model that
-supports the file type; the helper does not add model capabilities.
+The framework encodes bytes internally. OpenAI Responses receives `file_data`,
+Anthropic receives a base64 `document` source for PDFs, and Google receives
+`inlineData`. OpenAI Responses and Anthropic also accept PDF URLs. Google
+accepts URLs for images only, so send other files to Google as inline data.
+
+A file part that a transport cannot send fails before inference with an error
+that names the file and MIME type. Chat Completions transports reject all
+non-image files, and Anthropic rejects files other than images and PDFs. Select
+a model that supports the file type. The helper does not add model capabilities.
 
 `maxBytes` limits one file before encoding. Apply your own aggregate attachment
 budget before building a message. Base64 adds about one third to request size;

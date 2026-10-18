@@ -402,6 +402,21 @@ function toOpenAIResponsesInput(
   };
 }
 
+const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "application/json": "json",
+  "application/pdf": "pdf",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/markdown": "md",
+  "text/plain": "txt",
+};
+
+/** OpenAI infers inline file types from the filename extension. */
+function inlineFileFallbackName(mediaType: string): string {
+  const extension = INLINE_FILE_EXTENSIONS[mediaType.toLowerCase()];
+  return extension ? `file.${extension}` : "file";
+}
+
 function toOpenAIResponsesUserContent(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -422,7 +437,11 @@ function toOpenAIResponsesUserContent(
 
     content.push(
       part.url.startsWith("data:")
-        ? { type: "input_file", file_data: part.url, filename: part.filename ?? "file" }
+        ? {
+          type: "input_file",
+          file_data: part.url,
+          filename: part.filename ?? inlineFileFallbackName(part.mediaType),
+        }
         : {
           type: "input_file",
           file_url: part.url,

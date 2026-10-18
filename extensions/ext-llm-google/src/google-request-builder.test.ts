@@ -118,6 +118,42 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  it("matches inline data MIME types case-insensitively", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:Application/PDF;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
+  it("rejects remote non-image file URLs instead of sending them as fileData", () => {
+    assertThrows(
+      () =>
+        buildGoogleGenerateContentRequest("google", {
+          prompt: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "https://example.test/report.pdf",
+              mediaType: "application/pdf",
+              filename: "report.pdf",
+            }],
+          }],
+        }, createWarningCollector()),
+      TypeError,
+      'Google does not support file input "report.pdf" (application/pdf)',
+    );
+  });
+
   it("preserves generateContent request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

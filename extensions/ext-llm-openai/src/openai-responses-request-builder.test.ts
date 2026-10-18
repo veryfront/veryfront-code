@@ -49,7 +49,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
 
         assertEquals(body.input, [{
           role: "user",
-          content: [{ type: "input_file", file_data: url, filename: filename ?? "file" }],
+          content: [{ type: "input_file", file_data: url, filename: filename ?? "file.pdf" }],
         }]);
       });
     }

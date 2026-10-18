@@ -25,6 +25,7 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
+import { unsupportedFileInputError } from "./runtime-loader/inline-file.ts";
 
 export {
   jsonValuesEqual,
@@ -216,10 +217,14 @@ export function readTextParts(
 function toOpenAICompatibleUserContent(
   parts: RuntimePromptUserContent,
 ): OpenAICompatibleUserContent {
-  if (parts.some((part) => part.type === "file" && !part.mediaType.startsWith("image/"))) {
-    throw new TypeError(
-      "This Chat Completions transport does not support document inputs; use a document-capable provider",
-    );
+  for (const part of parts) {
+    if (part.type === "file" && !part.mediaType.startsWith("image/")) {
+      throw unsupportedFileInputError(
+        "Chat Completions",
+        part,
+        "Use a provider with document input support, such as OpenAI Responses, Anthropic, or Google.",
+      );
+    }
   }
   if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
     return readTextParts(parts);
