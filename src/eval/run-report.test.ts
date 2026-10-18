@@ -553,6 +553,34 @@ describe("runEvalReport single mode", () => {
     );
   });
 
+  it("renders expected terminal errors as passing Markdown and JUnit cases", async () => {
+    const report = createReport({
+      records: [{
+        ...createReport().records[0]!,
+        expectedOutcome: "error",
+        outcome: "error",
+        completed: false,
+        error: "Invalid reference",
+        metrics: [],
+      }],
+    });
+    const { adapters, writes } = createAdapters({ report });
+    await runEvalReport({
+      kind: "single",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      targetKind: "agent",
+      target: "agent:answers",
+      targetAdapter: {},
+      junit: "artifacts/expected.xml",
+    }, adapters);
+    const junit = writes.find((write) => write.path === "artifacts/expected.xml")?.content ?? "";
+    assertEquals(junit.includes("<failure"), false);
+    const markdown = writes.find((write) => write.path.endsWith("report.md"))?.content ?? "";
+    assertStringIncludes(markdown, "| PASS |");
+  });
+
   it("emits record execution errors as JUnit testcase failures", async () => {
     const failedReport = createReport({
       summary: {

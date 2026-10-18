@@ -901,6 +901,7 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       usage: normalizeUsage(response),
       durationMs: Date.now() - started,
       completed: response.status === "completed",
+      ...(response.status === "error" ? { outcome: "error" as const } : {}),
       ...(response.status === "error" ? { error: response.text } : {}),
     };
   };
@@ -923,6 +924,7 @@ export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext 
       toolCallId,
       durationMs: Date.now() - started,
       completed: !error,
+      ...(error ? { outcome: "error" as const } : {}),
       ...(error ? { error } : {}),
     };
   };
