@@ -76,8 +76,13 @@ export function buildNativeCoverageGroups() {
 }
 
 /** Owned children inherit the collector's V8 directory for range-aware merging. */
-export async function runNativeCoverageGroups(root = ROOT, groups = buildNativeCoverageGroups()) {
-  if (!process.env.NODE_V8_COVERAGE) throw new Error("Native coverage collector is required");
+export async function runNativeCoverageGroups(
+  root = ROOT,
+  groups = buildNativeCoverageGroups(),
+) {
+  if (!process.env.NODE_V8_COVERAGE) {
+    throw new Error("Native coverage collector is required");
+  }
   for (const group of groups) {
     // An owned child is a new test runner, while V8 coverage remains inherited.
     const env = buildRuntimeTestProcessEnv(process.env);
@@ -106,7 +111,9 @@ export async function runNativeCoverageGroups(root = ROOT, groups = buildNativeC
       output += chunk;
       process.stderr.write(chunk);
     });
-    const timer = group.pattern ? setTimeout(() => child.kill("SIGKILL"), 25_000) : undefined;
+    const timer = group.pattern
+      ? setTimeout(() => child.kill("SIGKILL"), 25_000)
+      : undefined;
     try {
       const code = await new Promise((resolveCode, reject) => {
         child.once("error", reject);
@@ -130,7 +137,9 @@ export async function runNativeCoverageGroups(root = ROOT, groups = buildNativeC
 }
 
 function sourcePath(root, value) {
-  return value.startsWith("file:") ? fileURLToPath(value) : resolve(root, value);
+  return value.startsWith("file:")
+    ? fileURLToPath(value)
+    : resolve(root, value);
 }
 
 /** Reject missing, empty, truncated, or generated-position coverage before upload. */
