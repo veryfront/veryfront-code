@@ -25,7 +25,11 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
-import { isImageFileInput, unsupportedFileInputError } from "./runtime-loader/inline-file.ts";
+import {
+  isImageFileInput,
+  readInlineFileData,
+  unsupportedFileInputError,
+} from "./runtime-loader/inline-file.ts";
 
 export {
   jsonValuesEqual,
@@ -239,6 +243,7 @@ function toOpenAICompatibleUserContent(
       }
       continue;
     }
+    readInlineFileData(part); // Validates inline image data before inference.
     content.push({ type: "image_url", image_url: { url: part.url } });
   }
 

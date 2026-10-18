@@ -423,7 +423,7 @@ type RuntimeUserFilePart = Exclude<
 
 /**
  * Build an inline `input_file`. OpenAI infers the file type from the filename
- * extension, so a part without a filename needs a MIME type we can name.
+ * extension, so a filename without one needs a MIME type we can name.
  */
 function toOpenAIResponsesInlineFile(
   part: RuntimeUserFilePart,
@@ -431,8 +431,9 @@ function toOpenAIResponsesInlineFile(
 ): Record<string, unknown> {
   const mediaType = part.mediaType.toLowerCase();
   const extension = INLINE_FILE_EXTENSIONS[mediaType];
-  const filename = fileInputBaseName(part.filename);
-  if (!filename && !extension) {
+  const name = fileInputBaseName(part.filename) ?? "file";
+  const hasExtension = /.\.[^.]+$/.test(name);
+  if (!hasExtension && !extension) {
     throw unsupportedFileInputError(
       "OpenAI Responses",
       part,
@@ -442,7 +443,7 @@ function toOpenAIResponsesInlineFile(
   return {
     type: "input_file",
     file_data: `data:${mediaType};base64,${data}`,
-    filename: filename ?? `file.${extension}`,
+    filename: hasExtension ? name : `${name}.${extension}`,
   };
 }
 
@@ -460,6 +461,7 @@ function toOpenAIResponsesUserContent(
     }
 
     if (isImageFileInput(part)) {
+      readInlineFileData(part); // Validates inline image data before inference.
       content.push({ type: "input_image", image_url: part.url, detail: "auto" });
       continue;
     }

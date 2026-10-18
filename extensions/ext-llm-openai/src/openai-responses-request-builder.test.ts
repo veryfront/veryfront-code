@@ -184,6 +184,40 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     });
   }
 
+  it("rejects inline image data whose MIME type does not match the part", () => {
+    assertThrows(
+      () => buildWithFile({ url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }),
+      TypeError,
+      "must be base64 data with a matching MIME type",
+    );
+  });
+
+  it("adds the MIME extension to an inline filename without one", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "report",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "report.pdf",
+      }],
+    }]);
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:application/zip;base64,UEs=",
+          mediaType: "application/zip",
+          filename: "archive",
+        }),
+      TypeError,
+      'OpenAI Responses does not support file input "archive" (application/zip). Set a filename with an extension',
+    );
+  });
+
   it("rejects an inline file without a filename when its type has no known extension", () => {
     assertThrows(
       () =>

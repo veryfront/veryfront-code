@@ -699,4 +699,16 @@ describe("document input capability: MIME case", () => {
       ],
     }]);
   });
+
+  it("rejects inline image data whose MIME type does not match the part", () => {
+    assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [{ type: "file", url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }],
+        }]),
+      TypeError,
+      "must be base64 data with a matching MIME type",
+    );
+  });
 });

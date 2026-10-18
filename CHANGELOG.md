@@ -21,7 +21,8 @@ case-insensitively. Other formats that a transport accepts but a model cannot
 read still reach the provider, which rejects them.
 
 OpenAI Responses requests carry only the base name of a file part's filename,
-so a stored or hand-built part with a local path does not send that path.
+so a stored or hand-built part with a local path does not send that path. A
+filename without an extension gets one from the MIME type.
 
 Chat and agent message preparation keeps inline `data:` file parts for the
 provider instead of rewriting unsupported types into `<uploaded_files>` text
