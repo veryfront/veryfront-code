@@ -65,6 +65,97 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-anthropic/anthropic-request-builder", () => {
+  for (const url of ["data:application/pdf;base64,JVBERi0=", "https://example.test/report.pdf"]) {
+    it(`preserves PDF documents from ${url.startsWith("data:") ? "bytes" : "URLs"}`, () => {
+      const body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-5",
+        "anthropic",
+        {
+          prompt: [{
+            role: "user",
+            content: [{ type: "file", url, mediaType: "application/pdf", filename: "report.pdf" }],
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.messages, [{
+        role: "user",
+        content: [{
+          type: "document",
+          source: url.startsWith("data:")
+            ? { type: "base64", media_type: "application/pdf", data: "JVBERi0=" }
+            : { type: "url", url },
+        }],
+      }]);
+    });
+  }
+  it("maps inline image bytes to a base64 image source", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: "data:image/png;base64,AQ==", mediaType: "image/png" }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "AQ==" },
+      }],
+    }]);
+  });
+  for (const url of ["data:application/pdf;base64,not-base64", "data:image/png;base64,AQ=="]) {
+    it("rejects malformed or mismatched inline PDF data", () => {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-5",
+            "anthropic",
+            {
+              prompt: [{
+                role: "user",
+                content: [{ type: "file", url, mediaType: "application/pdf" }],
+              }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "matching MIME",
+      );
+    });
+  }
+  it("rejects unsupported document types", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5",
+          "anthropic",
+          {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: "data:application/zip;base64,AQ==",
+                mediaType: "application/zip",
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "PDF",
+    );
+  });
+
   it("keeps a cached static system block separate from the uncached dynamic tail", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-5-20250929",

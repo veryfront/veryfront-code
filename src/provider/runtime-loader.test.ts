@@ -640,3 +640,24 @@ describe("provider/runtime-loader", () => {
     });
   });
 });
+
+describe("document input capability", () => {
+  it("rejects files before text-only fast paths can discard them", () => {
+    assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [
+            { type: "text", text: "Summarize" },
+            {
+              type: "file",
+              url: "data:application/pdf;base64,JVBERi0=",
+              mediaType: "application/pdf",
+            },
+          ],
+        }]),
+      TypeError,
+      "document",
+    );
+  });
+});

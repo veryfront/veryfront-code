@@ -97,3 +97,6 @@ export function generate(
     ...(security === undefined ? {} : { security }),
   }).generate(request);
 }
+
+/** Build an inline file message part from local bytes. */
+export { type FileBytesInput, fileFromBytes } from "./file.ts";

@@ -216,6 +216,11 @@ export function readTextParts(
 function toOpenAICompatibleUserContent(
   parts: RuntimePromptUserContent,
 ): OpenAICompatibleUserContent {
+  if (parts.some((part) => part.type === "file" && !part.mediaType.startsWith("image/"))) {
+    throw new TypeError(
+      "This Chat Completions transport does not support document inputs; use a document-capable provider",
+    );
+  }
   if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
     return readTextParts(parts);
   }

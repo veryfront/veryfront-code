@@ -30,6 +30,31 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  for (const provider of ["openai", "veryfront-cloud"] as const) {
+    for (const filename of ["request.pdf", undefined]) {
+      it(`sends inline PDF data through file_data for ${provider}, filename ${filename}`, () => {
+        const url = "data:application/pdf;base64,JVBERi0xLjQK";
+        const body = buildOpenAIResponsesRequest(
+          "gpt-5.5",
+          provider,
+          {
+            prompt: [{
+              role: "user",
+              content: [{ type: "file", url, mediaType: "application/pdf", filename }],
+            }],
+          },
+          true,
+          createWarningCollector(),
+        );
+
+        assertEquals(body.input, [{
+          role: "user",
+          content: [{ type: "input_file", file_data: url, filename: filename ?? "file" }],
+        }]);
+      });
+    }
+  }
+
   it("rejects accessor provider buckets before reading OpenAI Responses options", () => {
     let getterCalls = 0;
     const providerOptions = Object.defineProperty({}, "openai", {

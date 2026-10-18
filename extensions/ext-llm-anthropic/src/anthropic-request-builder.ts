@@ -1061,26 +1061,25 @@ function toAnthropicUserContent(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [];
-
   for (const part of parts) {
     if (part.type === "text") {
-      if (part.text.length > 0) {
-        content.push({ type: "text", text: part.text });
-      }
+      if (part.text.length > 0) content.push({ type: "text", text: part.text });
       continue;
     }
-
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({
-        type: "image",
-        source: {
-          type: "url",
-          url: part.url,
-        },
-      });
+    const image = part.type === "image" || part.mediaType.startsWith("image/");
+    if (!image && part.mediaType !== "application/pdf") {
+      throw new TypeError("Anthropic document inputs currently support PDF files only");
     }
+    let source: Record<string, unknown> = { type: "url", url: part.url };
+    if (part.url.startsWith("data:")) {
+      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(part.url);
+      if (!match || match[1] !== part.mediaType || !match[2] || match[2].length % 4 !== 0) {
+        throw new TypeError("Inline files require base64 data with a matching MIME type");
+      }
+      source = { type: "base64", media_type: part.mediaType, data: match[2] };
+    }
+    content.push({ type: image ? "image" : "document", source });
   }
-
   return content;
 }
 

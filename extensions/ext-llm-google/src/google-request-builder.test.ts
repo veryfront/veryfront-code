@@ -101,6 +101,23 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-google/google-request-builder", () => {
+  it("preserves inline PDF bytes", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:application/pdf;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
   it("preserves generateContent request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

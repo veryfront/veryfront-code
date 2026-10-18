@@ -529,3 +529,47 @@ curl -N http://localhost:3000/api/ag-ui \
 A token stream that ends without an authentication error means the provider
 resolved. In a chat UI, the `inferenceMode` field on `useChat` reports
 whether the call used cloud, server-local, or browser inference.
+
+## Local file input
+
+Use `fileFromBytes` from `veryfront/llm` to send a local PDF without an upload link.
+The helper accepts `Uint8Array` bytes, including Node.js `Buffer` values, and
+returns a file part for `generate` or agent messages.
+
+```ts
+import { readFile } from "node:fs/promises";
+import { fileFromBytes, generate } from "veryfront/llm";
+
+const file = fileFromBytes({
+  bytes: await readFile("report.pdf"),
+  filename: "report.pdf",
+  mediaType: "application/pdf",
+  maxBytes: 8 * 1024 * 1024,
+});
+
+const result = await generate({
+  model: "openai/gpt-5.5",
+  input: [{
+    id: "report-request",
+    role: "user",
+    parts: [{ type: "text", text: "Summarize this report." }, file],
+  }],
+});
+console.log(result.text);
+```
+
+Configure your direct provider key as described above. No Veryfront Cloud token
+or file-upload service is required. Deno applications can use `Deno.readFile`,
+and browser applications can use `new Uint8Array(await file.arrayBuffer())` to
+obtain bytes before passing them to trusted server code.
+
+The framework encodes bytes internally. OpenAI Responses receives `file_data`;
+Anthropic receives a base64 `document` source for PDFs; Google receives `inlineData`. Existing URL file parts
+remain supported on these transports. The generic Chat Completions transport
+rejects document parts instead of silently dropping them. Select a model that
+supports the file type; the helper does not add model capabilities.
+
+`maxBytes` limits one file before encoding. Apply your own aggregate attachment
+budget before building a message. Base64 adds about one third to request size;
+provider request and model limits still apply. The helper does not validate file
+contents or extract text. Filenames and MIME types must describe the actual file.

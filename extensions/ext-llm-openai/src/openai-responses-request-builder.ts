@@ -420,11 +420,15 @@ function toOpenAIResponsesUserContent(
       continue;
     }
 
-    content.push({
-      type: "input_file",
-      file_url: part.url,
-      ...(part.filename ? { filename: part.filename } : {}),
-    });
+    content.push(
+      part.url.startsWith("data:")
+        ? { type: "input_file", file_data: part.url, filename: part.filename ?? "file" }
+        : {
+          type: "input_file",
+          file_url: part.url,
+          ...(part.filename ? { filename: part.filename } : {}),
+        },
+    );
   }
 
   return content;
