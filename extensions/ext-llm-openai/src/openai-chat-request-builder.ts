@@ -112,7 +112,13 @@ export function buildOpenAIChatRequest(
 
   // Reasoning models and models with fixed sampling params
   // reject sampling params outright. Emit warnings.
-  if (dropSamplingParams) {
+  const samplingWarningDetails = (openaiName: string) => {
+    if (fixedSampling) return `Dropped because this model uses fixed sampling parameters.`;
+    if (samplingRejected) return `Dropped because this model rejects ${openaiName}.`;
+    return `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`;
+  };
+  const warnDroppedSamplingParams = () => {
+    if (!dropSamplingParams) return;
     const dropped: Array<[keyof typeof options, string]> = [
       ["temperature", "temperature"],
       ["topP", "top_p"],
@@ -125,25 +131,20 @@ export function buildOpenAIChatRequest(
           type: "unsupported-setting",
           provider: "openai",
           setting: key,
-          details: fixedSampling
-            ? `Dropped because this model uses fixed sampling parameters.`
-            : samplingRejected
-            ? `Dropped because this model rejects ${openaiName}.`
-            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
+          details: samplingWarningDetails(openaiName),
         });
       }
     }
-  }
+  };
+  warnDroppedSamplingParams();
 
-  const body: OpenAICompatibleChatRequest = {
-    model: modelId,
-    messages,
-    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-    ...(options.maxOutputTokens !== undefined
-      ? isNativeOpenAIModel(modelId)
-        ? { max_completion_tokens: options.maxOutputTokens }
-        : { max_tokens: options.maxOutputTokens }
-      : {}),
+  const tokenLimitFields = () => {
+    if (options.maxOutputTokens === undefined) return {};
+    return isNativeOpenAIModel(modelId)
+      ? { max_completion_tokens: options.maxOutputTokens }
+      : { max_tokens: options.maxOutputTokens };
+  };
+  const samplingAndStopFields = () => ({
     ...(!dropSamplingParams && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
@@ -151,23 +152,16 @@ export function buildOpenAIChatRequest(
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: [...options.stopSequences] }
       : {}),
-    ...(tools ? { tools } : {}),
-    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
-    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+  });
+  const penaltyFields = () => ({
     ...(!dropSamplingParams && options.presencePenalty !== undefined
       ? { presence_penalty: options.presencePenalty }
       : {}),
     ...(!dropSamplingParams && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
-    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
-    ...(typeof options.userId === "string" && options.userId.length > 0
-      ? { user: options.userId }
-      : {}),
-    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
-    ...(options.parallelToolCalls !== undefined
-      ? { parallel_tool_calls: options.parallelToolCalls }
-      : {}),
+  });
+  const responseFormatFields = () => ({
     ...(options.responseFormat && options.responseFormat.type !== "text"
       ? {
         response_format: options.responseFormat.type === "json" ? { type: "json_object" } : {
@@ -185,32 +179,58 @@ export function buildOpenAIChatRequest(
         },
       }
       : {}),
+  });
+  const userFields = () => ({
+    ...(typeof options.userId === "string" && options.userId.length > 0
+      ? { user: options.userId }
+      : {}),
+  });
+  const body: OpenAICompatibleChatRequest = {
+    model: modelId,
+    messages,
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
+    ...tokenLimitFields(),
+    ...samplingAndStopFields(),
+    ...(tools ? { tools } : {}),
+    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...penaltyFields(),
+    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
+    ...userFields(),
+    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
+    ...(options.parallelToolCalls !== undefined
+      ? { parallel_tool_calls: options.parallelToolCalls }
+      : {}),
+    ...responseFormatFields(),
   };
 
   defineOpenAIProviderOptions(body as Record<string, unknown>, providerOpts);
   // Provider-native options may tune request behavior, but they must not
   // replace the runtime-owned transport mode, model, or conversation.
-  body.model = modelId;
-  body.messages = messages;
-  if (stream) {
-    body.stream = true;
-    body.stream_options = { include_usage: true };
-  } else {
-    delete body.stream;
-    delete body.stream_options;
-  }
-  if (suppressReasoningForFunctionTools) {
-    if (resolvedReasoning !== undefined || body.reasoning_effort !== undefined) {
-      warnings.push({
-        type: "unsupported-setting",
-        provider: "openai",
-        setting: "reasoning",
-        details: "Veryfront drops reasoning because this Chat Completions transport " +
-          "does not support reasoning alongside function tools.",
-      });
+  const applyTransportCapabilities = () => {
+    body.model = modelId;
+    body.messages = messages;
+    if (stream) {
+      body.stream = true;
+      body.stream_options = { include_usage: true };
+    } else {
+      delete body.stream;
+      delete body.stream_options;
     }
-    delete body.reasoning_effort;
-  }
+    if (suppressReasoningForFunctionTools) {
+      if (resolvedReasoning !== undefined || body.reasoning_effort !== undefined) {
+        warnings.push({
+          type: "unsupported-setting",
+          provider: "openai",
+          setting: "reasoning",
+          details: "Veryfront drops reasoning because this Chat Completions transport " +
+            "does not support reasoning alongside function tools.",
+        });
+      }
+      delete body.reasoning_effort;
+    }
+  };
+  applyTransportCapabilities();
   return body;
 }
 
