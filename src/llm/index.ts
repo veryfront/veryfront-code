@@ -66,6 +66,11 @@ export interface GenerateInput<
   maxOutputTokens?: number;
   temperature?: number;
   abortSignal?: AbortSignal;
+  /**
+   * Set to false to disable the default security middleware (prompt-injection
+   * blocking and PII output filtering), as an agent's `security` does.
+   */
+  security?: false;
 }
 
 /**
@@ -79,7 +84,7 @@ export function generate<TOutputSchema extends AgentOutputSchema>(
 ): Promise<AgentResponse<InferAgentOutputSchema<TOutputSchema>>>;
 export function generate(input: GenerateInput): Promise<AgentResponse>;
 export function generate(
-  { system, temperature, outputSchema, ...request }: GenerateInput<
+  { system, temperature, outputSchema, security, ...request }: GenerateInput<
     AgentOutputSchema | undefined
   >,
 ): Promise<AgentResponse> {
@@ -89,5 +94,6 @@ export function generate(
     maxSteps: 1,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(temperature === undefined ? {} : { temperature }),
+    ...(security === undefined ? {} : { security }),
   }).generate(request);
 }

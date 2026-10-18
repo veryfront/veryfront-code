@@ -575,6 +575,11 @@ const { text } = await generate({
 It runs one step with no tools, skills or memory, and takes the same
 `outputSchema` an agent does.
 
+Like an agent, `generate` blocks prompt injection in its input and masks PII
+such as email addresses in its output by default. Pass `security: false` to
+keep those values, for example when you extract contact details. This turns off
+both protections, so only use it on input you trust.
+
 Reach for an agent instead when you need the thing itself rather than the
 answer: a registered id other code resolves, tools, memory across turns, or a
 system prompt built at request time. To hold such an agent to a single
