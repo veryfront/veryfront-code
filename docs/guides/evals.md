@@ -649,7 +649,9 @@ unless they are explicitly included in the `mockTools` result. Skills agents kee
 only the read-only skill loader tools, `veryfront__load_skill` and
 `veryfront__load_skill_reference`, so a skills agent can inspect skill instructions during a
 mocked eval; `veryfront__execute_skill_script` is not retained unless `mockTools` supplies
-it explicitly.
+it explicitly. Canonical `veryfront__*` fixtures are advertised and executed
+only within that local eval request; they do not gain platform authority in
+ordinary agent requests.
 
 Loaded-skill allowed-tool policies and delegation overrides are
 disabled while mock tools are active; the mock tool map is the complete tool

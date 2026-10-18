@@ -8,6 +8,7 @@ import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-proven
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { isActiveEvalMockTool } from "./eval-mock-tool-scope.ts";
 import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import {
   inheritRuntimeProviderSchemaHiddenTool,
@@ -142,11 +143,13 @@ function isAllowedBySourcePolicy(
   policy: SourceIntegrationPolicyManifest,
   entry?: unknown,
   remoteDefinitions: ToolDefinition[] = [],
+  strictConfiguredToolsOnly = false,
 ): boolean {
   if (!isReservedPlatformToolName(name)) {
     return isIntegrationToolAllowedBySourcePolicy(name, policy);
   }
   if (hasTrustedHostToolProvenance(entry)) return true;
+  if (strictConfiguredToolsOnly && isActiveEvalMockTool(name, entry)) return true;
   for (let index = 0; index < remoteDefinitions.length; index++) {
     if (!intrinsicHasOwn(remoteDefinitions, index)) continue;
     const definition = remoteDefinitions[index]!;
@@ -536,6 +539,8 @@ async function executeConfiguredToolImplementation(
       configuredEntry === true || configuredEntry === undefined
         ? resolveVisibleRegistryTool(toolName, context?.agentId)
         : configuredEntry,
+      [],
+      options?.strictConfiguredToolsOnly,
     ) &&
     !((configuredEntry === undefined || configuredEntry === true) &&
       (selectedSource = await resolveTrustedPlatformSource(
@@ -809,6 +814,7 @@ export async function getAvailableTools(
         sourceIntegrationPolicy,
         entry === true ? resolveVisibleRegistryTool(name, options?.callerAgentId) : entry,
         remoteDefs,
+        strictConfiguredToolsOnly,
       )
     ) {
       continue;
@@ -920,5 +926,6 @@ export async function getAvailableTools(
         ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
         : toolsConfig[definition.name],
       remoteDefs,
+      strictConfiguredToolsOnly,
     ));
 }

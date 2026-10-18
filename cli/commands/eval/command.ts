@@ -4,6 +4,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
+import { runWithEvalMockToolScope } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
@@ -874,24 +875,28 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
     // A resolver that ignored the signal can return after the deadline. The
     // record is already reported as timed out, so start no model request.
     if (signal?.aborted) throw signal.reason;
-    const response = await agent.generate({
-      input: normalizeEvalInputForAgent(example.input),
-      context: {
-        eval: {
-          definitionId: definition.id,
-          exampleId: example.id,
-          repetition,
-          metadata: example.metadata ?? {},
+    const generate = () =>
+      agent.generate({
+        input: normalizeEvalInputForAgent(example.input),
+        context: {
+          eval: {
+            definitionId: definition.id,
+            exampleId: example.id,
+            repetition,
+            metadata: example.metadata ?? {},
+          },
         },
-      },
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-      ...(definition.mockTools !== undefined
-        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-        : {}),
-      // The runner aborts this when the case passes --record-timeout.
-      ...(signal ? { abortSignal: signal } : {}),
-    });
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+        ...(definition.mockTools !== undefined
+          ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+          : {}),
+        // The runner aborts this when the case passes --record-timeout.
+        ...(signal ? { abortSignal: signal } : {}),
+      });
+    const response = definition.mockTools !== undefined
+      ? await runWithEvalMockToolScope(mockTools ?? {}, generate)
+      : await generate();
     return {
       text: response.text,
       trace: {

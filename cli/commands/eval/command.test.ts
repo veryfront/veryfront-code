@@ -897,6 +897,72 @@ describe("eval CLI command helpers", () => {
     assertEquals(report.records[0]?.completed, false);
   });
 
+  it("advertises and executes canonical mocks only during an eval", async () => {
+    const observed: string[][] = [];
+    let step = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-canonical-mock",
+      async doGenerate(options) {
+        const tools =
+          (options as { tools?: Array<{ name: string }> | Record<string, unknown> }).tools;
+        observed.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name).toSorted()
+            : Object.keys(tools ?? {}).toSorted(),
+        );
+        if (++step === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "call-canonical",
+              toolName: "veryfront__invoke_agent",
+              input: '{"query":"delegated"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = createAgent({
+      id: "eval-canonical-mock-runtime",
+      model: "hosted/eval-canonical-mock",
+      system: "Call the canonical mock.",
+      skills: false,
+      tools: {},
+      resolveModelTransport: async () => ({ model }),
+    });
+    const canonical = makeEvalTool("veryfront__invoke_agent", "canonical-mock");
+    const mocks = { veryfront__invoke_agent: canonical, local_mock: makeEvalTool("local_mock") };
+    const definition = evalAgent({
+      id: "eval:canonical-mock-runtime",
+      target: "agent:eval-canonical-mock-runtime",
+      dataset: [{ id: "one", input: "delegate" }],
+      mockTools: mocks,
+    });
+    const result = await createAgentAdapter(assistant, createEvalOptions())({
+      definition,
+      example: { id: "one", input: "delegate" },
+      repetition: 1,
+    });
+    assertEquals(observed[0], ["local_mock", "veryfront__invoke_agent"]);
+    assertEquals(result.trace?.toolCalls?.map((call) => [call.name, call.status]), [[
+      "veryfront__invoke_agent",
+      "ok",
+    ]]);
+    await assistant.generate({ input: "outside eval", tools: mocks });
+    assertEquals(observed.at(-1), ["local_mock"]);
+  });
+
   it("passes static mock tools into real agent.generate and keeps real traces", async () => {
     const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
     let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
