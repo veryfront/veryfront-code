@@ -100,9 +100,9 @@ function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
   const view = new NativeUint8Array(buffer, byteOffset + offset, byteLength - offset);
   // Node's native fs.write wrapper reads these properties before entering the
   // binding. Keep mutable typed-array getters away from confidential chunks.
-  void defineProperty(view, "buffer", createDataDescriptor(buffer, false));
-  void defineProperty(view, "byteOffset", createDataDescriptor(byteOffset + offset, false));
-  void defineProperty(view, "byteLength", createDataDescriptor(byteLength - offset, false));
+  defineProperty(view, "buffer", createDataDescriptor(buffer, false));
+  defineProperty(view, "byteOffset", createDataDescriptor(byteOffset + offset, false));
+  defineProperty(view, "byteLength", createDataDescriptor(byteLength - offset, false));
   return view;
 }
 
@@ -128,25 +128,22 @@ function isHexAt(value: string, index: number): boolean {
     (code >= 65 && code <= 70);
 }
 
+function isCapturedUuidCharacter(value: string, index: number): boolean {
+  if (index === 8 || index === 13 || index === 18 || index === 23) {
+    return stringCharCodeAt(value, index) === 45;
+  }
+  if (index === 14) return stringCharCodeAt(value, index) === 52;
+  if (index === 19) {
+    const code = stringCharCodeAt(value, index);
+    return code === 56 || code === 57 || code === 97 || code === 98 || code === 65 || code === 66;
+  }
+  return isHexAt(value, index);
+}
+
 function isCapturedUuid(value: string): boolean {
   if (value.length !== 36) return false;
   for (let index = 0; index < value.length; index++) {
-    if (index === 8 || index === 13 || index === 18 || index === 23) {
-      if (stringCharCodeAt(value, index) !== 45) return false;
-      continue;
-    }
-    if (index === 14) {
-      if (stringCharCodeAt(value, index) !== 52) return false;
-      continue;
-    }
-    if (index === 19) {
-      const code = stringCharCodeAt(value, index);
-      if (code !== 56 && code !== 57 && code !== 97 && code !== 98 && code !== 65 && code !== 66) {
-        return false;
-      }
-      continue;
-    }
-    if (!isHexAt(value, index)) return false;
+    if (!isCapturedUuidCharacter(value, index)) return false;
   }
   return true;
 }
@@ -979,6 +976,22 @@ export async function writeStreamExclusive(
   };
 
   let pipeStarted = false;
+  const cleanupFailedWrite = async (): Promise<void> => {
+    if (!pipeStarted) await cancelSource();
+    if (handle) {
+      try {
+        await closeHandle();
+      } catch {
+        // Preserve the stream failure while still attempting file cleanup.
+      }
+      try {
+        await remove();
+      } catch {
+        // Cleanup failures must not replace the original stream failure.
+      }
+    }
+  };
+
   try {
     signal?.throwIfAborted();
     handle = await bindNativePromiseConstructor(open());
@@ -1003,20 +1016,6 @@ export async function writeStreamExclusive(
     failed = false;
     return bytes;
   } finally {
-    if (failed) {
-      if (!pipeStarted) await cancelSource();
-      if (handle) {
-        try {
-          await closeHandle();
-        } catch {
-          // Preserve the stream failure while still attempting file cleanup.
-        }
-        try {
-          await remove();
-        } catch {
-          // Cleanup failures must not replace the original stream failure.
-        }
-      }
-    }
+    if (failed) await bindNativePromiseConstructor(cleanupFailedWrite());
   }
 }
