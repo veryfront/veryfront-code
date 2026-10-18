@@ -99,9 +99,9 @@ mode preserves the existing root file when no document-relative file exists. Thi
 behavior preserves bytes during ingestion and does not rewrite OKF graph semantics.
 
 Project pull writes referenced UTF-8 companions returned for a branch proof without adding their extensions to ordinary push or prune source sync.
-Referenced non-Markdown companions use immutable raw-byte asset storage. Each asset is limited to 8 MiB.
+Referenced non-text binary companions use immutable raw-byte asset storage. Each asset is limited to 8 MiB.
 Publication resolves the selected branch name or UUID, then sends a SHA-256 digest and an absent-file precondition.
-An existing destination produces a conflict; ingestion does not overwrite it or retry an ambiguous write.
+A retry reuses an existing binary asset only after verifying its exact scoped path, immutable version, digest and bytes. Different content produces a conflict; ingestion does not overwrite it or blindly repeat an ambiguous write.
 Asset edits require the expected current version UUID. This capability requires a compatible API release.
 Referenced Markdown companions preserve their bytes even when their contents resemble
 malformed YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log
