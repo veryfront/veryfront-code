@@ -1124,6 +1124,15 @@ async function readChunk(
   });
 }
 
+/**
+ * Starts cancelling a reader without waiting for it. Detached for the same
+ * reason as readResponseTextPrefix: an untrusted cancellation promise must not
+ * hold the caller past its deadline.
+ */
+function startDetachedCancel(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void reader.cancel().catch(() => {});
+}
+
 export interface ResponseBytesPrefix {
   bytes: Uint8Array;
   /** True when the byte limit was reached before EOF was observed. */
@@ -1168,10 +1177,7 @@ export async function readResponseBytesPrefix(
   } finally {
     if (!completed) {
       try {
-        const cancellation = reader.cancel();
-        // Detached for the same reason as readResponseTextPrefix: an untrusted
-        // cancellation promise must not hold the caller past its deadline.
-        void cancellation.catch(() => {});
+        startDetachedCancel(reader);
       } catch {
         /* cancellation is best-effort cleanup */
       }
