@@ -1,3 +1,4 @@
+import { recoveryHistoryMessageDigest } from "#veryfront/internal-agents/recovery-history.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -246,4 +247,37 @@ it("snapshots require an actual positive safe database acknowledgement independe
   }
   const { acknowledgedEventId: _omitted, ...missing } = value;
   assertThrows(() => parseRecoverySnapshot(missing));
+});
+
+it("public snapshot parsing cannot attach provider replay provenance", () => {
+  const value = fixture();
+  const message = {
+    id: "historical-assistant",
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: "Historical answer" }],
+  };
+  const historical = {
+    ...value,
+    messages: [message],
+    modelTurns: [],
+    toolBoundaries: [],
+    initialHistoryMessageIds: [message.id],
+    initialHistoryMessageDigests: [recoveryHistoryMessageDigest(message)],
+    initialHistoryProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: message.id,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "text", text: "Historical answer" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
+  };
+  const parsed = parseRecoverySnapshot(historical);
+  assertEquals(readAttachedProviderMetadata(parsed.messages[0]!), undefined);
+  const restored = validateRecoverySnapshotForRestore(historical, parsed.binding);
+  assertEquals(readAttachedProviderMetadata(restored.messages[0]!) !== undefined, true);
 });

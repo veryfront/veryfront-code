@@ -4108,16 +4108,31 @@ export class AgentRuntime {
     );
   }
 
-  #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
-    return withRuntimeStreamOwnership(() =>
-      withRuntimeTurnLineage(
-        this,
-        () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
-      )
-    );
+  async #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
+    const completion = createPrivateDeferred<void>();
+    const lifetime = { completion, producerStarted: false };
+    // Reserve the lifetime before transport, model readiness or memory preflight can fail.
+    void chainPrivatePromise(completion.promise, () => {}, () => {});
+    try {
+      this.#onStreamCompletion?.(completion.promise);
+      return await withRuntimeStreamOwnership(() =>
+        withRuntimeTurnLineage(
+          this,
+          () => withLocalChildRuntime(this, () => this.#streamWithinTurn(lifetime, ...args)),
+        )
+      );
+    } catch (error) {
+      // Once start runs, only its actual finalizer can report producer settlement.
+      if (!lifetime.producerStarted) completion.resolve();
+      throw error;
+    }
   }
 
   async #streamWithinTurn(
+    lifetime: {
+      completion: ReturnType<typeof createPrivateDeferred<void>>;
+      producerStarted: boolean;
+    },
     messages: Message[],
     context?: Record<string, unknown>,
     callbacks?: AgentRuntimeStreamCallbacks,
@@ -4241,12 +4256,10 @@ export class AgentRuntime {
       // an unhandled rejection under Deno (#2334).
       let inFlight: Promise<AgentResponse> | undefined;
 
-      const completion = createPrivateDeferred<void>();
-      // The observer is optional; retain cleanup failure without an unhandled rejection.
-      void chainPrivatePromise(completion.promise, () => {}, () => {});
-      this.#onStreamCompletion?.(completion.promise);
+      const { completion } = lifetime;
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
+          lifetime.producerStarted = true;
           let streamedResponseText = "";
           let terminalCompleted = false;
           try {
