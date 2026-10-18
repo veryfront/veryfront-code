@@ -7,6 +7,8 @@
  * while still placing deterministic bounds on authenticated remote input.
  */
 
+import { JSON_VALUE_MAX_STRING_BYTES } from "#veryfront/schemas/json-value.ts";
+
 /** End-to-end deadline for one integration API request, including body reads. */
 export const INTEGRATION_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -24,6 +26,16 @@ export const MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 /** Maximum decoded JSON response accepted from tool execution. */
 export const MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Maximum raw bytes accepted from a binary (base64-encoded) tool response.
+ *
+ * Sized so the base64 string fits one bounded JSON string
+ * ({@link JSON_VALUE_MAX_STRING_BYTES}), which hosted runtimes enforce on every
+ * tool result. A larger body is rejected, never truncated.
+ */
+export const MAX_INTEGRATION_BINARY_RESPONSE_BYTES = Math.floor(JSON_VALUE_MAX_STRING_BYTES / 4) *
+  3;
 
 /** Maximum diagnostic prefix retained from a failed integration API response. */
 export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;

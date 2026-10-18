@@ -70,6 +70,23 @@ The shared mailbox tools call `/users/{mailbox}/...` for the mailbox you name in
 - Pass `prefer: IdType="ImmutableId"` to the message and attachment tools to use immutable
   message IDs. An immutable ID stays the same when the message moves to another folder.
 
+### Attachments versus original MIME
+
+- `list_shared_mailbox_attachments` returns attachment metadata only. `get_shared_mailbox_attachment`
+  returns one Graph attachment object; a file attachment carries its content as `contentBytes`.
+  Graph does not list every part as an attachment: a signed message (`multipart/signed` or
+  `application/pkcs7-mime`) can hold its files only inside the signed content.
+- `get_shared_mailbox_email_mime` returns the original message as Graph stores it
+  (`GET /users/{mailbox}/messages/{messageId}/$value`). It is read-only. The result is
+  `{ encoding: "base64", content_base64, size, content_type }`, and `content_base64` decodes to
+  the exact bytes, including signed and nested `message/rfc822` parts.
+- Size limits. This connector uses delegated OAuth, so its tools run through Veryfront Cloud,
+  which returns at most 774,144 bytes (756 KiB) of MIME. The framework's local endpoint executor
+  accepts up to 786,432 bytes (768 KiB), the most that fits one bounded tool-result string. A
+  larger message fails with an error.
+- A response that is partial or shorter than its declared length also fails. The tool never
+  returns truncated MIME.
+
 ### 4. Add Environment Variables
 
 Add to your `.env` file:
