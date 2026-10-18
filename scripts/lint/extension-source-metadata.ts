@@ -891,6 +891,76 @@ function bindingIsPrivateToDefaultExport(ast: AstNode, name: string): boolean {
   return true;
 }
 
+function resolveFactoryBinding(
+  module: StaticModuleBindings,
+  value: AstNode,
+  active: Set<string>,
+  depth: number,
+): StaticResolutionResult<FactoryDescriptor> {
+  const name = identifierName(value)!;
+  if (active.has(name)) {
+    return resolutionFailure("cycle", `factory binding cycle at ${name}`);
+  }
+  const bound = module.values.get(name);
+  if (!bound) {
+    return resolutionFailure(
+      "binding-not-found",
+      `default-export binding ${name} was not found`,
+    );
+  }
+  const boundValue = unwrapExpression(bound) ?? bound;
+  if (
+    boundValue.type !== "ArrowFunctionExpression" &&
+    boundValue.type !== "FunctionExpression"
+  ) {
+    return resolutionFailure(
+      "unsupported-expression",
+      `default-export binding ${name} must be a const function expression`,
+    );
+  }
+  if (!bindingIsPrivateToDefaultExport(module.ast, name)) {
+    return resolutionFailure(
+      "unsupported-expression",
+      `default-export factory binding ${name} has additional references`,
+    );
+  }
+  active.add(name);
+  const result = resolveFactoryDescriptor(
+    module,
+    boundValue,
+    active,
+    depth + 1,
+  );
+  active.delete(name);
+  return result;
+}
+
+function isBoundedMetadataSourceFile(
+  info: Pick<Deno.FileInfo, "isFile" | "size">,
+): boolean {
+  return !(!info.isFile || !Number.isSafeInteger(info.size) || info.size < 0);
+}
+
+function findStaticImportMappingKey(
+  imports: Readonly<Record<string, unknown>>,
+  specifier: string,
+): string | undefined {
+  let mappingKey: string | undefined;
+  if (Object.hasOwn(imports, specifier)) {
+    mappingKey = specifier;
+  } else {
+    for (
+      const key of Object.keys(imports).sort(compareDeterministically)
+    ) {
+      if (
+        key.endsWith("/") && specifier.startsWith(key) &&
+        (mappingKey === undefined || key.length > mappingKey.length)
+      ) mappingKey = key;
+    }
+  }
+  return mappingKey;
+}
+
 function resolveFactoryDescriptor(
   module: StaticModuleBindings,
   expression: AstNode,
@@ -905,42 +975,7 @@ function resolveFactoryDescriptor(
   }
   const value = unwrapExpression(expression) ?? expression;
   if (value.type === "Identifier") {
-    const name = identifierName(value)!;
-    if (active.has(name)) {
-      return resolutionFailure("cycle", `factory binding cycle at ${name}`);
-    }
-    const bound = module.values.get(name);
-    if (!bound) {
-      return resolutionFailure(
-        "binding-not-found",
-        `default-export binding ${name} was not found`,
-      );
-    }
-    const boundValue = unwrapExpression(bound) ?? bound;
-    if (
-      boundValue.type !== "ArrowFunctionExpression" &&
-      boundValue.type !== "FunctionExpression"
-    ) {
-      return resolutionFailure(
-        "unsupported-expression",
-        `default-export binding ${name} must be a const function expression`,
-      );
-    }
-    if (!bindingIsPrivateToDefaultExport(module.ast, name)) {
-      return resolutionFailure(
-        "unsupported-expression",
-        `default-export factory binding ${name} has additional references`,
-      );
-    }
-    active.add(name);
-    const result = resolveFactoryDescriptor(
-      module,
-      boundValue,
-      active,
-      depth + 1,
-    );
-    active.delete(name);
-    return result;
+    return resolveFactoryBinding(module, value, active, depth);
   }
   if (
     value.type !== "ArrowFunctionExpression" &&
@@ -1447,6 +1482,31 @@ class StaticContractResolver {
     return { ok: true, value: realPath };
   }
 
+  #recordSourceBytes(
+    bytes: Uint8Array,
+  ): StaticResolutionResult<never> | undefined {
+    if (this.#workspaceBudget) {
+      this.#workspaceBudget.sourceBytes += bytes.length;
+      if (
+        this.#workspaceBudget.sourceBytes >
+          MAX_EXTENSION_METADATA_WORKSPACE_SOURCE_BYTES
+      ) {
+        return resolutionFailure(
+          "workspace-total-source-too-large",
+          `workspace audit exceeds ${MAX_EXTENSION_METADATA_WORKSPACE_SOURCE_BYTES} parsed source bytes`,
+        );
+      }
+    }
+    this.#totalSourceBytes += bytes.length;
+    if (this.#totalSourceBytes > MAX_EXTENSION_METADATA_TOTAL_SOURCE_BYTES) {
+      return resolutionFailure(
+        "total-source-too-large",
+        `resolution exceeds ${MAX_EXTENSION_METADATA_TOTAL_SOURCE_BYTES} total source bytes`,
+      );
+    }
+    return undefined;
+  }
+
   async #loadModule(
     unresolvedPath: string,
   ): Promise<StaticResolutionResult<StaticModuleBindings>> {
@@ -1483,7 +1543,7 @@ class StaticContractResolver {
         `could not inspect ${this.#pathLabel(path)}`,
       );
     }
-    if (!info.isFile || !Number.isSafeInteger(info.size) || info.size < 0) {
+    if (!isBoundedMetadataSourceFile(info)) {
       return resolutionFailure(
         "source-not-regular",
         `source is not a regular bounded file: ${this.#pathLabel(path)}`,
@@ -1514,25 +1574,8 @@ class StaticContractResolver {
         } exceeds ${MAX_EXTENSION_METADATA_SOURCE_BYTES} bytes`,
       );
     }
-    if (this.#workspaceBudget) {
-      this.#workspaceBudget.sourceBytes += bytes.length;
-      if (
-        this.#workspaceBudget.sourceBytes >
-          MAX_EXTENSION_METADATA_WORKSPACE_SOURCE_BYTES
-      ) {
-        return resolutionFailure(
-          "workspace-total-source-too-large",
-          `workspace audit exceeds ${MAX_EXTENSION_METADATA_WORKSPACE_SOURCE_BYTES} parsed source bytes`,
-        );
-      }
-    }
-    this.#totalSourceBytes += bytes.length;
-    if (this.#totalSourceBytes > MAX_EXTENSION_METADATA_TOTAL_SOURCE_BYTES) {
-      return resolutionFailure(
-        "total-source-too-large",
-        `resolution exceeds ${MAX_EXTENSION_METADATA_TOTAL_SOURCE_BYTES} total source bytes`,
-      );
-    }
+    const budgetFailure = this.#recordSourceBytes(bytes);
+    if (budgetFailure) return budgetFailure;
     let source: string;
     try {
       source = decoder.decode(bytes);
@@ -1574,19 +1617,7 @@ class StaticContractResolver {
       return { ok: true, value: resolve(dirname(importer), specifier) };
     }
 
-    let mappingKey: string | undefined;
-    if (Object.hasOwn(this.#imports, specifier)) {
-      mappingKey = specifier;
-    } else {
-      for (
-        const key of Object.keys(this.#imports).sort(compareDeterministically)
-      ) {
-        if (
-          key.endsWith("/") && specifier.startsWith(key) &&
-          (mappingKey === undefined || key.length > mappingKey.length)
-        ) mappingKey = key;
-      }
-    }
+    const mappingKey = findStaticImportMappingKey(this.#imports, specifier);
     if (mappingKey === undefined) {
       return resolutionFailure(
         "non-local-import",
@@ -1664,6 +1695,95 @@ class StaticContractResolver {
     );
   }
 
+  async #resolveLocalBinding(
+    module: StaticModuleBindings,
+    path: string,
+    name: string,
+    depth: number,
+    active: Set<string>,
+  ): Promise<StaticResolutionResult<string>> {
+    const local = module.locals.get(name);
+    if (local?.kind === "literal") return { ok: true, value: local.value };
+    if (local?.kind === "identifier") {
+      return await this.#resolveBinding(
+        "local",
+        path,
+        local.name,
+        depth + 1,
+        active,
+      );
+    }
+    if (local?.kind === "unsupported") {
+      return resolutionFailure(
+        "unsupported-expression",
+        `binding ${
+          this.#pathLabel(path)
+        }#${name} is not exactly a static string or identifier`,
+      );
+    }
+    const imported = module.imports.get(name);
+    if (!imported) {
+      return resolutionFailure(
+        "binding-not-found",
+        `binding ${this.#pathLabel(path)}#${name} was not found`,
+      );
+    }
+    const importedPath = await this.#resolveImportedPath(
+      path,
+      imported.specifier,
+    );
+    return importedPath.ok
+      ? await this.#resolveBinding(
+        "export",
+        importedPath.value,
+        imported.importedName,
+        depth + 1,
+        active,
+      )
+      : importedPath;
+  }
+
+  async #resolveStarExports(
+    module: StaticModuleBindings,
+    path: string,
+    name: string,
+    depth: number,
+    active: Set<string>,
+  ): Promise<StaticResolutionResult<string>> {
+    let match: string | undefined;
+    let matches = 0;
+    for (const specifier of module.starExports) {
+      const starPath = await this.#resolveImportedPath(path, specifier);
+      if (!starPath.ok) return starPath;
+      const starResult = await this.#resolveBinding(
+        "export",
+        starPath.value,
+        name,
+        depth + 1,
+        active,
+      );
+      if (starResult.ok) {
+        matches += 1;
+        match = starResult.value;
+      } else if (starResult.failure.code !== "binding-not-found") {
+        return starResult;
+      }
+    }
+    if (matches === 1 && match !== undefined) {
+      return { ok: true, value: match };
+    }
+    if (matches > 1) {
+      return resolutionFailure(
+        "ambiguous-binding",
+        `multiple star exports provide ${this.#pathLabel(path)}#${name}`,
+      );
+    }
+    return resolutionFailure(
+      "binding-not-found",
+      `export ${this.#pathLabel(path)}#${name} was not found`,
+    );
+  }
+
   async #resolveBinding(
     mode: "local" | "export",
     unresolvedPath: string,
@@ -1693,45 +1813,13 @@ class StaticContractResolver {
       if (!moduleResult.ok) return moduleResult;
       const module = moduleResult.value;
       if (mode === "local") {
-        const local = module.locals.get(name);
-        if (local?.kind === "literal") return { ok: true, value: local.value };
-        if (local?.kind === "identifier") {
-          return await this.#resolveBinding(
-            "local",
-            path,
-            local.name,
-            depth + 1,
-            active,
-          );
-        }
-        if (local?.kind === "unsupported") {
-          return resolutionFailure(
-            "unsupported-expression",
-            `binding ${
-              this.#pathLabel(path)
-            }#${name} is not exactly a static string or identifier`,
-          );
-        }
-        const imported = module.imports.get(name);
-        if (!imported) {
-          return resolutionFailure(
-            "binding-not-found",
-            `binding ${this.#pathLabel(path)}#${name} was not found`,
-          );
-        }
-        const importedPath = await this.#resolveImportedPath(
+        return await this.#resolveLocalBinding(
+          module,
           path,
-          imported.specifier,
+          name,
+          depth,
+          active,
         );
-        return importedPath.ok
-          ? await this.#resolveBinding(
-            "export",
-            importedPath.value,
-            imported.importedName,
-            depth + 1,
-            active,
-          )
-          : importedPath;
       }
 
       const exported = module.exports.get(name);
@@ -1760,42 +1848,89 @@ class StaticContractResolver {
           : exportedPath;
       }
 
-      let match: string | undefined;
-      let matches = 0;
-      for (const specifier of module.starExports) {
-        const starPath = await this.#resolveImportedPath(path, specifier);
-        if (!starPath.ok) return starPath;
-        const starResult = await this.#resolveBinding(
-          "export",
-          starPath.value,
-          name,
-          depth + 1,
-          active,
-        );
-        if (starResult.ok) {
-          matches += 1;
-          match = starResult.value;
-        } else if (starResult.failure.code !== "binding-not-found") {
-          return starResult;
-        }
-      }
-      if (matches === 1 && match !== undefined) {
-        return { ok: true, value: match };
-      }
-      if (matches > 1) {
-        return resolutionFailure(
-          "ambiguous-binding",
-          `multiple star exports provide ${this.#pathLabel(path)}#${name}`,
-        );
-      }
-      return resolutionFailure(
-        "binding-not-found",
-        `export ${this.#pathLabel(path)}#${name} was not found`,
-      );
+      return await this.#resolveStarExports(module, path, name, depth, active);
     } finally {
       active.delete(key);
     }
   }
+}
+
+function appendInlineObjectProperty(
+  property: AstNode,
+  result: Record<string, unknown>,
+  depth: number,
+): StaticResolutionResult<unknown> | undefined {
+  if (property.type !== "ObjectProperty") {
+    return resolutionFailure(
+      "unsupported-expression",
+      "literal object must contain only data properties",
+    );
+  }
+  const propertyName = staticPropertyName(property);
+  if (!propertyName) {
+    return resolutionFailure(
+      "unsupported-expression",
+      "literal object has a dynamic computed property",
+    );
+  }
+  if (propertyName === "__proto__") {
+    return resolutionFailure(
+      "unsupported-expression",
+      "literal object must not declare __proto__",
+    );
+  }
+  if (Object.hasOwn(result, propertyName)) {
+    return resolutionFailure(
+      "unsupported-expression",
+      `literal object duplicates property ${propertyName}`,
+    );
+  }
+  const propertyValue = unwrapExpression(property.value);
+  if (!propertyValue) {
+    return resolutionFailure(
+      "unsupported-expression",
+      `literal object property ${propertyName} has no static value`,
+    );
+  }
+  const resolved = resolveInlineLiteralValue(propertyValue, depth + 1);
+  if (!resolved.ok) return resolved;
+  result[propertyName] = resolved.value;
+  return undefined;
+}
+
+function resolveInlineArray(
+  value: AstNode,
+  depth: number,
+): StaticResolutionResult<unknown> {
+  const result: unknown[] = [];
+  const elements = Array.isArray(value.elements) ? value.elements : [];
+  for (let index = 0; index < elements.length; index += 1) {
+    const element = elements[index];
+    if (
+      element === null || !isNode(element) || element.type === "SpreadElement"
+    ) {
+      return resolutionFailure(
+        "unsupported-expression",
+        `literal array has a hole or spread at index ${index}`,
+      );
+    }
+    const resolved = resolveInlineLiteralValue(element, depth + 1);
+    if (!resolved.ok) return resolved;
+    result.push(resolved.value);
+  }
+  return { ok: true, value: result };
+}
+
+function resolveInlineObject(
+  value: AstNode,
+  depth: number,
+): StaticResolutionResult<unknown> {
+  const result: Record<string, unknown> = Object.create(null);
+  for (const property of nodeList(value.properties)) {
+    const failure = appendInlineObjectProperty(property, result, depth);
+    if (failure) return failure;
+  }
+  return { ok: true, value: result };
 }
 
 function resolveInlineLiteralValue(
@@ -1823,65 +1958,9 @@ function resolveInlineLiteralValue(
       typeof argument.value === "number" && Number.isFinite(argument.value)
     ) return { ok: true, value: -argument.value };
   }
-  if (value.type === "ArrayExpression") {
-    const result: unknown[] = [];
-    const elements = Array.isArray(value.elements) ? value.elements : [];
-    for (let index = 0; index < elements.length; index += 1) {
-      const element = elements[index];
-      if (
-        element === null || !isNode(element) || element.type === "SpreadElement"
-      ) {
-        return resolutionFailure(
-          "unsupported-expression",
-          `literal array has a hole or spread at index ${index}`,
-        );
-      }
-      const resolved = resolveInlineLiteralValue(element, depth + 1);
-      if (!resolved.ok) return resolved;
-      result.push(resolved.value);
-    }
-    return { ok: true, value: result };
-  }
+  if (value.type === "ArrayExpression") return resolveInlineArray(value, depth);
   if (value.type === "ObjectExpression") {
-    const result: Record<string, unknown> = Object.create(null);
-    for (const property of nodeList(value.properties)) {
-      if (property.type !== "ObjectProperty") {
-        return resolutionFailure(
-          "unsupported-expression",
-          "literal object must contain only data properties",
-        );
-      }
-      const propertyName = staticPropertyName(property);
-      if (!propertyName) {
-        return resolutionFailure(
-          "unsupported-expression",
-          "literal object has a dynamic computed property",
-        );
-      }
-      if (propertyName === "__proto__") {
-        return resolutionFailure(
-          "unsupported-expression",
-          "literal object must not declare __proto__",
-        );
-      }
-      if (Object.hasOwn(result, propertyName)) {
-        return resolutionFailure(
-          "unsupported-expression",
-          `literal object duplicates property ${propertyName}`,
-        );
-      }
-      const propertyValue = unwrapExpression(property.value);
-      if (!propertyValue) {
-        return resolutionFailure(
-          "unsupported-expression",
-          `literal object property ${propertyName} has no static value`,
-        );
-      }
-      const resolved = resolveInlineLiteralValue(propertyValue, depth + 1);
-      if (!resolved.ok) return resolved;
-      result[propertyName] = resolved.value;
-    }
-    return { ok: true, value: result };
+    return resolveInlineObject(value, depth);
   }
   return resolutionFailure(
     "unsupported-expression",
@@ -1978,6 +2057,72 @@ interface ParsedLegacyProvides {
   issues: string[];
 }
 
+function appendLegacyProvide(
+  property: AstNode,
+  names: string[],
+  seen: Set<string>,
+): ParsedLegacyProvides | undefined {
+  const index = names.length;
+  if (index >= MAX_EXTENSION_CONTRACTS_PER_LIST) {
+    return {
+      values: [],
+      issues: [
+        `legacy provides must contain at most ${MAX_EXTENSION_CONTRACTS_PER_LIST} entries`,
+      ],
+    };
+  }
+  if (
+    property.type !== "ObjectProperty" && property.type !== "ObjectMethod"
+  ) {
+    return {
+      values: [],
+      issues: ["legacy provides must not contain spreads"],
+    };
+  }
+  const name = staticPropertyName(property);
+  if (name === undefined) {
+    return {
+      values: [],
+      issues: ["legacy provides has a dynamic computed property"],
+    };
+  }
+  if (name === "__proto__") {
+    return {
+      values: [],
+      issues: ["legacy provides must not declare __proto__"],
+    };
+  }
+  if (seen.has(name)) {
+    return {
+      values: [],
+      issues: [`legacy provides duplicates property ${name}`],
+    };
+  }
+  if (name.trim().length === 0) {
+    return {
+      values: [],
+      issues: ["legacy provides key must be a non-empty string"],
+    };
+  }
+  if (name.trim() !== name) {
+    return {
+      values: [],
+      issues: ["legacy provides key must not have surrounding whitespace"],
+    };
+  }
+  const validationIssue = validateResolvedContractName(
+    name,
+    "legacy provides",
+    index,
+    seen,
+  );
+  if (validationIssue) {
+    return { values: [], issues: [validationIssue] };
+  }
+  names.push(name);
+  return undefined;
+}
+
 function parseLegacyProvides(
   module: StaticModuleBindings,
 ): ParsedLegacyProvides {
@@ -2018,64 +2163,8 @@ function parseLegacyProvides(
   const names: string[] = [];
   const seen = new Set<string>();
   for (const property of nodeList(object.properties)) {
-    const index = names.length;
-    if (index >= MAX_EXTENSION_CONTRACTS_PER_LIST) {
-      return {
-        values: [],
-        issues: [
-          `legacy provides must contain at most ${MAX_EXTENSION_CONTRACTS_PER_LIST} entries`,
-        ],
-      };
-    }
-    if (
-      property.type !== "ObjectProperty" && property.type !== "ObjectMethod"
-    ) {
-      return {
-        values: [],
-        issues: ["legacy provides must not contain spreads"],
-      };
-    }
-    const name = staticPropertyName(property);
-    if (name === undefined) {
-      return {
-        values: [],
-        issues: ["legacy provides has a dynamic computed property"],
-      };
-    }
-    if (name === "__proto__") {
-      return {
-        values: [],
-        issues: ["legacy provides must not declare __proto__"],
-      };
-    }
-    if (seen.has(name)) {
-      return {
-        values: [],
-        issues: [`legacy provides duplicates property ${name}`],
-      };
-    }
-    if (name.trim().length === 0) {
-      return {
-        values: [],
-        issues: ["legacy provides key must be a non-empty string"],
-      };
-    }
-    if (name.trim() !== name) {
-      return {
-        values: [],
-        issues: ["legacy provides key must not have surrounding whitespace"],
-      };
-    }
-    const validationIssue = validateResolvedContractName(
-      name,
-      "legacy provides",
-      index,
-      seen,
-    );
-    if (validationIssue) {
-      return { values: [], issues: [validationIssue] };
-    }
-    names.push(name);
+    const failure = appendLegacyProvide(property, names, seen);
+    if (failure) return failure;
   }
   return { values: names.toSorted(compareDeterministically), issues: [] };
 }
