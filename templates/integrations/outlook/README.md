@@ -40,6 +40,8 @@ Complete Microsoft Outlook integration following the veryfront integration patte
    - `Mail.ReadWrite` - Read and write access to user mail
    - `Mail.Read.Shared` - Read mail in mailboxes shared with the user
    - `Mail.ReadWrite.Shared` - Move mail in mailboxes shared with the user
+   - `Calendars.Read` - Read user calendars
+   - `Calendars.ReadWrite` - Read and write user calendars
    - `offline_access` - Maintain access to data you have given it access to
 4. Click "Grant admin consent" (if available)
 
@@ -238,6 +240,10 @@ https://login.microsoftonline.com/common/oauth2/v2.0/token
 - `Mail.Read` - Read user mail
 - `Mail.Send` - Send mail
 - `Mail.ReadWrite` - Full mail access
+- `Mail.Read.Shared` - Read shared mailboxes
+- `Mail.ReadWrite.Shared` - Move mail in shared mailboxes
+- `Calendars.Read` - Read calendars
+- `Calendars.ReadWrite` - Read and write calendars
 - `offline_access` - Refresh token
 
 ### Token Authentication
