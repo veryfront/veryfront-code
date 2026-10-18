@@ -5,12 +5,101 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import {
   buildNativeCoverageArgs,
+  buildNativeCoverageGroups,
   validateNativeCoverage,
 } from "../../../scripts/test/coverage-node-executor.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 describe("native executor source coverage", () => {
+  it("isolates cold installations under the existing real-file budget", () => {
+    const groups = buildNativeCoverageGroups();
+    assertEquals(groups.length, 5);
+    assert(
+      !groups[0]!.testFiles.some((file: string) =>
+        file.endsWith("executor-node-bootstrap.test.ts")
+      ),
+    );
+    const names = ["runtime", "project-tools", "http"].map((profile) =>
+      `fixed Node executor bootstrap loads a real project only after fixed ${profile} installation`
+    );
+    names.push(
+      "fixed Node executor bootstrap accepts native Node when a Deno compatibility namespace is present",
+    );
+    for (const name of names) {
+      assertEquals(
+        groups.slice(1).filter((group) => new RegExp(group.pattern).test(name)).length,
+        1,
+      );
+    }
+    for (const group of groups) {
+      assert(
+        buildNativeCoverageArgs({ root, reportPath: "unused", sourceFiles: [], ...group }).includes(
+          "--test-timeout=30000",
+        ),
+      );
+    }
+  });
+
+  it("collects both paths from independent child test runners", async () => {
+    await Deno.mkdir(`${root}/coverage`, { recursive: true });
+    const directory = await makeTempDirWithOptions({
+      dir: `${root}/coverage`,
+      prefix: "node-range-",
+    });
+    const source = `${directory}/source.ts`;
+    const reportPath = `${directory}/lcov.info`;
+    await Deno.writeTextFile(
+      source,
+      "export function positiveOnly() {\n  return 1;\n}\nexport function negativeOnly() {\n  return 0;\n}\nexport function target(value: number) {\n  if (value > 0) return positiveOnly();\n  return negativeOnly();\n}\n",
+    );
+    try {
+      const groups = [];
+      for (const [index, value] of [1, -1].entries()) {
+        const file = `${directory}/${index}.test.mjs`;
+        await Deno.writeTextFile(
+          file,
+          `import { test } from "node:test"; import { target } from "./source.ts"; test("owned", () => { target(${value}); });`,
+        );
+        groups.push({ testFiles: [file], pattern: "", expectedTests: 1 });
+      }
+      const wrapper = `${directory}/wrapper.test.mjs`;
+      await Deno.writeTextFile(
+        wrapper,
+        `import { test } from "node:test"; import { runNativeCoverageGroups } from ${
+          JSON.stringify(`${root}/scripts/test/coverage-node-executor.mjs`)
+        }; test("collect", async () => { await runNativeCoverageGroups(${JSON.stringify(root)}, ${
+          JSON.stringify(groups)
+        }); });`,
+      );
+      const output = await new Deno.Command("node", {
+        args: buildNativeCoverageArgs({
+          root,
+          reportPath,
+          sourceFiles: [relative(root, source)],
+          testFiles: [wrapper],
+        }),
+        cwd: root,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.code,
+        0,
+        new TextDecoder().decode(output.stdout) + new TextDecoder().decode(output.stderr),
+      );
+      await validateNativeCoverage({ root, reportPath, sourceFiles: [source] });
+      const report = await Deno.readTextFile(reportPath);
+      assertEquals(report.match(/^SF:/gm)?.length, 1);
+      for (const line of [2, 5]) assert(new RegExp(`^DA:${line},[1-9]`, "m").test(report));
+      for (const name of ["positiveOnly", "negativeOnly"]) {
+        assert(new RegExp(`^FNDA:[1-9]\\d*,${name}$`, "m").test(report));
+      }
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+
   it("retains original source coverage from an owned child process", async () => {
     await Deno.mkdir(`${root}/coverage`, { recursive: true });
     const directory = await makeTempDirWithOptions({
