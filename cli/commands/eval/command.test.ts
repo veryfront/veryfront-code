@@ -877,6 +877,26 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("passes a declared local agent error without changing completion", async () => {
+    const agent = makeAgentStub(async () => ({
+      ...completedAgentResponse("search_docs"),
+      status: "error",
+      text: "Invalid reference",
+    }));
+    const report = await runEval(
+      evalAgent({
+        target: "agent:test",
+        dataset: [{ id: "invalid-reference", input: {}, expectedOutcome: "error" }],
+        check({ record }) {
+          assertEquals(record.error, "Invalid reference");
+        },
+      }),
+      { adapters: { agent: createAgentAdapter(agent, createEvalOptions()) } },
+    );
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.records[0]?.completed, false);
+  });
+
   it("passes static mock tools into real agent.generate and keeps real traces", async () => {
     const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
     let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
@@ -2315,6 +2335,7 @@ describe("eval CLI command helpers", () => {
     });
 
     assertEquals(result.completed, false);
+    assertEquals(result.outcome, "error");
     assertEquals(result.error, "Rate limited");
     assertEquals(result.output, { error: "Rate limited" });
   });

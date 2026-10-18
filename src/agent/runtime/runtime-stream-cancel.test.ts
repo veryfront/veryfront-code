@@ -94,6 +94,38 @@ function settleAbortedRun(): Promise<void> {
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
+  for (const failure of ["transport", "model-ready", "memory"] as const) {
+    it(`reports actual completion when ${failure} preflight rejects before producer creation`, async () => {
+      let completion: Promise<void> | undefined;
+      const model: ModelRuntime = {
+        ...scriptedModel([{ text: "Must not execute" }]),
+        prepare: () => {
+          if (failure === "model-ready") throw new Error("synthetic model-ready failure");
+          return Promise.resolve();
+        },
+      };
+      const runtime = new AgentRuntime("preflight-completion", {
+        model: "veryfront-cloud/openai/gpt-5.4",
+        system: "Synthetic instructions",
+      }, {
+        resolveModelRuntime: () => {
+          if (failure === "transport") throw new Error("synthetic transport failure");
+          return model;
+        },
+        onStreamCompletion: (pending) => {
+          completion = pending;
+        },
+      });
+      if (failure === "memory") {
+        runtime.getMemory().getMessages = () =>
+          Promise.reject(new Error("synthetic memory failure"));
+      }
+      await assertRejects(() => runtime.stream([]), Error, `synthetic ${failure} failure`);
+      assert(completion, "Preflight must register its actual lifetime before it can reject");
+      await completion;
+    });
+  }
+
   it("copies turn messages without consulting an overridden array mapper", async () => {
     let reads = 0;
     const messages = [{

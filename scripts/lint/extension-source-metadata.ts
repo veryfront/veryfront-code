@@ -222,6 +222,37 @@ interface PropertyLookup {
   issue?: string;
 }
 
+function inspectObjectMember(
+  property: AstNode,
+  propertyName: string,
+): { name?: string; issue?: string } {
+  if (property.type === "SpreadElement") {
+    return {
+      issue: `object containing ${propertyName} must not use spreads`,
+    };
+  }
+  if (
+    property.type !== "ObjectProperty" && property.type !== "ObjectMethod"
+  ) {
+    return {
+      issue: `object containing ${propertyName} has an unsupported member`,
+    };
+  }
+  const name = staticPropertyName(property);
+  if (name === "__proto__") {
+    return {
+      issue: `object containing ${propertyName} must not declare __proto__`,
+    };
+  }
+  if (name === undefined && property.computed === true) {
+    return {
+      issue:
+        `object containing ${propertyName} has a dynamic computed property`,
+    };
+  }
+  return { name };
+}
+
 function lookupObjectProperty(
   object: AstNode,
   propertyName: string,
@@ -232,34 +263,9 @@ function lookupObjectProperty(
 
   let match: AstNode | undefined;
   for (const property of nodeList(object.properties)) {
-    if (property.type === "SpreadElement") {
-      return {
-        found: false,
-        issue: `object containing ${propertyName} must not use spreads`,
-      };
-    }
-    if (
-      property.type !== "ObjectProperty" && property.type !== "ObjectMethod"
-    ) {
-      return {
-        found: false,
-        issue: `object containing ${propertyName} has an unsupported member`,
-      };
-    }
-    const name = staticPropertyName(property);
-    if (name === "__proto__") {
-      return {
-        found: false,
-        issue: `object containing ${propertyName} must not declare __proto__`,
-      };
-    }
-    if (name === undefined && property.computed === true) {
-      return {
-        found: false,
-        issue:
-          `object containing ${propertyName} has a dynamic computed property`,
-      };
-    }
+    const member = inspectObjectMember(property, propertyName);
+    if (member.issue) return { found: false, issue: member.issue };
+    const name = member.name;
     if (name !== propertyName) continue;
     if (property.type !== "ObjectProperty") {
       return {
@@ -290,10 +296,10 @@ function expressionLabel(value: AstNode | undefined): string {
   return value.type;
 }
 
-function parseModuleBindings(
+function parseMetadataProgram(
   source: string,
-  sourcePath = "metadata.ts",
-): StaticResolutionResult<StaticModuleBindings> {
+  sourcePath: string,
+): StaticResolutionResult<{ ast: AstNode; program: AstNode }> {
   let ast: AstNode;
   try {
     const extension = extname(sourcePath).toLowerCase();
@@ -331,9 +337,20 @@ function parseModuleBindings(
   }
 
   const program = isNode(ast.program) ? ast.program : undefined;
-  if (!program || program.type !== "Program") {
+  if (program?.type !== "Program") {
     return resolutionFailure("invalid-source", "parser returned no program");
   }
+
+  return { ok: true, value: { ast, program } };
+}
+
+function parseModuleBindings(
+  source: string,
+  sourcePath = "metadata.ts",
+): StaticResolutionResult<StaticModuleBindings> {
+  const parsed = parseMetadataProgram(source, sourcePath);
+  if (!parsed.ok) return parsed;
+  const { ast, program } = parsed.value;
 
   const locals = new Map<string, StaticBindingExpression>();
   const values = new Map<string, AstNode>();
@@ -342,30 +359,30 @@ function parseModuleBindings(
   const starExports: string[] = [];
   let defaultExport: AstNode | undefined;
 
+  const recordDeclarator = (declarator: AstNode, exported: boolean): void => {
+    if (declarator.type !== "VariableDeclarator") return;
+    const name = identifierName(declarator.id);
+    const value = unwrapExpression(declarator.init);
+    if (!name || name.length > MAX_STATIC_IDENTIFIER_CHARACTERS || !value) {
+      return;
+    }
+    values.set(name, value);
+    const literal = stringLiteralValue(value);
+    const alias = identifierName(value);
+    let binding: StaticBindingExpression = { kind: "unsupported" };
+    if (literal !== undefined) binding = { kind: "literal", value: literal };
+    else if (alias) binding = { kind: "identifier", name: alias };
+    locals.set(name, binding);
+    if (exported) {
+      exports.set(name, { kind: "local", localName: name });
+    }
+  };
+
   const recordDeclaration = (declaration: AstNode, exported: boolean): void => {
     if (declaration.type === "VariableDeclaration") {
       if (declaration.kind !== "const") return;
       for (const declarator of nodeList(declaration.declarations)) {
-        if (declarator.type !== "VariableDeclarator") continue;
-        const name = identifierName(declarator.id);
-        const value = unwrapExpression(declarator.init);
-        if (!name || name.length > MAX_STATIC_IDENTIFIER_CHARACTERS || !value) {
-          continue;
-        }
-        values.set(name, value);
-        const literal = stringLiteralValue(value);
-        const alias = identifierName(value);
-        locals.set(
-          name,
-          literal !== undefined
-            ? { kind: "literal", value: literal }
-            : alias
-            ? { kind: "identifier", name: alias }
-            : { kind: "unsupported" },
-        );
-        if (exported) {
-          exports.set(name, { kind: "local", localName: name });
-        }
+        recordDeclarator(declarator, exported);
       }
       return;
     }
@@ -380,68 +397,88 @@ function parseModuleBindings(
     }
   };
 
+  const recordImport = (statement: AstNode): void => {
+    if (statement.importKind === "type") return;
+    const specifier = stringLiteralValue(statement.source);
+    if (!specifier) return;
+    for (const binding of nodeList(statement.specifiers)) {
+      if (
+        binding.type !== "ImportSpecifier" || binding.importKind === "type"
+      ) continue;
+      const localName = identifierName(binding.local);
+      const importedName = identifierName(binding.imported) ??
+        stringLiteralValue(binding.imported);
+      if (localName && importedName) {
+        imports.set(localName, { importedName, specifier });
+      }
+    }
+  };
+
+  const recordNamedExport = (statement: AstNode): void => {
+    if (statement.exportKind === "type") return;
+    if (isNode(statement.declaration)) {
+      recordDeclaration(statement.declaration, true);
+    }
+    const specifier = stringLiteralValue(statement.source);
+    for (const binding of nodeList(statement.specifiers)) {
+      if (
+        binding.type !== "ExportSpecifier" || binding.exportKind === "type"
+      ) continue;
+      const localName = identifierName(binding.local) ??
+        stringLiteralValue(binding.local);
+      const exportedName = identifierName(binding.exported) ??
+        stringLiteralValue(binding.exported);
+      if (!localName || !exportedName) continue;
+      exports.set(
+        exportedName,
+        specifier
+          ? { kind: "reexport", importedName: localName, specifier }
+          : { kind: "local", localName },
+      );
+    }
+  };
+
+  const recordDefaultExport = (
+    statement: AstNode,
+  ): StaticResolutionResult<undefined> => {
+    const declaration = unwrapExpression(statement.declaration) ??
+      (isNode(statement.declaration) ? statement.declaration : undefined);
+    if (defaultExport || !declaration) {
+      return resolutionFailure(
+        "invalid-source",
+        "extension entry must have exactly one default export",
+      );
+    }
+    defaultExport = declaration;
+    recordDeclaration(declaration, false);
+    return { ok: true, value: undefined };
+  };
+
+  const recordStarExport = (statement: AstNode): void => {
+    if (statement.exportKind === "type") return;
+    const specifier = stringLiteralValue(statement.source);
+    if (specifier) starExports.push(specifier);
+  };
+
   for (const statement of nodeList(program.body)) {
     if (statement.type === "ImportDeclaration") {
-      if (statement.importKind === "type") continue;
-      const specifier = stringLiteralValue(statement.source);
-      if (!specifier) continue;
-      for (const binding of nodeList(statement.specifiers)) {
-        if (
-          binding.type !== "ImportSpecifier" || binding.importKind === "type"
-        ) continue;
-        const localName = identifierName(binding.local);
-        const importedName = identifierName(binding.imported) ??
-          stringLiteralValue(binding.imported);
-        if (localName && importedName) {
-          imports.set(localName, { importedName, specifier });
-        }
-      }
+      recordImport(statement);
       continue;
     }
 
     if (statement.type === "ExportDefaultDeclaration") {
-      const declaration = unwrapExpression(statement.declaration) ??
-        (isNode(statement.declaration) ? statement.declaration : undefined);
-      if (defaultExport || !declaration) {
-        return resolutionFailure(
-          "invalid-source",
-          "extension entry must have exactly one default export",
-        );
-      }
-      defaultExport = declaration;
-      recordDeclaration(declaration, false);
+      const recorded = recordDefaultExport(statement);
+      if (!recorded.ok) return recorded;
       continue;
     }
 
     if (statement.type === "ExportAllDeclaration") {
-      if (statement.exportKind === "type") continue;
-      const specifier = stringLiteralValue(statement.source);
-      if (specifier) starExports.push(specifier);
+      recordStarExport(statement);
       continue;
     }
 
     if (statement.type === "ExportNamedDeclaration") {
-      if (statement.exportKind === "type") continue;
-      if (isNode(statement.declaration)) {
-        recordDeclaration(statement.declaration, true);
-      }
-      const specifier = stringLiteralValue(statement.source);
-      for (const binding of nodeList(statement.specifiers)) {
-        if (
-          binding.type !== "ExportSpecifier" || binding.exportKind === "type"
-        ) continue;
-        const localName = identifierName(binding.local) ??
-          stringLiteralValue(binding.local);
-        const exportedName = identifierName(binding.exported) ??
-          stringLiteralValue(binding.exported);
-        if (!localName || !exportedName) continue;
-        exports.set(
-          exportedName,
-          specifier
-            ? { kind: "reexport", importedName: localName, specifier }
-            : { kind: "local", localName },
-        );
-      }
+      recordNamedExport(statement);
       continue;
     }
 
@@ -463,6 +500,18 @@ function parseModuleBindings(
   };
 }
 
+function queueAstChildren(
+  pending: unknown[],
+  node: AstNode,
+  excludeMetadata: boolean,
+): void {
+  for (const [key, child] of Object.entries(node)) {
+    if (key === "loc") continue;
+    if (excludeMetadata && (key === "tokens" || key === "comments")) continue;
+    pending.push(child);
+  }
+}
+
 function containsStaticProperty(ast: AstNode, propertyName: string): boolean {
   const pending: unknown[] = [ast];
   const visited = new Set<object>();
@@ -477,11 +526,7 @@ function containsStaticProperty(ast: AstNode, propertyName: string): boolean {
         (value.type === "ObjectProperty" || value.type === "ObjectMethod") &&
         staticPropertyName(value) === propertyName
       ) return true;
-      for (const [key, child] of Object.entries(value)) {
-        if (key !== "loc" && key !== "tokens" && key !== "comments") {
-          pending.push(child);
-        }
-      }
+      queueAstChildren(pending, value, true);
     } else if (Array.isArray(value)) {
       pending.push(...value);
     }
@@ -500,6 +545,77 @@ interface FactoryDescriptor {
   scopeBindings: ReadonlySet<string>;
 }
 
+function queueObjectBindingPattern(
+  value: AstNode,
+  pending: AstNode[],
+): StaticResolutionResult<undefined> {
+  for (const property of nodeList(value.properties)) {
+    if (property.type === "RestElement" && isNode(property.argument)) {
+      pending.push(property.argument);
+    } else if (property.type === "ObjectProperty" && isNode(property.value)) {
+      pending.push(property.value);
+    } else {
+      return resolutionFailure(
+        "unsupported-expression",
+        "factory contains an unsupported object binding",
+      );
+    }
+  }
+  return { ok: true, value: undefined };
+}
+
+function queueBindingPattern(
+  value: AstNode,
+  pending: AstNode[],
+  bindings: Set<string>,
+): StaticResolutionResult<undefined> {
+  switch (value.type) {
+    case "Identifier": {
+      const name = identifierName(value);
+      if (name) bindings.add(name);
+      break;
+    }
+    case "RestElement":
+      if (!isNode(value.argument)) {
+        return resolutionFailure(
+          "unsupported-expression",
+          "factory contains an invalid rest binding",
+        );
+      }
+      pending.push(value.argument);
+      break;
+    case "AssignmentPattern":
+      if (!isNode(value.left)) {
+        return resolutionFailure(
+          "unsupported-expression",
+          "factory contains an invalid default binding",
+        );
+      }
+      pending.push(value.left);
+      break;
+    case "ArrayPattern":
+      pending.push(...nodeList(value.elements));
+      break;
+    case "ObjectPattern":
+      return queueObjectBindingPattern(value, pending);
+    case "TSParameterProperty":
+      if (isNode(value.parameter)) {
+        pending.push(value.parameter);
+        break;
+      }
+      return resolutionFailure(
+        "unsupported-expression",
+        `factory contains unsupported binding ${expressionLabel(value)}`,
+      );
+    default:
+      return resolutionFailure(
+        "unsupported-expression",
+        `factory contains unsupported binding ${expressionLabel(value)}`,
+      );
+  }
+  return { ok: true, value: undefined };
+}
+
 function addPatternBindings(
   pattern: AstNode,
   bindings: Set<string>,
@@ -516,52 +632,8 @@ function addPatternBindings(
         `factory binding pattern exceeds ${MAX_FACTORY_SCOPE_NODES} syntax nodes`,
       );
     }
-    if (value.type === "Identifier") {
-      const name = identifierName(value);
-      if (name) bindings.add(name);
-    } else if (value.type === "RestElement") {
-      if (!isNode(value.argument)) {
-        return resolutionFailure(
-          "unsupported-expression",
-          "factory contains an invalid rest binding",
-        );
-      }
-      pending.push(value.argument);
-    } else if (value.type === "AssignmentPattern") {
-      if (!isNode(value.left)) {
-        return resolutionFailure(
-          "unsupported-expression",
-          "factory contains an invalid default binding",
-        );
-      }
-      pending.push(value.left);
-    } else if (value.type === "ArrayPattern") {
-      pending.push(...nodeList(value.elements));
-    } else if (value.type === "ObjectPattern") {
-      for (const property of nodeList(value.properties)) {
-        if (property.type === "RestElement" && isNode(property.argument)) {
-          pending.push(property.argument);
-        } else if (
-          property.type === "ObjectProperty" && isNode(property.value)
-        ) {
-          pending.push(property.value);
-        } else {
-          return resolutionFailure(
-            "unsupported-expression",
-            "factory contains an unsupported object binding",
-          );
-        }
-      }
-    } else if (
-      value.type === "TSParameterProperty" && isNode(value.parameter)
-    ) {
-      pending.push(value.parameter);
-    } else {
-      return resolutionFailure(
-        "unsupported-expression",
-        `factory contains unsupported binding ${expressionLabel(value)}`,
-      );
-    }
+    const queued = queueBindingPattern(value, pending, bindings);
+    if (!queued.ok) return queued;
     if (bindings.size > MAX_FACTORY_SCOPE_BINDINGS) {
       return resolutionFailure(
         "token-limit",
@@ -572,18 +644,102 @@ function addPatternBindings(
   return { ok: true, value: undefined };
 }
 
-function collectFactoryScopeBindings(
+function queueFactoryScopeChildren(value: AstNode, pending: unknown[]): void {
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      key !== "loc" && key !== "tokens" && key !== "comments" &&
+      !(value.type === "CatchClause" && key === "param")
+    ) {
+      pending.push(child);
+    }
+  }
+}
+
+function collectFactoryParameterBindings(
   factory: AstNode,
-  body: AstNode,
-): StaticResolutionResult<ReadonlySet<string>> {
-  const bindings = new Set<string>();
+  bindings: Set<string>,
+): StaticResolutionResult<undefined> {
   const functionName = identifierName(factory.id);
   if (functionName) bindings.add(functionName);
   for (const parameter of nodeList(factory.params)) {
     const added = addPatternBindings(parameter, bindings);
     if (!added.ok) return added;
   }
+  return { ok: true, value: undefined };
+}
+
+function collectFactoryScopeBindings(
+  factory: AstNode,
+  body: AstNode,
+): StaticResolutionResult<ReadonlySet<string>> {
+  const bindings = new Set<string>();
+  const parameters = collectFactoryParameterBindings(factory, bindings);
+  if (!parameters.ok) return parameters;
   if (body.type !== "BlockStatement") return { ok: true, value: bindings };
+
+  const collectVariableBindings = (
+    value: AstNode,
+  ): StaticResolutionResult<undefined> => {
+    for (const declaration of nodeList(value.declarations)) {
+      if (
+        declaration.type !== "VariableDeclarator" || !isNode(declaration.id)
+      ) {
+        return resolutionFailure(
+          "unsupported-expression",
+          "factory contains an invalid variable declaration",
+        );
+      }
+      const added = addPatternBindings(declaration.id, bindings);
+      if (!added.ok) return added;
+    }
+    return { ok: true, value: undefined };
+  };
+
+  const collectScopeNode = (
+    value: AstNode,
+  ): StaticResolutionResult<undefined> => {
+    if (value.type === "VariableDeclaration") {
+      return collectVariableBindings(value);
+    }
+    if (
+      value.type === "FunctionDeclaration" ||
+      value.type === "ClassDeclaration" ||
+      value.type === "TSEnumDeclaration" ||
+      value.type === "TSModuleDeclaration"
+    ) {
+      const name = identifierName(value.id);
+      if (name) bindings.add(name);
+      if (bindings.size > MAX_FACTORY_SCOPE_BINDINGS) {
+        return resolutionFailure(
+          "token-limit",
+          `factory exceeds ${MAX_FACTORY_SCOPE_BINDINGS} local bindings`,
+        );
+      }
+      return { ok: true, value: undefined };
+    }
+    if (
+      value.type === "ArrowFunctionExpression" ||
+      value.type === "FunctionExpression" ||
+      value.type === "ObjectMethod" ||
+      value.type === "ClassExpression" ||
+      value.type === "ClassMethod" ||
+      value.type === "ClassPrivateMethod"
+    ) {
+      return { ok: true, value: undefined };
+    }
+    if (value.type === "CatchClause" && isNode(value.param)) {
+      const added = addPatternBindings(value.param, bindings);
+      if (!added.ok) return added;
+    }
+    queueFactoryScopeChildren(value, pending);
+    if (bindings.size > MAX_FACTORY_SCOPE_BINDINGS) {
+      return resolutionFailure(
+        "token-limit",
+        `factory exceeds ${MAX_FACTORY_SCOPE_BINDINGS} local bindings`,
+      );
+    }
+    return { ok: true, value: undefined };
+  };
 
   const pending: unknown[] = nodeList(body.body).filter((statement) =>
     statement.type !== "ReturnStatement"
@@ -609,67 +765,22 @@ function collectFactoryScopeBindings(
       );
     }
 
-    if (value.type === "VariableDeclaration") {
-      for (const declaration of nodeList(value.declarations)) {
-        if (
-          declaration.type !== "VariableDeclarator" || !isNode(declaration.id)
-        ) {
-          return resolutionFailure(
-            "unsupported-expression",
-            "factory contains an invalid variable declaration",
-          );
-        }
-        const added = addPatternBindings(declaration.id, bindings);
-        if (!added.ok) return added;
-      }
-      continue;
-    }
-    if (
-      value.type === "FunctionDeclaration" ||
-      value.type === "ClassDeclaration" ||
-      value.type === "TSEnumDeclaration" ||
-      value.type === "TSModuleDeclaration"
-    ) {
-      const name = identifierName(value.id);
-      if (name) bindings.add(name);
-      if (bindings.size > MAX_FACTORY_SCOPE_BINDINGS) {
-        return resolutionFailure(
-          "token-limit",
-          `factory exceeds ${MAX_FACTORY_SCOPE_BINDINGS} local bindings`,
-        );
-      }
-      continue;
-    }
-    if (
-      value.type === "ArrowFunctionExpression" ||
-      value.type === "FunctionExpression" ||
-      value.type === "ObjectMethod" ||
-      value.type === "ClassExpression" ||
-      value.type === "ClassMethod" ||
-      value.type === "ClassPrivateMethod"
-    ) {
-      continue;
-    }
-    if (value.type === "CatchClause" && isNode(value.param)) {
-      const added = addPatternBindings(value.param, bindings);
-      if (!added.ok) return added;
-    }
-    for (const [key, child] of Object.entries(value)) {
-      if (
-        key !== "loc" && key !== "tokens" && key !== "comments" &&
-        !(value.type === "CatchClause" && key === "param")
-      ) {
-        pending.push(child);
-      }
-    }
-    if (bindings.size > MAX_FACTORY_SCOPE_BINDINGS) {
-      return resolutionFailure(
-        "token-limit",
-        `factory exceeds ${MAX_FACTORY_SCOPE_BINDINGS} local bindings`,
-      );
-    }
+    const scanned = collectScopeNode(value);
+    if (!scanned.ok) return scanned;
   }
   return { ok: true, value: bindings };
+}
+
+function factoryReturnsResult(
+  directCount: number,
+  directValue: AstNode | undefined,
+  hasNestedReturn: boolean,
+): FactoryReturns {
+  return {
+    directCount,
+    ...(directValue ? { directValue } : {}),
+    hasNestedReturn,
+  };
 }
 
 function collectFactoryReturns(body: AstNode): FactoryReturns {
@@ -699,11 +810,7 @@ function collectFactoryReturns(body: AstNode): FactoryReturns {
     }
     if (!isNode(value)) continue;
     if (value.type === "ReturnStatement") {
-      return {
-        directCount: directReturns.length,
-        ...(directValue ? { directValue } : {}),
-        hasNestedReturn: true,
-      };
+      return factoryReturnsResult(directReturns.length, directValue, true);
     }
     if (
       [
@@ -715,21 +822,55 @@ function collectFactoryReturns(body: AstNode): FactoryReturns {
         "ClassExpression",
       ].includes(value.type)
     ) continue;
-    for (const [key, child] of Object.entries(value)) {
-      if (key !== "loc") pending.push(child);
-    }
+    queueAstChildren(pending, value, false);
   }
-  return {
-    directCount: directReturns.length,
-    ...(directValue ? { directValue } : {}),
-    hasNestedReturn: false,
-  };
+  return factoryReturnsResult(directReturns.length, directValue, false);
+}
+
+function isPrivateDefaultBindingUse(
+  parent: AstNode | undefined,
+  key: string | undefined,
+): boolean {
+  switch (parent?.type) {
+    case "VariableDeclarator":
+    case "FunctionDeclaration":
+      return key === "id";
+    case "ExportDefaultDeclaration":
+      return key === "declaration";
+    case "ObjectProperty":
+    case "ObjectMethod":
+      return key === "key" && parent.computed !== true;
+    case "MemberExpression":
+      return key === "property" && parent.computed !== true;
+    case "LabeledStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+      return key === "label";
+    default:
+      return false;
+  }
 }
 
 function bindingIsPrivateToDefaultExport(ast: AstNode, name: string): boolean {
   const pending: Array<{ value: unknown; parent?: AstNode; key?: string }> = [
     { value: ast },
   ];
+  const queueNodeChildren = (value: AstNode): void => {
+    for (const [childKey, child] of Object.entries(value)) {
+      if (
+        childKey !== "loc" && childKey !== "tokens" && childKey !== "comments"
+      ) {
+        pending.push({ value: child, parent: value, key: childKey });
+      }
+    }
+  };
+  const queueArrayChildren = (
+    value: unknown[],
+    parent: AstNode | undefined,
+    key: string | undefined,
+  ): void => {
+    for (const child of value) pending.push({ value: child, parent, key });
+  };
   const visited = new Set<object>();
   while (pending.length > 0) {
     const { value, parent, key } = pending.pop()!;
@@ -738,35 +879,14 @@ function bindingIsPrivateToDefaultExport(ast: AstNode, name: string): boolean {
     }
     visited.add(value);
     if (Array.isArray(value)) {
-      for (const child of value) pending.push({ value: child, parent, key });
+      queueArrayChildren(value, parent, key);
       continue;
     }
     if (!isNode(value)) continue;
     if (value.type === "Identifier" && identifierName(value) === name) {
-      const declaration = parent &&
-        ((parent.type === "VariableDeclarator" && key === "id") ||
-          (parent.type === "FunctionDeclaration" && key === "id"));
-      const defaultExport = parent?.type === "ExportDefaultDeclaration" &&
-        key === "declaration";
-      const nonReferenceKey = parent &&
-        (((parent.type === "ObjectProperty" ||
-          parent.type === "ObjectMethod") &&
-          key === "key" &&
-          parent.computed !== true) ||
-          (parent.type === "MemberExpression" && key === "property" &&
-            parent.computed !== true) ||
-          (["LabeledStatement", "BreakStatement", "ContinueStatement"].includes(
-            parent.type,
-          ) && key === "label"));
-      if (!declaration && !defaultExport && !nonReferenceKey) return false;
+      if (!isPrivateDefaultBindingUse(parent, key)) return false;
     }
-    for (const [childKey, child] of Object.entries(value)) {
-      if (
-        childKey !== "loc" && childKey !== "tokens" && childKey !== "comments"
-      ) {
-        pending.push({ value: child, parent: value, key: childKey });
-      }
-    }
+    queueNodeChildren(value);
   }
   return true;
 }
@@ -1458,7 +1578,9 @@ class StaticContractResolver {
     if (Object.hasOwn(this.#imports, specifier)) {
       mappingKey = specifier;
     } else {
-      for (const key of Object.keys(this.#imports).sort(compareDeterministically)) {
+      for (
+        const key of Object.keys(this.#imports).sort(compareDeterministically)
+      ) {
         if (
           key.endsWith("/") && specifier.startsWith(key) &&
           (mappingKey === undefined || key.length > mappingKey.length)

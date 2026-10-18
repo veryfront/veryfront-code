@@ -1,3 +1,8 @@
+import {
+  chainPrivatePromise,
+  observePrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
@@ -768,7 +773,7 @@ function createIdempotentAsyncCleanup(
 ): () => Promise<void> {
   let cleanupPromise: Promise<void> | undefined;
   return () => {
-    cleanupPromise ??= cleanup ? Promise.resolve().then(cleanup) : Promise.resolve();
+    cleanupPromise ??= cleanup ? resolvePrivatePromise().then(cleanup) : resolvePrivatePromise();
     return cleanupPromise;
   };
 }
@@ -857,7 +862,7 @@ async function buildProjectAgentSandboxTools(input: {
       closeSandbox,
     };
   } catch (error) {
-    await closeSandbox().catch((cleanupError) => {
+    await observePrivatePromise(closeSandbox()).catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed during materialization", {
         agentId: input.agent.id,
         error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -1263,7 +1268,7 @@ function createModelCallContextRelay(
         forward();
         return;
       }
-      return Promise.resolve(persist(event)).then((receipt) => {
+      return chainPrivatePromise(resolvePrivatePromise(), () => persist(event)).then((receipt) => {
         forward();
         return receipt;
       });
@@ -1784,7 +1789,6 @@ export async function createRuntimeAgentStreamResponse(
       );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     if (managedRecovery) await managedRecovery.owner.assertCurrentOwnership();
-    runtimeInvocationStarted = true;
     const withManagedOccurrences = <T>(operation: () => T): T =>
       managedRecovery ? runWithToolCallOccurrences(operation) : operation();
     const candidateRuntimeStream = await runWithExecutionOwnershipGuard(
@@ -1799,8 +1803,9 @@ export async function createRuntimeAgentStreamResponse(
                 () =>
                   runWithMandatoryRunEventSink(
                     modelCallContextRelay.sink,
-                    () =>
-                      runtimeDispatch.kind === "override"
+                    () => {
+                      runtimeInvocationStarted = true;
+                      return runtimeDispatch.kind === "override"
                         ? runtimeDispatch.runtime.stream(
                           runtimeMessages,
                           runtimeContext,
@@ -1822,7 +1827,8 @@ export async function createRuntimeAgentStreamResponse(
                           undefined,
                           maxOutputTokens,
                           abortSignal,
-                        ),
+                        );
+                    },
                   ),
               )
             ),
@@ -1838,15 +1844,17 @@ export async function createRuntimeAgentStreamResponse(
       agentId: agent.id,
     });
   } catch (error) {
-    recoveryLifetime?.stop();
+    if (!runtimeInvocationStarted) recoveryLifetime?.stop();
     revokePlatformDependencyOwner(input);
     deps.sessionManager.failRun(input.runId, abortSignal);
-    await closeSandbox().then(() => {
+    await observePrivatePromise(closeSandbox()).then(() => {
       if (producerCompletion) {
-        void producerCompletion.then(() => {
+        void observePrivatePromise(producerCompletion).then(() => {
+          recoveryLifetime?.stop();
           settledStop();
           managedRecovery?.settle();
         }, () => {
+          recoveryLifetime?.stop();
           settledStop();
           managedRecovery?.settle();
         });
@@ -1949,7 +1957,7 @@ export async function createRuntimeAgentStreamResponse(
             deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
           };
 
-          let presentationTail = Promise.resolve();
+          let presentationTail = resolvePrivatePromise();
           let presentationFailure: { error: unknown } | undefined;
           let presentationStopped = false;
           let pendingPresentationEvents = 0;
@@ -1965,7 +1973,7 @@ export async function createRuntimeAgentStreamResponse(
             if (readerReachedEof) {
               return Promise.resolve();
             }
-            readerCancellation ??= reader.cancel(reason).then(() => {
+            readerCancellation ??= chainPrivatePromise(reader.cancel(reason), () => {
               readerCancellationCompleted = true;
             }, (error) => {
               logger.debug(
@@ -2358,7 +2366,6 @@ export async function createRuntimeAgentStreamResponse(
             presentationStopped = true;
             await providerReplayCheckpointRelay.fail();
             await presentationTail;
-            recoveryLifetime?.stop();
             revokePlatformDependencyOwner(input);
             stopHeartbeat?.();
             stopHeartbeat = undefined;
@@ -2377,7 +2384,7 @@ export async function createRuntimeAgentStreamResponse(
               });
             }
             let sandboxClosed = false;
-            await closeSandbox().then(() => {
+            await observePrivatePromise(closeSandbox()).then(() => {
               sandboxClosed = true;
             }).catch((cleanupError) => {
               logger.warn("Internal agent runtime sandbox cleanup failed", {
@@ -2401,7 +2408,8 @@ export async function createRuntimeAgentStreamResponse(
               }
             }
             if (sandboxClosed && producerCompletion) {
-              void producerCompletion.then(async () => {
+              void observePrivatePromise(producerCompletion).then(async () => {
+                recoveryLifetime?.stop();
                 if (abortSignal.aborted) {
                   deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
                 }
@@ -2412,6 +2420,7 @@ export async function createRuntimeAgentStreamResponse(
                   await settleHostedAgentPause(manualPause);
                 }
               }, (error) => {
+                recoveryLifetime?.stop();
                 if (abortSignal.aborted) {
                   deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
                 }

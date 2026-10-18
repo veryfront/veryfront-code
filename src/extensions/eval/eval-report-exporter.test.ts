@@ -179,8 +179,8 @@ describe("EvalReportExporterRegistry", () => {
     // `evidence` carries, so it must not survive redaction either.
     assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
     assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
-    // The dataset hash is a deterministic digest of every example's id, input, reference, and
-    // metadata, so it identifies dataset content across runs and must not survive redaction.
+    // The dataset hash covers each example's id, input, declared expectedOutcome, reference,
+    // and metadata, so it identifies dataset content across runs and must not survive redaction.
     assertEquals(exportedReport.dataset, {
       kind: "json",
       examples: 1,

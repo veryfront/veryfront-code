@@ -1,3 +1,4 @@
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import type { RecoverySessionOwner } from "./recovery-session-owner.ts";
 
 const monotonicNow = performance.now.bind(performance);
@@ -33,7 +34,7 @@ export async function startManagedRecoveryLifetime(
       if (renewalTimer !== undefined) cancel(renewalTimer);
       expiryTimer = schedule(fail, remaining);
       renewalTimer = schedule(() => {
-        void renew().catch(fail);
+        void chainPrivatePromise(renew(), () => {}, fail);
       }, Math.min(1_000, remaining / 2));
     } catch (error) {
       fail();

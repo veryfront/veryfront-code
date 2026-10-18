@@ -104,7 +104,9 @@ for (
     { managed: true, replay: false, delegates: 2, cancel: false, eof: false },
   ]
 ) {
-  it(`native skill delegation admits before deferred replay (managed=${mode.managed}, replay=${mode.replay}, delegates=${mode.delegates}, cancel=${mode.cancel}, eof=${mode.eof})`, async () => {
+  const name =
+    `native skill delegation admits before deferred replay (managed=${mode.managed}, replay=${mode.replay}, delegates=${mode.delegates}, cancel=${mode.cancel}, eof=${mode.eof})`;
+  it(name, { sanitizeOps: true, sanitizeResources: true }, async () => {
     const previous = Deno.env.get(envKey);
     const directory = await makeTempDir();
     let producerCompletion: Promise<void> | undefined;
@@ -234,30 +236,42 @@ for (
           createRuntime: (runtimeAgent) => {
             if (mode.eof) {
               return {
-                stream: async () =>
-                  new ReadableStream<Uint8Array>({
+                stream: async (_messages, _context, callbacks) => {
+                  const completion = Promise.withResolvers<void>();
+                  producerCompletion = completion.promise;
+                  callbacks?.onStreamCompletion?.(producerCompletion);
+                  return new ReadableStream<Uint8Array>({
                     start(controller) {
-                      controller.enqueue(
-                        new TextEncoder().encode('data: {"type":"start-step"}\n\n'),
-                      );
-                      controller.close();
+                      try {
+                        controller.enqueue(
+                          new TextEncoder().encode('data: {"type":"start-step"}\n\n'),
+                        );
+                        controller.close();
+                      } finally {
+                        completion.resolve();
+                      }
                     },
-                  }),
+                  });
+                },
               };
             }
 
+            let reportCompletion: ((completion: Promise<void>) => void) | undefined;
             const runtime = new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
               ...(writer ? { persistRecoveryBoundary: writer.persistBoundary } : {}),
               onStreamCompletion: (completion) => {
                 producerCompletion = completion;
+                reportCompletion?.(completion);
               },
             });
             return {
               // The scripted provider has no billing broker. Exclude only model
               // observation sinks; native replay, tool policy/admissions and actual
               // durable recovery boundaries retain their production paths.
-              stream: (...args: Parameters<AgentRuntime["stream"]>) =>
-                runWithoutRunEventSinks(() => runtime.stream(...args)),
+              stream: (...args: Parameters<AgentRuntime["stream"]>) => {
+                reportCompletion = args[2]?.onStreamCompletion;
+                return runWithoutRunEventSinks(() => runtime.stream(...args));
+              },
             };
           },
         },

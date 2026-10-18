@@ -55,6 +55,54 @@ describe("host HTTP API origin at process boot", () => {
     );
     assertEquals(result, [true, false]);
   });
+  it("uses only the boot-configured HTTP API for platform MCP mutation authority", async () => {
+    const sourceUrl = new URL(
+      "../../../src/server/handlers/request/run-terminal-tool-source.ts",
+      import.meta.url,
+    ).href;
+    const mockUrl = new URL("../../../src/testing/mock-fetch.ts", import.meta.url).href;
+    const result = await boot(
+      origin,
+      `
+      const { createRunPlatformToolSource } = await import(${JSON.stringify(sourceUrl)});
+      const { observeFetchRequestInit, withMockFetch } = await import(${JSON.stringify(mockUrl)});
+      const calls = [];
+      await withMockFetch(async (_url, init) => {
+        const observed = observeFetchRequestInit(init);
+        const headers = new Headers(observed.headers);
+        const body = JSON.parse(String(observed.body));
+        calls.push([body.method, headers.get('X-Veryfront-Run-Event-Token')]);
+        const result = body.method === 'tools/list' ? { tools: [] } : { content: [] };
+        return Response.json({ jsonrpc: '2.0', id: body.id, result });
+      }, async () => {
+        const source = createRunPlatformToolSource(
+          { endpoint: '${origin}/mcp', headers: {} }, null, undefined,
+          { apiBaseUrl: '${origin}', token: '<LOCAL_TEST_TOKEN>' },
+        );
+        await source.listTools({});
+        await source.executeTool('veryfront__update_file', {}, {});
+      });
+      const rejected = [];
+      for (const [apiBaseUrl, endpoint] of [
+        ['http://foreign.example', 'http://foreign.example/mcp'],
+        ['http://127.0.0.1:4001', 'http://127.0.0.1:4001/mcp'],
+        ['${origin}', 'http://foreign.example/mcp'],
+        ['${origin}', '${origin}/mcp?redirect=foreign'],
+      ]) {
+        try {
+          createRunPlatformToolSource({ endpoint, headers: {} }, null, undefined,
+            { apiBaseUrl, token: '<LOCAL_TEST_TOKEN>' });
+          rejected.push(false);
+        } catch { rejected.push(true); }
+      }
+      console.log(JSON.stringify({ calls, rejected }));
+    `,
+    );
+    assertEquals(result, {
+      calls: [["tools/list", null], ["tools/call", "<LOCAL_TEST_TOKEN>"]],
+      rejected: [true, true, true, true],
+    });
+  });
   const denoOnlyIt = isDeno ? it : it.skip;
   denoOnlyIt(
     "uses real HTTP only for the approved API and rejects redirect credential forwarding",

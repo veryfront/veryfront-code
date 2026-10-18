@@ -1809,3 +1809,104 @@ it("checkpoint byte guard rejects oversized native continuation despite poisoned
     else Deno.env.set(envKey, previous);
   }
 });
+
+for (const invalidHistory of ["pending-tool-call", "duplicate-message-id"]) {
+  it(`rejects initial ${invalidHistory} before publishing an external cursor`, async () => {
+    const { assertRejects } = await import("#veryfront/testing/assert.ts");
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    try {
+      const value = admission();
+      const claims = await signed(value);
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        validateCurrentOwnership: async () => receipt(value),
+        awaitRetiredPreviousOwner: async () => {},
+      });
+      let appends = 0;
+      const writer = await createManagedRecoveryWriter({
+        claims,
+        owner,
+        directory,
+        bindAdmissionWriter: () => {},
+        append: async () => {
+          appends++;
+          return { eventId: appends, externalSequence: appends, toolAdmissions: [] };
+        },
+      });
+      const initial = await captureInitialNativeRecoveryBoundary();
+      if (!initial.runtimeContinuation) throw new Error("Expected native continuation");
+      const messages: typeof initial.messages = invalidHistory === "pending-tool-call"
+        ? [{
+          id: "pending-history",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "pending-call",
+            toolName: "inspect",
+            args: {},
+          }],
+        }]
+        : [initial.messages[0]!, initial.messages[0]!];
+      await assertRejects(() =>
+        writer.persistBoundary({
+          ...initial,
+          messages,
+          runtimeContinuation: { ...initial.runtimeContinuation, messages },
+        })
+      );
+      assertEquals(appends, 0, "Invalid history must not publish a durable successor cursor");
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+it("project Promise.then replacement cannot falsely acknowledge an unpersisted boundary", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const then = Promise.prototype.then;
+  const capturedResolve = Promise.resolve.bind(Promise);
+  try {
+    const value = admission();
+    const claims = await signed(value);
+    const owner = await RecoverySessionOwner.acquire({
+      claims,
+      directory: `${directory}/owner`,
+      validateCurrentOwnership: async () => receipt(value),
+      awaitRetiredPreviousOwner: async () => {},
+    });
+    let appends = 0;
+    const writer = await createManagedRecoveryWriter({
+      claims,
+      owner,
+      directory,
+      bindAdmissionWriter: () => {},
+      append: async () => {
+        appends++;
+        throw new Error("Actual append failed");
+      },
+    });
+    const initial = await captureInitialNativeRecoveryBoundary();
+    Promise.prototype.then = function () {
+      return capturedResolve(undefined);
+    };
+    let error: unknown;
+    try {
+      await writer.persistBoundary(initial);
+    } catch (caught) {
+      error = caught;
+    }
+    Promise.prototype.then = then;
+    assertEquals(appends, 1);
+    assertEquals(error instanceof Error ? error.message : undefined, "Actual append failed");
+  } finally {
+    Promise.prototype.then = then;
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});

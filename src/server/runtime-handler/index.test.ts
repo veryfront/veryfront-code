@@ -61,6 +61,11 @@ import {
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { seedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
 import { getRequestLogger } from "#veryfront/utils/logger/request-context.ts";
+import {
+  markRequestProfilePhase,
+  resetRequestProfiles,
+  snapshotRequestProfiles,
+} from "#veryfront/observability/request-profiler.ts";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 
 const TEST_FIXTURES_ROOT = fromFileUrl(
@@ -376,6 +381,88 @@ describe("server/runtime-handler/index", () => {
     resetMetrics();
     resetOtelInstruments();
     _resetShimForTests();
+  });
+
+  it("retains separate profiling sessions across interleaved request phases", async () => {
+    const previousTiming = Deno.env.get("VERYFRONT_ENABLE_SERVER_TIMING");
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let firstPending: Promise<Response> | undefined;
+    let secondResponse: Response | undefined;
+    resetRequestProfiles();
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    try {
+      const firstDir = testProjectDir("profile-first");
+      const firstHandler = createVeryfrontHandler(firstDir, createMockAdapter(), {
+        projectDir: firstDir,
+        config: {
+          middleware: {
+            custom: [async () => {
+              markRequestProfilePhase("probe.first", 1);
+              entered.resolve();
+              await resume.promise;
+              markRequestProfilePhase("probe.first.after", 2);
+              return new Response("first", { status: 201 });
+            }],
+          },
+        },
+        allowHostProjectCodeExecution: true,
+      });
+      const secondDir = testProjectDir("profile-second");
+      const secondHandler = createVeryfrontHandler(secondDir, createMockAdapter(), {
+        projectDir: secondDir,
+        config: {
+          middleware: {
+            custom: [() => {
+              markRequestProfilePhase("probe.second", 3);
+              return new Response("second", { status: 202 });
+            }],
+          },
+        },
+        allowHostProjectCodeExecution: true,
+      });
+      firstPending = firstHandler(new Request("http://localhost/bench/profile-first"));
+      await Promise.race([
+        entered.promise,
+        firstPending.then(() => {
+          throw new Error("First request completed before entering its middleware");
+        }),
+      ]);
+      secondResponse = await secondHandler(
+        new Request("http://localhost/api/bench/profile-second"),
+      );
+      resume.resolve();
+      const firstResponse = await firstPending;
+      assertEquals(await firstResponse.text(), "first");
+      assertEquals(await secondResponse.text(), "second");
+      assertEquals(
+        requireHeader(firstResponse, "server-timing").includes("probe.first;dur=1.00"),
+        true,
+      );
+      assertEquals(
+        requireHeader(secondResponse, "server-timing").includes("probe.second;dur=3.00"),
+        true,
+      );
+      const records = snapshotRequestProfiles().records;
+      const first = records.find((record) => record.pathname === "/bench/profile-first");
+      const second = records.find((record) => record.pathname === "/api/bench/profile-second");
+      assertEquals(records.length, 2);
+      assertEquals([first?.category, first?.status], ["html", 201]);
+      assertEquals([second?.category, second?.status], ["api", 202]);
+      assertEquals([first?.phases["probe.first"], first?.phases["probe.first.after"]], [1, 2]);
+      assertEquals(first?.phases["probe.second"], undefined);
+      assertEquals(second?.phases["probe.second"], 3);
+      assertEquals(second?.phases["probe.first"], undefined);
+      assertEquals(second?.phases["probe.first.after"], undefined);
+    } finally {
+      resume.resolve();
+      const firstResponse = await firstPending?.catch(() => undefined);
+      if (firstResponse && !firstResponse.bodyUsed) await firstResponse.body?.cancel();
+      if (secondResponse && !secondResponse.bodyUsed) await secondResponse.body?.cancel();
+      resetRequestProfiles();
+      if (previousTiming === undefined) Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
+      else Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", previousTiming);
+    }
   });
 
   it("labels execution diagnostics for standalone and hosted requests", async () => {

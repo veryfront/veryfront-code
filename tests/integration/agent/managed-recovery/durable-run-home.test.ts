@@ -341,3 +341,67 @@ it("poisoned reduce cannot bypass the actual 64 MiB durable home limit", async (
     await Deno.remove(directory, { recursive: true });
   }
 });
+
+for (const family of ["FileHandle", "Stats", "Dir"]) {
+  it(`captured descriptor operations retain real durable bytes under ${family} prototype replacement`, async () => {
+    const { open } = await import("node:fs/promises");
+    const { Stats, Dir } = await import("node:fs");
+    const directory = await makeTempDir();
+    const probe = await open(`${directory}/probe`, "w");
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    await Deno.remove(`${directory}/probe`);
+    const allReplacements = [
+      [prototype, "stat"],
+      [prototype, "read"],
+      [prototype, "writeFile"],
+      [prototype, "sync"],
+      [prototype, "close"],
+      [Stats.prototype, "isFile"],
+      [Stats.prototype, "isDirectory"],
+      [Stats.prototype, "isSymbolicLink"],
+      [Dir.prototype, "read"],
+      [Dir.prototype, "close"],
+    ] as const;
+    const targetPrototype = family === "FileHandle"
+      ? prototype
+      : family === "Stats"
+      ? Stats.prototype
+      : Dir.prototype;
+    const replacements = allReplacements.filter(([target]) => target === targetPrototype);
+    const descriptors = replacements.map(([target, key]) =>
+      Object.getOwnPropertyDescriptor(target, key)
+    );
+    try {
+      const home = await DurableRunHome.open({ directory, identity });
+      for (const [target, key] of replacements) {
+        Object.defineProperty(target, key, {
+          configurable: true,
+          value: () => {
+            throw new Error("Project filesystem hook ran");
+          },
+        });
+      }
+      await home.append({ sequence: 1, value: { persisted: "actual bytes" } });
+      const reopened = await DurableRunHome.open({ directory, identity });
+      const records = await reopened.read();
+      for (let index = 0; index < replacements.length; index++) {
+        const [target, key] = replacements[index]!;
+        const descriptor = descriptors[index];
+        if (descriptor) Object.defineProperty(target, key, descriptor);
+        else Reflect.deleteProperty(target, key);
+      }
+      assertEquals(records, [{ sequence: 1, value: { persisted: "actual bytes" } }]);
+      const bytes = await Deno.readTextFile(`${directory}/0000000001.json`);
+      assertEquals(bytes.includes("actual bytes"), true);
+    } finally {
+      for (let index = 0; index < replacements.length; index++) {
+        const [target, key] = replacements[index]!;
+        const descriptor = descriptors[index];
+        if (descriptor) Object.defineProperty(target, key, descriptor);
+        else Reflect.deleteProperty(target, key);
+      }
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+}

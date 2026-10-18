@@ -231,57 +231,53 @@ function addBytes(state: SnapshotState, bytes: number): void {
   state.bytes += bytes;
 }
 
+type JsonCharacterWidth = Readonly<{ bytes: number; paired: boolean }>;
+
+// Reuse private width records so byte counting does not allocate per code unit.
+const JSON_WIDTH_ONE = objectFreeze({ bytes: 1, paired: false });
+const JSON_WIDTH_TWO = objectFreeze({ bytes: 2, paired: false });
+const JSON_WIDTH_THREE = objectFreeze({ bytes: 3, paired: false });
+const JSON_WIDTH_ESCAPED = objectFreeze({ bytes: 6, paired: false });
+const JSON_WIDTH_PAIR = objectFreeze({ bytes: 4, paired: true });
+
+function jsonUnicodeWidth(
+  value: string,
+  index: number,
+  codeUnit: number,
+): JsonCharacterWidth {
+  if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+    const next = charCodeAt(value, index + 1);
+    if (next >= 0xdc00 && next <= 0xdfff) return JSON_WIDTH_PAIR;
+    // JSON.stringify escapes lone UTF-16 surrogates as six-byte sequences.
+    return JSON_WIDTH_ESCAPED;
+  }
+  if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return JSON_WIDTH_ESCAPED;
+  return JSON_WIDTH_THREE;
+}
+
+function jsonCharacterWidth(value: string, index: number): JsonCharacterWidth {
+  const codeUnit = charCodeAt(value, index);
+  if (codeUnit === 0x22 || codeUnit === 0x5c) return JSON_WIDTH_TWO;
+  if (codeUnit <= 0x1f) {
+    const shortEscape = codeUnit === 0x08 || codeUnit === 0x09 || codeUnit === 0x0a ||
+      codeUnit === 0x0c || codeUnit === 0x0d;
+    return shortEscape ? JSON_WIDTH_TWO : JSON_WIDTH_ESCAPED;
+  }
+  if (codeUnit <= 0x7f) return JSON_WIDTH_ONE;
+  if (codeUnit <= 0x7ff) return JSON_WIDTH_TWO;
+  return jsonUnicodeWidth(value, index, codeUnit);
+}
+
 /**
  * Count the exact UTF-8 bytes used by JSON.stringify for a primitive string
  * without allocating an encoded copy of caller-controlled text.
  */
 function addJsonStringBytes(state: SnapshotState, value: string): void {
   addBytes(state, 2); // Opening and closing quotation marks.
-
   for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = charCodeAt(value, index);
-
-    if (codeUnit === 0x22 || codeUnit === 0x5c) {
-      addBytes(state, 2);
-      continue;
-    }
-    if (codeUnit <= 0x1f) {
-      addBytes(
-        state,
-        codeUnit === 0x08 ||
-          codeUnit === 0x09 ||
-          codeUnit === 0x0a ||
-          codeUnit === 0x0c ||
-          codeUnit === 0x0d
-          ? 2
-          : 6,
-      );
-      continue;
-    }
-    if (codeUnit <= 0x7f) {
-      addBytes(state, 1);
-      continue;
-    }
-    if (codeUnit <= 0x7ff) {
-      addBytes(state, 2);
-      continue;
-    }
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = charCodeAt(value, index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        addBytes(state, 4);
-        index += 1;
-      } else {
-        // Well-formed JSON.stringify escapes lone surrogates as "\\udxxx".
-        addBytes(state, 6);
-      }
-      continue;
-    }
-    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      addBytes(state, 6);
-      continue;
-    }
-    addBytes(state, 3);
+    const width = jsonCharacterWidth(value, index);
+    addBytes(state, width.bytes);
+    if (width.paired) index += 1;
   }
 }
 
@@ -375,6 +371,48 @@ function beginValue(state: SnapshotState, depth: number): void {
   state.nodes += 1;
 }
 
+function assertArraySerializationGuard(value: unknown[], key: string): void {
+  const descriptor = inspectOwnDescriptor(value, key);
+  if (
+    !hasOwn(descriptor, "value") ||
+    descriptor.value !== undefined ||
+    descriptor.configurable !== false ||
+    descriptor.enumerable !== false ||
+    descriptor.writable !== false
+  ) {
+    invalidValue("contained an invalid serialization guard");
+  }
+}
+
+function captureArraySnapshotKey(
+  value: unknown[],
+  key: PropertyKey,
+  length: number,
+  ownedSnapshot: boolean,
+  elementValues: unknown[],
+): void {
+  if (key === "length") {
+    return;
+  }
+  if (key === "toJSON" && ownedSnapshot) {
+    assertArraySerializationGuard(value, key);
+    return;
+  }
+  if (typeof key !== "string") {
+    invalidValue("must not contain symbol properties");
+  }
+  const index = numberFromValue(key);
+  if (
+    !numberIsInteger(index) ||
+    index < 0 ||
+    index >= length ||
+    stringFromValue(index) !== key
+  ) {
+    invalidValue("arrays must be dense and contain no extra properties");
+  }
+  defineArrayElement(elementValues, index, readDataProperty(value, key, true));
+}
+
 function snapshotArray(
   value: unknown[],
   depth: number,
@@ -410,36 +448,7 @@ function snapshotArray(
 
   const elementValues: unknown[] = new NativeArray(length);
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-    const key = keys[keyIndex]!;
-    if (key === "length") {
-      continue;
-    }
-    if (key === "toJSON" && ownedSnapshot) {
-      const descriptor = inspectOwnDescriptor(value, key);
-      if (
-        !hasOwn(descriptor, "value") ||
-        descriptor.value !== undefined ||
-        descriptor.configurable !== false ||
-        descriptor.enumerable !== false ||
-        descriptor.writable !== false
-      ) {
-        invalidValue("contained an invalid serialization guard");
-      }
-      continue;
-    }
-    if (typeof key !== "string") {
-      invalidValue("must not contain symbol properties");
-    }
-    const index = numberFromValue(key);
-    if (
-      !numberIsInteger(index) ||
-      index < 0 ||
-      index >= length ||
-      stringFromValue(index) !== key
-    ) {
-      invalidValue("arrays must be dense and contain no extra properties");
-    }
-    defineArrayElement(elementValues, index, readDataProperty(value, key, true));
+    captureArraySnapshotKey(value, keys[keyIndex]!, length, ownedSnapshot, elementValues);
   }
 
   addBytes(state, 1);
@@ -468,6 +477,12 @@ function snapshotArray(
   });
   addWeakSetValue(OWNED_ARRAY_SNAPSHOTS, snapshot);
   return objectFreeze(snapshot);
+}
+
+function compareSnapshotEntries(left: { key: string }, right: { key: string }): number {
+  if (left.key < right.key) return -1;
+  if (left.key > right.key) return 1;
+  return 0;
 }
 
 function snapshotObject(
@@ -502,8 +517,7 @@ function snapshotObject(
   }
   if (state.sortObjectKeys) {
     apply(arraySort, entries, [
-      (left: { key: string }, right: { key: string }) =>
-        left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+      compareSnapshotEntries,
     ]);
   }
 
@@ -525,6 +539,38 @@ function snapshotObject(
   }
   addBytes(state, 1);
   return objectFreeze(snapshot);
+}
+
+function snapshotObjectValue(
+  value: unknown,
+  depth: number,
+  state: SnapshotState,
+): JsonSnapshotValue {
+  const objectValue = value as object;
+  if (!state.valuesAreOwned) {
+    if (!canIdentifyProxyWithoutHooks) {
+      invalidValue("cannot inspect object values without Proxy detection");
+    }
+    if (isProxyWithoutHooks(objectValue)) {
+      invalidValue("must not contain Proxy values");
+    }
+  }
+  if (hasWeakSetValue(state.ancestors, objectValue)) {
+    invalidValue("must not contain cycles");
+  }
+  addWeakSetValue(state.ancestors, objectValue);
+  try {
+    if (ArrayIsArray(value)) {
+      return snapshotArray(value, depth, state);
+    }
+    return snapshotObject(
+      value as Record<string, unknown>,
+      depth,
+      state,
+    );
+  } finally {
+    deleteWeakSetValue(state.ancestors, objectValue);
+  }
 }
 
 function snapshotValue(
@@ -557,35 +603,26 @@ function snapshotValue(
       addBytes(state, stringFromValue(value).length);
       return value;
     case "object": {
-      const objectValue = value as object;
-      if (!state.valuesAreOwned) {
-        if (!canIdentifyProxyWithoutHooks) {
-          invalidValue("cannot inspect object values without Proxy detection");
-        }
-        if (isProxyWithoutHooks(objectValue)) {
-          invalidValue("must not contain Proxy values");
-        }
-      }
-      if (hasWeakSetValue(state.ancestors, objectValue)) {
-        invalidValue("must not contain cycles");
-      }
-      addWeakSetValue(state.ancestors, objectValue);
-      try {
-        if (ArrayIsArray(value)) {
-          return snapshotArray(value, depth, state);
-        }
-        return snapshotObject(
-          value as Record<string, unknown>,
-          depth,
-          state,
-        );
-      } finally {
-        deleteWeakSetValue(state.ancestors, objectValue);
-      }
+      return snapshotObjectValue(value, depth, state);
     }
     default:
       invalidValue("contained a value without a JSON representation");
   }
+}
+
+function snapshotArraysEqual(
+  leftArray: readonly JsonSnapshotValue[],
+  rightArray: readonly JsonSnapshotValue[],
+): boolean {
+  if (leftArray.length !== rightArray.length) {
+    return false;
+  }
+  for (let index = 0; index < leftArray.length; index += 1) {
+    if (!snapshotsEqual(leftArray[index]!, rightArray[index]!)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function snapshotsEqual(
@@ -607,17 +644,10 @@ function snapshotsEqual(
     return false;
   }
   if (leftIsArray) {
-    const leftArray = left as readonly JsonSnapshotValue[];
-    const rightArray = right as readonly JsonSnapshotValue[];
-    if (leftArray.length !== rightArray.length) {
-      return false;
-    }
-    for (let index = 0; index < leftArray.length; index += 1) {
-      if (!snapshotsEqual(leftArray[index]!, rightArray[index]!)) {
-        return false;
-      }
-    }
-    return true;
+    return snapshotArraysEqual(
+      left as readonly JsonSnapshotValue[],
+      right as readonly JsonSnapshotValue[],
+    );
   }
 
   const leftObject = left as { readonly [key: string]: JsonSnapshotValue };

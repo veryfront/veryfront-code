@@ -155,17 +155,21 @@ function isNode(value: unknown): value is Node {
     typeof (value as { type?: unknown }).type === "string";
 }
 
+function appendChildNodes(found: Node[], value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) if (isNode(entry)) found.push(entry);
+    return;
+  }
+  if (isNode(value)) found.push(value);
+}
+
 function children(node: Node): Node[] {
   const found: Node[] = [];
 
   for (const [key, value] of Object.entries(node)) {
     if (key === "loc" || key === "leadingComments" || key === "trailingComments") continue;
 
-    if (Array.isArray(value)) {
-      for (const entry of value) if (isNode(entry)) found.push(entry);
-      continue;
-    }
-    if (isNode(value)) found.push(value);
+    appendChildNodes(found, value);
   }
 
   return found;
@@ -187,61 +191,55 @@ function jsxElementNameReadsBinding(node: Node): boolean {
 }
 
 function isReferenceChildKey(parent: Node, key: string): boolean {
-  if (parent.type === "ImportDeclaration" || parent.type === "ImportSpecifier") return false;
-  if (parent.type === "ImportDefaultSpecifier" || parent.type === "ImportNamespaceSpecifier") {
-    return false;
+  switch (parent.type) {
+    case "ImportDeclaration":
+    case "ImportSpecifier":
+    case "ImportDefaultSpecifier":
+    case "ImportNamespaceSpecifier":
+    case "ImportAttribute":
+    case "ExportAllDeclaration":
+    case "ExportDefaultSpecifier":
+    case "ExportNamespaceSpecifier":
+    case "JSXNamespacedName":
+    case "MetaProperty":
+    case "Directive":
+    case "DirectiveLiteral":
+      return false;
+    case "ExportSpecifier":
+      return key === "local";
+    case "ExportNamedDeclaration":
+      return !(isNode(parent.source) && key === "specifiers");
+    case "JSXOpeningElement":
+    case "JSXClosingElement":
+      return !(key === "name" && isNode(parent.name) && !jsxElementNameReadsBinding(parent.name));
+    case "JSXAttribute":
+      return key !== "name";
+    case "JSXMemberExpression":
+      return key !== "property";
+    case "MemberExpression":
+    case "OptionalMemberExpression":
+      return key !== "property" || parent.computed === true;
+    case "ObjectProperty":
+    case "ObjectMethod":
+    case "ClassMethod":
+    case "ClassProperty":
+    case "ClassAccessorProperty":
+    case "ClassPrivateProperty":
+    case "ClassPrivateMethod":
+      return key !== "key" || parent.computed === true;
+    case "PrivateName":
+    case "TSEnumDeclaration":
+    case "TSEnumMember":
+      return key !== "id";
+    case "TSQualifiedName":
+      return key !== "right";
+    case "BreakStatement":
+    case "ContinueStatement":
+    case "LabeledStatement":
+      return key !== "label";
+    default:
+      return true;
   }
-  if (parent.type === "ImportAttribute") return false;
-  if (parent.type === "ExportAllDeclaration") return false;
-  if (parent.type === "ExportDefaultSpecifier" || parent.type === "ExportNamespaceSpecifier") {
-    return false;
-  }
-  if (parent.type === "ExportSpecifier") return key === "local";
-  if (
-    parent.type === "ExportNamedDeclaration" && isNode(parent.source) && key === "specifiers"
-  ) {
-    return false;
-  }
-  if (
-    (parent.type === "JSXOpeningElement" || parent.type === "JSXClosingElement") &&
-    key === "name" && isNode(parent.name) && !jsxElementNameReadsBinding(parent.name)
-  ) {
-    return false;
-  }
-  if (parent.type === "JSXAttribute" && key === "name") return false;
-  if (parent.type === "JSXNamespacedName") return false;
-  if (parent.type === "JSXMemberExpression" && key === "property") return false;
-  if (
-    (parent.type === "MemberExpression" || parent.type === "OptionalMemberExpression") &&
-    key === "property" && parent.computed !== true
-  ) {
-    return false;
-  }
-  if (
-    (parent.type === "ObjectProperty" || parent.type === "ObjectMethod" ||
-      parent.type === "ClassMethod" || parent.type === "ClassProperty" ||
-      parent.type === "ClassAccessorProperty" || parent.type === "ClassPrivateProperty" ||
-      parent.type === "ClassPrivateMethod") &&
-    key === "key" && parent.computed !== true
-  ) {
-    return false;
-  }
-  if (parent.type === "PrivateName" && key === "id") return false;
-  if (
-    (parent.type === "TSEnumDeclaration" || parent.type === "TSEnumMember") && key === "id"
-  ) {
-    return false;
-  }
-  if (parent.type === "TSQualifiedName" && key === "right") return false;
-  if (
-    (parent.type === "BreakStatement" || parent.type === "ContinueStatement" ||
-      parent.type === "LabeledStatement") && key === "label"
-  ) {
-    return false;
-  }
-  if (parent.type === "MetaProperty") return false;
-  if (parent.type === "Directive" || parent.type === "DirectiveLiteral") return false;
-  return true;
 }
 
 function referenceChildren(node: Node): Node[] {
@@ -256,11 +254,7 @@ function referenceChildren(node: Node): Node[] {
     }
     if (!isReferenceChildKey(node, key)) continue;
 
-    if (Array.isArray(value)) {
-      for (const entry of value) if (isNode(entry)) found.push(entry);
-      continue;
-    }
-    if (isNode(value)) found.push(value);
+    appendChildNodes(found, value);
   }
 
   return found;
@@ -573,6 +567,13 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
   return { locals, unhandled };
 }
 
+function declarationsIn(statement: Node): Node[] {
+  const declaration = statement.type === "ExportNamedDeclaration"
+    ? statement.declaration
+    : statement;
+  return isNode(declaration) ? [declaration] : [];
+}
+
 /**
  * Empty the body of every exported server-only hook. Emptying rather than
  * deleting keeps the binding, so an export clause or re-export stays valid.
@@ -586,36 +587,31 @@ function emptyServerOnlyHooks(
 
   let changed = false;
 
-  const declarationsIn = (statement: Node): Node[] => {
-    const declaration = statement.type === "ExportNamedDeclaration"
-      ? statement.declaration
-      : statement;
-    return isNode(declaration) ? [declaration] : [];
+  const emptyDeclaration = (declaration: Node): void => {
+    if (declaration.type === "FunctionDeclaration") {
+      const name = nodeName(declaration.id);
+      if (!name || !targets.has(name)) return;
+      declaration.params = [];
+      declaration.body = structuredClone(stubs.body);
+      changed = true;
+      return;
+    }
+
+    if (declaration.type !== "VariableDeclaration") return;
+
+    for (
+      const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+    ) {
+      if (!isNode(declarator)) continue;
+      const name = nodeName(declarator.id);
+      if (!name || !targets.has(name)) continue;
+      declarator.init = structuredClone(stubs.init);
+      changed = true;
+    }
   };
 
   for (const statement of body) {
-    for (const declaration of declarationsIn(statement)) {
-      if (declaration.type === "FunctionDeclaration") {
-        const name = nodeName(declaration.id);
-        if (!name || !targets.has(name)) continue;
-        declaration.params = [];
-        declaration.body = structuredClone(stubs.body);
-        changed = true;
-        continue;
-      }
-
-      if (declaration.type !== "VariableDeclaration") continue;
-
-      for (
-        const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
-      ) {
-        if (!isNode(declarator)) continue;
-        const name = nodeName(declarator.id);
-        if (!name || !targets.has(name)) continue;
-        declarator.init = structuredClone(stubs.init);
-        changed = true;
-      }
-    }
+    for (const declaration of declarationsIn(statement)) emptyDeclaration(declaration);
   }
 
   return changed;
@@ -638,17 +634,27 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
   const fixedNames = new WeakSet<Node>();
 
   const markFixedName = (node: Node): void => {
-    const property = node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
-      ? node.property
-      : node.type === "ObjectProperty" || node.type === "ObjectMethod" ||
-          node.type === "ClassMethod" || node.type === "ClassProperty" ||
-          node.type === "ClassAccessorProperty"
-      ? node.key
-      : node.type === "TSEnumDeclaration" || node.type === "TSEnumMember"
-      ? node.id
-      : node.type === "TSQualifiedName"
-      ? node.right
-      : undefined;
+    let property: unknown;
+    switch (node.type) {
+      case "MemberExpression":
+      case "OptionalMemberExpression":
+        property = node.property;
+        break;
+      case "ObjectProperty":
+      case "ObjectMethod":
+      case "ClassMethod":
+      case "ClassProperty":
+      case "ClassAccessorProperty":
+        property = node.key;
+        break;
+      case "TSEnumDeclaration":
+      case "TSEnumMember":
+        property = node.id;
+        break;
+      case "TSQualifiedName":
+        property = node.right;
+        break;
+    }
 
     if (node.computed === true) return;
     if (isNode(property)) fixedNames.add(property);
@@ -823,6 +829,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     return true;
   };
 
+  const bindVariablePatterns = (scope: LexicalScope, node: Node): void => {
+    for (const declarator of Array.isArray(node.declarations) ? node.declarations : []) {
+      if (isNode(declarator)) bindPatternNames(scope, declarator.id);
+    }
+  };
+
   const bindDirectDeclarations = (scope: LexicalScope, node: Node): void => {
     const body = node.body;
     if (!Array.isArray(body)) return;
@@ -835,11 +847,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       }
       if (bindHoistedRuntimeTsDeclaration(scope, statement)) continue;
       if (statement.type !== "VariableDeclaration") continue;
-      for (
-        const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
-      ) {
-        if (isNode(declarator)) bindPatternNames(scope, declarator.id);
-      }
+      bindVariablePatterns(scope, statement);
     }
   };
 
@@ -864,11 +872,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       }
 
       if (child.type === "VariableDeclaration" && child.kind === "var") {
-        for (
-          const declarator of Array.isArray(child.declarations) ? child.declarations : []
-        ) {
-          if (isNode(declarator)) bindPatternNames(scope, declarator.id);
-        }
+        bindVariablePatterns(scope, child);
       }
       bindNestedVarDeclarations(scope, child);
     }
@@ -1194,34 +1198,28 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
  * names (as passed to `emptyServerOnlyHooks`).
  */
 function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<string> {
-  const declarationsIn = (statement: Node): Node[] => {
-    const declaration = statement.type === "ExportNamedDeclaration"
-      ? statement.declaration
-      : statement;
-    return isNode(declaration) ? [declaration] : [];
-  };
-
   const referenced = new Set<string>();
   const collect = (node: Node): void => {
     for (const name of freeReferencedIdentifiers(node)) referenced.add(name);
   };
 
-  for (const statement of body) {
-    for (const declaration of declarationsIn(statement)) {
-      if (declaration.type === "FunctionDeclaration") {
-        const name = nodeName(declaration.id);
-        if (name && targets.has(name)) collect(declaration);
-        continue;
-      }
-      if (declaration.type !== "VariableDeclaration") continue;
-      for (
-        const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
-      ) {
-        if (!isNode(declarator)) continue;
-        const name = nodeName(declarator.id);
-        if (name && targets.has(name) && isNode(declarator.init)) collect(declarator.init);
-      }
+  const collectDeclaration = (declaration: Node): void => {
+    if (declaration.type === "FunctionDeclaration") {
+      const name = nodeName(declaration.id);
+      if (name && targets.has(name)) collect(declaration);
+      return;
     }
+    if (declaration.type !== "VariableDeclaration") return;
+    for (
+      const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+    ) {
+      if (!isNode(declarator)) continue;
+      const name = nodeName(declarator.id);
+      if (name && targets.has(name) && isNode(declarator.init)) collect(declarator.init);
+    }
+  };
+  for (const statement of body) {
+    for (const declaration of declarationsIn(statement)) collectDeclaration(declaration);
   }
 
   return referenced;

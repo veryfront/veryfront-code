@@ -876,6 +876,7 @@ describe("eval/agent-service", () => {
     }) as EvalAgentAdapterResult;
 
     assertEquals(result.completed, false, "a run that emits RunError is never a completed run");
+    assertEquals(result.outcome, "error");
     assertEquals(result.error, "agent crashed", "the run error message becomes the record error");
     assertEquals(result.output, {
       text: "",

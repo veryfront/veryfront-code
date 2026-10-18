@@ -91,6 +91,7 @@ const MathFloor = Math.floor;
 const MathMax = Math.max;
 const MathMin = Math.min;
 const StringFromCodePoint = String.fromCodePoint;
+const FIXED_IDENTIFIER_ESCAPE_WIDTH = String.raw`\u0000`.length;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
 const IDENTIFIER_ESCAPE_SOURCE = String.raw`\\u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]+\})`;
@@ -348,7 +349,7 @@ function isIdentifierEscapeStartingAt(source: string, index: number): boolean {
 }
 
 function identifierEscapeStartEndingAt(source: string, end: number): number | undefined {
-  const fixedStart = end - "\\u0000".length;
+  const fixedStart = end - FIXED_IDENTIFIER_ESCAPE_WIDTH;
   const fixed = identifierEscapeCodePoint(source, fixedStart);
   if (
     fixed?.end === end &&
@@ -551,7 +552,7 @@ function decodeLiteralContents(
     }
 
     if (escaped === "0") {
-      if (regexpTest(/[0-9]/, source[cursor + 2] ?? "")) invalidEscapedSpecifier();
+      if (regexpTest(/\d/, source[cursor + 2] ?? "")) invalidEscapedSpecifier();
       result += "\0";
       cursor += 2;
       continue;
@@ -716,6 +717,15 @@ function startLineCommentScan(source: string, index: number): LineCommentScan {
   return { source, lineStart, scannedTo: lineStart, quote: null, commentStart: null };
 }
 
+function advanceQuotedLineComment(scan: LineCommentScan, cursor: number): number {
+  const { source } = scan;
+  if (source[cursor] === "\\" && !isLineTerminator(source[cursor + 1] ?? "")) {
+    return cursor + 2;
+  }
+  if (source[cursor] === scan.quote) scan.quote = null;
+  return cursor + 1;
+}
+
 function advanceLineCommentScan(scan: LineCommentScan, index: number): void {
   const { source } = scan;
   let cursor = scan.scannedTo;
@@ -735,11 +745,7 @@ function advanceLineCommentScan(scan: LineCommentScan, index: number): void {
       continue;
     }
     if (scan.quote !== null) {
-      if (char === "\\" && !isLineTerminator(source[cursor + 1] ?? "")) cursor += 2;
-      else {
-        if (char === scan.quote) scan.quote = null;
-        cursor++;
-      }
+      cursor = advanceQuotedLineComment(scan, cursor);
       continue;
     }
     if (char === '"' || char === "'" || char === "`") {
@@ -756,7 +762,7 @@ function lineCommentStart(source: string, index: number): number | null {
   if (index < 0 || isLineTerminator(source[index] ?? "")) return null;
 
   let scan = lineCommentScan;
-  if (scan === null || scan.source !== source || index < scan.lineStart) {
+  if (scan?.source !== source || index < scan.lineStart) {
     scan = startLineCommentScan(source, index);
     lineCommentScan = scan;
   }
@@ -951,25 +957,78 @@ function declarationStatementStartBefore(
   return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ?? separatorStart;
 }
 
+interface DelimiterDepth {
+  paren: number;
+  brace: number;
+  bracket: number;
+}
+
+function atDelimiterTopLevel(depth: DelimiterDepth): boolean {
+  return depth.paren === 0 && depth.brace === 0 && depth.bracket === 0;
+}
+
+function advanceDelimiterDepth(depth: DelimiterDepth, char: string | undefined): void {
+  switch (char) {
+    case "(":
+      depth.paren++;
+      break;
+    case ")":
+      if (depth.paren > 0) depth.paren--;
+      break;
+    case "{":
+      depth.brace++;
+      break;
+    case "}":
+      if (depth.brace > 0) depth.brace--;
+      break;
+    case "[":
+      depth.bracket++;
+      break;
+    case "]":
+      if (depth.bracket > 0) depth.bracket--;
+      break;
+  }
+}
+
+function retreatDelimiterDepth(depth: DelimiterDepth, char: string | undefined): boolean {
+  switch (char) {
+    case ")":
+      depth.paren++;
+      return true;
+    case "(":
+      if (depth.paren === 0) return false;
+      depth.paren--;
+      return true;
+    case "}":
+      depth.brace++;
+      return true;
+    case "{":
+      if (depth.brace === 0) return false;
+      depth.brace--;
+      return true;
+    case "]":
+      depth.bracket++;
+      return true;
+    case "[":
+      if (depth.bracket === 0) return false;
+      depth.bracket--;
+      return true;
+    default:
+      return false;
+  }
+}
+
 function balancedDeclarationStatementStartBefore(
   source: string,
   index: number,
   keywords: readonly string[],
 ): number {
   let cursor = index - 1;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
+  const depth: DelimiterDepth = { paren: 0, brace: 0, bracket: 0 };
 
   while (cursor >= 0) {
     const char = source[cursor];
-    if (char === ")") parenDepth++;
-    else if (char === "(" && parenDepth > 0) parenDepth--;
-    else if (char === "}") braceDepth++;
-    else if (char === "{" && braceDepth > 0) braceDepth--;
-    else if (char === "]") bracketDepth++;
-    else if (char === "[" && bracketDepth > 0) bracketDepth--;
-    else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+    if (!retreatDelimiterDepth(depth, char) && atDelimiterTopLevel(depth)) {
       if (char === ";" || char === "{" || char === "}") {
         const separatorStart = cursor + 1;
         return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ??
@@ -1207,9 +1266,7 @@ function switchClauseStartBeforeColon(
 ): number | null {
   let cursor = start;
   let candidate: number | null = null;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
+  const depth: DelimiterDepth = { paren: 0, brace: 0, bracket: 0 };
 
   while (cursor < colonIndex) {
     const skipped = skipIgnored(source, cursor);
@@ -1219,14 +1276,9 @@ function switchClauseStartBeforeColon(
     }
 
     const char = source[cursor];
-    if (char === "(") parenDepth++;
-    else if (char === ")" && parenDepth > 0) parenDepth--;
-    else if (char === "{") braceDepth++;
-    else if (char === "}" && braceDepth > 0) braceDepth--;
-    else if (char === "[") bracketDepth++;
-    else if (char === "]" && bracketDepth > 0) bracketDepth--;
+    advanceDelimiterDepth(depth, char);
 
-    if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+    if (atDelimiterTopLevel(depth)) {
       if (
         stringStartsWith(source, "case", cursor) &&
         !isIdentifierBoundaryBefore(source, cursor) &&
@@ -1517,80 +1569,76 @@ function isForOfKeywordBefore(
   return currentParen?.isForHeader === true && !currentParen.hasSemicolon;
 }
 
+function moduleDeclarationKeywordAt(source: string, cursor: number): "import" | "export" | null {
+  if (
+    stringStartsWith(source, "import", cursor) &&
+    !isIdentifierBoundaryBefore(source, cursor) &&
+    !isIdentifierBoundaryAfter(source, cursor + "import".length)
+  ) return "import";
+  if (
+    stringStartsWith(source, "export", cursor) &&
+    !isIdentifierBoundaryBefore(source, cursor) &&
+    !isIdentifierBoundaryAfter(source, cursor + "export".length)
+  ) return "export";
+  return null;
+}
+
+function ignoredTextEndsStatement(source: string, cursor: number, skipped: number): boolean {
+  if (source[cursor] !== "/") return false;
+  if (source[cursor + 1] === "/") return true;
+  return source[cursor + 1] === "*" && hasLineTerminatorBetween(source, cursor + 2, skipped - 2);
+}
+
 function createModuleDeclarationTracker(
   source: string,
   rangeStart: number,
 ): (end: number) => { keyword: "import" | "export"; index: number } | null {
   let cursor = rangeStart;
   let atStatementStart = true;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
+  const depth: DelimiterDepth = { paren: 0, brace: 0, bracket: 0 };
   let candidate: { keyword: "import" | "export"; index: number } | null = null;
+
+  const advanceStatementSeparator = (char: string | undefined, atTopLevel: boolean): boolean => {
+    if (!atTopLevel) return false;
+    if (char === ";") {
+      candidate = null;
+      atStatementStart = true;
+      cursor++;
+      return true;
+    }
+    if (char !== undefined && isLineTerminator(char)) {
+      atStatementStart = true;
+      cursor++;
+      return true;
+    }
+    return false;
+  };
 
   return (end: number) => {
     while (cursor <= end) {
       const skipped = skipIgnored(source, cursor);
       if (skipped !== cursor) {
-        if (source[cursor] === "/" && source[cursor + 1] === "/") {
-          atStatementStart = true;
-        } else if (
-          source[cursor] === "/" &&
-          source[cursor + 1] === "*" &&
-          hasLineTerminatorBetween(source, cursor + 2, skipped - 2)
-        ) {
-          atStatementStart = true;
-        } else {
-          atStatementStart = false;
-        }
+        atStatementStart = ignoredTextEndsStatement(source, cursor, skipped);
         cursor = skipped;
         continue;
       }
 
       const char = source[cursor];
-      if (char === "(") parenDepth++;
-      else if (char === ")" && parenDepth > 0) parenDepth--;
-      else if (char === "{") braceDepth++;
-      else if (char === "}" && braceDepth > 0) braceDepth--;
-      else if (char === "[") bracketDepth++;
-      else if (char === "]" && bracketDepth > 0) bracketDepth--;
+      advanceDelimiterDepth(depth, char);
 
-      const atTopLevel = parenDepth === 0 && braceDepth === 0 && bracketDepth === 0;
-      if (atTopLevel && char === ";") {
-        candidate = null;
-        atStatementStart = true;
-        cursor++;
-        continue;
-      }
-      if (atTopLevel && char !== undefined && isLineTerminator(char)) {
-        atStatementStart = true;
-        cursor++;
-        continue;
-      }
+      const atTopLevel = atDelimiterTopLevel(depth);
+      if (advanceStatementSeparator(char, atTopLevel)) continue;
       if (regexpTest(/\s/, char ?? "")) {
         cursor++;
         continue;
       }
 
       if (atTopLevel && atStatementStart) {
-        if (
-          stringStartsWith(source, "import", cursor) &&
-          !isIdentifierBoundaryBefore(source, cursor) &&
-          !isIdentifierBoundaryAfter(source, cursor + "import".length)
-        ) {
-          candidate = { keyword: "import", index: cursor };
+        const keyword = moduleDeclarationKeywordAt(source, cursor);
+        if (keyword !== null) {
+          candidate = { keyword, index: cursor };
           atStatementStart = false;
-          cursor += "import".length;
-          continue;
-        }
-        if (
-          stringStartsWith(source, "export", cursor) &&
-          !isIdentifierBoundaryBefore(source, cursor) &&
-          !isIdentifierBoundaryAfter(source, cursor + "export".length)
-        ) {
-          candidate = { keyword: "export", index: cursor };
-          atStatementStart = false;
-          cursor += "export".length;
+          cursor += keyword.length;
           continue;
         }
       }
@@ -1659,6 +1707,20 @@ function isPostfixNonNullAssertionBefore(
     canEndStatementBeforeLineTerminator(source, beforeBang);
 }
 
+function isTypeArgumentCalleeBefore(
+  source: string,
+  cursor: number,
+  rangeStart: number,
+  sawTypeContent: boolean,
+): boolean {
+  const beforeOpen = previousSignificantIndexBeforeIgnored(source, cursor);
+  const beforeOpenChar = source[beforeOpen];
+  return sawTypeContent && beforeOpen >= rangeStart &&
+    (isIdentifierPartAt(source, beforeOpen) ||
+      isIdentifierEscapeEndingAt(source, beforeOpen + 1) ||
+      beforeOpenChar === ")" || beforeOpenChar === "]");
+}
+
 function isCompletedTypeArgumentListBefore(
   source: string,
   closeIndex: number,
@@ -1666,33 +1728,23 @@ function isCompletedTypeArgumentListBefore(
 ): boolean {
   let cursor = closeIndex - 1;
   let angleDepth = 1;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
+  const depth: DelimiterDepth = { paren: 0, brace: 0, bracket: 0 };
   let sawTypeContent = false;
 
   while (cursor >= rangeStart) {
     const char = source[cursor];
 
-    if (char === ")") parenDepth++;
-    else if (char === "(" && parenDepth > 0) parenDepth--;
-    else if (char === "}") braceDepth++;
-    else if (char === "{" && braceDepth > 0) braceDepth--;
-    else if (char === "]") bracketDepth++;
-    else if (char === "[" && bracketDepth > 0) bracketDepth--;
-    else if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+    if (retreatDelimiterDepth(depth, char)) {
+      cursor--;
+      continue;
+    }
+    if (atDelimiterTopLevel(depth)) {
       if (char === ">") {
         angleDepth++;
       } else if (char === "<") {
         angleDepth--;
         if (angleDepth === 0) {
-          const beforeOpen = previousSignificantIndexBeforeIgnored(source, cursor);
-          const beforeOpenChar = source[beforeOpen];
-          return sawTypeContent && beforeOpen >= rangeStart &&
-            (isIdentifierPartAt(source, beforeOpen) ||
-              isIdentifierEscapeEndingAt(source, beforeOpen + 1) ||
-              beforeOpenChar === ")" ||
-              beforeOpenChar === "]");
+          return isTypeArgumentCalleeBefore(source, cursor, rangeStart, sawTypeContent);
         }
       } else if (!regexpTest(/\s/, char ?? "")) {
         sawTypeContent = true;
@@ -2016,6 +2068,25 @@ function looksLikeStatementAfterJsxTextBreak(source: string, index: number): boo
   return keyword !== null && setHas(JSX_TEXT_BREAK_STATEMENT_KEYWORDS, keyword);
 }
 
+function isNamedRawJsxClosingTagAt(source: string, cursor: number, name: string): boolean {
+  if (source[cursor + 1] !== "/") return false;
+  const tag = rawJsxTagName(source, cursor + 2);
+  const afterName = source[tag.end];
+  return tag.name === name &&
+    (afterName === ">" || afterName === "/" || regexpTest(/\s/, afterName ?? ""));
+}
+
+function isStatementBreakAfterJsxText(
+  source: string,
+  cursor: number,
+  statementEnd: number,
+): boolean {
+  const char = source[cursor];
+  return cursor >= statementEnd &&
+    (char === ";" || (char !== undefined && isLineTerminator(char))) &&
+    looksLikeStatementAfterJsxTextBreak(source, cursor + 1);
+}
+
 function hasRawJsxClosingTagAcrossText(
   source: string,
   name: string,
@@ -2027,14 +2098,7 @@ function hasRawJsxClosingTagAcrossText(
 
   while (cursor < limit) {
     const char = source[cursor];
-    if (char === "<") {
-      if (source[cursor + 1] !== "/") return false;
-
-      const tag = rawJsxTagName(source, cursor + 2);
-      const afterName = source[tag.end];
-      return tag.name === name &&
-        (afterName === ">" || afterName === "/" || regexpTest(/\s/, afterName ?? ""));
-    }
+    if (char === "<") return isNamedRawJsxClosingTagAt(source, cursor, name);
 
     if (char === "{") {
       const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
@@ -2044,13 +2108,7 @@ function hasRawJsxClosingTagAcrossText(
     }
 
     if (char === "}" || char === ")" || char === "]") return false;
-    if (
-      cursor >= statementEnd &&
-      (char === ";" || (char !== undefined && isLineTerminator(char))) &&
-      looksLikeStatementAfterJsxTextBreak(source, cursor + 1)
-    ) {
-      return false;
-    }
+    if (isStatementBreakAfterJsxText(source, cursor, statementEnd)) return false;
 
     cursor++;
   }
@@ -2507,13 +2565,35 @@ function tokenAt(source: string, index: number, token: string): boolean {
     !isIdentifierPartAt(source, index + token.length);
 }
 
+function typeSpecifierEnd(source: string, cursor: number, end: number): number {
+  while (cursor < end) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+    if (source[cursor] === "," || source[cursor] === "}") return cursor;
+    cursor++;
+  }
+  return cursor;
+}
+
+function isTypeSpecifierStart(source: string, cursor: number, end: number): boolean {
+  return cursor < end && source[cursor] !== "," && source[cursor] !== "}" &&
+    !tokenAt(source, cursor, "as");
+}
+
+function isWholeTypeOnlyClause(source: string, cursor: number, end: number): boolean {
+  return cursor < end && source[cursor] !== "," && !tokenAt(source, cursor, "as") &&
+    !tokenAt(source, cursor, "from");
+}
+
 /** Whether a static module clause contains no runtime binding or side effect. */
 function isTypeOnlyModuleClause(source: string, start: number, end: number): boolean {
   let cursor = skipWhitespaceAndComments(source, start);
   if (tokenAt(source, cursor, "type")) {
     cursor = skipWhitespaceAndComments(source, cursor + "type".length);
-    return cursor < end && source[cursor] !== "," && !tokenAt(source, cursor, "as") &&
-      !tokenAt(source, cursor, "from");
+    return isWholeTypeOnlyClause(source, cursor, end);
   }
   if (source[cursor] !== "{") return false;
   cursor++;
@@ -2524,27 +2604,12 @@ function isTypeOnlyModuleClause(source: string, start: number, end: number): boo
     if (source[cursor] === "}") return foundTypeSpecifier;
     if (!tokenAt(source, cursor, "type")) return false;
     cursor = skipWhitespaceAndComments(source, cursor + "type".length);
-    if (
-      cursor >= end || source[cursor] === "," || source[cursor] === "}" ||
-      tokenAt(source, cursor, "as")
-    ) {
-      return false;
-    }
+    if (!isTypeSpecifierStart(source, cursor, end)) return false;
     foundTypeSpecifier = true;
 
-    while (cursor < end) {
-      const skipped = skipIgnored(source, cursor);
-      if (skipped !== cursor) {
-        cursor = skipped;
-        continue;
-      }
-      if (source[cursor] === ",") {
-        cursor++;
-        break;
-      }
-      if (source[cursor] === "}") return true;
-      cursor++;
-    }
+    cursor = typeSpecifierEnd(source, cursor, end);
+    if (cursor < end && source[cursor] === "}") return true;
+    if (cursor < end && source[cursor] === ",") cursor++;
   }
   return false;
 }

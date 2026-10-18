@@ -450,26 +450,32 @@ it("actual stream denies a callable effect after live generation changes", async
       createRuntimeAgentStreamResponse(input, agent, {
         sessionManager: manager,
         createRuntime: () => ({
-          stream: async () => {
-            current = admission(1);
-            await executeConfiguredTool("ledger", {}, {
-              ledger: {
-                id: "ledger",
-                type: "function",
-                description: "synthetic",
-                inputSchemaJson: {},
-                inputSchema: defineSchema((v) => v.object({}))(),
-                execute: () => {
-                  effects++;
-                  return Promise.resolve({});
+          stream: async (_messages, _context, callbacks) => {
+            const completion = Promise.withResolvers<void>();
+            callbacks?.onStreamCompletion?.(completion.promise);
+            try {
+              current = admission(1);
+              await executeConfiguredTool("ledger", {}, {
+                ledger: {
+                  id: "ledger",
+                  type: "function",
+                  description: "synthetic",
+                  inputSchemaJson: {},
+                  inputSchema: defineSchema((v) => v.object({}))(),
+                  execute: () => {
+                    effects++;
+                    return Promise.resolve({});
+                  },
                 },
-              },
-            });
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            });
+              });
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            } finally {
+              completion.resolve();
+            }
           },
         }),
       })
@@ -672,3 +678,335 @@ it("cancelled ordinary cleanup blocks managed acquisition at combined capacity",
     else Deno.env.set(envKey, previous);
   }
 });
+
+for (const exit of ["disconnect", "setup-error"] as const) {
+  it(`keeps renewing ownership through ${exit} until the deferred tool settles`, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const value = admission();
+    let renewals = 0;
+    let effects = 0;
+    const releaseTool = Promise.withResolvers<void>();
+    const producerEnded = Promise.withResolvers<void>();
+    const manager = new AgentRunSessionManager({
+      recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+        const owner = await RecoverySessionOwner.acquire({
+          claims,
+          directory: `${directory}/owner`,
+          awaitRetiredPreviousOwner,
+          validateCurrentOwnership: async () => {
+            renewals++;
+            return { ...receipt(value), leaseRemainingMs: 200 };
+          },
+        });
+        const writer = await createManagedRecoveryWriter({
+          claims,
+          owner,
+          directory,
+          append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+          bindAdmissionWriter: () => {},
+        });
+        return { owner, writer };
+      },
+    });
+    try {
+      const input = {
+        runId: identity.publicRunId,
+        threadId: identity.threadId,
+        messages: [],
+        tools: [],
+        context: [],
+      };
+      bindManagedRecoveryInput(input, await signed(value));
+      const agent = createAgent({
+        id: "recovery-proof",
+        model: "anthropic/test",
+        system: "Synthetic",
+        skills: false,
+      });
+      const response = createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: manager,
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            // The producer's callable effect deliberately ignores the abort signal.
+            const producer = (async () => {
+              await releaseTool.promise;
+              effects++;
+            })();
+            callbacks?.onStreamCompletion?.(producer);
+            void producer.finally(() => producerEnded.resolve());
+            if (exit === "setup-error") throw new Error("synthetic post-invocation failure");
+            return new ReadableStream<Uint8Array>();
+          },
+        }),
+      });
+      if (exit === "setup-error") {
+        await assertRejects(() => response, Error, "synthetic post-invocation failure");
+      } else {
+        const reader = (await response).body!.getReader();
+        await reader.read();
+        await reader.cancel();
+      }
+      const before = renewals;
+      await waitFor(() => renewals >= before + 3);
+      assertEquals(effects, 0);
+      releaseTool.resolve();
+      await producerEnded.promise;
+      await waitFor(() => manager.getRunStatus(identity.publicRunId) === null);
+      const after = renewals;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assertEquals(renewals, after);
+      assertEquals(effects, 1);
+    } finally {
+      releaseTool.resolve();
+      manager.reset();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}
+
+it("project Map.get replacement cannot hide a managed session from cancellation", async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const get = Map.prototype.get;
+  const manager = new AgentRunSessionManager({
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => ({
+      owner: await RecoverySessionOwner.acquire({
+        claims,
+        directory,
+        validateCurrentOwnership: async () => receipt(),
+        awaitRetiredPreviousOwner,
+      }),
+    }),
+  });
+  try {
+    const run = await manager.startManagedRecoveryRun({
+      runId: identity.publicRunId,
+      threadId: identity.threadId,
+      claims: await signed(),
+    });
+    Map.prototype.get = function (key) {
+      const value = Reflect.apply(get, this, [key]);
+      return value && typeof value === "object" && "generation" in value && "manager" in value
+        ? undefined
+        : value;
+    };
+    const cancelled = manager.cancelRun(identity.publicRunId);
+    const aborted = run.signal.aborted;
+    Map.prototype.get = get;
+    run.settle();
+    assertEquals(cancelled, true);
+    assertEquals(aborted, true);
+  } finally {
+    Map.prototype.get = get;
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("lease renewal does not consult a project Promise catch hook", async () => {
+  const previous = Deno.env.get(envKey);
+  const originalCatch = Promise.prototype.catch;
+  const directory = await makeTempDir();
+  let renewals = 0;
+  let intercepted = false;
+  let lifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  try {
+    const owner = await RecoverySessionOwner.acquire({
+      claims: await signed(),
+      directory,
+      awaitRetiredPreviousOwner: async () => {},
+      validateCurrentOwnership: async () => {
+        renewals++;
+        return { ...receipt(), leaseRemainingMs: 200 };
+      },
+    });
+    lifetime = await startManagedRecoveryLifetime(owner, () => {});
+    const before = renewals;
+    Promise.prototype.catch = function (onRejected) {
+      intercepted = true;
+      return Reflect.apply(originalCatch, this, [onRejected]);
+    };
+    await waitFor(() => renewals > before);
+    Promise.prototype.catch = originalCatch;
+    assertEquals(intercepted, false);
+  } finally {
+    Promise.prototype.catch = originalCatch;
+    lifetime?.stop();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("framework preflight rejection retires its managed generation before producer creation", {
+  sanitizeOps: true,
+  sanitizeResources: true,
+}, async () => {
+  const previous = Deno.env.get(envKey);
+  const directory = await makeTempDir();
+  const value = admission();
+  const manager = new AgentRunSessionManager({
+    maxConcurrentSessions: 1,
+    recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+      const owner = await RecoverySessionOwner.acquire({
+        claims,
+        directory: `${directory}/owner`,
+        awaitRetiredPreviousOwner,
+        validateCurrentOwnership: async () => receipt(value),
+      });
+      return {
+        owner,
+        writer: await createManagedRecoveryWriter({
+          claims,
+          owner,
+          directory,
+          append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+          bindAdmissionWriter: () => {},
+        }),
+      };
+    },
+  });
+  try {
+    const input = {
+      runId: identity.publicRunId,
+      threadId: identity.threadId,
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    bindManagedRecoveryInput(input, await signed(value));
+    const agent = createAgent({
+      id: "recovery-proof",
+      model: "anthropic/test",
+      system: "Synthetic",
+      skills: false,
+      resolveModelTransport: () => {
+        throw new Error("synthetic framework model preflight failure");
+      },
+    });
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager: manager,
+        }),
+      Error,
+      "synthetic framework model preflight failure",
+    );
+    const next = manager.startRun({
+      runId: "after-framework-preflight",
+      threadId: identity.threadId,
+    });
+    manager.completeRun("after-framework-preflight", next);
+  } finally {
+    manager.reset();
+    await Deno.remove(directory, { recursive: true });
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+for (const failure of ["ownership-check", "unknown-override"] as const) {
+  it(`distinguishes ${failure} failure from an invoked producer`, {
+    sanitizeOps: true,
+    sanitizeResources: true,
+  }, async () => {
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const value = admission();
+    let armed = false;
+    let checks = 0;
+    let invocations = 0;
+    let activeSession:
+      | Awaited<ReturnType<AgentRunSessionManager["startManagedRecoveryRun"]>>
+      | undefined;
+    class ObservedManager extends AgentRunSessionManager {
+      override async startManagedRecoveryRun(
+        ...args: Parameters<AgentRunSessionManager["startManagedRecoveryRun"]>
+      ) {
+        activeSession = await super.startManagedRecoveryRun(...args);
+        return activeSession;
+      }
+    }
+    const manager = new ObservedManager({
+      maxConcurrentSessions: 1,
+      recoveryOwnerFactory: async ({ claims, awaitRetiredPreviousOwner }) => {
+        const owner = await RecoverySessionOwner.acquire({
+          claims,
+          directory: `${directory}/owner`,
+          awaitRetiredPreviousOwner,
+          validateCurrentOwnership: async () => {
+            if (armed && ++checks === 1 && failure === "ownership-check") {
+              throw new Error("synthetic ownership-check failure");
+            }
+            return receipt(value);
+          },
+        });
+        return {
+          owner,
+          writer: await createManagedRecoveryWriter({
+            claims,
+            owner,
+            directory,
+            append: async () => ({ eventId: 1, externalSequence: 0, toolAdmissions: [] }),
+            bindAdmissionWriter: () => {},
+          }),
+        };
+      },
+    });
+    try {
+      const input = {
+        runId: identity.publicRunId,
+        threadId: identity.threadId,
+        messages: [],
+        tools: [],
+        context: [],
+      };
+      bindManagedRecoveryInput(input, await signed(value));
+      const agent = createAgent({
+        id: "recovery-proof",
+        model: "anthropic/test",
+        system: "Synthetic",
+        skills: false,
+      });
+      await assertRejects(
+        () =>
+          createRuntimeAgentStreamResponse(input, agent, {
+            sessionManager: manager,
+            createRuntime: () => {
+              armed = true;
+              return {
+                stream: () => {
+                  invocations++;
+                  // No completion report: the host cannot assume this override did no work.
+                  return Promise.reject(new Error("synthetic unknown-override failure"));
+                },
+              };
+            },
+          }),
+        Error,
+        `synthetic ${failure} failure`,
+      );
+      assertEquals(invocations, failure === "ownership-check" ? 0 : 1);
+      if (failure === "unknown-override") {
+        assertThrows(() =>
+          manager.startRun({ runId: "still-fenced", threadId: identity.threadId })
+        );
+      } else {
+        const next = manager.startRun({ runId: "after-guard", threadId: identity.threadId });
+        manager.completeRun("after-guard", next);
+      }
+    } finally {
+      // This synthetic override starts no work. Only the test has that knowledge.
+      activeSession?.settle();
+      manager.reset();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+}

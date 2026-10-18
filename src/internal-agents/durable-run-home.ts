@@ -10,8 +10,19 @@ import {
   privateByteSubarray,
   PrivateUint8Array,
 } from "#veryfront/security/private-bytes.ts";
-import { constants } from "node:fs";
-import { link, lstat, mkdir, open, opendir, unlink } from "node:fs/promises";
+import {
+  close as closeCallback,
+  constants,
+  Dir,
+  fstat as statCallback,
+  fsync as syncCallback,
+  open as openCallback,
+  read as readCallback,
+  Stats,
+  writeFile as writeFileCallback,
+} from "node:fs";
+import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { link, lstat, mkdir, opendir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
@@ -25,6 +36,46 @@ import {
 } from "./durable-run-home-schema.ts";
 
 const apply = Reflect.apply;
+// FileHandle and Stats prototypes remain visible to project modules. Use captured
+// descriptor operations so a replaced method cannot acknowledge bytes or fsync.
+function callbackOperation<T>(
+  start: (done: (error: NodeJS.ErrnoException | null, value: T) => void) => void,
+): Promise<T> {
+  const completion = createPrivateDeferred<T>();
+  start((error, value) => error ? completion.reject(error) : completion.resolve(value));
+  return completion.promise;
+}
+const openDescriptor = (path: string, flags: string | number, mode?: number) =>
+  callbackOperation<number>((done) => openCallback(path, flags, mode, done));
+const closeDescriptor = (fd: number) =>
+  callbackOperation<void>((done) => closeCallback(fd, (error) => done(error, undefined)));
+const syncDescriptor = (fd: number) =>
+  callbackOperation<void>((done) => syncCallback(fd, (error) => done(error, undefined)));
+const statDescriptor = (fd: number) => callbackOperation<Stats>((done) => statCallback(fd, done));
+const readDescriptor = (
+  fd: number,
+  bytes: Uint8Array,
+  offset: number,
+  length: number,
+  position: number | null,
+) =>
+  callbackOperation<{ bytesRead: number }>((done) =>
+    readCallback(
+      fd,
+      bytes,
+      offset,
+      length,
+      position,
+      (error, bytesRead) => done(error, { bytesRead }),
+    )
+  );
+const writeDescriptor = (fd: number, text: string) =>
+  callbackOperation<void>((done) => writeFileCallback(fd, text, (error) => done(error, undefined)));
+const directoryRead = Dir.prototype.read;
+const directoryClose = Dir.prototype.close;
+const statsIsFile = Stats.prototype.isFile;
+const statsIsDirectory = Stats.prototype.isDirectory;
+const statsIsSymbolicLink = Stats.prototype.isSymbolicLink;
 const sort = Array.prototype.sort;
 const regexTest = RegExp.prototype.test;
 const objectKeys = Object.keys;
@@ -42,23 +93,26 @@ function isExists(error: unknown): boolean {
 }
 
 async function syncDirectory(directory: string): Promise<void> {
-  const folder = await open(directory, constants.O_RDONLY);
+  const folder = await openDescriptor(directory, constants.O_RDONLY);
   try {
-    await folder.sync();
+    await syncDescriptor(folder);
   } finally {
-    await folder.close();
+    await closeDescriptor(folder);
   }
 }
 
 async function readBounded(path: string): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const file = await openDescriptor(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
-    const info = await file.stat();
-    if (!info.isFile() || info.size > MAX_DURABLE_RECORD_BYTES) throw invalid();
+    const info = await statDescriptor(file);
+    if (!apply(statsIsFile, info, []) || info.size > MAX_DURABLE_RECORD_BYTES) throw invalid();
     const bytes = new PrivateUint8Array(info.size + 1);
     let count = 0;
     while (count < bytes.length) {
-      const result = await file.read(bytes, count, bytes.length - count, null);
+      const result = await readDescriptor(file, bytes, count, bytes.length - count, null);
       if (result.bytesRead === 0) break;
       count += result.bytesRead;
     }
@@ -67,7 +121,7 @@ async function readBounded(path: string): Promise<string> {
       privateByteSubarray(bytes, 0, count),
     );
   } finally {
-    await file.close();
+    await closeDescriptor(file);
   }
 }
 
@@ -75,12 +129,12 @@ async function readBounded(path: string): Promise<string> {
 async function publish(directory: string, name: string, text: string): Promise<void> {
   if (byteLength(text) > MAX_DURABLE_RECORD_BYTES) throw invalid();
   const temporary = join(directory, `.pending-${randomUUID()}`);
-  const file = await open(temporary, "wx", 0o600);
+  const file = await openDescriptor(temporary, "wx", 0o600);
   try {
-    await file.writeFile(text);
-    await file.sync();
+    await writeDescriptor(file, text);
+    await syncDescriptor(file);
   } finally {
-    await file.close();
+    await closeDescriptor(file);
   }
   try {
     await link(temporary, join(directory, name));
@@ -109,7 +163,7 @@ export class DurableRunHome {
       if (!isExists(error)) throw error;
     }
     const info = await lstat(input.directory);
-    if (!info.isDirectory() || info.isSymbolicLink()) throw invalid();
+    if (!apply(statsIsDirectory, info, []) || apply(statsIsSymbolicLink, info, [])) throw invalid();
     await syncDirectory(dirname(input.directory));
     const manifest = privateJsonStringify({ version: 1, identity });
     try {
@@ -127,11 +181,18 @@ export class DurableRunHome {
   async read(): Promise<DurableRunRecord[]> {
     const names: string[] = [];
     const directory = await opendir(this.directory);
-    for await (const entry of directory) {
-      // Pending publications may belong to a live writer; ignore without retaining them.
-      if (privateTextStartsWith(entry.name, ".pending-")) continue;
-      if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
-      pushPrivateArray(names, entry.name);
+    try {
+      for (;;) {
+        const entry = await apply(directoryRead, directory, []);
+        if (!entry) break;
+        const name = entry.name;
+        // Pending publications may belong to a live writer; ignore without retaining them.
+        if (privateTextStartsWith(name, ".pending-")) continue;
+        if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
+        pushPrivateArray(names, name);
+      }
+    } finally {
+      await apply(directoryClose, directory, []);
     }
     const records: string[] = [];
     for (let index = 0; index < names.length; index++) {

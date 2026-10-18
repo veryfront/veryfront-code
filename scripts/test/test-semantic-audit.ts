@@ -846,6 +846,65 @@ export function collectSemanticMarkers(
   const markers: SemanticMarker[] = [];
   const definitelyReachedTryEntryPrefixClearingCalls = new Set<Node>();
 
+  const visitRuntimeChild = (
+    node: Node,
+    key: string,
+    scopes: readonly Scope[],
+    allowAssignmentClearing: boolean,
+  ): void => {
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNode(item)) {
+          visit(
+            item,
+            scopes,
+            false,
+            allowAssignmentClearing && !isConditionalBranch(node, key),
+          );
+        }
+      }
+    } else if (isNode(value)) {
+      const childScopes = classFieldValueScopes(node, key, scopes);
+      const suppressChildMarker =
+        isGlobalRuntimePrefixObject(node, key, value) ||
+        isRuntimeEnvDetailObjectChild(
+          node,
+          key,
+          value,
+          bindings,
+          childScopes,
+        ) ||
+        isWriteOnlyAssignmentTargetChild(node, key);
+      visit(
+        value,
+        childScopes,
+        suppressChildMarker,
+        allowAssignmentClearing && !isConditionalBranch(node, key),
+      );
+    }
+  };
+
+  const visitRuntimeChildren = (
+    node: Node,
+    scopes: readonly Scope[],
+    allowAssignmentClearing: boolean,
+  ): void => {
+    for (const key of Object.keys(node)) {
+      if (
+        key === "loc" || COMMENT_KEYS.has(key) || TYPE_ONLY_CHILD_KEYS.has(key)
+      ) continue;
+      if (key === "body" && isFunctionScopeNode(node)) {
+        markRuntimeFunctionParametersInitialized(
+          node,
+          scopes,
+          allowAssignmentClearing,
+        );
+      }
+      visitRuntimeChild(node, key, scopes, allowAssignmentClearing);
+    }
+  };
+
   const visit = (
     node: Node,
     scopes: readonly Scope[],
@@ -898,51 +957,7 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
-    for (const key of Object.keys(node)) {
-      if (
-        key === "loc" || COMMENT_KEYS.has(key) ||
-        TYPE_ONLY_CHILD_KEYS.has(key)
-      ) continue;
-      if (key === "body" && isFunctionScopeNode(node)) {
-        markRuntimeFunctionParametersInitialized(
-          node,
-          nextScopes,
-          allowAssignmentClearing,
-        );
-      }
-      const value = node[key];
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (isNode(item)) {
-            visit(
-              item,
-              nextScopes,
-              false,
-              allowAssignmentClearing && !isConditionalBranch(node, key),
-            );
-          }
-        }
-      } else if (isNode(value)) {
-        const childScopes = classFieldValueScopes(node, key, nextScopes);
-        const suppressChildMarker = isGlobalRuntimePrefixObject(
-          node,
-          key,
-          value,
-        ) || isRuntimeEnvDetailObjectChild(
-          node,
-          key,
-          value,
-          bindings,
-          childScopes,
-        ) || isWriteOnlyAssignmentTargetChild(node, key);
-        visit(
-          value,
-          childScopes,
-          suppressChildMarker,
-          allowAssignmentClearing && !isConditionalBranch(node, key),
-        );
-      }
-    }
+    visitRuntimeChildren(node, nextScopes, allowAssignmentClearing);
     markRuntimeDeclarationInitialized(
       node,
       nextScopes,
@@ -1994,6 +2009,12 @@ function memberAssignmentRuntimeEffectMarkers(
   return marker ? [marker] : [];
 }
 
+function assignmentPatternChildren(node: Node): unknown {
+  if (node.type === "ObjectPattern") return node.properties;
+  if (node.type === "ArrayPattern") return node.elements;
+  return undefined;
+}
+
 function assignmentTargetRuntimeEffectMarkers(
   target: Node,
   line: number,
@@ -2050,11 +2071,7 @@ function assignmentTargetRuntimeEffectMarkers(
       assignedValue,
     );
   }
-  const children = unwrapped.type === "ObjectPattern"
-    ? unwrapped.properties
-    : unwrapped.type === "ArrayPattern"
-    ? unwrapped.elements
-    : undefined;
+  const children = assignmentPatternChildren(unwrapped);
   return (Array.isArray(children) ? children : []).flatMap((child) => {
     if (!isNode(child)) return [];
     const target = child.type === "ObjectProperty" && isNode(child.value)
@@ -2370,6 +2387,47 @@ function unknownComputedRuntimeInvocationMarkers(
   return effects.map((effect) => ({ effect, line, symbol }));
 }
 
+function directConservativeRuntimeEffects(
+  binding: RuntimeBinding,
+): readonly SemanticEffect[] | undefined {
+  switch (binding.kind) {
+    case "effect":
+    case "effect-object":
+    case "constructor-effect":
+      return [binding.effect];
+    case "filesystem-open":
+      return ["filesystem-read", "filesystem-write"];
+    case "global-runtime":
+      return binding.runtime === "Deno"
+        ? [
+          "filesystem-read",
+          "filesystem-watch",
+          "filesystem-write",
+          "process",
+          "server",
+          "network",
+          "shared-cwd",
+        ]
+        : ["process", "shared-cwd"];
+    case "global-object":
+      return [
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "process",
+        "server",
+        "network",
+        "browser",
+        "shared-cwd",
+      ];
+    case "module":
+    case "module-instance":
+      return conservativeModuleEffects(binding.source);
+    default:
+      return undefined;
+  }
+}
+
 function conservativeRuntimeEffects(
   binding: RuntimeBinding | undefined,
 ): readonly SemanticEffect[] {
@@ -2381,50 +2439,9 @@ function conservativeRuntimeEffects(
     if (!candidate) continue;
     if (visited.has(candidate)) continue;
     visited.add(candidate);
-    if (
-      candidate.kind === "effect" || candidate.kind === "effect-object" ||
-      candidate.kind === "constructor-effect"
-    ) {
-      effects.push(candidate.effect);
-      continue;
-    }
-    if (candidate.kind === "filesystem-open") {
-      effects.push("filesystem-read", "filesystem-write");
-      continue;
-    }
-    if (candidate.kind === "global-runtime") {
-      effects.push(
-        ...candidate.runtime === "Deno"
-          ? [
-            "filesystem-read",
-            "filesystem-watch",
-            "filesystem-write",
-            "process",
-            "server",
-            "network",
-            "shared-cwd",
-          ] as const
-          : ["process", "shared-cwd"] as const,
-      );
-      continue;
-    }
-    if (candidate.kind === "global-object") {
-      effects.push(
-        "filesystem-read",
-        "filesystem-watch",
-        "filesystem-write",
-        "process",
-        "server",
-        "network",
-        "browser",
-        "shared-cwd",
-      );
-      continue;
-    }
-    if (
-      candidate.kind === "module" || candidate.kind === "module-instance"
-    ) {
-      effects.push(...conservativeModuleEffects(candidate.source));
+    const directEffects = directConservativeRuntimeEffects(candidate);
+    if (directEffects) {
+      effects.push(...directEffects);
       continue;
     }
     if (
@@ -2527,6 +2544,20 @@ function namespaceUnknownPropertyNames(
   return propertyNames;
 }
 
+function collectRuntimeNamespacePropertyNames(
+  binding: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+  propertyNames: Set<string>,
+  pending: RuntimeBinding[],
+): void {
+  for (const propertyName of binding.properties.keys()) {
+    propertyNames.add(propertyName);
+  }
+  for (const operation of binding.propertyOperations ?? []) {
+    if (operation.kind === "define") propertyNames.add(operation.name);
+    else if (operation.kind === "spread") pending.push(operation.binding);
+  }
+}
+
 function namespacePropertyNames(
   binding: RuntimeBinding | undefined,
 ): Set<string> {
@@ -2543,16 +2574,7 @@ function namespacePropertyNames(
       continue;
     }
     if (candidate.kind !== "namespace-object") continue;
-    for (const propertyName of candidate.properties.keys()) {
-      propertyNames.add(propertyName);
-    }
-    for (const operation of candidate.propertyOperations ?? []) {
-      if (operation.kind === "define") {
-        propertyNames.add(operation.name);
-      } else if (operation.kind === "spread") {
-        pending.push(operation.binding);
-      }
-    }
+    collectRuntimeNamespacePropertyNames(candidate, propertyNames, pending);
   }
   return propertyNames;
 }
@@ -2642,6 +2664,23 @@ function invocationSymbol(callee: Node): string {
     memberProperty(callee) ?? "runtime effect";
 }
 
+function filesystemOpenOptionKey(property: Node): string | undefined {
+  if (!isNode(property.key)) return undefined;
+  if (property.key.type === "Identifier" && property.computed !== true) {
+    return property.key.name as string;
+  }
+  return literalValue(property.key);
+}
+
+function filesystemOpenPropertyMayWrite(property: unknown): boolean {
+  if (!isNode(property) || property.type !== "ObjectProperty") return true;
+  const key = filesystemOpenOptionKey(property);
+  if (!key) return property.computed === true;
+  if (!FILESYSTEM_MUTATING_OPEN_OPTIONS.has(key)) return false;
+  const option = unwrapExpression(property.value);
+  return option?.type !== "BooleanLiteral" || option.value !== false;
+}
+
 function filesystemOpenEffect(options: unknown): SemanticEffect {
   const value = unwrapExpression(options);
   if (!value) return "filesystem-read";
@@ -2654,30 +2693,14 @@ function filesystemOpenEffect(options: unknown): SemanticEffect {
   for (
     const property of Array.isArray(value.properties) ? value.properties : []
   ) {
-    if (!isNode(property) || property.type !== "ObjectProperty") {
-      return "filesystem-write";
-    }
-    const key = isNode(property.key)
-      ? property.key.type === "Identifier" && property.computed !== true
-        ? property.key.name as string
-        : literalValue(property.key)
-      : undefined;
-    if (!key) {
-      if (property.computed === true) return "filesystem-write";
-      continue;
-    }
-    if (!FILESYSTEM_MUTATING_OPEN_OPTIONS.has(key)) continue;
-    const option = unwrapExpression(property.value);
-    if (!option || option.type !== "BooleanLiteral" || option.value !== false) {
-      return "filesystem-write";
-    }
+    if (filesystemOpenPropertyMayWrite(property)) return "filesystem-write";
   }
   return "filesystem-read";
 }
 
 function filesystemOpenApplyArguments(args: unknown): readonly unknown[] {
   const value = unwrapExpression(args);
-  if (!value || value.type !== "ArrayExpression") {
+  if (value?.type !== "ArrayExpression") {
     return [
       { type: "Identifier", name: "unknownOpenPath" },
       { type: "Identifier", name: "unknownOpenOptions" },
@@ -2739,6 +2762,22 @@ function globalPropertyMutationMarker(
   return markers.length > 0 ? markers : undefined;
 }
 
+function directMutationTarget(
+  binding: Extract<RuntimeBinding, { readonly kind: "mutation-method" }>,
+  callee: Node,
+  args: readonly unknown[],
+): unknown {
+  if (binding.receiver !== "Array") return args[0];
+  if (binding.boundTarget !== undefined) return binding.boundTarget;
+  if (
+    callee.type === "MemberExpression" ||
+    callee.type === "OptionalMemberExpression"
+  ) {
+    return callee.object;
+  }
+  return args[0];
+}
+
 function mutationMethodInvocations(
   callee: Node,
   args: readonly unknown[],
@@ -2764,14 +2803,7 @@ function mutationMethodInvocations(
       args: binding.receiver === "Array"
         ? [...binding.boundValues ?? [], ...args]
         : args,
-      target: binding.receiver === "Array" &&
-          binding.boundTarget !== undefined
-        ? binding.boundTarget
-        : binding.receiver === "Array" &&
-            (callee.type === "MemberExpression" ||
-              callee.type === "OptionalMemberExpression")
-        ? callee.object
-        : args[0],
+      target: directMutationTarget(binding, callee, args),
     }));
   }
 
@@ -2870,6 +2902,29 @@ function mutationMethodBinding(
     : undefined;
 }
 
+function mutationMarkerForTarget(
+  target: ReturnType<typeof sharedGlobalMutationTarget>,
+  targetArgument: unknown,
+  property: string | undefined,
+  calleeName: string,
+  mutatesSingleProperty: boolean,
+  line: number,
+): SemanticMarker | undefined {
+  if (!target) {
+    if (isUnknownMutationTarget(targetArgument)) {
+      return { effect: "process", line, symbol: `${calleeName}(*)` };
+    }
+    return undefined;
+  }
+  return {
+    effect: mutatesSingleProperty && target.kind === "runtime-root"
+      ? globalRuntimeMutationEffect(property)
+      : "process",
+    line,
+    symbol: `${calleeName}(${target.symbol}.${property ?? "*"})`,
+  };
+}
+
 function mutationCallMarker(
   binding: Extract<RuntimeBinding, { readonly kind: "mutation-method" }>,
   calleeName: string,
@@ -2923,24 +2978,14 @@ function mutationCallMarker(
   const property = mutatesSingleProperty
     ? literalPropertyName(args[1])
     : undefined;
-  let mutationMarker: SemanticMarker | undefined;
-  if (!target) {
-    if (isUnknownMutationTarget(targetArgument)) {
-      mutationMarker = {
-        effect: "process",
-        line,
-        symbol: `${calleeName}(*)`,
-      };
-    }
-  } else {
-    mutationMarker = {
-      effect: mutatesSingleProperty && target.kind === "runtime-root"
-        ? globalRuntimeMutationEffect(property)
-        : "process",
-      line,
-      symbol: `${calleeName}(${target.symbol}.${property ?? "*"})`,
-    };
-  }
+  const mutationMarker = mutationMarkerForTarget(
+    target,
+    targetArgument,
+    property,
+    calleeName,
+    mutatesSingleProperty,
+    line,
+  );
   return accessorMarkers.length > 0
     ? [...accessorMarkers, ...(mutationMarker ? [mutationMarker] : [])]
     : mutationMarker;
