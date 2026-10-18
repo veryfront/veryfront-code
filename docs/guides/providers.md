@@ -570,8 +570,13 @@ accepts URLs for images only, so send other files to Google as inline data.
 
 A file part that a transport cannot send fails before inference with an error
 that names the file and MIME type. Chat Completions transports reject all
-non-image files, and Anthropic rejects files other than images and PDFs. Select
-a model that supports the file type. The helper does not add model capabilities.
+non-image files, and Anthropic rejects files other than images and PDFs. OpenAI
+models on the default `auto` transport send requests with non-image files
+through Responses; set `openAITransport: "responses"` when a model is pinned to
+Chat Completions. Select a model that supports the file type. The helper does
+not add model capabilities. The check covers stored chat history too, so a
+conversation with a document attachment needs a document-capable model on every
+later turn.
 
 `maxBytes` limits one file before encoding. Apply your own aggregate attachment
 budget before building a message. Base64 adds about one third to request size;

@@ -1,6 +1,7 @@
 import {
   canIdentifyProxyWithoutHooks,
   closeSchemaForOutputConfig,
+  isImageFileInput,
   isProxyWithoutHooks,
   jsonValuesEqual,
   readInlineFileData,
@@ -1069,7 +1070,7 @@ function toAnthropicUserContent(
       continue;
     }
     const mediaType = part.mediaType.toLowerCase();
-    const image = part.type === "image" || mediaType.startsWith("image/");
+    const image = isImageFileInput(part);
     if (!image && mediaType !== "application/pdf") {
       throw unsupportedFileInputError("Anthropic", part, "Use an image or a PDF file.");
     }

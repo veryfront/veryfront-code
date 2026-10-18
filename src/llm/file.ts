@@ -26,7 +26,7 @@ export function fileFromBytes(
   }
   if (typeof filename !== "string" || !filename.trim() || /[\r\n\0]/.test(filename)) {
     throw INVALID_ARGUMENT.create({
-      message: "File filename must be non-empty and contain no control lines",
+      message: "File filename must be non-empty and contain no control characters (CR, LF, NUL)",
     });
   }
   if (typeof mediaType !== "string" || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(mediaType)) {

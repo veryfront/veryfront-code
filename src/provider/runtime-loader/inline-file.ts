@@ -14,6 +14,13 @@ function fileInputError(message: string): TypeError {
   return toError(createError({ type: "config", message }), TypeError);
 }
 
+/** Whether a prompt part is an image. MIME types compare case-insensitively. */
+export function isImageFileInput(
+  part: { readonly type: string; readonly mediaType: string },
+): boolean {
+  return part.type === "image" || part.mediaType.toLowerCase().startsWith("image/");
+}
+
 /** Error for a file part that a provider transport cannot send. */
 export function unsupportedFileInputError(
   transport: string,

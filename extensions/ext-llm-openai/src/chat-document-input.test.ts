@@ -2,7 +2,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerModelProvider } from "veryfront/provider";
 import { generate } from "veryfront/llm";
-import { createOpenAIModelRuntime } from "./openai-provider.ts";
+import { createOpenAIModelRuntime, OpenAIProvider } from "./openai-provider.ts";
 
 describe("OpenAI-compatible Chat Completions document input", () => {
   it("rejects a PDF before inference and sends no provider request", async () => {
@@ -36,11 +36,51 @@ describe("OpenAI-compatible Chat Completions document input", () => {
             }],
           }),
         TypeError,
-        'Chat Completions does not support file input "request.pdf" (application/pdf)',
+        'Chat Completions does not support file input "request.pdf" (application/pdf). ' +
+          'Use openAITransport: "responses"',
       );
       assertEquals(requests, []);
     } finally {
       dispose();
     }
   });
+
+  for (
+    const [label, file, endpoint] of [
+      ["a PDF", {
+        type: "file" as const,
+        url: "data:application/pdf;base64,JVBERi0xLjQK",
+        mediaType: "application/pdf",
+        filename: "request.pdf",
+      }, "/responses"],
+      ["an image", {
+        type: "file" as const,
+        url: "https://example.test/photo.png",
+        mediaType: "IMAGE/PNG",
+      }, "/chat/completions"],
+    ] as const
+  ) {
+    it(`auto transport sends ${label} on a non-reasoning model to ${endpoint}`, async () => {
+      const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const runtime = new OpenAIProvider().createModel("gpt-4.1", {
+        credential: "test-local-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (input, init) => {
+          requests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+          return Promise.resolve(Response.json({}, { status: 400 }));
+        },
+      });
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Classify" }, file] }],
+      }).catch(() => undefined);
+      assertEquals(requests.map(({ url }) => url), [`https://example.openai.test/v1${endpoint}`]);
+      if (endpoint === "/responses") {
+        assertEquals((requests[0]!.body.input as Array<{ content: unknown[] }>)[0]!.content[1], {
+          type: "input_file",
+          file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+          filename: "request.pdf",
+        });
+      }
+    });
+  }
 });

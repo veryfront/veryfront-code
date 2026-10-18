@@ -51,7 +51,11 @@ export {
 } from "../runtime-loader/stream-retention.ts";
 
 // Inline file parts: data URL payloads and actionable unsupported-input errors.
-export { readInlineFileData, unsupportedFileInputError } from "../runtime-loader/inline-file.ts";
+export {
+  isImageFileInput,
+  readInlineFileData,
+  unsupportedFileInputError,
+} from "../runtime-loader/inline-file.ts";
 
 // Retry, error, HTTP, usage, and JSON boundary plumbing.
 export {

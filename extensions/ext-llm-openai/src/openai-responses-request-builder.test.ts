@@ -55,6 +55,53 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     }
   }
 
+  function buildWithFile(file: { url: string; mediaType: string; filename?: string }) {
+    return buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      { prompt: [{ role: "user", content: [{ type: "file", ...file }] }] },
+      true,
+      createWarningCollector(),
+    );
+  }
+
+  it("validates inline file data before inference", () => {
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:text/plain;base64,aGk=",
+          mediaType: "application/pdf",
+          filename: "request.pdf",
+        }),
+      TypeError,
+      'Inline file input "request.pdf" (application/pdf) must be base64 data',
+    );
+  });
+
+  it("normalizes the inline MIME type in file_data", () => {
+    const body = buildWithFile({
+      url: "data:Application/PDF;base64,JVBERi0=",
+      mediaType: "application/pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  it("rejects an inline file without a filename when its type has no known extension", () => {
+    assertThrows(
+      () =>
+        buildWithFile({ url: "data:application/zip;base64,UEs=", mediaType: "application/zip" }),
+      TypeError,
+      "OpenAI Responses does not support file input (application/zip). Set a filename with an extension",
+    );
+  });
+
   it("rejects accessor provider buckets before reading OpenAI Responses options", () => {
     let getterCalls = 0;
     const providerOptions = Object.defineProperty({}, "openai", {

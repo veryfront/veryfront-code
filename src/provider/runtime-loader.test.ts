@@ -661,3 +661,22 @@ describe("document input capability", () => {
     );
   });
 });
+
+describe("document input capability: MIME case", () => {
+  it("keeps image files whose media type is upper case", () => {
+    const messages = toOpenAICompatibleMessages([{
+      role: "user",
+      content: [
+        { type: "text", text: "Describe" },
+        { type: "file", url: "https://example.test/photo.png", mediaType: "IMAGE/PNG" },
+      ],
+    }]);
+    assertEquals(messages, [{
+      role: "user",
+      content: [
+        { type: "text", text: "Describe" },
+        { type: "image_url", image_url: { url: "https://example.test/photo.png" } },
+      ],
+    }]);
+  });
+});

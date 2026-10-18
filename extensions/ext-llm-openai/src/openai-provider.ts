@@ -23,6 +23,7 @@ import {
   getOpenAIChatCompletionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
+  isImageFileInput,
   isNumberArray,
   mergeUsage,
   notifyProviderRequestRetry,
@@ -1314,6 +1315,18 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
   ) !== undefined;
 }
 
+/** Non-image files need Responses; Chat Completions only carries images. */
+function requestUsesOpenAIDocumentInput(options: OpenAICompatibleLanguageOptions): boolean {
+  return options.prompt.some((message) =>
+    message.role === "user" &&
+    message.content.some((part) => part.type !== "text" && !isImageFileInput(part))
+  );
+}
+
+function requiresOpenAIResponses(options: OpenAICompatibleLanguageOptions): boolean {
+  return requestUsesOpenAIHostedTool(options) || requestUsesOpenAIDocumentInput(options);
+}
+
 function createOpenAIChatCompletionsOnlyRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   hostedToolReason?: string,
@@ -1348,12 +1361,12 @@ function createOpenAIAdaptiveModelRuntime(
     ...chatRuntime,
     openAITransport: "auto",
     doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+      return requiresOpenAIResponses(optionsForRuntime)
         ? responsesRuntime.doGenerate(optionsForRuntime)
         : chatRuntime.doGenerate(optionsForRuntime);
     },
     doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+      return requiresOpenAIResponses(optionsForRuntime)
         ? responsesRuntime.doStream(optionsForRuntime)
         : chatRuntime.doStream(optionsForRuntime);
     },

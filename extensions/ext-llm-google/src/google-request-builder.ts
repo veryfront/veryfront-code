@@ -1,4 +1,5 @@
 import {
+  isImageFileInput,
   jsonValuesEqual,
   readInlineFileData,
   readRecord,
@@ -651,11 +652,12 @@ function toGoogleUserParts(
       continue;
     }
 
+    const mimeType = part.mediaType.toLowerCase();
     const data = readInlineFileData(part);
     if (data !== undefined) {
-      content.push({ inlineData: { mimeType: part.mediaType, data } });
-    } else if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({ fileData: { mimeType: part.mediaType, fileUri: part.url } });
+      content.push({ inlineData: { mimeType, data } });
+    } else if (isImageFileInput(part)) {
+      content.push({ fileData: { mimeType, fileUri: part.url } });
     } else {
       throw unsupportedFileInputError(
         "Google",

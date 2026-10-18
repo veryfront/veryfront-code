@@ -1,7 +1,10 @@
 import {
+  isImageFileInput,
   jsonValuesEqual,
+  readInlineFileData,
   stringifyToolArguments,
   stringifyToolResultValue,
+  unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -411,10 +414,33 @@ const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
   "text/plain": "txt",
 };
 
-/** OpenAI infers inline file types from the filename extension. */
-function inlineFileFallbackName(mediaType: string): string {
-  const extension = INLINE_FILE_EXTENSIONS[mediaType.toLowerCase()];
-  return extension ? `file.${extension}` : "file";
+type RuntimeUserFilePart = Exclude<
+  Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"][number],
+  { readonly type: "text" }
+>;
+
+/**
+ * Build an inline `input_file`. OpenAI infers the file type from the filename
+ * extension, so a part without a filename needs a MIME type we can name.
+ */
+function toOpenAIResponsesInlineFile(
+  part: RuntimeUserFilePart,
+  data: string,
+): Record<string, unknown> {
+  const mediaType = part.mediaType.toLowerCase();
+  const extension = INLINE_FILE_EXTENSIONS[mediaType];
+  if (!part.filename && !extension) {
+    throw unsupportedFileInputError(
+      "OpenAI Responses",
+      part,
+      "Set a filename with an extension, for example with fileFromBytes.",
+    );
+  }
+  return {
+    type: "input_file",
+    file_data: `data:${mediaType};base64,${data}`,
+    filename: part.filename || `file.${extension}`,
+  };
 }
 
 function toOpenAIResponsesUserContent(
@@ -430,23 +456,20 @@ function toOpenAIResponsesUserContent(
       continue;
     }
 
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+    if (isImageFileInput(part)) {
       content.push({ type: "input_image", image_url: part.url, detail: "auto" });
       continue;
     }
 
+    const data = readInlineFileData(part);
     content.push(
-      part.url.startsWith("data:")
+      data === undefined
         ? {
-          type: "input_file",
-          file_data: part.url,
-          filename: part.filename ?? inlineFileFallbackName(part.mediaType),
-        }
-        : {
           type: "input_file",
           file_url: part.url,
           ...(part.filename ? { filename: part.filename } : {}),
-        },
+        }
+        : toOpenAIResponsesInlineFile(part, data),
     );
   }
 

@@ -1,6 +1,13 @@
+import { Buffer } from "node:buffer";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { fileFromBytes } from "./file.ts";
+
+function assertInvalidArgument(fn: () => unknown, message: string): void {
+  const error = assertThrows(fn, VeryfrontError, message);
+  assertEquals(error instanceof VeryfrontError && error.slug, INVALID_ARGUMENT.slug);
+}
 
 describe("fileFromBytes", () => {
   it("preserves binary views and JSON serialization", () => {
@@ -12,6 +19,14 @@ describe("fileFromBytes", () => {
       filename: "report.pdf",
       mediaType: "application/pdf",
     });
+  });
+  it("encodes only the viewed bytes of a Node Buffer with a non-zero byteOffset", () => {
+    // Pooled Buffers share one ArrayBuffer; model that with an explicit offset view.
+    const pool = new Uint8Array([9, 0x25, 0x50, 0x44, 0x46, 9]).buffer;
+    const bytes = Buffer.from(pool, 1, 4);
+    assertEquals([bytes.byteOffset, bytes.buffer.byteLength], [1, 6]);
+    const file = fileFromBytes({ bytes, filename: "request.pdf", mediaType: "application/pdf" });
+    assertEquals(file.url, "data:application/pdf;base64,JVBERg==");
   });
   it("preserves bytes across encoding chunks", () => {
     const bytes = Uint8Array.from({ length: 50001 }, (_, i) => i % 256);
@@ -33,18 +48,18 @@ describe("fileFromBytes", () => {
       filename: "report.pdf",
       mediaType: "application/pdf",
     };
-    for (
-      const change of [
-        { filename: " " },
-        { mediaType: "application/pdf;base64,secret" },
-        { maxBytes: 0 },
-        { maxBytes: NaN },
-        { maxBytes: 0.5 },
-        { bytes: new Uint8Array() },
-      ]
-    ) {
-      assertThrows(() => fileFromBytes({ ...input, ...change }));
+    const cases: Array<[Partial<typeof input> & { maxBytes?: number }, string]> = [
+      [{ filename: " " }, "File filename must be non-empty"],
+      [{ filename: "a\nb.pdf" }, "control characters (CR, LF, NUL)"],
+      [{ mediaType: "application/pdf;base64,secret" }, "File mediaType must be a MIME type"],
+      [{ maxBytes: 0 }, "File maxBytes must be a positive safe integer"],
+      [{ maxBytes: NaN }, "File maxBytes must be a positive safe integer"],
+      [{ maxBytes: 0.5 }, "File maxBytes must be a positive safe integer"],
+      [{ bytes: new Uint8Array() }, "File bytes must be a non-empty Uint8Array"],
+      [{ bytes: new Uint8Array(2), maxBytes: 1 }, "File exceeds maxBytes"],
+    ];
+    for (const [change, message] of cases) {
+      assertInvalidArgument(() => fileFromBytes({ ...input, ...change }), message);
     }
-    assertThrows(() => fileFromBytes({ ...input, bytes: new Uint8Array(2), maxBytes: 1 }));
   });
 });

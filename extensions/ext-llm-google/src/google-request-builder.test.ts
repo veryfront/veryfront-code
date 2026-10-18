@@ -135,6 +135,29 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  it("lowercases file MIME types for inline and remote image parts", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [
+          {
+            type: "file",
+            url: "data:application/pdf;base64,JVBERi0=",
+            mediaType: "Application/PDF",
+          },
+          { type: "file", url: "https://example.test/photo.png", mediaType: "IMAGE/PNG" },
+        ],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [
+        { inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } },
+        { fileData: { mimeType: "image/png", fileUri: "https://example.test/photo.png" } },
+      ],
+    }]);
+  });
+
   it("rejects remote non-image file URLs instead of sending them as fileData", () => {
     assertThrows(
       () =>

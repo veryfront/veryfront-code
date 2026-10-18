@@ -25,7 +25,7 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
-import { unsupportedFileInputError } from "./runtime-loader/inline-file.ts";
+import { isImageFileInput, unsupportedFileInputError } from "./runtime-loader/inline-file.ts";
 
 export {
   jsonValuesEqual,
@@ -218,15 +218,15 @@ function toOpenAICompatibleUserContent(
   parts: RuntimePromptUserContent,
 ): OpenAICompatibleUserContent {
   for (const part of parts) {
-    if (part.type === "file" && !part.mediaType.startsWith("image/")) {
+    if (part.type !== "text" && !isImageFileInput(part)) {
       throw unsupportedFileInputError(
         "Chat Completions",
         part,
-        "Use a provider with document input support, such as OpenAI Responses, Anthropic, or Google.",
+        'Use openAITransport: "responses" for OpenAI, or a provider with document input support, such as Anthropic or Google.',
       );
     }
   }
-  if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
+  if (!parts.some((part) => part.type !== "text")) {
     return readTextParts(parts);
   }
 
@@ -239,9 +239,7 @@ function toOpenAICompatibleUserContent(
       }
       continue;
     }
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({ type: "image_url", image_url: { url: part.url } });
-    }
+    content.push({ type: "image_url", image_url: { url: part.url } });
   }
 
   return content.length > 0 ? content : readTextParts(parts);
