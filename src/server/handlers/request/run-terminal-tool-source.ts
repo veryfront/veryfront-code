@@ -23,8 +23,6 @@ import {
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
 } from "#veryfront/security/http/ingress-credentials.ts";
 
-const ReflectApply = Reflect.apply;
-
 /**
  * Builds the platform MCP source for one control-plane run. The API-minted
  * terminal credential is attached only to finalize calls from the dispatched
