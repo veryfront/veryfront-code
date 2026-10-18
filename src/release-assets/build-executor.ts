@@ -926,6 +926,79 @@ async function createMaterializedReleaseTransformAdapter(
   };
 }
 
+function resolvedServerAliasImportIsMissing(
+  aliasResolution: ProjectImportAliasResolution,
+  addResolved: (path: string | null, allowCss?: boolean) => boolean,
+): boolean {
+  return aliasResolution.path === null ||
+    (aliasResolution.path !== undefined && !addResolved(aliasResolution.path, false));
+}
+
+function unusableServerImportSpecifier(
+  specifier: string,
+  hasJsonTypeAttribute: boolean | undefined,
+): boolean {
+  if (/^file:/i.test(specifier)) return true;
+  if (/^data:/i.test(specifier) && isExternalCssSpecifier(specifier)) return true;
+  if (isJsonDataUrlSpecifier(specifier) && hasJsonTypeAttribute !== true) return true;
+  return (specifier.startsWith("//") || /^https?:/i.test(specifier)) &&
+    isExternalJsonSpecifier(specifier) && hasJsonTypeAttribute !== true;
+}
+
+function unresolvedServerAliasImportIsMissing(
+  aliasResolution: ProjectImportAliasResolution,
+  hasJsonTypeAttribute: boolean | undefined,
+  addResolved: (path: string | null, allowCss?: boolean) => boolean,
+): boolean {
+  if (aliasResolution.path === null) return true;
+  if (aliasResolution.path !== undefined) {
+    return (aliasResolution.path.endsWith(".json") && hasJsonTypeAttribute === false) ||
+      !addResolved(aliasResolution.path, false);
+  }
+  return aliasResolution.external !== undefined &&
+    (isExternalCssSpecifier(aliasResolution.external) ||
+      (isExternalJsonSpecifier(aliasResolution.external) && hasJsonTypeAttribute !== true));
+}
+
+function collectResolvedServerModuleImports(
+  parsed: Awaited<ReturnType<typeof parseLocalImports>>,
+  tempDir: string,
+  knownPaths: Set<string>,
+  resolveRuntimeImportAlias: (specifier: string) => ProjectImportAliasResolution,
+  addResolved: (path: string | null, allowCss?: boolean) => boolean,
+): number {
+  let missingProjectImports = 0;
+  for (const { specifier, absolutePath } of parsed.imports) {
+    const aliasResolution = resolveRuntimeImportAlias(specifier);
+    if (aliasResolution.matched) {
+      if (resolvedServerAliasImportIsMissing(aliasResolution, addResolved)) missingProjectImports++;
+      continue;
+    }
+    const relativePath = relative(tempDir, absolutePath).replaceAll("\\", "/");
+    if (!addResolved(resolveKnownServerModulePath(relativePath, knownPaths))) {
+      missingProjectImports++;
+    }
+  }
+  for (const { specifier } of parsed.missing) {
+    const aliasResolution = resolveRuntimeImportAlias(specifier);
+    if (
+      !aliasResolution.matched || resolvedServerAliasImportIsMissing(aliasResolution, addResolved)
+    ) {
+      missingProjectImports++;
+    }
+  }
+  return missingProjectImports;
+}
+
+function addCommonJsServerImportSpecifiers(
+  unresolvedImports: Map<string, boolean | undefined>,
+  commonJsSpecifiers: Set<string>,
+): void {
+  for (const specifier of commonJsSpecifiers) {
+    if (!unresolvedImports.has(specifier)) unresolvedImports.set(specifier, undefined);
+  }
+}
+
 /**
  * Import edges of an App Router server module, read from its authored source.
  *
@@ -1013,29 +1086,13 @@ async function collectServerModuleImports(
         resolveKnownServerDependencyPath,
       )
       : { matched: false };
-  let missingProjectImports = 0;
-  for (const { specifier, absolutePath } of parsed.imports) {
-    const aliasResolution = resolveRuntimeImportAlias(specifier);
-    if (aliasResolution.matched) {
-      if (aliasResolution.path === null) missingProjectImports++;
-      else if (
-        aliasResolution.path !== undefined && !addResolved(aliasResolution.path, false)
-      ) missingProjectImports++;
-      continue;
-    }
-    const relativePath = relative(tempDir, absolutePath).replaceAll("\\", "/");
-    if (!addResolved(resolveKnownServerModulePath(relativePath, knownPaths))) {
-      missingProjectImports++;
-    }
-  }
-  for (const { specifier } of parsed.missing) {
-    const aliasResolution = resolveRuntimeImportAlias(specifier);
-    if (!aliasResolution.matched || aliasResolution.path === null) {
-      missingProjectImports++;
-    } else if (aliasResolution.path !== undefined) {
-      if (!addResolved(aliasResolution.path, false)) missingProjectImports++;
-    }
-  }
+  let missingProjectImports = collectResolvedServerModuleImports(
+    parsed,
+    tempDir,
+    knownPaths,
+    resolveRuntimeImportAlias,
+    addResolved,
+  );
   // Cross-project imports are resolved by the runtime's project boundary, not
   // by a single release asset. They cannot be represented in this closure, so
   // fail the route closed instead of publishing an incomplete server module.
@@ -1045,39 +1102,14 @@ async function collectServerModuleImports(
     hasJsonTypeAttribute?: boolean,
     fromCommonJs = false,
   ) => {
-    if (/^file:/i.test(specifier)) {
-      missingProjectImports++;
-      return;
-    }
-    if (/^data:/i.test(specifier) && isExternalCssSpecifier(specifier)) {
-      missingProjectImports++;
-      return;
-    }
-    if (isJsonDataUrlSpecifier(specifier) && hasJsonTypeAttribute !== true) {
-      missingProjectImports++;
-      return;
-    }
-    if (
-      (specifier.startsWith("//") || /^https?:/i.test(specifier)) &&
-      isExternalJsonSpecifier(specifier) && hasJsonTypeAttribute !== true
-    ) {
+    if (unusableServerImportSpecifier(specifier, hasJsonTypeAttribute)) {
       missingProjectImports++;
       return;
     }
     const aliasResolution = resolveRuntimeImportAlias(specifier);
     if (aliasResolution.matched) {
-      if (aliasResolution.path === null) {
-        missingProjectImports++;
-      } else if (aliasResolution.path !== undefined) {
-        if (aliasResolution.path.endsWith(".json") && hasJsonTypeAttribute === false) {
-          missingProjectImports++;
-        } else if (!addResolved(aliasResolution.path, false)) {
-          missingProjectImports++;
-        }
-      } else if (
-        aliasResolution.external !== undefined &&
-        (isExternalCssSpecifier(aliasResolution.external) ||
-          (isExternalJsonSpecifier(aliasResolution.external) && hasJsonTypeAttribute !== true))
+      if (
+        unresolvedServerAliasImportIsMissing(aliasResolution, hasJsonTypeAttribute, addResolved)
       ) {
         missingProjectImports++;
       }
@@ -1128,9 +1160,7 @@ async function collectServerModuleImports(
       commonJsSpecifiers.add(specifier);
     }
   }
-  for (const specifier of commonJsSpecifiers) {
-    if (!unresolvedImports.has(specifier)) unresolvedImports.set(specifier, undefined);
-  }
+  addCommonJsServerImportSpecifiers(unresolvedImports, commonJsSpecifiers);
   for (const [specifier, hasJsonTypeAttribute] of unresolvedImports) {
     resolveUnresolvedImport(specifier, hasJsonTypeAttribute, commonJsSpecifiers.has(specifier));
   }
@@ -1176,6 +1206,14 @@ function serverOnlyBrowserProjectImportAliasTarget(
   return esmSh ? `${esmSh.packageName}${esmSh.subpath}` : canonical;
 }
 
+function resolveBrowserProjectImportAlias(canonical: string, reactVersion: string): string {
+  if (canonical.startsWith("npm:")) {
+    return resolveBareSpecifier(canonical.slice(4), {}, reactVersion);
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(canonical)) return canonical;
+  return resolveBareSpecifier(canonical, {}, reactVersion);
+}
+
 function canonicalizeBrowserProjectImportAliasTarget(
   mapped: string,
   reactVersion: string,
@@ -1193,11 +1231,7 @@ function canonicalizeBrowserProjectImportAliasTarget(
     // esm.sh bundle containing unusable Node stubs.
     return serverOnly;
   }
-  const resolved = canonical.startsWith("npm:")
-    ? resolveBareSpecifier(canonical.slice(4), {}, reactVersion)
-    : /^[A-Za-z][A-Za-z0-9+.-]*:/.test(canonical)
-    ? canonical
-    : resolveBareSpecifier(canonical, {}, reactVersion);
+  const resolved = resolveBrowserProjectImportAlias(canonical, reactVersion);
   if (requireCspCompatible && /^https?:/i.test(resolved)) {
     const origin = new URL(resolved).origin;
     if (!PLATFORM_SCRIPT_ORIGINS.some((allowed) => allowed === origin)) {
@@ -1217,6 +1251,33 @@ function isExternalProjectImportAliasTarget(mapped: string): boolean {
     return false;
   }
   return true;
+}
+
+function selectProjectImportAliasKey(
+  specifier: string,
+  aliases: ReadonlyMap<string, string>,
+  key: string | undefined,
+): { key: string | undefined; suffix: string } {
+  let suffix = "";
+  if (
+    key === undefined &&
+    (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs"))
+  ) {
+    const base = specifier.replace(/\.(m|c)?js$/, "");
+    if (aliases.has(base)) key = base;
+  }
+  if (key === undefined) {
+    for (
+      let separator = specifier.indexOf("/");
+      separator >= 0;
+      separator = specifier.indexOf("/", separator + 1)
+    ) {
+      const candidate = specifier.slice(0, separator + 1);
+      if (aliases.has(candidate)) key = candidate;
+    }
+    if (key !== undefined) suffix = specifier.slice(key.length);
+  }
+  return { key, suffix };
 }
 
 function resolveProjectImportAlias(
@@ -1259,24 +1320,9 @@ function resolveProjectImportAlias(
       );
     }
   }
-  if (
-    key === undefined &&
-    (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs"))
-  ) {
-    const base = specifier.replace(/\.(m|c)?js$/, "");
-    if (aliases.has(base)) key = base;
-  }
-  if (key === undefined) {
-    for (
-      let separator = specifier.indexOf("/");
-      separator >= 0;
-      separator = specifier.indexOf("/", separator + 1)
-    ) {
-      const candidate = specifier.slice(0, separator + 1);
-      if (aliases.has(candidate)) key = candidate;
-    }
-    if (key !== undefined) suffix = specifier.slice(key.length);
-  }
+  const selected = selectProjectImportAliasKey(specifier, aliases, key);
+  key = selected.key;
+  suffix = selected.suffix;
   if (key === undefined) return { matched: false, path: null };
   if (seenKeys.has(key)) return { matched: true, path: null };
   seenKeys.add(key);
@@ -1446,6 +1492,21 @@ async function rewriteProjectModuleImports(
   return await replaceSpecifiers(code, (specifier) => rewriteSpecifier(specifier));
 }
 
+function assertFinalModuleHttpImport(
+  parsed: URL,
+  specifier: string,
+  options: { allowHttp: boolean },
+): void {
+  if (
+    !options.allowHttp ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    !isSafeBuildText(specifier, MAX_DEPENDENCY_SPECIFIER_LENGTH)
+  ) {
+    throw new Error("Release module contains an unvendored HTTP import");
+  }
+}
+
 async function assertFinalModuleImports(
   code: string,
   options: { allowHttp: boolean },
@@ -1473,14 +1534,7 @@ async function assertFinalModuleImports(
 
     const protocol = parsed.protocol.toLowerCase();
     if (protocol === "http:" || protocol === "https:") {
-      if (
-        !options.allowHttp ||
-        parsed.username !== "" ||
-        parsed.password !== "" ||
-        !isSafeBuildText(specifier, MAX_DEPENDENCY_SPECIFIER_LENGTH)
-      ) {
-        throw new Error("Release module contains an unvendored HTTP import");
-      }
+      assertFinalModuleHttpImport(parsed, specifier, options);
       continue;
     }
 
@@ -1605,6 +1659,29 @@ export function buildReleaseAssetDependencyUrlMap(
   return buildDependencyUrlMap(dependencies);
 }
 
+function exposeDependencySpecifierAlias(
+  aliased: Record<string, PreparedAsset>,
+  asset: PreparedAsset,
+  normalized: string,
+  entryCount: number,
+  maximumEntries: number,
+): number {
+  const existing = Object.hasOwn(aliased, normalized) ? aliased[normalized] : undefined;
+  if (existing && !preparedAssetsEqual(existing, asset)) {
+    throw new Error(`Conflicting release dependency manifest alias: ${normalized}`);
+  }
+  if (!existing && entryCount >= maximumEntries) {
+    throw new Error(`Release dependency manifest exceeds ${maximumEntries} entries`);
+  }
+  Object.defineProperty(aliased, normalized, {
+    value: asset,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  return existing ? entryCount : entryCount + 1;
+}
+
 function exposeDependencySpecifierAliases(
   assets: Record<string, PreparedAsset>,
   dependencyModules: Map<string, DependencyModule>,
@@ -1630,20 +1707,13 @@ function exposeDependencySpecifierAliases(
       ) {
         continue;
       }
-      const existing = Object.hasOwn(aliased, normalized) ? aliased[normalized] : undefined;
-      if (existing && !preparedAssetsEqual(existing, asset)) {
-        throw new Error(`Conflicting release dependency manifest alias: ${normalized}`);
-      }
-      if (!existing && entryCount >= maximumEntries) {
-        throw new Error(`Release dependency manifest exceeds ${maximumEntries} entries`);
-      }
-      Object.defineProperty(aliased, normalized, {
-        value: asset,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      if (!existing) entryCount++;
+      entryCount = exposeDependencySpecifierAlias(
+        aliased,
+        asset,
+        normalized,
+        entryCount,
+        maximumEntries,
+      );
     }
   }
   return aliased;
@@ -1685,7 +1755,7 @@ const UNREADABLE_DATA_PROPERTY = Symbol("unreadable-data-property");
 function readOwnDataProperty(
   value: unknown,
   key: PropertyKey,
-): unknown | typeof UNREADABLE_DATA_PROPERTY {
+): unknown {
   if (typeof value !== "object" || value === null) return UNREADABLE_DATA_PROPERTY;
   try {
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
@@ -1742,6 +1812,36 @@ function validateVendorResult(
   return { code, dependencies };
 }
 
+function stagedDependencySourcePath(
+  declaredSourcePath: unknown,
+  specifier: string,
+): string | undefined {
+  let sourcePath: string | undefined;
+  if (declaredSourcePath !== undefined) {
+    if (
+      !isSafeBuildText(declaredSourcePath, MAX_RELEASE_FILE_PATH_LENGTH) ||
+      !isAbsolute(declaredSourcePath) ||
+      normalize(declaredSourcePath) !== declaredSourcePath
+    ) {
+      throw new Error("Vendored dependency source path must be canonical and absolute");
+    }
+    sourcePath = declaredSourcePath;
+  } else {
+    sourcePath = resolveLocalDependencyPath(specifier) ?? undefined;
+  }
+  return sourcePath;
+}
+
+function assertStagedDependencyCollectionWithinLimits(staged: DependencyModuleCollection): void {
+  if (
+    staged.modules.size > MAX_DEPENDENCY_MODULES ||
+    staged.specifierCount > MAX_DEPENDENCY_SPECIFIERS ||
+    staged.sourceBytes > MAX_DEPENDENCY_SOURCE_BYTES
+  ) {
+    throw new Error("Vendored dependency collection exceeds the supported boundary");
+  }
+}
+
 function stageDependencyModules(
   dependencies: readonly unknown[],
 ): DependencyModuleCollection {
@@ -1766,19 +1866,7 @@ function stageDependencyModules(
       throw new Error("Vendored dependency exceeds the supported boundary");
     }
 
-    let sourcePath: string | undefined;
-    if (declaredSourcePath !== undefined) {
-      if (
-        !isSafeBuildText(declaredSourcePath, MAX_RELEASE_FILE_PATH_LENGTH) ||
-        !isAbsolute(declaredSourcePath) ||
-        normalize(declaredSourcePath) !== declaredSourcePath
-      ) {
-        throw new Error("Vendored dependency source path must be canonical and absolute");
-      }
-      sourcePath = declaredSourcePath;
-    } else {
-      sourcePath = resolveLocalDependencyPath(specifier) ?? undefined;
-    }
+    const sourcePath = stagedDependencySourcePath(declaredSourcePath, specifier);
 
     const existing = staged.modules.get(manifestKey);
     if (existing) {
@@ -1807,13 +1895,7 @@ function stageDependencyModules(
       staged.sourceBytes += codeSize;
     }
 
-    if (
-      staged.modules.size > MAX_DEPENDENCY_MODULES ||
-      staged.specifierCount > MAX_DEPENDENCY_SPECIFIERS ||
-      staged.sourceBytes > MAX_DEPENDENCY_SOURCE_BYTES
-    ) {
-      throw new Error("Vendored dependency collection exceeds the supported boundary");
-    }
+    assertStagedDependencyCollectionWithinLimits(staged);
   }
 
   return staged;
@@ -1835,6 +1917,22 @@ function addStagedDependencySpecifier(
   staged.specifierCount++;
 }
 
+function assertCommittedDependencyCompatible(
+  existing: DependencyModule,
+  dependency: DependencyModule,
+): void {
+  if (
+    existing.code !== dependency.code ||
+    (existing.sourcePath !== undefined &&
+      dependency.sourcePath !== undefined &&
+      existing.sourcePath !== dependency.sourcePath)
+  ) {
+    throw new Error(
+      `Conflicting vendored dependency identity: ${dependency.manifestKey}`,
+    );
+  }
+}
+
 function commitDependencyModules(
   target: DependencyModuleCollection,
   staged: DependencyModuleCollection,
@@ -1851,16 +1949,7 @@ function commitDependencyModules(
       addedSourceBytes += dependency.codeSize;
       continue;
     }
-    if (
-      existing.code !== dependency.code ||
-      (existing.sourcePath !== undefined &&
-        dependency.sourcePath !== undefined &&
-        existing.sourcePath !== dependency.sourcePath)
-    ) {
-      throw new Error(
-        `Conflicting vendored dependency identity: ${dependency.manifestKey}`,
-      );
-    }
+    assertCommittedDependencyCompatible(existing, dependency);
     for (const specifier of dependency.specifiers) {
       if (!existing.specifiers.has(specifier)) addedSpecifiers++;
     }
@@ -1977,6 +2066,25 @@ function dependencyLookupKeys(specifier: string): Set<string> {
   return keys;
 }
 
+function dependencyModuleMatchesLookupKeys(
+  dependency: DependencyModule,
+  lookupKeys: Set<string>,
+): boolean {
+  if (lookupKeys.has(dependency.manifestKey)) {
+    return true;
+  }
+  for (const dependencySpecifier of dependency.specifiers) {
+    for (const key of dependencyLookupKeys(dependencySpecifier)) {
+      if (lookupKeys.has(key)) return true;
+    }
+    if (lookupKeys.has(normalizeDependencySpecifier(dependencySpecifier))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function findDependencyModuleBySpecifier(
   dependencies: Map<string, DependencyModule>,
   specifier: string,
@@ -1988,17 +2096,7 @@ function findDependencyModuleBySpecifier(
   }
 
   for (const dependency of dependencies.values()) {
-    if (lookupKeys.has(dependency.manifestKey)) {
-      return dependency;
-    }
-    for (const dependencySpecifier of dependency.specifiers) {
-      for (const key of dependencyLookupKeys(dependencySpecifier)) {
-        if (lookupKeys.has(key)) return dependency;
-      }
-      if (lookupKeys.has(normalizeDependencySpecifier(dependencySpecifier))) {
-        return dependency;
-      }
-    }
+    if (dependencyModuleMatchesLookupKeys(dependency, lookupKeys)) return dependency;
   }
 
   return null;
