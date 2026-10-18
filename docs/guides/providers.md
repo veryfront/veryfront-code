@@ -582,9 +582,47 @@ later turn.
 
 `maxBytes` limits one file before encoding. Hosted durable runs record each
 model call, and a record over 10 MiB refuses the call, so keep inline files well
-below that after base64 encoding. Apply your own aggregate attachment
-budget before building a message. Base64 adds about one third to request size;
+below that after base64 encoding. Use `planFileParts`
+below for aggregate attachment budgets. Base64 adds about one third to request size;
 provider request and model limits still apply. The helper does not validate file
 contents or extract text. Filenames and MIME types must describe the actual file.
 The filename must be a base name such as `report.pdf`, not a path, a drive prefix such as `C:`, or `.`/`..`,
 without leading or trailing spaces, because providers receive it.
+
+### Attachment budgets
+
+Use `planFileParts` to apply per-file, total, and count budgets to several files
+without throwing. The result lists the parts to send and every omitted file with
+a reason. `complete` is `true` only when every file is sent.
+
+```ts
+import { planFileParts } from "veryfront/llm";
+
+const plan = planFileParts({
+  files: attachments, // [{ bytes, filename, mediaType }]
+  maxFileBytes: 8 * 1024 * 1024,
+  maxTotalBytes: 20 * 1024 * 1024,
+  maxFiles: 10,
+});
+
+if (!plan.complete) {
+  // Each entry has index, filename, mediaType, bytes, and reason.
+  console.warn("Files not sent", plan.omitted);
+}
+```
+
+The helper checks files in input order. Omitted files do not use the budget, so a
+later smaller file can still be sent. An unset budget does not limit. Reasons are:
+
+| Reason              | Meaning                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `invalid_metadata`  | The filename or MIME type is invalid.                                                          |
+| `invalid_content`   | The file is empty, or an `application/pdf` file has no `%PDF-` header in its first 1024 bytes. |
+| `over_file_limit`   | The file is larger than `maxFileBytes`.                                                        |
+| `over_count_limit`  | `maxFiles` files were already sent.                                                            |
+| `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                          |
+
+Budgets count raw bytes only. The helper does not infer page counts or model
+context limits from file size, so a file within budget can still exceed a
+provider page or context limit. Treat an incomplete plan as incomplete input,
+for example by sending the result to review instead of automating on it.
