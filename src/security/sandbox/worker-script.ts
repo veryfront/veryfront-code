@@ -216,8 +216,8 @@ const DATA_JAVASCRIPT_URL_PATTERN =
   /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,[^ \t\r\n]*/g;
 const DATA_JAVASCRIPT_URL_PRESENCE_PATTERN =
   /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,/;
-const STACK_LOCATION_PATTERN = /:([0-9]+):([0-9]+)\)?$/;
-const SANITIZED_DATA_MODULE_LABEL_PATTERN = /vf-api:(?:[0-9a-f]{64}|unknown)(?::[0-9]+:[0-9]+)?/;
+const STACK_LOCATION_PATTERN = /:(\d+):(\d+)\)?$/;
+const SANITIZED_DATA_MODULE_LABEL_PATTERN = /vf-api:(?:[0-9a-f]{64}|unknown)(?::\d+:\d+)?/;
 const MAX_WORKER_PATH_CHARS = 32 * 1024;
 const MAX_WORKER_URL_CHARS = 64 * 1024;
 const MAX_WORKER_HEADER_COUNT = 1_024;
@@ -1113,6 +1113,38 @@ function snapshotProjectEnv(
   return env;
 }
 
+function snapshotPolicyAllowedToolIds(
+  rawToolIds: unknown,
+  policyBudget: StringSnapshotBudget,
+): string[] | null {
+  let allowedToolIds: string[] | null = null;
+  if (rawToolIds !== null) {
+    allowedToolIds = snapshotStringArray(
+      rawToolIds,
+      "sourceIntegrationPolicy.allowedToolIds",
+      MAX_WORKER_RECORD_ENTRIES,
+      MAX_WORKER_POLICY_SEGMENT_CHARS,
+      policyBudget,
+    );
+    const seenToolIds = new NativeSet<string>();
+    for (let index = 0; index < allowedToolIds.length; index++) {
+      const toolId = allowedToolIds[index]!;
+      if (!matches(CANONICAL_POLICY_SEGMENT_PATTERN, toolId)) {
+        return invalidWorkerRequest("sourceIntegrationPolicy.allowedToolIds");
+      }
+      if (apply(setHas, seenToolIds, [toolId])) {
+        return invalidWorkerRequest(
+          "sourceIntegrationPolicy.allowedToolIds",
+        );
+      }
+      apply(setAdd, seenToolIds, [toolId]);
+    }
+    apply(arraySort, allowedToolIds, [compareStrings]);
+    freezeObject(allowedToolIds);
+  }
+  return allowedToolIds;
+}
+
 function snapshotSourceIntegrationPolicy(
   value: unknown,
 ): SourceIntegrationPolicyManifest {
@@ -1178,31 +1210,7 @@ function snapshotSourceIntegrationPolicy(
       "sourceIntegrationPolicy.integrations",
     );
     const rawToolIds = readDataProperty(restriction, "allowedToolIds");
-    let allowedToolIds: string[] | null = null;
-    if (rawToolIds !== null) {
-      allowedToolIds = snapshotStringArray(
-        rawToolIds,
-        "sourceIntegrationPolicy.allowedToolIds",
-        MAX_WORKER_RECORD_ENTRIES,
-        MAX_WORKER_POLICY_SEGMENT_CHARS,
-        policyBudget,
-      );
-      const seenToolIds = new NativeSet<string>();
-      for (let index = 0; index < allowedToolIds.length; index++) {
-        const toolId = allowedToolIds[index]!;
-        if (!matches(CANONICAL_POLICY_SEGMENT_PATTERN, toolId)) {
-          return invalidWorkerRequest("sourceIntegrationPolicy.allowedToolIds");
-        }
-        if (apply(setHas, seenToolIds, [toolId])) {
-          return invalidWorkerRequest(
-            "sourceIntegrationPolicy.allowedToolIds",
-          );
-        }
-        apply(setAdd, seenToolIds, [toolId]);
-      }
-      apply(arraySort, allowedToolIds, [compareStrings]);
-      freezeObject(allowedToolIds);
-    }
+    const allowedToolIds = snapshotPolicyAllowedToolIds(rawToolIds, policyBudget);
     defineDataProperty(
       integrations,
       integrationName,
@@ -1372,6 +1380,35 @@ function consumeDataBudget(
   }
 }
 
+function snapshotStructuredDataArray(
+  value: unknown,
+  budget: DataSnapshotBudget,
+  depth: number,
+): unknown[] {
+  const input = requireDenseArray(
+    value,
+    "render data",
+    MAX_WORKER_DATA_NODES,
+  );
+  budget.nodes++;
+  if (budget.nodes > MAX_WORKER_DATA_NODES) {
+    return invalidWorkerRequest("render data");
+  }
+  const output = new NativeArray<unknown>(input.length);
+  for (let index = 0; index < input.length; index++) {
+    defineDataProperty(
+      output,
+      NativeString(index),
+      snapshotStructuredData(
+        arrayElement(input, index, "render data"),
+        budget,
+        depth + 1,
+      ),
+    );
+  }
+  return output;
+}
+
 function snapshotStructuredData(
   value: unknown,
   budget: DataSnapshotBudget,
@@ -1401,30 +1438,7 @@ function snapshotStructuredData(
     }
     return value;
   }
-  if (isArray(value)) {
-    const input = requireDenseArray(
-      value,
-      "render data",
-      MAX_WORKER_DATA_NODES,
-    );
-    budget.nodes++;
-    if (budget.nodes > MAX_WORKER_DATA_NODES) {
-      return invalidWorkerRequest("render data");
-    }
-    const output = new NativeArray<unknown>(input.length);
-    for (let index = 0; index < input.length; index++) {
-      defineDataProperty(
-        output,
-        NativeString(index),
-        snapshotStructuredData(
-          arrayElement(input, index, "render data"),
-          budget,
-          depth + 1,
-        ),
-      );
-    }
-    return output;
-  }
+  if (isArray(value)) return snapshotStructuredDataArray(value, budget, depth);
   if (typeof value !== "object") {
     return invalidWorkerRequest("render data");
   }
@@ -1486,6 +1500,41 @@ function snapshotDataResponseHeaders(value: unknown): Record<string, string> {
   );
 }
 
+type DataResponseCookie = NonNullable<SerializedDataResult["cookies"]>[number];
+
+function snapshotCookieOptionalStrings(record: DataRecord, cookie: DataResponseCookie): void {
+  const domain = snapshotOptionalString(record, "domain", MAX_WORKER_VALUE_CHARS);
+  const path = snapshotOptionalString(record, "path", MAX_WORKER_VALUE_CHARS);
+  const expires = snapshotOptionalString(record, "expires", MAX_WORKER_VALUE_CHARS);
+  const sameSite = snapshotOptionalString(record, "sameSite", 6);
+  if (domain !== undefined) cookie.domain = domain;
+  if (path !== undefined) cookie.path = path;
+  if (expires !== undefined) cookie.expires = expires;
+  if (sameSite !== undefined) {
+    if (sameSite !== "lax" && sameSite !== "strict" && sameSite !== "none") {
+      return invalidIsolatedDataResult();
+    }
+    cookie.sameSite = sameSite;
+  }
+}
+
+function snapshotCookieOptionFlags(record: DataRecord, cookie: DataResponseCookie): void {
+  const maxAge = readOptionalDataProperty(record, "maxAge");
+  if (maxAge.present && maxAge.value !== undefined) {
+    if (typeof maxAge.value !== "number" || !numberIsSafeInteger(maxAge.value)) {
+      return invalidIsolatedDataResult();
+    }
+    cookie.maxAge = maxAge.value;
+  }
+  for (const key of ["httpOnly", "secure"] as const) {
+    const field = readOptionalDataProperty(record, key);
+    if (field.present && field.value !== undefined) {
+      if (typeof field.value !== "boolean") return invalidIsolatedDataResult();
+      cookie[key] = field.value;
+    }
+  }
+}
+
 function snapshotDataResponseCookies(
   value: unknown,
 ): NonNullable<SerializedDataResult["cookies"]> {
@@ -1519,37 +1568,69 @@ function snapshotDataResponseCookies(
       value: requireString(readDataProperty(record, "value"), "data result cookie value"),
     };
 
-    const domain = snapshotOptionalString(record, "domain", MAX_WORKER_VALUE_CHARS);
-    const path = snapshotOptionalString(record, "path", MAX_WORKER_VALUE_CHARS);
-    const expires = snapshotOptionalString(record, "expires", MAX_WORKER_VALUE_CHARS);
-    const sameSite = snapshotOptionalString(record, "sameSite", 6);
-    if (domain !== undefined) cookie.domain = domain;
-    if (path !== undefined) cookie.path = path;
-    if (expires !== undefined) cookie.expires = expires;
-    if (sameSite !== undefined) {
-      if (sameSite !== "lax" && sameSite !== "strict" && sameSite !== "none") {
-        return invalidIsolatedDataResult();
-      }
-      cookie.sameSite = sameSite;
-    }
-    const maxAge = readOptionalDataProperty(record, "maxAge");
-    if (maxAge.present && maxAge.value !== undefined) {
-      if (typeof maxAge.value !== "number" || !numberIsSafeInteger(maxAge.value)) {
-        return invalidIsolatedDataResult();
-      }
-      cookie.maxAge = maxAge.value;
-    }
-    for (const key of ["httpOnly", "secure"] as const) {
-      const field = readOptionalDataProperty(record, key);
-      if (field.present && field.value !== undefined) {
-        if (typeof field.value !== "boolean") return invalidIsolatedDataResult();
-        cookie[key] = field.value;
-      }
-    }
+    snapshotCookieOptionalStrings(record, cookie);
+    snapshotCookieOptionFlags(record, cookie);
     defineDataProperty(output, NativeString(index), cookie);
   }
 
   return output;
+}
+
+type OptionalWorkerDataField = ReturnType<typeof readOptionalDataProperty>;
+
+function snapshotDataResponseRedirect(
+  value: unknown,
+): NonNullable<SerializedDataResult["redirect"]> {
+  const { record: redirectRecord } = requirePlainDataRecord(
+    value,
+    "data result redirect",
+  );
+  const destinationField = readOptionalDataProperty(
+    redirectRecord,
+    "destination",
+  );
+  if (!destinationField.present) return invalidIsolatedDataResult();
+  const destination = requireString(
+    destinationField.value,
+    "data result redirect destination",
+    MAX_WORKER_URL_CHARS,
+    true,
+  );
+  const permanent = readOptionalDataProperty(redirectRecord, "permanent");
+  const hasPermanent = permanent.present && permanent.value !== undefined;
+  if (hasPermanent && typeof permanent.value !== "boolean") {
+    return invalidIsolatedDataResult();
+  }
+  return {
+    destination,
+    ...(hasPermanent ? { permanent: permanent.value as boolean } : {}),
+  };
+}
+
+function appendDataResultContent(
+  normalized: Record<string, unknown>,
+  rawProps: OptionalWorkerDataField,
+  normalizedNotFound: boolean | undefined,
+  rawRevalidate: OptionalWorkerDataField,
+): void {
+  let normalizedRevalidate: number | false | undefined;
+  if (rawRevalidate.present && rawRevalidate.value !== undefined) {
+    if (
+      rawRevalidate.value !== false &&
+      (typeof rawRevalidate.value !== "number" || !numberIsFinite(rawRevalidate.value) ||
+        rawRevalidate.value < 0)
+    ) return invalidIsolatedDataResult();
+    normalizedRevalidate = rawRevalidate.value as number | false;
+  }
+  if (rawProps.present && rawProps.value !== undefined) {
+    defineDataProperty(normalized, "props", rawProps.value);
+  }
+  if (normalizedNotFound !== undefined) {
+    defineDataProperty(normalized, "notFound", normalizedNotFound);
+  }
+  if (normalizedRevalidate !== undefined) {
+    defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+  }
 }
 
 function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
@@ -1564,42 +1645,14 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
     const rawRevalidate = readOptionalDataProperty(result, "revalidate");
     const rawHeaders = readOptionalDataProperty(result, "headers");
     const rawCookies = readOptionalDataProperty(result, "cookies");
-    const hasProps = rawProps.present && rawProps.value !== undefined;
     const hasRedirect = rawRedirect.present && rawRedirect.value !== undefined;
     const hasNotFound = rawNotFound.present && rawNotFound.value !== undefined;
-    const hasRevalidate = rawRevalidate.present && rawRevalidate.value !== undefined;
     const hasHeaders = rawHeaders.present && rawHeaders.value !== undefined;
     const hasCookies = rawCookies.present && rawCookies.value !== undefined;
 
-    let normalizedRedirect:
-      | { destination: string; permanent?: boolean }
-      | undefined;
-    if (hasRedirect) {
-      const { record: redirectRecord } = requirePlainDataRecord(
-        rawRedirect.value,
-        "data result redirect",
-      );
-      const destinationField = readOptionalDataProperty(
-        redirectRecord,
-        "destination",
-      );
-      if (!destinationField.present) return invalidIsolatedDataResult();
-      const destination = requireString(
-        destinationField.value,
-        "data result redirect destination",
-        MAX_WORKER_URL_CHARS,
-        true,
-      );
-      const permanent = readOptionalDataProperty(redirectRecord, "permanent");
-      const hasPermanent = permanent.present && permanent.value !== undefined;
-      if (hasPermanent && typeof permanent.value !== "boolean") {
-        return invalidIsolatedDataResult();
-      }
-      normalizedRedirect = {
-        destination,
-        ...(hasPermanent ? { permanent: permanent.value as boolean } : {}),
-      };
-    }
+    const normalizedRedirect = hasRedirect
+      ? snapshotDataResponseRedirect(rawRedirect.value)
+      : undefined;
 
     if (hasNotFound && typeof rawNotFound.value !== "boolean") {
       return invalidIsolatedDataResult();
@@ -1612,25 +1665,7 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
     } else if (normalizedNotFound === true) {
       defineDataProperty(normalized, "notFound", true);
     } else {
-      let normalizedRevalidate: number | false | undefined;
-      if (hasRevalidate) {
-        if (
-          rawRevalidate.value !== false &&
-          (typeof rawRevalidate.value !== "number" ||
-            !numberIsFinite(rawRevalidate.value) ||
-            rawRevalidate.value < 0)
-        ) {
-          return invalidIsolatedDataResult();
-        }
-        normalizedRevalidate = rawRevalidate.value as number | false;
-      }
-      if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
-      if (normalizedNotFound !== undefined) {
-        defineDataProperty(normalized, "notFound", normalizedNotFound);
-      }
-      if (normalizedRevalidate !== undefined) {
-        defineDataProperty(normalized, "revalidate", normalizedRevalidate);
-      }
+      appendDataResultContent(normalized, rawProps, normalizedNotFound, rawRevalidate);
     }
     if (hasHeaders) {
       defineDataProperty(
@@ -1768,6 +1803,246 @@ export function assertIsolatedSsrDependencySnapshotSupported(
   );
 }
 
+function snapshotAppRouteWorkerRequest(
+  cloned: unknown,
+  envelope: DataRecord,
+): ExecuteAppRouteRequest {
+  const type = "execute-app-route" as const;
+  const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
+    envelope,
+  );
+  const request = requireRecordShape(
+    cloned,
+    [
+      "type",
+      "id",
+      "module",
+      "modulePath",
+      "method",
+      "request",
+      "params",
+      "projectDir",
+      "sourceIntegrationPolicy",
+    ],
+    ["projectEnv", "applicationIdentity", "traceparent"],
+    "payload",
+  );
+  const applicationIdentity = readOptionalDataProperty(
+    request,
+    "applicationIdentity",
+  );
+  if (!applicationIdentity.present) {
+    return invalidWorkerRequest("applicationIdentity");
+  }
+  return {
+    type,
+    traceparent: readOptionalDataProperty(request, "traceparent").present
+      ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
+      : undefined,
+    id: requireString(
+      readDataProperty(request, "id"),
+      "id",
+      MAX_WORKER_REQUEST_ID_CHARS,
+      false,
+    ),
+    module: snapshotPreparedWorkerModule(
+      readDataProperty(request, "module"),
+    ),
+    modulePath: requireString(
+      readDataProperty(request, "modulePath"),
+      "modulePath",
+      MAX_WORKER_PATH_CHARS,
+      false,
+    ),
+    method: requireString(
+      readDataProperty(request, "method"),
+      "method",
+      64,
+      false,
+    ),
+    request: snapshotSerializedRequest(
+      readDataProperty(request, "request"),
+    ),
+    params: snapshotStringRecord(
+      readDataProperty(request, "params"),
+      "params",
+      false,
+    ),
+    projectDir: requireString(
+      readDataProperty(request, "projectDir"),
+      "projectDir",
+      MAX_WORKER_PATH_CHARS,
+      false,
+    ),
+    sourceIntegrationPolicy,
+    projectEnv: snapshotProjectEnv(
+      readOptionalDataProperty(request, "projectEnv").present
+        ? readDataProperty(request, "projectEnv")
+        : undefined,
+    ),
+    applicationIdentity: snapshotWorkerApplicationIdentity(
+      applicationIdentity.value,
+    ),
+  };
+}
+
+function snapshotRouteMethodsWorkerRequest(
+  cloned: unknown,
+  envelope: DataRecord,
+): InspectApiRouteMethodsRequest {
+  const type = "inspect-api-route-methods" as const;
+  const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
+    envelope,
+  );
+  const request = requireRecordShape(
+    cloned,
+    [
+      "type",
+      "id",
+      "module",
+      "modulePath",
+      "projectDir",
+      "sourceIntegrationPolicy",
+    ],
+    ["requestedMethod", "includeFrameworkOptions", "projectEnv"],
+    "payload",
+  );
+  return {
+    type,
+    id: requireString(
+      readDataProperty(request, "id"),
+      "id",
+      MAX_WORKER_REQUEST_ID_CHARS,
+      false,
+    ),
+    module: snapshotPreparedWorkerModule(
+      readDataProperty(request, "module"),
+    ),
+    modulePath: requireString(
+      readDataProperty(request, "modulePath"),
+      "modulePath",
+      MAX_WORKER_PATH_CHARS,
+      false,
+    ),
+    requestedMethod: snapshotOptionalString(
+      request,
+      "requestedMethod",
+      64,
+    ),
+    includeFrameworkOptions: (() => {
+      const field = readOptionalDataProperty(request, "includeFrameworkOptions");
+      if (!field.present) return undefined;
+      if (typeof field.value !== "boolean") {
+        throw new NativeTypeError(
+          "Invalid worker request includeFrameworkOptions",
+        );
+      }
+      return field.value;
+    })(),
+    projectDir: requireString(
+      readDataProperty(request, "projectDir"),
+      "projectDir",
+      MAX_WORKER_PATH_CHARS,
+      false,
+    ),
+    sourceIntegrationPolicy,
+    projectEnv: snapshotProjectEnv(
+      readOptionalDataProperty(request, "projectEnv").present
+        ? readDataProperty(request, "projectEnv")
+        : undefined,
+    ),
+  };
+}
+
+function snapshotRenderWorkerRequest(cloned: unknown, envelope: DataRecord): RenderSSRRequest {
+  const type = "render-ssr" as const;
+  const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
+    envelope,
+  );
+  const request = requireRecordShape(
+    cloned,
+    [
+      "type",
+      "id",
+      "pageModulePath",
+      "layoutModulePaths",
+      "pageProps",
+      "layoutProps",
+      "delivery",
+      "sourceIntegrationPolicy",
+    ],
+    [
+      "dependencyPinningCacheKey",
+      "dependencyPinningDependencies",
+    ],
+    "payload",
+  );
+  const budget: DataSnapshotBudget = { nodes: 0, utf8Bytes: 0 };
+  const layoutPathBudget: StringSnapshotBudget = {
+    values: 0,
+    utf8Bytes: 0,
+    maxValues: MAX_WORKER_RECORD_ENTRIES,
+    maxUtf8Bytes: MAX_WORKER_STRING_COLLECTION_UTF8_BYTES,
+  };
+  const layoutModulePaths = snapshotStringArray(
+    readDataProperty(request, "layoutModulePaths"),
+    "layoutModulePaths",
+    MAX_WORKER_RECORD_ENTRIES,
+    MAX_WORKER_PATH_CHARS,
+    layoutPathBudget,
+  );
+  const rawLayoutProps = requireDenseArray(
+    readDataProperty(request, "layoutProps"),
+    "layoutProps",
+    MAX_WORKER_RECORD_ENTRIES,
+  );
+  if (rawLayoutProps.length !== layoutModulePaths.length) {
+    return invalidWorkerRequest("layoutProps");
+  }
+  const layoutProps = new NativeArray<Record<string, unknown>>(
+    rawLayoutProps.length,
+  );
+  for (let index = 0; index < rawLayoutProps.length; index++) {
+    defineDataProperty(
+      layoutProps,
+      NativeString(index),
+      snapshotStructuredDataRecord(
+        arrayElement(rawLayoutProps, index, "layoutProps"),
+        budget,
+      ),
+    );
+  }
+  const delivery = readDataProperty(request, "delivery");
+  if (delivery !== "string" && delivery !== "stream") {
+    return invalidWorkerRequest("delivery");
+  }
+  const dependencyPinning = snapshotSSRDependencyPinning(request);
+  return {
+    type,
+    id: requireString(
+      readDataProperty(request, "id"),
+      "id",
+      MAX_WORKER_REQUEST_ID_CHARS,
+      false,
+    ),
+    pageModulePath: requireString(
+      readDataProperty(request, "pageModulePath"),
+      "pageModulePath",
+      MAX_WORKER_PATH_CHARS,
+      false,
+    ),
+    layoutModulePaths,
+    pageProps: snapshotStructuredDataRecord(
+      readDataProperty(request, "pageProps"),
+      budget,
+    ),
+    layoutProps,
+    delivery,
+    ...dependencyPinning,
+    sourceIntegrationPolicy,
+  };
+}
+
 /**
  * Synchronously detach and validate one control-port request before it can be
  * observed or mutated by any later project task.
@@ -1792,84 +2067,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
     false,
   );
 
-  if (type === "execute-app-route") {
-    const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
-      envelope,
-    );
-    const request = requireRecordShape(
-      cloned,
-      [
-        "type",
-        "id",
-        "module",
-        "modulePath",
-        "method",
-        "request",
-        "params",
-        "projectDir",
-        "sourceIntegrationPolicy",
-      ],
-      ["projectEnv", "applicationIdentity", "traceparent"],
-      "payload",
-    );
-    const applicationIdentity = readOptionalDataProperty(
-      request,
-      "applicationIdentity",
-    );
-    if (!applicationIdentity.present) {
-      return invalidWorkerRequest("applicationIdentity");
-    }
-    return {
-      type,
-      traceparent: readOptionalDataProperty(request, "traceparent").present
-        ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
-        : undefined,
-      id: requireString(
-        readDataProperty(request, "id"),
-        "id",
-        MAX_WORKER_REQUEST_ID_CHARS,
-        false,
-      ),
-      module: snapshotPreparedWorkerModule(
-        readDataProperty(request, "module"),
-      ),
-      modulePath: requireString(
-        readDataProperty(request, "modulePath"),
-        "modulePath",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      method: requireString(
-        readDataProperty(request, "method"),
-        "method",
-        64,
-        false,
-      ),
-      request: snapshotSerializedRequest(
-        readDataProperty(request, "request"),
-      ),
-      params: snapshotStringRecord(
-        readDataProperty(request, "params"),
-        "params",
-        false,
-      ),
-      projectDir: requireString(
-        readDataProperty(request, "projectDir"),
-        "projectDir",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      sourceIntegrationPolicy,
-      projectEnv: snapshotProjectEnv(
-        readOptionalDataProperty(request, "projectEnv").present
-          ? readDataProperty(request, "projectEnv")
-          : undefined,
-      ),
-      applicationIdentity: snapshotWorkerApplicationIdentity(
-        applicationIdentity.value,
-      ),
-    };
-  }
+  if (type === "execute-app-route") return snapshotAppRouteWorkerRequest(cloned, envelope);
 
   if (type === "execute-pages-route") {
     const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
@@ -1943,67 +2141,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
   }
 
   if (type === "inspect-api-route-methods") {
-    const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
-      envelope,
-    );
-    const request = requireRecordShape(
-      cloned,
-      [
-        "type",
-        "id",
-        "module",
-        "modulePath",
-        "projectDir",
-        "sourceIntegrationPolicy",
-      ],
-      ["requestedMethod", "includeFrameworkOptions", "projectEnv"],
-      "payload",
-    );
-    return {
-      type,
-      id: requireString(
-        readDataProperty(request, "id"),
-        "id",
-        MAX_WORKER_REQUEST_ID_CHARS,
-        false,
-      ),
-      module: snapshotPreparedWorkerModule(
-        readDataProperty(request, "module"),
-      ),
-      modulePath: requireString(
-        readDataProperty(request, "modulePath"),
-        "modulePath",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      requestedMethod: snapshotOptionalString(
-        request,
-        "requestedMethod",
-        64,
-      ),
-      includeFrameworkOptions: (() => {
-        const field = readOptionalDataProperty(request, "includeFrameworkOptions");
-        if (!field.present) return undefined;
-        if (typeof field.value !== "boolean") {
-          throw new NativeTypeError(
-            "Invalid worker request includeFrameworkOptions",
-          );
-        }
-        return field.value;
-      })(),
-      projectDir: requireString(
-        readDataProperty(request, "projectDir"),
-        "projectDir",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      sourceIntegrationPolicy,
-      projectEnv: snapshotProjectEnv(
-        readOptionalDataProperty(request, "projectEnv").present
-          ? readDataProperty(request, "projectEnv")
-          : undefined,
-      ),
-    };
+    return snapshotRouteMethodsWorkerRequest(cloned, envelope);
   }
 
   if (type === "fetch-data") {
@@ -2046,93 +2184,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
     };
   }
 
-  if (type === "render-ssr") {
-    const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
-      envelope,
-    );
-    const request = requireRecordShape(
-      cloned,
-      [
-        "type",
-        "id",
-        "pageModulePath",
-        "layoutModulePaths",
-        "pageProps",
-        "layoutProps",
-        "delivery",
-        "sourceIntegrationPolicy",
-      ],
-      [
-        "dependencyPinningCacheKey",
-        "dependencyPinningDependencies",
-      ],
-      "payload",
-    );
-    const budget: DataSnapshotBudget = { nodes: 0, utf8Bytes: 0 };
-    const layoutPathBudget: StringSnapshotBudget = {
-      values: 0,
-      utf8Bytes: 0,
-      maxValues: MAX_WORKER_RECORD_ENTRIES,
-      maxUtf8Bytes: MAX_WORKER_STRING_COLLECTION_UTF8_BYTES,
-    };
-    const layoutModulePaths = snapshotStringArray(
-      readDataProperty(request, "layoutModulePaths"),
-      "layoutModulePaths",
-      MAX_WORKER_RECORD_ENTRIES,
-      MAX_WORKER_PATH_CHARS,
-      layoutPathBudget,
-    );
-    const rawLayoutProps = requireDenseArray(
-      readDataProperty(request, "layoutProps"),
-      "layoutProps",
-      MAX_WORKER_RECORD_ENTRIES,
-    );
-    if (rawLayoutProps.length !== layoutModulePaths.length) {
-      return invalidWorkerRequest("layoutProps");
-    }
-    const layoutProps = new NativeArray<Record<string, unknown>>(
-      rawLayoutProps.length,
-    );
-    for (let index = 0; index < rawLayoutProps.length; index++) {
-      defineDataProperty(
-        layoutProps,
-        NativeString(index),
-        snapshotStructuredDataRecord(
-          arrayElement(rawLayoutProps, index, "layoutProps"),
-          budget,
-        ),
-      );
-    }
-    const delivery = readDataProperty(request, "delivery");
-    if (delivery !== "string" && delivery !== "stream") {
-      return invalidWorkerRequest("delivery");
-    }
-    const dependencyPinning = snapshotSSRDependencyPinning(request);
-    return {
-      type,
-      id: requireString(
-        readDataProperty(request, "id"),
-        "id",
-        MAX_WORKER_REQUEST_ID_CHARS,
-        false,
-      ),
-      pageModulePath: requireString(
-        readDataProperty(request, "pageModulePath"),
-        "pageModulePath",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      layoutModulePaths,
-      pageProps: snapshotStructuredDataRecord(
-        readDataProperty(request, "pageProps"),
-        budget,
-      ),
-      layoutProps,
-      delivery,
-      ...dependencyPinning,
-      sourceIntegrationPolicy,
-    };
-  }
+  if (type === "render-ssr") return snapshotRenderWorkerRequest(cloned, envelope);
 
   return invalidWorkerRequest("type");
 }
@@ -2181,12 +2233,11 @@ function dataModuleStackLabel(
   const digest = digestStart < 0
     ? "unknown"
     : apply(stringSlice, match, [digestStart, digestStart + 64]) as string;
-  const safeDigest = matches(LOWERCASE_SHA256_PATTERN, digest)
-    ? digest
-    : fallbackDigest !== undefined &&
-        matches(LOWERCASE_SHA256_PATTERN, fallbackDigest)
-    ? fallbackDigest
-    : "unknown";
+  let safeDigest: string;
+  if (matches(LOWERCASE_SHA256_PATTERN, digest)) safeDigest = digest;
+  else if (fallbackDigest !== undefined && matches(LOWERCASE_SHA256_PATTERN, fallbackDigest)) {
+    safeDigest = fallbackDigest;
+  } else safeDigest = "unknown";
 
   const location = apply(regexpExec, STACK_LOCATION_PATTERN, [
     match,
@@ -2433,7 +2484,8 @@ export async function loadModule(modulePath: string): Promise<Record<string, unk
 }
 
 function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function sortedOwnKeys(record: Record<string, unknown>): string[] {
