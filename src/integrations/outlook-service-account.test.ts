@@ -10,6 +10,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createLocalIntegrationToolSource } from "./index.ts";
 import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
+import type { IntegrationToolMeta } from "./schema.ts";
 import {
   _createOutlookServiceAccountToolSourceForTesting,
   createOutlookServiceAccountToolSource,
@@ -77,6 +78,7 @@ function createSource(
   options: Partial<OutlookServiceAccountToolSourceOptions> = {},
   transport: LocalIntegrationEndpointTransport = recordingTransport().transport,
   now?: () => number,
+  catalog?: readonly IntegrationToolMeta[],
 ) {
   return _createOutlookServiceAccountToolSourceForTesting(
     {
@@ -86,8 +88,108 @@ function createSource(
     },
     transport,
     now,
+    catalog,
   );
 }
+
+const MAILBOX_PARAM = {
+  type: "string",
+  in: "path",
+  description: "Mailbox user principal name or Microsoft Graph user ID",
+  required: true,
+} as const;
+const PREFER_PARAM = {
+  type: "string",
+  in: "header",
+  headerName: "Prefer",
+  pattern: '^IdType="ImmutableId"$',
+  description: "Immutable ID preference",
+} as const;
+const MESSAGE_ID_PARAM = {
+  type: "string",
+  in: "path",
+  description: "Message ID",
+  required: true,
+} as const;
+
+/** Synthetic `/users/{mailbox}` catalog entries shaped like delegated shared-mailbox tools. */
+const SHARED_MAILBOX_CATALOG: IntegrationToolMeta[] = [
+  {
+    id: "outlook__synthetic_child_folders",
+    name: "Synthetic Child Folders",
+    description: "List child folders",
+    requiresWrite: false,
+    endpoint: {
+      method: "GET",
+      url: "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/childFolders",
+      params: {
+        mailbox: MAILBOX_PARAM,
+        folderId: { type: "string", in: "path", description: "Folder ID", required: true },
+      },
+      response: { transform: "value" },
+    },
+  },
+  {
+    id: "outlook__synthetic_message_mime",
+    name: "Synthetic Message MIME",
+    description: "Read original MIME",
+    requiresWrite: false,
+    endpoint: {
+      method: "GET",
+      url: "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/$value",
+      params: { mailbox: MAILBOX_PARAM, messageId: MESSAGE_ID_PARAM, prefer: PREFER_PARAM },
+      // Binary response mode as declared by a catalog that supports it.
+      response: { encoding: "base64" } as NonNullable<
+        NonNullable<IntegrationToolMeta["endpoint"]>["response"]
+      >,
+    },
+  },
+  {
+    id: "outlook__synthetic_move",
+    name: "Synthetic Move",
+    description: "Move a message",
+    requiresWrite: true,
+    endpoint: {
+      method: "POST",
+      url: "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/move",
+      params: { mailbox: MAILBOX_PARAM, messageId: MESSAGE_ID_PARAM, prefer: PREFER_PARAM },
+      body: { destinationId: { type: "string", description: "Folder ID", required: true } },
+    },
+  },
+  {
+    id: "outlook__synthetic_query_mailbox",
+    name: "Synthetic Query Mailbox",
+    description: "Mailbox given as a query parameter",
+    requiresWrite: false,
+    endpoint: {
+      method: "GET",
+      url: "https://graph.microsoft.com/v1.0/users/{mailbox}/messages",
+      params: { mailbox: { ...MAILBOX_PARAM, in: "query" } },
+    },
+  },
+  {
+    id: "outlook__synthetic_second_mailbox",
+    name: "Synthetic Second Mailbox",
+    description: "Names the mailbox twice",
+    requiresWrite: false,
+    endpoint: {
+      method: "GET",
+      url: "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{mailbox}",
+      params: { mailbox: MAILBOX_PARAM },
+    },
+  },
+  {
+    id: "outlook__synthetic_user_id",
+    name: "Synthetic User ID",
+    description: "Mailbox under another parameter name",
+    requiresWrite: false,
+    endpoint: {
+      method: "GET",
+      url: "https://graph.microsoft.com/v1.0/users/{userId}/messages",
+      params: { userId: MAILBOX_PARAM },
+    },
+  },
+];
 
 function assertNoSecrets(value: string): void {
   assertEquals(value.includes(CLIENT_SECRET), false, value);
@@ -274,8 +376,6 @@ describe("createOutlookServiceAccountToolSource", () => {
   it("rejects tools that let the caller choose another mailbox", () => {
     for (
       const toolName of [
-        "outlook__list_shared_mailbox_emails",
-        "outlook__search_shared_mailbox_emails",
         // getSchedule reads free/busy for the addresses in its `schedules` body.
         "outlook__get_schedule",
         "outlook__find_free_time",
@@ -283,6 +383,121 @@ describe("createOutlookServiceAccountToolSource", () => {
     ) {
       const error = assertThrows(
         () => createSource({ allowedTools: [toolName] }),
+        VeryfrontError,
+      );
+      assertStringIncludes(error.message, "configured mailbox", toolName);
+    }
+  });
+
+  it("binds a /users/{mailbox} catalog tool to the configured mailbox", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({
+      allowedTools: [
+        "outlook__list_shared_mailbox_emails",
+        "outlook__search_shared_mailbox_emails",
+      ],
+    }, transport);
+
+    // The mailbox is not a caller input.
+    for (const definition of await source.listTools()) {
+      const properties = (definition.parameters as { properties: Record<string, unknown> })
+        .properties;
+      assertEquals("mailbox" in properties, false, definition.name);
+    }
+
+    await source.executeTool("outlook__list_shared_mailbox_emails", { folderId: "inbox" });
+    await source.executeTool("outlook__search_shared_mailbox_emails", { query: "invoice" });
+    assertEquals(requests.length, 3);
+    assert(requests[1]!.url.startsWith(`${MAILBOX_PATH}/mailFolders/inbox/messages?`));
+    assert(requests[2]!.url.startsWith(`${MAILBOX_PATH}/messages?`));
+  });
+
+  it("refuses a caller-chosen mailbox before any request", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource(
+      { allowedTools: ["outlook__list_shared_mailbox_emails"] },
+      transport,
+    );
+
+    await assertRejects(
+      () =>
+        source.executeTool("outlook__list_shared_mailbox_emails", {
+          mailbox: "other@example.test",
+          folderId: "inbox",
+        }),
+      VeryfrontError,
+    );
+    assertEquals(requests.length, 0);
+  });
+
+  it("serves child folders, original MIME and the declared Prefer header", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource(
+      {
+        allowedTools: ["outlook__synthetic_child_folders", "outlook__synthetic_message_mime"],
+      },
+      transport,
+      undefined,
+      SHARED_MAILBOX_CATALOG,
+    );
+
+    await source.executeTool("outlook__synthetic_child_folders", { folderId: "inbox" });
+    await source.executeTool("outlook__synthetic_message_mime", {
+      messageId: "message-1",
+      prefer: 'IdType="ImmutableId"',
+    });
+
+    assertEquals(requests.map((request) => request.url), [
+      TOKEN_URL,
+      `${MAILBOX_PATH}/mailFolders/inbox/childFolders`,
+      `${MAILBOX_PATH}/messages/message-1/$value`,
+    ]);
+    assertEquals(requests[2]!.method, "GET");
+    assertEquals(requests[2]!.headers.get("prefer"), 'IdType="ImmutableId"');
+    assertEquals(requests[2]!.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+  });
+
+  it("keeps a /users/{mailbox} write tool absent unless writes are allowed", async () => {
+    const error = assertThrows(
+      () =>
+        createSource(
+          { allowedTools: ["outlook__synthetic_move"] },
+          undefined,
+          undefined,
+          SHARED_MAILBOX_CATALOG,
+        ),
+      VeryfrontError,
+    );
+    assertStringIncludes(error.message, "allowWrites");
+
+    const { requests, transport } = recordingTransport();
+    const source = createSource(
+      { allowedTools: ["outlook__synthetic_move"], allowWrites: true },
+      transport,
+      undefined,
+      SHARED_MAILBOX_CATALOG,
+    );
+    await source.executeTool("outlook__synthetic_move", {
+      messageId: "message-1",
+      destinationId: "archive",
+      prefer: 'IdType="ImmutableId"',
+    });
+    assertEquals(requests[1]!.method, "POST");
+    assertEquals(requests[1]!.url, `${MAILBOX_PATH}/messages/message-1/move`);
+    assertEquals(requests[1]!.headers.get("prefer"), 'IdType="ImmutableId"');
+  });
+
+  it("rejects /users tools whose mailbox is not a single path parameter", () => {
+    for (
+      const toolName of [
+        "outlook__synthetic_query_mailbox",
+        "outlook__synthetic_second_mailbox",
+        "outlook__synthetic_user_id",
+      ]
+    ) {
+      const error = assertThrows(
+        () =>
+          createSource({ allowedTools: [toolName] }, undefined, undefined, SHARED_MAILBOX_CATALOG),
         VeryfrontError,
       );
       assertStringIncludes(error.message, "configured mailbox", toolName);

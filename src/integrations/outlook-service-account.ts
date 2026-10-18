@@ -45,6 +45,7 @@ const OUTLOOK_INTEGRATION = "outlook";
 const TOKEN_ORIGIN = "https://login.microsoftonline.com";
 const GRAPH_ORIGIN = "https://graph.microsoft.com";
 const GRAPH_ME_PREFIX = `${GRAPH_ORIGIN}/v1.0/me/`;
+const GRAPH_USERS_MAILBOX_PREFIX = `${GRAPH_ORIGIN}/v1.0/users/{mailbox}/`;
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const MAX_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1_000;
@@ -112,10 +113,26 @@ function configurationError(detail: string): never {
   return localIntegrationConfigurationError(detail);
 }
 
+/**
+ * Returns the endpoint in `/me/` form, which `executeTool` points at the
+ * configured mailbox. A `/users/{mailbox}/` endpoint qualifies when `mailbox`
+ * is one path parameter; it is dropped from the caller's inputs, so a caller
+ * cannot name another mailbox. Any other endpoint returns `undefined`.
+ */
+function configuredMailboxEndpoint(endpoint: OutlookEndpoint): OutlookEndpoint | undefined {
+  if (endpoint.url.startsWith(GRAPH_ME_PREFIX)) return endpoint;
+  if (!endpoint.url.startsWith(GRAPH_USERS_MAILBOX_PREFIX)) return undefined;
+  const path = endpoint.url.slice(GRAPH_USERS_MAILBOX_PREFIX.length);
+  const { mailbox, ...params } = endpoint.params ?? {};
+  if (mailbox?.in !== "path" || path.includes("{mailbox}")) return undefined;
+  return { ...endpoint, url: GRAPH_ME_PREFIX + path, params };
+}
+
 function admitTool(
   toolName: unknown,
   allowWrites: boolean,
   seen: Set<string>,
+  catalog: readonly IntegrationToolMeta[],
 ): AdmittedOutlookTool {
   if (typeof toolName !== "string") {
     configurationError("Outlook service-account allowed tools must be strings");
@@ -131,13 +148,12 @@ function admitTool(
   }
   seen.add(toolName);
 
-  const connector = connectors.find((entry) => entry.name === OUTLOOK_INTEGRATION);
-  const catalogTool = connector?.tools.find((tool) => tool.id === toolName);
+  const catalogTool = catalog.find((tool) => tool.id === toolName);
   if (!catalogTool?.endpoint) {
     configurationError(`Outlook service-account tool "${safeName}" is unknown`);
   }
   // Copied so a later change to the exported catalog cannot alter a granted tool.
-  const endpoint = structuredClone(catalogTool.endpoint);
+  const endpoint = configuredMailboxEndpoint(structuredClone(catalogTool.endpoint));
 
   if (DELEGATED_ONLY_TOOLS.has(toolName)) {
     configurationError(
@@ -145,7 +161,7 @@ function admitTool(
         "does not support app-only credentials",
     );
   }
-  if (!endpoint.url.startsWith(GRAPH_ME_PREFIX) || OTHER_MAILBOX_TOOLS.has(toolName)) {
+  if (!endpoint || OTHER_MAILBOX_TOOLS.has(toolName)) {
     configurationError(
       `Outlook service-account tool "${safeName}" does not run against the configured mailbox`,
     );
@@ -175,8 +191,13 @@ function admitTool(
   });
 }
 
+function outlookCatalog(): readonly IntegrationToolMeta[] {
+  return connectors.find((entry) => entry.name === OUTLOOK_INTEGRATION)?.tools ?? [];
+}
+
 function resolveAllowedTools(
   options: OutlookServiceAccountToolSourceOptions,
+  catalog: readonly IntegrationToolMeta[],
 ): Map<string, AdmittedOutlookTool> {
   const allowedTools = options?.allowedTools;
   if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
@@ -193,7 +214,7 @@ function resolveAllowedTools(
   const seen = new Set<string>();
   const admitted = new Map<string, AdmittedOutlookTool>();
   for (const toolName of [...allowedTools]) {
-    const tool = admitTool(toolName, options.allowWrites === true, seen);
+    const tool = admitTool(toolName, options.allowWrites === true, seen, catalog);
     admitted.set(tool.id, tool);
   }
   return admitted;
@@ -364,8 +385,9 @@ function createOutlookServiceAccountToolSourceInternal(
   options: OutlookServiceAccountToolSourceOptions,
   transport?: LocalIntegrationEndpointTransport,
   now: () => number = Date.now,
+  catalog: readonly IntegrationToolMeta[] = outlookCatalog(),
 ): RemoteToolSource {
-  const admitted = resolveAllowedTools(options);
+  const admitted = resolveAllowedTools(options, catalog);
   const credentialProvider = options.credentialProvider ?? getEnv;
   if (typeof credentialProvider !== "function") {
     configurationError("Outlook service-account credentialProvider must be a function");
@@ -484,13 +506,14 @@ export function createOutlookServiceAccountToolSource(
 }
 
 /**
- * @internal Test-only transport and clock seam without the host grant, which
- * the public factory applies. Not exported from the public integrations module.
+ * @internal Test-only transport, clock and catalog seam without the host grant,
+ * which the public factory applies. Not exported from the public integrations module.
  */
 export function _createOutlookServiceAccountToolSourceForTesting(
   options: OutlookServiceAccountToolSourceOptions,
   transport: LocalIntegrationEndpointTransport,
   now?: () => number,
+  catalog?: readonly IntegrationToolMeta[],
 ): RemoteToolSource {
-  return createOutlookServiceAccountToolSourceInternal(options, transport, now);
+  return createOutlookServiceAccountToolSourceInternal(options, transport, now, catalog);
 }

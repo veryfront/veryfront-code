@@ -203,10 +203,13 @@ const outlookSource = createOutlookServiceAccountToolSource({
 export const outlookTools = await loadRemoteToolsFromSource(outlookSource);
 ```
 
-Every Microsoft Graph request targets `/users/<MAILBOX>`, never `/me`. Tools
-that let the caller choose another mailbox, including the free/busy tools
-`outlook__get_schedule` and `outlook__find_free_time`, are rejected, and so are
-delegated-only operations such as `outlook__find_meeting_times`. Tools that change
+Every Microsoft Graph request targets `/users/<MAILBOX>`, never `/me`. Catalog
+tools whose path is `/users/{mailbox}/...`, such as
+`outlook__list_shared_mailbox_emails`, are bound to the configured mailbox and
+take no `mailbox` input. Other tools that let the caller choose another
+mailbox, including the free/busy tools `outlook__get_schedule` and
+`outlook__find_free_time`, are rejected, and so are delegated-only operations
+such as `outlook__find_meeting_times`. Tools that change
 mailbox or calendar state, such as `outlook__move_email`, are rejected unless
 you also pass `allowWrites: true`. `allowWrites` covers every listed write
 tool, including `outlook__send_email`, which sends mail as the mailbox. List

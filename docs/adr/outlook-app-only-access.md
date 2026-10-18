@@ -24,8 +24,9 @@ Option 3. App-only access is the preferred mode. `createOutlookServiceAccountToo
 it with these rules:
 
 - One configured mailbox. Every Graph request targets `/users/<OUTLOOK_SERVICE_ACCOUNT_MAILBOX>`,
-  never `/me`. Tools that let the caller choose a mailbox, and delegated-only operations, are
-  rejected.
+  never `/me`. A catalog tool under `/users/{mailbox}/` is bound to that mailbox, and its `mailbox`
+  input is removed. Tools that let the caller choose a mailbox some other way, and delegated-only
+  operations, are rejected.
 - Least privilege. Application `Mail.Read` covers reading. `Mail.ReadWrite` is added only for
   moves and other mail changes, and write tools also need `allowWrites: true`. An administrator
   grants consent. A mailbox-scoped access policy (Exchange Online RBAC for Applications or an
