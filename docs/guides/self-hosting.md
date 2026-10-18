@@ -41,8 +41,8 @@ Choose substitutes for managed capabilities before you deploy.
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
 Allow local integration credentials in the host process before you materialize
-any local source, both the catalog source and the Salesforce service-account
-source below:
+any local source, including the catalog source and the Salesforce and Outlook
+service-account sources below:
 
 ```dotenv title=".env"
 VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
@@ -139,6 +139,70 @@ metadata, URLs, logs, or project files.
 
 The source does not implement interactive user OAuth. Use the managed backing
 API when each tool call must use an individual user's Salesforce connection.
+
+## Run Outlook integration tools locally
+
+Outlook supports two access modes outside Veryfront Cloud:
+
+- **App-only access** uses Microsoft Entra client credentials and reads one
+  configured mailbox. Use it for unattended ingestion, scheduled runs, and
+  other project-owned automation.
+- **Delegated access** signs in a user with your own Entra app through the
+  scaffolded Outlook OAuth template. Use it when each action must run as that
+  user.
+
+For app-only access, register an Entra app in the target tenant and grant it
+the Microsoft Graph **application** permission `Mail.Read`. Add
+`Mail.ReadWrite` only when the project moves, flags, or categorizes mail. An
+administrator must grant consent for application permissions. Restrict the app
+to the configured mailbox with Exchange Online RBAC for Applications or an
+application access policy, because an unrestricted application permission
+covers every mailbox in the tenant.
+
+Set these values in the project environment used by the self-hosted runtime:
+
+```dotenv title=".env"
+OUTLOOK_SERVICE_ACCOUNT_CLIENT_ID=<CLIENT_ID>
+OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET=<CLIENT_SECRET>
+OUTLOOK_SERVICE_ACCOUNT_TENANT_ID=<TENANT_ID>
+OUTLOOK_SERVICE_ACCOUNT_MAILBOX=intake@example.com
+```
+
+The tenant must be a tenant ID or verified domain. Multi-tenant aliases such as
+`common` are rejected. The mailbox must be an address or Entra user ID. A
+missing or invalid value fails with an error that names the variable, before
+any request is sent.
+
+Create a source with the exact Outlook tools the agent can use:
+
+```ts title="lib/mail-intake-outlook-tools.ts"
+import { createOutlookServiceAccountToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
+
+const outlookSource = createOutlookServiceAccountToolSource({
+  allowedTools: [
+    "outlook__list_emails",
+    "outlook__get_email",
+    "outlook__list_attachments",
+    "outlook__get_attachment",
+  ],
+});
+
+export const outlookTools = await loadRemoteToolsFromSource(outlookSource);
+```
+
+Every Microsoft Graph request targets `/users/<MAILBOX>`, never `/me`. Tools
+that let the caller choose another mailbox are rejected, and so are
+delegated-only operations such as `outlook__find_meeting_times`. Tools that change
+mailbox or calendar state, such as `outlook__move_email`, are rejected unless
+you also pass `allowWrites: true`.
+
+The source exchanges the client secret at
+`login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token
+in process memory until shortly before it expires. It stores no refresh token
+and writes nothing to disk. Changing any credential variable mints a new token,
+so rotate the client secret in Entra and then update the project environment.
+Requests go only to Microsoft origins and never to Veryfront APIs.
 
 ## Build the project
 
