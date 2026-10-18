@@ -802,8 +802,8 @@ describe("createOutlookServiceAccountToolSource", () => {
     );
   });
 
-  it("rejects a path argument that contains a slash before any request", async () => {
-    for (const messageId of ["../../other@example.test", "a/b", "a\\b"]) {
+  it("rejects a path argument that could leave the mailbox before any request", async () => {
+    for (const messageId of ["../../other@example.test", "a/../b", "./a", "..", "a\\b"]) {
       const { requests, transport } = recordingTransport();
       const source = createSource({ allowedTools: ["outlook__get_email"] }, transport);
 
@@ -814,6 +814,18 @@ describe("createOutlookServiceAccountToolSource", () => {
       assertEquals(error.slug, "local-integration-request-invalid", messageId);
       assertEquals(requests.length, 0);
     }
+  });
+
+  it("sends an Outlook ID that contains a slash as one encoded segment", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({ allowedTools: ["outlook__get_email"] }, transport);
+
+    await source.executeTool("outlook__get_email", { messageId: "AAMk+a/b=" });
+
+    assert(
+      requests[1]!.url.startsWith(`${MAILBOX_PATH}/messages/AAMk%2Ba%2Fb%3D?`),
+      requests[1]!.url,
+    );
   });
 
   it("returns null for an empty 202 Graph action response", async () => {

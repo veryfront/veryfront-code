@@ -307,17 +307,21 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): 
 }
 
 /**
- * Microsoft Graph IDs never contain a slash. Rejecting one keeps an encoded
- * `..%2F` value from naming a path outside the configured mailbox.
+ * Outlook IDs may contain `/`, which is sent percent-encoded. A server that
+ * decodes `%2F` must still stay in the configured mailbox, so a path argument
+ * may not contain a backslash or a `.` or `..` segment.
  */
-function assertSinglePathSegments(endpoint: OutlookEndpoint, args: Record<string, unknown>): void {
+function assertNoPathTraversal(endpoint: OutlookEndpoint, args: Record<string, unknown>): void {
   for (const [name, field] of Object.entries(endpoint.params ?? {})) {
     const value = args[name];
-    if (field.in === "path" && typeof value === "string" && /[/\\]/.test(value)) {
+    if (
+      field.in === "path" && typeof value === "string" &&
+      (value.includes("\\") || value.split("/").some((part) => part === "." || part === ".."))
+    ) {
       throw LOCAL_INTEGRATION_REQUEST_INVALID.create({
         detail: `Outlook argument "${
           safeLocalIntegrationIdentifier(name)
-        }" must not contain a slash`,
+        }" must not contain a backslash or a dot path segment`,
       });
     }
   }
@@ -455,7 +459,7 @@ function createOutlookServiceAccountToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
-      assertSinglePathSegments(tool.endpoint, validated.args);
+      assertNoPathTraversal(tool.endpoint, validated.args);
       const config = await readConfig(credentialProvider);
       const endpoint = Object.freeze({
         ...tool.endpoint,
