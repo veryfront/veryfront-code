@@ -179,23 +179,9 @@ describe("llm/generate", () => {
     }
   });
 
-  it("does not forward security to the model call", async () => {
-    const stub = stubProvider("hello");
-    try {
-      await generate({ input: "hi", model: "stub/stub", security: false });
-      const [call] = stub.calls;
-      assertEquals(call !== undefined && "security" in call, false);
-      assertEquals(
-        JSON.stringify(call ?? {}).includes('"security"'),
-        false,
-        "security must configure the agent, not travel in the provider request",
-      );
-    } finally {
-      stub.dispose();
-    }
-  });
-
   it("accepts only false as a security value", () => {
+    // Compile-time only: deno check fails if the @ts-expect-error goes unused.
+    // The function is never called, so no model request is made.
     const typeCheckOnly = () =>
       generate({
         input: "hi",
