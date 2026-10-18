@@ -142,7 +142,8 @@ API when each tool call must use an individual user's Salesforce connection.
 
 ## Run Outlook integration tools locally
 
-Outlook supports two access modes outside Veryfront Cloud:
+Outlook supports two access modes outside Veryfront Cloud. App-only access is
+the preferred mode:
 
 - **App-only access** uses Microsoft Entra client credentials and reads one
   configured mailbox. Use it for unattended ingestion, scheduled runs, and
@@ -152,10 +153,21 @@ Outlook supports two access modes outside Veryfront Cloud:
   user.
 
 For app-only access, register an Entra app in the target tenant and grant it
-the Microsoft Graph **application** permission `Mail.Read`. Add
-`Mail.ReadWrite` only when the project moves, flags, or categorizes mail. An
-administrator must grant consent for application permissions. Restrict the app
-to the configured mailbox with Exchange Online RBAC for Applications or an
+the Microsoft Graph **application** permissions for the tools you list. Grant
+only what those tools need:
+
+| Tools                                                                | Application permission      |
+| -------------------------------------------------------------------- | --------------------------- |
+| Read mail, such as `outlook__list_emails` and `outlook__get_email`   | `Mail.Read`                 |
+| Change mail, such as `outlook__move_email` and `outlook__flag_email` | `Mail.ReadWrite`            |
+| Send mail, such as `outlook__send_email` and `outlook__reply_email`  | `Mail.Send`                 |
+| Read calendars, such as `outlook__list_events`                       | `Calendars.Read`            |
+| Change calendars, such as `outlook__create_event`                    | `Calendars.ReadWrite`       |
+| Read categories, such as `outlook__list_categories`                  | `MailboxSettings.Read`      |
+| Change categories, such as `outlook__create_category`                | `MailboxSettings.ReadWrite` |
+
+An administrator must grant consent for application permissions. Restrict the
+app to the configured mailbox with Exchange Online RBAC for Applications or an
 application access policy, because an unrestricted application permission
 covers every mailbox in the tenant.
 
@@ -192,16 +204,28 @@ export const outlookTools = await loadRemoteToolsFromSource(outlookSource);
 ```
 
 Every Microsoft Graph request targets `/users/<MAILBOX>`, never `/me`. Tools
-that let the caller choose another mailbox are rejected, and so are
+that let the caller choose another mailbox, including the free/busy tools
+`outlook__get_schedule` and `outlook__find_free_time`, are rejected, and so are
 delegated-only operations such as `outlook__find_meeting_times`. Tools that change
 mailbox or calendar state, such as `outlook__move_email`, are rejected unless
-you also pass `allowWrites: true`.
+you also pass `allowWrites: true`. `allowWrites` covers every listed write
+tool, including `outlook__send_email`, which sends mail as the mailbox. List
+only the write tools the project needs.
+
+Each string in a tool request or response is limited to 1 MiB. Base64
+attachment content over about 750 KB decoded fails with
+`local-integration-request-invalid` on upload, or
+`local-integration-response-invalid` from `outlook__get_attachment`.
 
 The source exchanges the client secret at
 `login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token
 in process memory until shortly before it expires. It stores no refresh token
 and writes nothing to disk. Changing any credential variable mints a new token,
 so rotate the client secret in Entra and then update the project environment.
+Concurrent tool calls share one token request. When Graph rejects a token with
+HTTP 401, the source drops it and retries the call once with a new token. A
+rejected token request fails with an error that names the credential
+variables.
 Requests go only to Microsoft origins and never to Veryfront APIs.
 
 ## Build the project

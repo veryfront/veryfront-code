@@ -659,7 +659,11 @@ function createRequestSignal(
   });
 }
 
-const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
+/**
+ * @internal The default egress-guarded transport, for sources that wrap it to
+ * observe response status. Not exported from the public integrations module.
+ */
+export const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
   return await guardedEgressFetch(request.url, request.init, {
     authorizeUrl(url): void {
       if (urlValue(urlOrigin, url) !== request.allowedOrigin) {
@@ -732,6 +736,8 @@ async function readResponseJson(
   ) {
     responseInvalid(identity, status);
   }
+  // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
+  if (status === 202 && text === "") return null;
   let parsed: unknown;
   try {
     parsed = jsonParse(text);

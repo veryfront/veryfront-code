@@ -69,7 +69,7 @@ details for a project-credentials connector instead of opening a browser.
 | Basic authentication        | `basic`                                  | Set the user and secret variables, for example `TWILIO_AUTH_TOKEN`.       | Yes, project credentials only | Yes                                   |
 | OAuth client credentials    | `oauth2` with `token_url` only           | Set the client ID and secret variables, for example `PERSONIO_CLIENT_ID`. | Yes, project credentials only | Yes                                   |
 | Salesforce service account  | See [Set up Salesforce](./salesforce.md) | Set the three `SALESFORCE_SERVICE_ACCOUNT_*` variables.                   | Yes                           | Yes                                   |
-| Outlook app-only access     | Not in the catalog                       | Set the four `OUTLOOK_SERVICE_ACCOUNT_*` variables.                       | Yes                           | Yes                                   |
+| Outlook app-only access     | None, catalog `outlook` is delegated     | Set the four `OUTLOOK_SERVICE_ACCOUNT_*` variables.                       | Yes                           | Yes                                   |
 
 Keep provider secrets in your approved secret manager and in project environment
 variables. Never place them in agent prompts, tool arguments, project files,

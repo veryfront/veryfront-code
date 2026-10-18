@@ -14,12 +14,15 @@ import { guardLocalCredentialSource } from "./local-credential-host-policy.ts";
 import {
   executeLocalIntegrationEndpoint,
   executeLocalIntegrationJsonRequest,
+  guardedTransport,
   type LocalIntegrationEndpointTransport,
   snapshotLocalIntegrationEndpointInput,
 } from "./local-endpoint-executor.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   LOCAL_INTEGRATION_CREDENTIALS_MISSING,
+  LOCAL_INTEGRATION_REQUEST_FAILED,
+  LOCAL_INTEGRATION_REQUEST_INVALID,
   localIntegrationConfigurationError,
   localIntegrationResponseInvalid,
   safeLocalIntegrationIdentifier,
@@ -50,8 +53,14 @@ const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const TENANT_DOMAIN_PATTERN =
   /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 const MAILBOX_ADDRESS_PATTERN = /^[^\s@/\\?#%]+@[^\s@/\\?#%]+$/;
+const REJECTED_TOKEN = Symbol("rejected token");
 /** Catalog tools whose Graph operation supports delegated permissions only. */
 const DELEGATED_ONLY_TOOLS: ReadonlySet<string> = new Set(["outlook__find_meeting_times"]);
+/** Catalog tools under `/me` whose body names other mailboxes, such as getSchedule's `schedules`. */
+const OTHER_MAILBOX_TOOLS: ReadonlySet<string> = new Set([
+  "outlook__find_free_time",
+  "outlook__get_schedule",
+]);
 
 type OutlookEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
@@ -82,9 +91,21 @@ interface OutlookServiceAccountConfig {
 }
 
 interface CachedToken {
-  readonly key: string;
+  readonly key: TokenKey;
   readonly authorization: string;
   readonly expiresAt: number;
+}
+
+/** Credential values a token was minted for, compared field by field. */
+interface TokenKey {
+  readonly tenantId: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
+function sameTokenKey(a: TokenKey, b: TokenKey): boolean {
+  return a.tenantId === b.tenantId && a.clientId === b.clientId &&
+    a.clientSecret === b.clientSecret;
 }
 
 function configurationError(detail: string): never {
@@ -124,7 +145,7 @@ function admitTool(
         "does not support app-only credentials",
     );
   }
-  if (!endpoint.url.startsWith(GRAPH_ME_PREFIX)) {
+  if (!endpoint.url.startsWith(GRAPH_ME_PREFIX) || OTHER_MAILBOX_TOOLS.has(toolName)) {
     configurationError(
       `Outlook service-account tool "${safeName}" does not run against the configured mailbox`,
     );
@@ -238,6 +259,49 @@ async function readConfig(
   });
 }
 
+/** Wraps a transport so the caller can read the last response status. */
+function observeStatus(
+  transport: LocalIntegrationEndpointTransport,
+): { transport: LocalIntegrationEndpointTransport; status(): number | undefined } {
+  let status: number | undefined;
+  return {
+    transport: async (request) => {
+      const response = await transport(request);
+      status = response.status;
+      return response;
+    },
+    status: () => status,
+  };
+}
+
+/** Settles with the caller's abort reason without cancelling the shared work. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+/**
+ * Microsoft Graph IDs never contain a slash. Rejecting one keeps an encoded
+ * `..%2F` value from naming a path outside the configured mailbox.
+ */
+function assertSinglePathSegments(endpoint: OutlookEndpoint, args: Record<string, unknown>): void {
+  for (const [name, field] of Object.entries(endpoint.params ?? {})) {
+    const value = args[name];
+    if (field.in === "path" && typeof value === "string" && /[/\\]/.test(value)) {
+      throw LOCAL_INTEGRATION_REQUEST_INVALID.create({
+        detail: `Outlook argument "${
+          safeLocalIntegrationIdentifier(name)
+        }" must not contain a slash`,
+      });
+    }
+  }
+}
+
 function tokenLifetimeMs(value: unknown): number {
   const seconds = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return 0;
@@ -247,10 +311,10 @@ function tokenLifetimeMs(value: unknown): number {
 async function mintToken(
   config: OutlookServiceAccountConfig,
   toolId: string,
-  signal: AbortSignal | undefined,
-  transport: LocalIntegrationEndpointTransport | undefined,
+  transport: LocalIntegrationEndpointTransport,
 ): Promise<{ authorization: string; lifetimeMs: number }> {
-  const result = await executeLocalIntegrationJsonRequest({
+  const observed = observeStatus(transport);
+  const request = executeLocalIntegrationJsonRequest({
     connectorName: OUTLOOK_INTEGRATION,
     toolId,
     url: `${TOKEN_ORIGIN}/${encodeURIComponent(config.tenantId)}/oauth2/v2.0/token`,
@@ -266,9 +330,19 @@ async function mintToken(
       client_secret: config.clientSecret,
     }).toString(),
     allowedOrigin: TOKEN_ORIGIN,
-    signal,
-    transport,
+    transport: observed.transport,
   });
+  let result: Awaited<typeof request>;
+  try {
+    result = await request;
+  } catch (cause) {
+    const status = observed.status();
+    if (status === undefined || (status >= 200 && status < 300)) throw cause;
+    throw LOCAL_INTEGRATION_REQUEST_FAILED.create({
+      detail: `Microsoft Entra rejected the Outlook service-account token request with HTTP ` +
+        `status ${status}. Check ${CLIENT_ID_ENV}, ${CLIENT_SECRET_ENV} and ${TENANT_ID_ENV}`,
+    });
+  }
   const identity = { connectorName: OUTLOOK_INTEGRATION, toolId };
   const response = result.value;
   if (typeof response !== "object" || response === null || Array.isArray(response)) {
@@ -296,27 +370,46 @@ function createOutlookServiceAccountToolSourceInternal(
   if (typeof credentialProvider !== "function") {
     configurationError("Outlook service-account credentialProvider must be a function");
   }
+  const baseTransport = transport ?? guardedTransport;
   let cachedToken: CachedToken | undefined;
+  let pendingToken: { readonly key: TokenKey; readonly promise: Promise<string> } | undefined;
 
   async function authorization(
     config: OutlookServiceAccountConfig,
     toolId: string,
     signal: AbortSignal | undefined,
   ): Promise<string> {
-    const key = JSON.stringify([config.tenantId, config.clientId, config.clientSecret]);
-    if (cachedToken?.key === key && now() < cachedToken.expiresAt) {
+    const key: TokenKey = Object.freeze({
+      tenantId: config.tenantId,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+    });
+    if (cachedToken && sameTokenKey(cachedToken.key, key) && now() < cachedToken.expiresAt) {
       return cachedToken.authorization;
     }
-    cachedToken = undefined;
-    const minted = await mintToken(config, toolId, signal, transport);
-    if (minted.lifetimeMs > 0) {
-      cachedToken = Object.freeze({
-        key,
-        authorization: minted.authorization,
-        expiresAt: now() + minted.lifetimeMs,
+    let pending = pendingToken;
+    if (!pending || !sameTokenKey(pending.key, key)) {
+      cachedToken = undefined;
+      // Concurrent callers share one token request. It runs without any one
+      // caller's signal, bounded by the executor deadline, so a caller that
+      // aborts leaves it running for the others.
+      const promise = mintToken(config, toolId, baseTransport).then((minted) => {
+        if (minted.lifetimeMs > 0) {
+          cachedToken = Object.freeze({
+            key,
+            authorization: minted.authorization,
+            expiresAt: now() + minted.lifetimeMs,
+          });
+        }
+        return minted.authorization;
       });
+      const started = Object.freeze({ key, promise });
+      pending = pendingToken = started;
+      promise.finally(() => {
+        if (pendingToken === started) pendingToken = undefined;
+      }).catch(() => undefined);
     }
-    return minted.authorization;
+    return await untilAborted(pending.promise, signal);
   }
 
   return Object.freeze({
@@ -340,24 +433,42 @@ function createOutlookServiceAccountToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
+      assertSinglePathSegments(tool.endpoint, validated.args);
       const config = await readConfig(credentialProvider);
       const endpoint = Object.freeze({
         ...tool.endpoint,
         url: `${GRAPH_ORIGIN}/v1.0/users/${encodeURIComponent(config.mailbox)}/` +
           tool.endpoint.url.slice(GRAPH_ME_PREFIX.length),
       });
-      const authorizationHeader = await authorization(config, toolName, context?.abortSignal);
-      return await executeLocalIntegrationEndpoint({
-        connectorName: OUTLOOK_INTEGRATION,
-        toolId: toolName,
-        endpoint,
-        args: validated.args,
-        body: validated.body,
-        authHeaders: { Authorization: authorizationHeader },
-        allowedOrigin: GRAPH_ORIGIN,
-        signal: context?.abortSignal,
-        transport,
-      });
+      const call = async (authorizationHeader: string, retryable: boolean) => {
+        const observed = observeStatus(baseTransport);
+        try {
+          return await executeLocalIntegrationEndpoint({
+            connectorName: OUTLOOK_INTEGRATION,
+            toolId: toolName,
+            endpoint,
+            args: validated.args,
+            body: validated.body,
+            authHeaders: { Authorization: authorizationHeader },
+            allowedOrigin: GRAPH_ORIGIN,
+            signal: context?.abortSignal,
+            transport: observed.transport,
+          });
+        } catch (cause) {
+          if (observed.status() !== 401) throw cause;
+          // Graph rejected the token, for example after revocation or a
+          // consent change. Drop it so no later call reuses it.
+          if (cachedToken?.authorization === authorizationHeader) cachedToken = undefined;
+          if (!retryable) throw cause;
+          return REJECTED_TOKEN;
+        }
+      };
+      const result = await call(
+        await authorization(config, toolName, context?.abortSignal),
+        true,
+      );
+      if (result !== REJECTED_TOKEN) return result;
+      return await call(await authorization(config, toolName, context?.abortSignal), false);
     },
   });
 }

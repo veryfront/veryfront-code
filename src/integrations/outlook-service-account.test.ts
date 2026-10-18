@@ -37,7 +37,13 @@ interface RecordedRequest {
 }
 
 function recordingTransport(
-  options: { expiresIn?: number; tokens?: string[] } = {},
+  options: {
+    /** `null` omits `expires_in` from the token response. */
+    expiresIn?: number | null;
+    tokens?: string[];
+    /** Graph status for a request carrying the given Authorization header. */
+    graphStatus?: (authorization: string | null) => number;
+  } = {},
 ): { requests: RecordedRequest[]; transport: LocalIntegrationEndpointTransport } {
   const requests: RecordedRequest[] = [];
   let minted = 0;
@@ -55,8 +61,12 @@ function recordingTransport(
       return Promise.resolve(Response.json({
         token_type: "Bearer",
         access_token: token,
-        expires_in: options.expiresIn ?? 3599,
+        ...(options.expiresIn === null ? {} : { expires_in: options.expiresIn ?? 3599 }),
       }));
+    }
+    const status = options.graphStatus?.(new Headers(request.init.headers).get("authorization"));
+    if (status !== undefined && status !== 200) {
+      return Promise.resolve(Response.json({ error: { code: "denied" } }, { status }));
     }
     return Promise.resolve(Response.json({ value: [{ id: "message-1" }] }));
   };
@@ -262,11 +272,21 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("rejects tools that let the caller choose another mailbox", () => {
-    const error = assertThrows(
-      () => createSource({ allowedTools: ["outlook__list_shared_mailbox_emails"] }),
-      VeryfrontError,
-    );
-    assertStringIncludes(error.message, "configured mailbox");
+    for (
+      const toolName of [
+        "outlook__list_shared_mailbox_emails",
+        "outlook__search_shared_mailbox_emails",
+        // getSchedule reads free/busy for the addresses in its `schedules` body.
+        "outlook__get_schedule",
+        "outlook__find_free_time",
+      ]
+    ) {
+      const error = assertThrows(
+        () => createSource({ allowedTools: [toolName] }),
+        VeryfrontError,
+      );
+      assertStringIncludes(error.message, "configured mailbox", toolName);
+    }
   });
 
   it("rejects tools whose Graph operation is delegated-only", () => {
@@ -305,6 +325,299 @@ describe("createOutlookServiceAccountToolSource", () => {
     );
     assertStringIncludes(error.message, "403");
     assertNoSecrets(error.message);
+  });
+
+  it("shares one token request between concurrent cold-cache calls", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({}, transport);
+
+    await Promise.all(
+      Array.from({ length: 5 }, () => source.executeTool("outlook__list_emails", {})),
+    );
+
+    assertEquals(requests.filter((request) => request.url === TOKEN_URL).length, 1);
+    assertEquals(requests.length, 6);
+  });
+
+  it("does not keep a failed shared token request", async () => {
+    let failToken = true;
+    const { requests, transport: inner } = recordingTransport();
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      if (request.url.href === TOKEN_URL && failToken) {
+        failToken = false;
+        requests.push({ url: TOKEN_URL, method: "POST", headers: new Headers(), body: undefined });
+        return Promise.resolve(new Response("unavailable", { status: 503 }));
+      }
+      return inner(request);
+    };
+    const source = createSource({}, transport);
+
+    const results = await Promise.allSettled([
+      source.executeTool("outlook__list_emails", {}),
+      source.executeTool("outlook__list_emails", {}),
+    ]);
+    assertEquals(results.map((result) => result.status), ["rejected", "rejected"]);
+    await source.executeTool("outlook__list_emails", {});
+
+    assertEquals(requests.filter((request) => request.url === TOKEN_URL).length, 2);
+  });
+
+  it("lets an aborted caller leave a shared token request without failing the others", async () => {
+    let releaseToken!: () => void;
+    const tokenGate = new Promise<void>((resolve) => releaseToken = resolve);
+    const { requests, transport: inner } = recordingTransport();
+    const transport: LocalIntegrationEndpointTransport = async (request) => {
+      if (request.url.href === TOKEN_URL) await tokenGate;
+      return await inner(request);
+    };
+    const source = createSource({}, transport);
+    const controller = new AbortController();
+
+    const aborted = source.executeTool("outlook__list_emails", {}, {
+      abortSignal: controller.signal,
+    });
+    const other = source.executeTool("outlook__list_emails", {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort(new DOMException("caller left", "AbortError"));
+    // The aborted caller must settle while the shared token request is still open.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      aborted.then(() => "resolved", (error: unknown) => error),
+      new Promise((resolve) => timer = setTimeout(() => resolve("pending"), 50)),
+    ]);
+    clearTimeout(timer);
+    releaseToken();
+    await aborted.catch(() => undefined);
+    assert(settled instanceof DOMException, String(settled));
+    assertEquals(settled.message, "caller left");
+
+    assertEquals(await other, [{ id: "message-1" }]);
+    assertEquals(requests.filter((request) => request.url === TOKEN_URL).length, 1);
+    assertEquals(requests.length, 2);
+  });
+
+  it("sends nothing when the caller has already aborted", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({}, transport);
+    const controller = new AbortController();
+    controller.abort(new DOMException("stop", "AbortError"));
+
+    await assertRejects(
+      () => source.executeTool("outlook__list_emails", {}, { abortSignal: controller.signal }),
+      DOMException,
+      "stop",
+    );
+    assertEquals(requests.length, 0);
+  });
+
+  it("clears a token Graph rejects with 401 and retries once with a new token", async () => {
+    const { requests, transport } = recordingTransport({
+      tokens: ["token-revoked", "token-fresh"],
+      graphStatus: (authorization) => authorization === "Bearer token-revoked" ? 401 : 200,
+    });
+    const source = createSource({}, transport);
+
+    assertEquals(await source.executeTool("outlook__list_emails", {}), [{ id: "message-1" }]);
+    await source.executeTool("outlook__list_emails", {});
+
+    assertEquals(
+      requests.map((request) => request.headers.get("authorization") ?? request.url),
+      [TOKEN_URL, "Bearer token-revoked", TOKEN_URL, "Bearer token-fresh", "Bearer token-fresh"],
+    );
+  });
+
+  it("fails after one retry when Graph keeps rejecting the token", async () => {
+    const { requests, transport } = recordingTransport({
+      tokens: ["token-one", "token-two", "token-three"],
+      graphStatus: () => 401,
+    });
+    const source = createSource({}, transport);
+
+    const error = await assertRejects(
+      () => source.executeTool("outlook__list_emails", {}),
+      VeryfrontError,
+    );
+    assertEquals(error.slug, "local-integration-request-failed");
+    assertStringIncludes(error.message, "401");
+    assertEquals(requests.length, 4);
+
+    // The rejected token is not reused by the next call.
+    await assertRejects(() => source.executeTool("outlook__list_emails", {}), VeryfrontError);
+    assertEquals(requests[4]!.url, TOKEN_URL);
+  });
+
+  it("does not retry a Graph 403", async () => {
+    const { requests, transport } = recordingTransport({ graphStatus: () => 403 });
+    const source = createSource({}, transport);
+
+    await assertRejects(() => source.executeTool("outlook__list_emails", {}), VeryfrontError);
+    assertEquals(requests.length, 2);
+  });
+
+  it("reports a rejected token request as a credential failure, not a tool failure", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(
+        Response.json({ error: "invalid_client", error_description: CLIENT_SECRET }, {
+          status: 401,
+        }),
+      );
+    };
+    const source = createSource({}, transport);
+
+    const error = await assertRejects(
+      () => source.executeTool("outlook__list_emails", {}),
+      VeryfrontError,
+    );
+    assertEquals(error.slug, "local-integration-request-failed");
+    assertStringIncludes(error.message, "token request");
+    assertStringIncludes(error.message, "OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET");
+    assertStringIncludes(error.message, "401");
+    assertEquals(error.message.includes("outlook__list_emails"), false, error.message);
+    assertNoSecrets(error.message);
+    assertEquals(requests, [TOKEN_URL]);
+  });
+
+  it("rejects malformed or non-bearer token responses before calling Graph", async () => {
+    for (
+      const tokenBody of [
+        [],
+        { token_type: "Bearer" },
+        { token_type: "Bearer", access_token: "   " },
+        { token_type: "mac", access_token: ACCESS_TOKEN },
+        { access_token: ACCESS_TOKEN },
+      ]
+    ) {
+      const requests: string[] = [];
+      const transport: LocalIntegrationEndpointTransport = (request) => {
+        requests.push(request.url.href);
+        return Promise.resolve(Response.json(tokenBody));
+      };
+      const source = createSource({}, transport);
+
+      const error = await assertRejects(
+        () => source.executeTool("outlook__list_emails", {}),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "local-integration-response-invalid", JSON.stringify(tokenBody));
+      assertNoSecrets(error.message);
+      assertEquals(requests, [TOKEN_URL]);
+    }
+  });
+
+  it("does not cache a token without a usable expires_in", async () => {
+    for (const expiresIn of [null, 0, 30, 60]) {
+      const { requests, transport } = recordingTransport({ expiresIn });
+      const source = createSource({}, transport);
+
+      await source.executeTool("outlook__list_emails", {});
+      await source.executeTool("outlook__list_emails", {});
+
+      assertEquals(
+        requests.filter((request) => request.url === TOKEN_URL).length,
+        2,
+        `expires_in ${expiresIn}`,
+      );
+    }
+  });
+
+  it("re-mints exactly 60 seconds before the token expires", async () => {
+    const start = 1_000_000;
+    let clock = start;
+    const { requests, transport } = recordingTransport({ expiresIn: 3600 });
+    const source = createSource({}, transport, () => clock);
+    const mints = () => requests.filter((request) => request.url === TOKEN_URL).length;
+
+    await source.executeTool("outlook__list_emails", {});
+    clock = start + 3_540_000 - 1;
+    await source.executeTool("outlook__list_emails", {});
+    assertEquals(mints(), 1);
+    clock = start + 3_540_000;
+    await source.executeTool("outlook__list_emails", {});
+    assertEquals(mints(), 2);
+  });
+
+  it("reports a throwing credential provider by variable name without a request", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({
+      credentialProvider: (name) => {
+        if (name === "OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET") throw new Error(CLIENT_SECRET);
+        return credentials[name];
+      },
+    }, transport);
+
+    const error = await assertRejects(
+      () => source.executeTool("outlook__list_emails", {}),
+      VeryfrontError,
+    );
+    assertEquals(error.slug, "local-integration-credential-unavailable");
+    assertStringIncludes(error.message, "OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET");
+    assertNoSecrets(error.message);
+    assertEquals(requests.length, 0);
+  });
+
+  it("rejects a non-boolean allowWrites", () => {
+    const error = assertThrows(
+      () =>
+        createSource({
+          allowedTools: ["outlook__move_email"],
+          allowWrites: "true" as unknown as boolean,
+        }),
+      VeryfrontError,
+    );
+    assertStringIncludes(error.message, "allowWrites must be a boolean");
+  });
+
+  it("targets a mailbox given as an Entra user ID", async () => {
+    const userId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    const { requests, transport } = recordingTransport();
+    const source = createSource({
+      credentialProvider: (name) =>
+        name === "OUTLOOK_SERVICE_ACCOUNT_MAILBOX" ? userId : credentials[name],
+    }, transport);
+
+    await source.executeTool("outlook__list_emails", {});
+
+    assert(
+      requests[1]!.url.startsWith(
+        `https://graph.microsoft.com/v1.0/users/${userId}/mailFolders/inbox/messages`,
+      ),
+      requests[1]!.url,
+    );
+  });
+
+  it("rejects a path argument that contains a slash before any request", async () => {
+    for (const messageId of ["../../other@example.test", "a/b", "a\\b"]) {
+      const { requests, transport } = recordingTransport();
+      const source = createSource({ allowedTools: ["outlook__get_email"] }, transport);
+
+      const error = await assertRejects(
+        () => source.executeTool("outlook__get_email", { messageId }),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "local-integration-request-invalid", messageId);
+      assertEquals(requests.length, 0);
+    }
+  });
+
+  it("returns null for an empty 202 Graph action response", async () => {
+    const { requests, transport: inner } = recordingTransport();
+    const transport: LocalIntegrationEndpointTransport = (request) =>
+      request.url.href.endsWith("/sendMail")
+        ? inner(request).then(() => new Response(null, { status: 202 }))
+        : inner(request);
+    const source = createSource(
+      { allowedTools: ["outlook__send_email"], allowWrites: true },
+      transport,
+    );
+
+    const result = await source.executeTool("outlook__send_email", {
+      message: { subject: "Status", toRecipients: [] },
+    });
+
+    assertEquals(result, null);
+    assertEquals(requests[1]!.url, `${MAILBOX_PATH}/sendMail`);
   });
 
   it("is exported with a public factory", () => {
