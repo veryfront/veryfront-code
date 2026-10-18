@@ -81,7 +81,8 @@ The shared mailbox tools call `/users/{mailbox}/...` for the mailbox you name in
   `{ encoding: "base64", content_base64, size, content_type }`, and `content_base64` decodes to
   the exact bytes, including signed and nested `message/rfc822` parts.
 - Size limits. This connector uses delegated OAuth, so its tools run through Veryfront Cloud,
-  which returns at most 774,144 bytes (756 KiB) of MIME. The framework's local endpoint executor
+  which sets its own MIME limit: at most 774,144 bytes (756 KiB) on current releases, and
+  128 KiB on releases that predate full MIME downloads. The framework's local endpoint executor
   accepts up to 786,432 bytes (768 KiB), the most that fits one bounded tool-result string. A
   larger message fails with an error.
 - A response that is partial or shorter than its declared length also fails. The tool never

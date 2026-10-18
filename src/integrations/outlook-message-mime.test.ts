@@ -187,11 +187,40 @@ describe("binary endpoint responses", () => {
     assertEquals((result as Record<string, unknown>).size, body.byteLength);
   });
 
+  const paddingCases: ReadonlyArray<readonly [readonly number[], string]> = [
+    [[0xff], "/w=="],
+    [[0xff, 0x00], "/wA="],
+    [[0xfb, 0xff, 0xbf], "+/+/"],
+    [[1, 2, 3, 4], "AQIDBA=="],
+    [[1, 2, 3, 4, 5], "AQIDBAU="],
+  ];
+
   it("encodes every trailing byte count with standard padding", async () => {
-    for (const body of [[0xff], [0xff, 0x00], [0xfb, 0xff, 0xbf], [1, 2, 3, 4], [1, 2, 3, 4, 5]]) {
+    for (const [body, expected] of paddingCases) {
       const bytes = new Uint8Array(body);
       const result = await executeMime(() => new Response(bytes)) as Record<string, unknown>;
-      assertEquals(result.content_base64, btoa(String.fromCharCode(...bytes)), String(body));
+      assertEquals(result.content_base64, expected, String(body));
+    }
+  });
+
+  it("encodes byte-exact base64 even when btoa and Buffer are replaced", async () => {
+    const globals = globalThis as { btoa: unknown; Buffer?: unknown };
+    const originalBtoa = globals.btoa;
+    const hadBuffer = Object.hasOwn(globals, "Buffer");
+    const originalBuffer = globals.Buffer;
+    const poisoned = () => "POISONED";
+    globals.btoa = poisoned;
+    globals.Buffer = { from: () => ({ toString: poisoned }) };
+    try {
+      for (const [body, expected] of paddingCases) {
+        const bytes = new Uint8Array(body);
+        const result = await executeMime(() => new Response(bytes)) as Record<string, unknown>;
+        assertEquals(result.content_base64, expected, String(body));
+      }
+    } finally {
+      globals.btoa = originalBtoa;
+      if (hadBuffer) globals.Buffer = originalBuffer;
+      else delete globals.Buffer;
     }
   });
 
