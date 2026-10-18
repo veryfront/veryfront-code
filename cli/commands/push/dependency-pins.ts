@@ -190,6 +190,17 @@ interface VersionParts {
   prerelease: readonly string[];
 }
 
+function versionWithoutBuildMetadata(value: string): string | null {
+  if (!value.includes("+")) return value;
+  const match = /^(.*)\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/.exec(value);
+  return match ? match[1]! : null;
+}
+
+function versionPrecision(match: RegExpExecArray): 1 | 2 | 3 {
+  if (match[3] !== undefined) return 3;
+  return match[2] === undefined ? 1 : 2;
+}
+
 /**
  * Parse a version-like string while retaining prerelease identifiers for npm's
  * ordering and prerelease admission rules. Build metadata does not affect
@@ -200,11 +211,12 @@ interface VersionParts {
  */
 function parseVersionParts(value: string): VersionParts | null {
   const stripped = value.trim();
-  const match =
-    /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
-      .exec(
-        stripped,
-      );
+  const core = versionWithoutBuildMetadata(stripped);
+  if (core === null) return null;
+  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+    .exec(
+      core,
+    );
   if (!match || (match[4] !== undefined && match[3] === undefined)) return null;
   const coreParts = [match[1], match[2], match[3]].filter((part): part is string =>
     part !== undefined
@@ -222,7 +234,7 @@ function parseVersionParts(value: string): VersionParts | null {
     major: parts[0]!,
     minor: parts[1]!,
     patch: parts[2]!,
-    precision: match[3] === undefined ? (match[2] === undefined ? 1 : 2) : 3,
+    precision: versionPrecision(match),
     prerelease: prereleaseParts,
   };
 }
@@ -234,7 +246,7 @@ function declaredValue(
   return Object.hasOwn(section, name) ? section[name] : undefined;
 }
 
-function normalizeNpmPartialRange(value: string): string {
+function readRangeOperator(value: string) {
   let operator = "";
   let body = value.trim();
   for (const candidate of [">=", "<=", ">", "<", "^", "~>", "~"]) {
@@ -245,6 +257,11 @@ function normalizeNpmPartialRange(value: string): string {
     }
   }
   if (operator === "~>") operator = "~";
+  return { operator, body };
+}
+
+function normalizeNpmPartialRange(value: string): string {
+  let { operator, body } = readRangeOperator(value);
   if (body.startsWith("=")) {
     if (operator !== "") return `${operator}=${body.slice(1)}`;
     body = body.slice(1);
@@ -297,7 +314,32 @@ function matchesPartialPrefix(version: VersionParts, range: VersionParts): boole
   return compareVersionParts(version, range) === 0;
 }
 
-function compareVersionParts(left: VersionParts, right: VersionParts): number {
+function compareNumericPrereleaseParts(leftPart: string, rightPart: string): number {
+  const normalizedLeft = leftPart.replace(/^0+(?=\d)/, "");
+  const normalizedRight = rightPart.replace(/^0+(?=\d)/, "");
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return normalizedLeft.length < normalizedRight.length ? -1 : 1;
+  }
+  if (normalizedLeft !== normalizedRight) return normalizedLeft < normalizedRight ? -1 : 1;
+  return 0;
+}
+
+function comparePrereleaseParts(leftPart: string, rightPart: string): number {
+  const leftNumeric = /^\d+$/.test(leftPart);
+  const rightNumeric = /^\d+$/.test(rightPart);
+  if (leftNumeric && rightNumeric) {
+    return compareNumericPrereleaseParts(leftPart, rightPart);
+  } else if (leftNumeric !== rightNumeric) {
+    return leftNumeric ? -1 : 1;
+  } else if (leftPart < rightPart) {
+    return -1;
+  } else if (leftPart > rightPart) {
+    return 1;
+  }
+  return 0;
+}
+
+function compareCoreVersions(left: VersionParts, right: VersionParts): number {
   for (
     const [leftPart, rightPart] of [
       [left.major, right.major],
@@ -308,6 +350,12 @@ function compareVersionParts(left: VersionParts, right: VersionParts): number {
     if (leftPart < rightPart) return -1;
     if (leftPart > rightPart) return 1;
   }
+  return 0;
+}
+
+function compareVersionParts(left: VersionParts, right: VersionParts): number {
+  const coreComparison = compareCoreVersions(left, right);
+  if (coreComparison !== 0) return coreComparison;
   if (left.prerelease.length === 0 && right.prerelease.length > 0) return 1;
   if (left.prerelease.length > 0 && right.prerelease.length === 0) return -1;
   for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index++) {
@@ -315,22 +363,8 @@ function compareVersionParts(left: VersionParts, right: VersionParts): number {
     const rightPart = right.prerelease[index];
     if (leftPart === undefined) return -1;
     if (rightPart === undefined) return 1;
-    const leftNumeric = /^\d+$/.test(leftPart);
-    const rightNumeric = /^\d+$/.test(rightPart);
-    if (leftNumeric && rightNumeric) {
-      const normalizedLeft = leftPart.replace(/^0+(?=\d)/, "");
-      const normalizedRight = rightPart.replace(/^0+(?=\d)/, "");
-      if (normalizedLeft.length !== normalizedRight.length) {
-        return normalizedLeft.length < normalizedRight.length ? -1 : 1;
-      }
-      if (normalizedLeft !== normalizedRight) return normalizedLeft < normalizedRight ? -1 : 1;
-    } else if (leftNumeric !== rightNumeric) {
-      return leftNumeric ? -1 : 1;
-    } else if (leftPart < rightPart) {
-      return -1;
-    } else if (leftPart > rightPart) {
-      return 1;
-    }
+    const comparison = comparePrereleaseParts(leftPart, rightPart);
+    if (comparison !== 0) return comparison;
   }
   return 0;
 }
@@ -342,13 +376,63 @@ function allowsPrerelease(version: VersionParts, range: VersionParts): boolean {
     version.minor === range.minor && version.patch === range.patch;
 }
 
+function isNumericVersionTag(value: string): boolean {
+  const core = versionWithoutBuildMetadata(value);
+  return core !== null && /^v?\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(core);
+}
+
 function isNpmDistTag(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) &&
-    !/^v?\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
-      .test(
-        value,
-      ) &&
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && !isNumericVersionTag(value) &&
     parseVersionParts(value) === null;
+}
+
+function matchesCaretRange(parsed: VersionParts, inner: string): boolean {
+  const dotCount = (inner.match(/\./g) ?? []).length;
+  const base = parseVersionParts(inner);
+  if (base === null || !allowsPrerelease(parsed, base)) return false;
+  if (base.major > 0) {
+    return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
+  }
+  if (dotCount >= 1 && base.minor > 0) {
+    return parsed.major === 0 && parsed.minor === base.minor &&
+      compareVersionParts(parsed, base) >= 0;
+  }
+  if (dotCount >= 2) {
+    return parsed.major === base.major && parsed.minor === base.minor &&
+      parsed.patch === base.patch && compareVersionParts(parsed, base) >= 0;
+  }
+  if (dotCount >= 1) {
+    return parsed.major === 0 && parsed.minor === 0 &&
+      compareVersionParts(parsed, base) >= 0;
+  }
+  return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
+}
+
+function matchesTildeRange(parsed: VersionParts, inner: string): boolean {
+  const dotCount = (inner.match(/\./g) ?? []).length;
+  const base = parseVersionParts(inner);
+  if (base === null || !allowsPrerelease(parsed, base)) return false;
+  if (dotCount >= 1) {
+    return parsed.major === base.major && parsed.minor === base.minor &&
+      compareVersionParts(parsed, base) >= 0;
+  }
+  return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
+}
+
+function matchesExclusiveLowerRange(parsed: VersionParts, inner: string): boolean {
+  const base = parseVersionParts(inner);
+  if (base === null || !allowsPrerelease(parsed, base)) return false;
+  if (base.precision === 3) return compareVersionParts(parsed, base) > 0;
+  const lower = nextPartialBoundary(base);
+  return lower !== null && compareVersionParts(parsed, lower) >= 0;
+}
+
+function matchesInclusiveUpperRange(parsed: VersionParts, inner: string): boolean {
+  const base = parseVersionParts(inner);
+  if (base === null || !allowsPrerelease(parsed, base)) return false;
+  if (base.precision === 3) return compareVersionParts(parsed, base) <= 0;
+  const upper = nextPartialBoundary(base);
+  return upper !== null && compareVersionParts(parsed, upper) < 0;
 }
 
 /**
@@ -369,60 +453,17 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
   if (trimmed === "*") return parsed.prerelease.length === 0;
   if (isNpmDistTag(trimmed)) return true;
 
-  if (trimmed.startsWith("^")) {
-    const inner = trimmed.slice(1);
-    const dotCount = (inner.match(/\./g) ?? []).length;
-    const base = parseVersionParts(inner);
-    if (base === null || !allowsPrerelease(parsed, base)) return false;
-    if (base.major > 0) {
-      return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
-    }
-    if (dotCount >= 1 && base.minor > 0) {
-      return parsed.major === 0 && parsed.minor === base.minor &&
-        compareVersionParts(parsed, base) >= 0;
-    }
-    if (dotCount >= 2) {
-      return parsed.major === base.major && parsed.minor === base.minor &&
-        parsed.patch === base.patch && compareVersionParts(parsed, base) >= 0;
-    }
-    if (dotCount >= 1) {
-      return parsed.major === 0 && parsed.minor === 0 &&
-        compareVersionParts(parsed, base) >= 0;
-    }
-    return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
-  }
+  if (trimmed.startsWith("^")) return matchesCaretRange(parsed, trimmed.slice(1));
 
-  if (trimmed.startsWith("~")) {
-    const inner = trimmed.slice(1);
-    const dotCount = (inner.match(/\./g) ?? []).length;
-    const base = parseVersionParts(inner);
-    if (base === null || !allowsPrerelease(parsed, base)) return false;
-    if (dotCount >= 1) {
-      return parsed.major === base.major && parsed.minor === base.minor &&
-        compareVersionParts(parsed, base) >= 0;
-    }
-    return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
-  }
+  if (trimmed.startsWith("~")) return matchesTildeRange(parsed, trimmed.slice(1));
 
   if (trimmed.startsWith(">=")) {
     const base = parseVersionParts(trimmed.slice(2));
     return base !== null && allowsPrerelease(parsed, base) &&
       compareVersionParts(parsed, base) >= 0;
   }
-  if (trimmed.startsWith(">")) {
-    const base = parseVersionParts(trimmed.slice(1));
-    if (base === null || !allowsPrerelease(parsed, base)) return false;
-    if (base.precision === 3) return compareVersionParts(parsed, base) > 0;
-    const lower = nextPartialBoundary(base);
-    return lower !== null && compareVersionParts(parsed, lower) >= 0;
-  }
-  if (trimmed.startsWith("<=")) {
-    const base = parseVersionParts(trimmed.slice(2));
-    if (base === null || !allowsPrerelease(parsed, base)) return false;
-    if (base.precision === 3) return compareVersionParts(parsed, base) <= 0;
-    const upper = nextPartialBoundary(base);
-    return upper !== null && compareVersionParts(parsed, upper) < 0;
-  }
+  if (trimmed.startsWith(">")) return matchesExclusiveLowerRange(parsed, trimmed.slice(1));
+  if (trimmed.startsWith("<=")) return matchesInclusiveUpperRange(parsed, trimmed.slice(2));
   if (trimmed.startsWith("<")) {
     const base = parseVersionParts(trimmed.slice(1));
     return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) < 0;
@@ -430,6 +471,47 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
 
   const base = parseVersionParts(trimmed);
   return base !== null && allowsPrerelease(parsed, base) && matchesPartialPrefix(parsed, base);
+}
+
+function declarationSection(value: string | undefined): DependencySection {
+  return value !== undefined ? "dependencies" : "devDependencies";
+}
+
+function classifyTightenedPin(
+  name: string,
+  baseline: DeclarationSections,
+  remote: DeclarationSections,
+): AdoptedPin | null | undefined {
+  const beforeDep = declaredValue(baseline.dependencies, name);
+  const beforeDev = declaredValue(baseline.devDependencies, name);
+  const afterDep = declaredValue(remote.dependencies, name);
+  const afterDev = declaredValue(remote.devDependencies, name);
+  // Untouched in both sections, including a name declared in both and left
+  // alone by the write.
+  if (beforeDep === afterDep && beforeDev === afterDev) return undefined;
+  // A name this write touched must sit in exactly one section on each side.
+  if (beforeDep !== undefined && beforeDev !== undefined) return null;
+  if (afterDep !== undefined && afterDev !== undefined) return null;
+
+  const before = beforeDep ?? beforeDev;
+  const after = afterDep ?? afterDev;
+  if (after === undefined) return null;
+  if (!isExactSemver(after)) return null;
+
+  if (before === undefined) {
+    return { name, version: after, added: true, sectionMove: null };
+  }
+  if (isExactSemver(before)) return null;
+  if (!satisfiesDeclaredRange(after, before)) return null;
+
+  const from = declarationSection(beforeDep);
+  const to = declarationSection(afterDep);
+  return {
+    name,
+    version: after,
+    added: false,
+    sectionMove: from === to ? null : { from, to },
+  };
 }
 
 /**
@@ -460,37 +542,9 @@ function tightenedPins(
   ]);
 
   for (const name of names) {
-    const beforeDep = declaredValue(baseline.dependencies, name);
-    const beforeDev = declaredValue(baseline.devDependencies, name);
-    const afterDep = declaredValue(remote.dependencies, name);
-    const afterDev = declaredValue(remote.devDependencies, name);
-    // Untouched in both sections, including a name declared in both and left
-    // alone by the write.
-    if (beforeDep === afterDep && beforeDev === afterDev) continue;
-    // A name this write touched must sit in exactly one section on each side.
-    if (beforeDep !== undefined && beforeDev !== undefined) return null;
-    if (afterDep !== undefined && afterDev !== undefined) return null;
-
-    const before = beforeDep ?? beforeDev;
-    const after = afterDep ?? afterDev;
-    if (after === undefined) return null;
-    if (!isExactSemver(after)) return null;
-
-    if (before === undefined) {
-      pins.push({ name, version: after, added: true, sectionMove: null });
-      continue;
-    }
-    if (isExactSemver(before)) return null;
-    if (!satisfiesDeclaredRange(after, before)) return null;
-
-    const from: DependencySection = beforeDep !== undefined ? "dependencies" : "devDependencies";
-    const to: DependencySection = afterDep !== undefined ? "dependencies" : "devDependencies";
-    pins.push({
-      name,
-      version: after,
-      added: false,
-      sectionMove: from === to ? null : { from, to },
-    });
+    const pin = classifyTightenedPin(name, baseline, remote);
+    if (pin === null) return null;
+    if (pin !== undefined) pins.push(pin);
   }
 
   // Stable output for the notice and for the tests that pin it: the order the
