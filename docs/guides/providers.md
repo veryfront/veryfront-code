@@ -598,8 +598,21 @@ a reason. `complete` is `true` only when every file is sent.
 ```ts
 import { planFileParts } from "veryfront/llm";
 
+const attachments = [
+  {
+    bytes: await Deno.readFile("./invoice.pdf"),
+    filename: "invoice.pdf",
+    mediaType: "application/pdf",
+  },
+  {
+    bytes: await Deno.readFile("./notes.txt"),
+    filename: "notes.txt",
+    mediaType: "text/plain",
+  },
+];
+
 const plan = planFileParts({
-  files: attachments, // [{ bytes, filename, mediaType }]
+  files: attachments,
   maxFileBytes: 8 * 1024 * 1024,
   maxTotalBytes: 20 * 1024 * 1024,
   maxFiles: 10,
@@ -614,13 +627,13 @@ if (!plan.complete) {
 The helper checks files in input order. Omitted files do not use the budget, so a
 later smaller file can still be sent. An unset budget does not limit. Reasons are:
 
-| Reason              | Meaning                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------- |
-| `invalid_metadata`  | The entry is missing, or its filename or MIME type is invalid.                                 |
-| `invalid_content`   | The bytes are missing or empty, or a PDF has no `%PDF-` header in its first 1024 bytes.        |
-| `over_file_limit`   | The file is larger than `maxFileBytes`.                                                        |
-| `over_count_limit`  | `maxFiles` files were already sent.                                                            |
-| `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                          |
+| Reason              | Meaning                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `invalid_metadata`  | The entry is missing, or its filename or MIME type is invalid.                          |
+| `invalid_content`   | The bytes are missing or empty, or a PDF has no `%PDF-` header in its first 1024 bytes. |
+| `over_file_limit`   | The file is larger than `maxFileBytes`.                                                 |
+| `over_count_limit`  | `maxFiles` files were already sent.                                                     |
+| `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                   |
 
 A file is a PDF when its MIME type is `application/pdf` or its filename ends in
 `.pdf`. The filename must be a base name, as for `fileFromBytes`. Omitted
