@@ -613,14 +613,18 @@ const attachments = [
 
 const plan = planFileParts({
   files: attachments,
-  maxFileBytes: 8 * 1024 * 1024,
-  maxTotalBytes: 20 * 1024 * 1024,
+  // 6 MiB raw is about 8 MiB in base64, under the 10 MiB durable-run record limit.
+  maxFileBytes: 4 * 1024 * 1024,
+  maxTotalBytes: 6 * 1024 * 1024,
   maxFiles: 10,
 });
 
 if (!plan.complete) {
-  // Each entry has index, filename, mediaType, bytes, and reason.
-  console.warn("Files not sent", plan.omitted);
+  // Filenames can contain customer data, so log only index, bytes, and reason.
+  console.warn(
+    "Files not sent",
+    plan.omitted.map(({ index, bytes, reason }) => ({ index, bytes, reason })),
+  );
 }
 ```
 
