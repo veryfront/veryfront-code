@@ -4,7 +4,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
-import { runWithEvalMockToolScope } from "#veryfront/agent/runtime/eval-mock-tool-scope.ts";
+import { runWithEvalMockToolScope } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
