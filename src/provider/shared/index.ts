@@ -55,6 +55,7 @@ export {
   isImageFileInput,
   promptHasDocumentInput,
   readInlineFileData,
+  readRemoteFileUrl,
   routesOpenAIDocumentInputToResponses,
   unsupportedFileInputError,
 } from "../runtime-loader/inline-file.ts";

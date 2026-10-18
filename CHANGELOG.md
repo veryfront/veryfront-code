@@ -12,7 +12,8 @@ File parts that a provider transport cannot send now throw a `TypeError` that
 names the file and MIME type, before any provider request. Before, they were
 dropped silently and the model answered without the file. This affects
 non-image files on Chat Completions transports, non-image and non-PDF files on
-Anthropic, and remote non-image URLs on Google. MIME types compare
+Anthropic, remote non-image URLs on Google, and document URLs that are not
+`http` or `https` on OpenAI Responses and Anthropic. MIME types compare
 case-insensitively.
 
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now

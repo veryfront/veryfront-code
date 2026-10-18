@@ -7,6 +7,7 @@ import {
   readInlineFileData,
   readProviderOptions,
   readRecord,
+  readRemoteFileUrl,
   snapshotProviderJsonValue,
   stringifyToolResultValue,
   unsupportedFileInputError,
@@ -1075,8 +1076,9 @@ function toAnthropicUserContent(
       throw unsupportedFileInputError("Anthropic", part, "Use an image or a PDF file.");
     }
     const data = readInlineFileData(part);
+    // Image URLs keep their existing pass-through; a document URL must be remote.
     const source = data === undefined
-      ? { type: "url", url: part.url }
+      ? { type: "url", url: image ? part.url : readRemoteFileUrl("Anthropic", part) }
       : { type: "base64", media_type: mediaType, data };
     content.push({ type: image ? "image" : "document", source });
   }

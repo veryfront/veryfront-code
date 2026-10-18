@@ -544,7 +544,7 @@ const file = fileFromBytes({
   bytes: await readFile("report.pdf"),
   filename: "report.pdf",
   mediaType: "application/pdf",
-  maxBytes: 8 * 1024 * 1024,
+  maxBytes: 4 * 1024 * 1024,
 });
 
 const result = await generate({
@@ -580,7 +580,9 @@ not add model capabilities. The check covers stored chat history too, so a
 conversation with a document attachment needs a document-capable model on every
 later turn.
 
-`maxBytes` limits one file before encoding. Apply your own aggregate attachment
+`maxBytes` limits one file before encoding. Hosted durable runs record each
+model call, and a record over 10 MiB refuses the call, so keep inline files well
+below that after base64 encoding. Apply your own aggregate attachment
 budget before building a message. Base64 adds about one third to request size;
 provider request and model limits still apply. The helper does not validate file
 contents or extract text. Filenames and MIME types must describe the actual file.

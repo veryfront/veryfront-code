@@ -72,3 +72,19 @@ export function readInlineFileData(part: FileInputPart): string | undefined {
   }
   return match[2];
 }
+
+/**
+ * Return a remote file URL, or throw before inference. A local path or other
+ * non-HTTP scheme must not reach the provider request.
+ */
+export function readRemoteFileUrl(transport: string, part: FileInputPart): string {
+  const protocol = URL.canParse(part.url) ? new URL(part.url).protocol : undefined;
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw unsupportedFileInputError(
+      transport,
+      part,
+      "Send an https URL or inline data, for example with fileFromBytes.",
+    );
+  }
+  return part.url;
+}

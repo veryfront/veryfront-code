@@ -93,6 +93,16 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     }]);
   });
 
+  for (const url of ["/home/user/report.pdf", "file:///home/user/report.pdf"]) {
+    it(`rejects a file URL that is not remote: ${url}`, () => {
+      assertThrows(
+        () => buildWithFile({ url, mediaType: "application/pdf" }),
+        TypeError,
+        "OpenAI Responses does not support file input (application/pdf). Send an https URL or inline data",
+      );
+    });
+  }
+
   it("recognizes an upper-case data URL scheme as inline data, not a file URL", () => {
     const body = buildWithFile({
       url: "DATA:application/pdf;base64,JVBERi0=",

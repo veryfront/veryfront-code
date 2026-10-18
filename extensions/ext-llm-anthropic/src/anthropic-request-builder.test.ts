@@ -162,6 +162,30 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       );
     });
   }
+  it("rejects a PDF whose URL is a local path instead of sending it", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5",
+          "anthropic",
+          {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: "/home/user/report.pdf",
+                mediaType: "application/pdf",
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic does not support file input (application/pdf). Send an https URL or inline data",
+    );
+  });
+
   it("rejects unsupported document types", () => {
     assertThrows(
       () =>

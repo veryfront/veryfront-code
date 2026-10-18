@@ -2,6 +2,7 @@ import {
   isImageFileInput,
   jsonValuesEqual,
   readInlineFileData,
+  readRemoteFileUrl,
   stringifyToolArguments,
   stringifyToolResultValue,
   unsupportedFileInputError,
@@ -466,7 +467,7 @@ function toOpenAIResponsesUserContent(
       data === undefined
         ? {
           type: "input_file",
-          file_url: part.url,
+          file_url: readRemoteFileUrl("OpenAI Responses", part),
           ...(part.filename ? { filename: part.filename } : {}),
         }
         : toOpenAIResponsesInlineFile(part, data),
