@@ -48,19 +48,23 @@ Complete Microsoft Outlook integration following the veryfront integration patte
 The shared mailbox tools call `/users/{mailbox}/...` for the mailbox you name in the
 `mailbox` argument. They never fall back to the signed-in user's mailbox.
 
-| Tool | Delegated permission | Application permission (app-only) |
-| --- | --- | --- |
-| List, search and get shared mailbox emails | `Mail.Read.Shared` | `Mail.Read` |
-| List shared mailbox folders | `Mail.Read.Shared` | `Mail.Read` |
-| List and get shared mailbox attachments | `Mail.Read.Shared` | `Mail.Read` |
-| Move shared mailbox email (write) | `Mail.ReadWrite.Shared` | `Mail.ReadWrite` |
+| Tool | Delegated permission |
+| --- | --- |
+| List, search and get shared mailbox emails | `Mail.Read.Shared` |
+| List shared mailbox folders and child folders | `Mail.Read.Shared` |
+| List and get shared mailbox attachments | `Mail.Read.Shared` |
+| Move shared mailbox email (write) | `Mail.ReadWrite.Shared` |
 
-- Delegated access also needs the signed-in user to have access to the mailbox in Exchange.
-- Application permissions apply to every mailbox in the tenant. Limit them to the selected
-  mailboxes with an Exchange Online application access policy or RBAC for Applications.
+- This connector signs in with delegated OAuth only. The signed-in user also needs access to
+  the mailbox in Exchange. Application (app-only) permissions have no effect on this connector.
+- Existing connections must reconnect to grant `Mail.ReadWrite.Shared` before a move works.
 - Move Shared Mailbox Email is a write. It sends `POST /users/{mailbox}/messages/{messageId}/move`
-  with `destinationId` once and does not retry. The destination folder must already exist; use
-  List Shared Mailbox Folders to find its ID.
+  with `destinationId` once and does not retry. The destination folder must already exist.
+  List Shared Mailbox Folders returns top-level folders; use List Shared Mailbox Child Folders
+  with a folder ID (or `inbox`) to find nested folders.
+- List Shared Mailbox Attachments returns metadata only. Get Shared Mailbox Attachment returns
+  file contents; pass `$expand: microsoft.graph.itemattachment/item` to read an attached
+  message, event or contact.
 - Pass `prefer: IdType="ImmutableId"` to the message and attachment tools to use immutable
   message IDs. An immutable ID stays the same when the message moves to another folder.
 

@@ -2615,6 +2615,20 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
     "omitted": "attachment binary content and provider-specific payload fields",
   },
+  "outlook__list_shared_mailbox_child_folders": {
+    "collectionKeys": ["value", "folders", "data"],
+    "collectionName": "folders",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "displayName" },
+      { "name": "parentFolderId" },
+      { "name": "childFolderCount" },
+      { "name": "unreadItemCount" },
+      { "name": "totalItemCount" },
+    ],
+    "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+    "omitted": "folder provider-specific payload fields",
+  },
   "outlook__list_shared_mailbox_emails": {
     "collectionKeys": ["value", "data", "messages"],
     "collectionName": "messages",

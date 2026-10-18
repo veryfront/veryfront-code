@@ -820,6 +820,12 @@ describe("Outlook shared-mailbox catalog routes", () => {
         path: "/v1.0/users/shared%40example.test/mailFolders",
       },
       {
+        toolId: "list_shared_mailbox_child_folders",
+        args: { mailbox, folderId: "AAMk/inbox+1=" },
+        method: "GET",
+        path: "/v1.0/users/shared%40example.test/mailFolders/AAMk%2Finbox%2B1%3D/childFolders",
+      },
+      {
         toolId: "list_shared_mailbox_attachments",
         args: { mailbox, messageId },
         method: "GET",
@@ -846,7 +852,7 @@ describe("Outlook shared-mailbox catalog routes", () => {
         connectorName: "outlook",
         toolId: `outlook__${testCase.toolId}`,
         endpoint: outlookEndpoint(testCase.toolId),
-        args: testCase.toolId === "list_shared_mailbox_folders"
+        args: testCase.toolId.includes("folders")
           ? testCase.args
           : { ...testCase.args, prefer: 'IdType="ImmutableId"' },
         authHeaders: { Authorization: `Bearer ${SECRET}` },
@@ -863,7 +869,7 @@ describe("Outlook shared-mailbox catalog routes", () => {
       assertEquals(request.init.body, testCase.body, testCase.toolId);
       assertEquals(
         new Headers(request.init.headers).get("prefer"),
-        testCase.toolId === "list_shared_mailbox_folders" ? null : 'IdType="ImmutableId"',
+        testCase.toolId.includes("folders") ? null : 'IdType="ImmutableId"',
         testCase.toolId,
       );
     }
@@ -876,12 +882,13 @@ describe("Outlook shared-mailbox catalog routes", () => {
       const toolId of [
         "get_shared_mailbox_email",
         "list_shared_mailbox_folders",
+        "list_shared_mailbox_child_folders",
         "list_shared_mailbox_attachments",
         "get_shared_mailbox_attachment",
         "move_shared_mailbox_email",
       ]
     ) {
-      const base = { messageId, attachmentId, destinationId: "archive" };
+      const base = { messageId, attachmentId, folderId: "inbox", destinationId: "archive" };
       const declared = outlookEndpoint(toolId);
       const known = (args: Record<string, unknown>) =>
         Object.fromEntries(
@@ -921,6 +928,53 @@ describe("Outlook shared-mailbox catalog routes", () => {
     }
 
     assertEquals(requests, []);
+  });
+
+  it("lists attachment metadata without file contents", async () => {
+    const requests: LocalIntegrationEndpointTransportRequest[] = [];
+    await executeLocalIntegrationEndpoint({
+      connectorName: "outlook",
+      toolId: "outlook__list_shared_mailbox_attachments",
+      endpoint: outlookEndpoint("list_shared_mailbox_attachments"),
+      args: { mailbox, messageId },
+      authHeaders: { Authorization: `Bearer ${SECRET}` },
+      allowedOrigin: graph,
+      transport: recordingTransport(requests),
+    });
+
+    const select = requests[0]?.url.searchParams.get("$select")?.split(",") ?? [];
+    for (const field of ["id", "name", "contentType", "size", "isInline"]) {
+      assert(select.includes(field), field);
+    }
+    assertEquals(select.includes("contentBytes"), false);
+  });
+
+  it("expands an attached item only on request and only as the item attachment", async () => {
+    const requests: LocalIntegrationEndpointTransportRequest[] = [];
+    const run = (args: Record<string, unknown>) =>
+      executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: "outlook__get_shared_mailbox_attachment",
+        endpoint: outlookEndpoint("get_shared_mailbox_attachment"),
+        args: { mailbox, messageId, attachmentId, ...args },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: recordingTransport(requests),
+      });
+
+    await run({});
+    await run({ $expand: "microsoft.graph.itemattachment/item" });
+    assertEquals(requests[0]?.url.searchParams.has("$expand"), false);
+    assertEquals(
+      requests[1]?.url.searchParams.get("$expand"),
+      "microsoft.graph.itemattachment/item",
+    );
+
+    await assertRejects(
+      () => run({ $expand: "microsoft.graph.message/attachments" }),
+      VeryfrontError,
+    );
+    assertEquals(requests.length, 2);
   });
 
   it("sends a failed shared-mailbox move exactly once", async () => {

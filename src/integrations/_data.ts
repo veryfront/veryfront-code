@@ -39122,6 +39122,59 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
+      "id": "outlook__list_shared_mailbox_child_folders",
+      "name": "List Shared Mailbox Child Folders",
+      "description": "List shared mailbox child folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/childFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder ID or well-known folder name such as inbox",
+            "required": true,
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "folders", "data"],
+            "collectionName": "folders",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "displayName" },
+              { "name": "parentFolderId" },
+              { "name": "childFolderCount" },
+              { "name": "unreadItemCount" },
+              { "name": "totalItemCount" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "folder provider-specific payload fields",
+          },
+        },
+      },
+    }, {
       "id": "outlook__list_shared_mailbox_attachments",
       "name": "List Shared Mailbox Attachments",
       "description": "List shared mailbox attachments",
@@ -39141,6 +39194,13 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Message ID",
             "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Comma-separated attachment fields to return. The default omits file contents; use Get Shared Mailbox Attachment to read them.",
+            "default": "id,name,contentType,size,isInline,lastModifiedDateTime",
           },
           "prefer": {
             "type": "string",
@@ -39196,6 +39256,13 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Attachment ID",
             "required": true,
+          },
+          "$expand": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Set to microsoft.graph.itemattachment/item to return the attached message, event or contact of an item attachment",
+            "pattern": "^microsoft\\.graph\\.itemattachment/item$",
           },
           "prefer": {
             "type": "string",
@@ -40017,7 +40084,7 @@ export const connectors: IntegrationConfig[] = [
       }],
       "notes": [
         "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user. Mail.ReadWrite.Shared lets Move Shared Mailbox Email move messages in those mailboxes.",
-        "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. App-only (client credentials) access to a shared mailbox needs the Mail.Read and Mail.ReadWrite application permissions instead. Limit them to the selected mailboxes with an Exchange Online application access policy or RBAC for Applications.",
+        "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. This connector signs in with delegated OAuth only, so the signed-in user must have access to that mailbox in Exchange. Application (app-only) permissions are not used by this connector.",
         "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
       ],
       "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",

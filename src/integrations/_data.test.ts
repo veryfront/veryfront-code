@@ -1505,7 +1505,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 65],
+      ["outlook", 66],
       ["teams", 7],
     ]);
 
@@ -2790,6 +2790,7 @@ describe("integration endpoint specs", () => {
       "search_shared_mailbox_emails",
       "get_shared_mailbox_email",
       "list_shared_mailbox_folders",
+      "list_shared_mailbox_child_folders",
       "list_shared_mailbox_attachments",
       "get_shared_mailbox_attachment",
       "move_shared_mailbox_email",
@@ -2885,6 +2886,10 @@ describe("integration endpoint specs", () => {
       search_shared_mailbox_emails: ["GET", "/users/{mailbox}/messages"],
       get_shared_mailbox_email: ["GET", "/users/{mailbox}/messages/{messageId}"],
       list_shared_mailbox_folders: ["GET", "/users/{mailbox}/mailFolders"],
+      list_shared_mailbox_child_folders: [
+        "GET",
+        "/users/{mailbox}/mailFolders/{folderId}/childFolders",
+      ],
       list_shared_mailbox_attachments: [
         "GET",
         "/users/{mailbox}/messages/{messageId}/attachments",
@@ -2905,7 +2910,7 @@ describe("integration endpoint specs", () => {
       // Graph immutable IDs cover messages and attachments, not mail folders.
       assertEquals(
         sharedEndpoint?.params?.prefer,
-        toolId === "list_shared_mailbox_folders" ? undefined : {
+        toolId.endsWith("folders") ? undefined : {
           type: "string",
           in: "header",
           headerName: "Prefer",
