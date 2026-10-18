@@ -32,10 +32,12 @@ import {
 import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
   buildDataFileAnnotation,
+  type ChatAssistantContentPart,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
   type ChatUiMessagePart,
+  type ChatUserContentPart,
   normalizeInlineAttachmentMediaType,
   type ProviderModelMessage,
   type UploadedFileReference,
@@ -56,7 +58,6 @@ import type {
   HistoricalToolInputRetentionOptions,
   HistoricalToolInputRetentionPolicy,
   MessagePrepLimits,
-  MessageTokenBreakdown,
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
 export { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
@@ -72,115 +73,26 @@ export type {
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
 
-function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
-  return {
-    totalTokens,
-    systemTextTokens: 0,
-    userContentTokens: 0,
-    assistantContentTokens: 0,
-    reasoningTokens: 0,
-    toolCallInputTokens: 0,
-    toolResultOutputTokens: 0,
-    fileTokens: 0,
-    unknownTokens: 0,
-  };
-}
-
-function addPartTokenBreakdown(
-  breakdown: MessageTokenBreakdown,
-  role: string,
-  part: unknown,
-): void {
-  if (!isRecord(part) || typeof part.type !== "string") {
-    breakdown.unknownTokens += estimateTokens(part);
-    return;
-  }
-
-  switch (part.type) {
-    case "text": {
-      const tokens = estimateTokens(typeof part.text === "string" ? part.text : part);
-      if (role === "system") breakdown.systemTextTokens += tokens;
-      else if (role === "user") breakdown.userContentTokens += tokens;
-      else if (role === "assistant") breakdown.assistantContentTokens += tokens;
-      else breakdown.unknownTokens += tokens;
-      return;
-    }
-    case "reasoning":
-      breakdown.reasoningTokens += estimateTokens(part);
-      return;
-    case "tool-call":
-    case "tool_call":
-    case "dynamic-tool":
-      breakdown.toolCallInputTokens += estimateTokens(
-        "input" in part ? part.input : "args" in part ? part.args : part,
-      );
-      return;
-    case "tool-result":
-    case "tool_result":
-      breakdown.toolResultOutputTokens += estimateTokens(
-        "output" in part ? part.output : "result" in part ? part.result : part,
-      );
-      return;
-    case "file":
-    case "image":
-      breakdown.fileTokens += estimateTokens(part);
-      return;
-    default:
-      if (part.type.startsWith("tool-")) {
-        breakdown.toolCallInputTokens += estimateTokens(
-          "input" in part ? part.input : "args" in part ? part.args : part,
-        );
-        return;
-      }
-      breakdown.unknownTokens += estimateTokens(part);
-  }
-}
-
-/** Estimate token categories for provider, UI, or runtime messages. */
-export function estimateMessageTokenBreakdown(messages: readonly unknown[]): MessageTokenBreakdown {
-  const breakdown = createEmptyTokenBreakdown(estimateTokens(messages));
-
-  for (const message of messages) {
-    if (!isRecord(message)) {
-      breakdown.unknownTokens += estimateTokens(message);
-      continue;
-    }
-
-    const role = typeof message.role === "string" ? message.role : "unknown";
-    if ("parts" in message && Array.isArray(message.parts)) {
-      for (const part of message.parts) {
-        addPartTokenBreakdown(breakdown, role, part);
-      }
-      continue;
-    }
-
-    if ("content" in message) {
-      const content = message.content;
-      if (typeof content === "string") {
-        const tokens = estimateTokens(content);
-        if (role === "system") breakdown.systemTextTokens += tokens;
-        else if (role === "user") breakdown.userContentTokens += tokens;
-        else if (role === "assistant") breakdown.assistantContentTokens += tokens;
-        else breakdown.unknownTokens += tokens;
-      } else if (Array.isArray(content)) {
-        for (const part of content) {
-          addPartTokenBreakdown(breakdown, role, part);
-        }
-      } else {
-        breakdown.unknownTokens += estimateTokens(content);
-      }
-      continue;
-    }
-
-    breakdown.unknownTokens += estimateTokens(message);
-  }
-
-  return breakdown;
-}
+export { estimateMessageTokenBreakdown } from "./message-token-breakdown.ts";
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return `${text.slice(0, maxLen)}…`;
+}
+
+function summarizeAssistantTurnParts(
+  content: Exclude<ProviderModelMessage["content"], string>,
+  toolNames: string[],
+  assistantConclusion: string,
+): string {
+  for (const part of content) {
+    if (part.type === "tool-call") {
+      toolNames.push(part.toolName);
+    } else if (part.type === "text") {
+      assistantConclusion = truncate(part.text, 150);
+    }
+  }
+  return assistantConclusion;
 }
 
 /** Compress turn. */
@@ -201,13 +113,11 @@ export function compressTurn(
       const text = typeof msg.content === "string" ? msg.content : stringifyChatJson(msg.content);
       userQuery = truncate(text, 100);
     } else if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part.type === "tool-call") {
-          toolNames.push(part.toolName);
-        } else if (part.type === "text") {
-          assistantConclusion = truncate(part.text, 150);
-        }
-      }
+      assistantConclusion = summarizeAssistantTurnParts(
+        msg.content,
+        toolNames,
+        assistantConclusion,
+      );
     } else if (msg.role === "assistant" && typeof msg.content === "string") {
       assistantConclusion = truncate(msg.content, 150);
     }
@@ -501,6 +411,38 @@ function resolveHistoricalToolInputRetentionPolicy(
   return fallback ? validateHistoricalToolInputRetentionPolicy(fallback) : undefined;
 }
 
+function validateHistoricalToolInputRetainedField(field: HistoricalToolInputRetainedField): void {
+  if (typeof field === "string") {
+    if (field.length === 0) {
+      throw new TypeError("Historical tool input retained field names must not be empty");
+    }
+    return;
+  }
+  if (!isRecord(field)) {
+    throw new TypeError("Historical tool input retained fields must be strings or objects");
+  }
+  if ("inputNames" in field) {
+    if (
+      !Array.isArray(field.inputNames) ||
+      field.inputNames.length === 0 ||
+      !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
+      typeof field.outputName !== "string" ||
+      field.outputName.length === 0
+    ) {
+      throw new TypeError("Historical tool input multi-field selectors are invalid");
+    }
+    return;
+  }
+  if (
+    typeof field.inputName !== "string" ||
+    field.inputName.length === 0 ||
+    (field.outputName !== undefined &&
+      (typeof field.outputName !== "string" || field.outputName.length === 0))
+  ) {
+    throw new TypeError("Historical tool input field selectors are invalid");
+  }
+}
+
 function validateHistoricalToolInputRetentionPolicy(
   policy: HistoricalToolInputRetentionPolicy,
 ): HistoricalToolInputRetentionPolicy {
@@ -520,35 +462,7 @@ function validateHistoricalToolInputRetentionPolicy(
   }
 
   for (const field of policy.retainInputFields ?? []) {
-    if (typeof field === "string") {
-      if (field.length === 0) {
-        throw new TypeError("Historical tool input retained field names must not be empty");
-      }
-      continue;
-    }
-    if (!isRecord(field)) {
-      throw new TypeError("Historical tool input retained fields must be strings or objects");
-    }
-    if ("inputNames" in field) {
-      if (
-        !Array.isArray(field.inputNames) ||
-        field.inputNames.length === 0 ||
-        !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
-        typeof field.outputName !== "string" ||
-        field.outputName.length === 0
-      ) {
-        throw new TypeError("Historical tool input multi-field selectors are invalid");
-      }
-      continue;
-    }
-    if (
-      typeof field.inputName !== "string" ||
-      field.inputName.length === 0 ||
-      (field.outputName !== undefined &&
-        (typeof field.outputName !== "string" || field.outputName.length === 0))
-    ) {
-      throw new TypeError("Historical tool input field selectors are invalid");
-    }
+    validateHistoricalToolInputRetainedField(field);
   }
   return policy;
 }
@@ -746,6 +660,23 @@ export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): C
   });
 }
 
+function appendDataFileAnnotation(
+  kept: ChatUiMessagePart[],
+  dataFiles: UploadedFileReference[],
+): void {
+  const annotation = buildDataFileAnnotation(dataFiles);
+  const lastTextIndex = kept.findLastIndex((part) => part.type === "text");
+
+  if (lastTextIndex >= 0) {
+    const textPart = kept[lastTextIndex];
+    if (textPart?.type === "text") {
+      kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
+    }
+  } else {
+    kept.push({ type: "text", text: annotation.trimStart() });
+  }
+}
+
 /** Rewrite unsupported file parts as annotations. */
 export function rewriteUnsupportedFilePartsAsAnnotations(
   messages: ChatUiMessage[],
@@ -786,17 +717,7 @@ export function rewriteUnsupportedFilePartsAsAnnotations(
       return message;
     }
 
-    const annotation = buildDataFileAnnotation(dataFiles);
-    const lastTextIndex = kept.findLastIndex((part) => part.type === "text");
-
-    if (lastTextIndex >= 0) {
-      const textPart = kept[lastTextIndex];
-      if (textPart?.type === "text") {
-        kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
-      }
-    } else {
-      kept.push({ type: "text", text: annotation.trimStart() });
-    }
+    appendDataFileAnnotation(kept, dataFiles);
 
     return { ...message, parts: kept };
   });
@@ -935,6 +856,45 @@ function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage
   });
 }
 
+function appendSanitizedArrayMessage(
+  result: ProviderModelMessage[],
+  message: ProviderModelMessage,
+  options: ProviderMessageSanitizationOptions,
+): void {
+  if (message.role === "user") {
+    const cleaned = cleanContent(
+      message.content as ChatUserContentPart[],
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    }
+    return;
+  }
+  if (message.role === "assistant") {
+    const cleaned = cleanContent(
+      message.content as ChatAssistantContentPart[],
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
+      const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
+      result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
+    }
+    return;
+  }
+  if (message.role === "tool") {
+    const cleaned = cleanContent(
+      message.content,
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    }
+  }
+}
+
 /** Sanitize provider model messages. */
 export function sanitizeProviderModelMessages(
   messages: ProviderModelMessage[],
@@ -944,25 +904,7 @@ export function sanitizeProviderModelMessages(
 
   for (const message of messages) {
     if (Array.isArray(message.content)) {
-      if (message.role === "user") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        }
-      } else if (message.role === "assistant") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
-          const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
-          result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
-        }
-      } else if (message.role === "tool") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        }
-      }
+      appendSanitizedArrayMessage(result, message, options);
       continue;
     }
 
@@ -1166,6 +1108,38 @@ function compactNamedArrayValue(value: unknown): string | null {
   return null;
 }
 
+function compactHistoricalContactArray(fieldValue: unknown): unknown {
+  if (!Array.isArray(fieldValue)) return null;
+  const contacts = fieldValue
+    .map((item) => compactContactValue(item))
+    .filter((item): item is Record<string, unknown> | string => item !== null);
+  return contacts.length > 0 ? contacts : null;
+}
+
+function compactHistoricalNamedArray(fieldValue: unknown): unknown {
+  if (!Array.isArray(fieldValue)) return null;
+  const names = fieldValue
+    .map((item) => compactNamedArrayValue(item))
+    .filter((item): item is string => item !== null);
+  return names.length > 0 ? names : null;
+}
+
+function compactHistoricalObject(fieldValue: unknown): unknown {
+  if (!isRecord(fieldValue)) return null;
+  const compact: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fieldValue)) {
+    if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+      compact[key] = value;
+    }
+  }
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function compactHistoricalStringArray(fieldValue: unknown[]): unknown {
+  const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
+  return strings.length > 0 ? strings : null;
+}
+
 function compactHistoricalField(
   field: HistoricalToolSummaryField,
   fieldValue: unknown,
@@ -1174,38 +1148,16 @@ function compactHistoricalField(
     return compactContactValue(fieldValue);
   }
 
-  if (field.kind === "contact-array") {
-    if (!Array.isArray(fieldValue)) return null;
-    const contacts = fieldValue
-      .map((item) => compactContactValue(item))
-      .filter((item): item is Record<string, unknown> | string => item !== null);
-    return contacts.length > 0 ? contacts : null;
-  }
+  if (field.kind === "contact-array") return compactHistoricalContactArray(fieldValue);
 
   if (field.kind === "string-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
-    return strings.length > 0 ? strings : null;
+    return compactHistoricalStringArray(fieldValue);
   }
 
-  if (field.kind === "named-array") {
-    if (!Array.isArray(fieldValue)) return null;
-    const names = fieldValue
-      .map((item) => compactNamedArrayValue(item))
-      .filter((item): item is string => item !== null);
-    return names.length > 0 ? names : null;
-  }
+  if (field.kind === "named-array") return compactHistoricalNamedArray(fieldValue);
 
-  if (field.kind === "object") {
-    if (!isRecord(fieldValue)) return null;
-    const compact: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fieldValue)) {
-      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
-        compact[key] = value;
-      }
-    }
-    return Object.keys(compact).length > 0 ? compact : null;
-  }
+  if (field.kind === "object") return compactHistoricalObject(fieldValue);
 
   if (typeof fieldValue === "string") {
     return field.maxLength ? truncate(fieldValue, field.maxLength) : fieldValue;
@@ -1216,8 +1168,7 @@ function compactHistoricalField(
   }
 
   if (Array.isArray(fieldValue)) {
-    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
-    return strings.length > 0 ? strings : null;
+    return compactHistoricalStringArray(fieldValue);
   }
 
   return null;
