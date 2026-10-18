@@ -375,85 +375,72 @@ function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEven
   }
 }
 
-function applyResponseMetadata(
+function applyResponseCacheTokenMetadata(
   state: AgUiEncoderState,
-  response: AgentResponse | null,
+  response: AgentResponse,
 ): void {
-  if (!response) return;
-
-  if (response.usage) {
-    state.metadata.inputTokens = response.usage.promptTokens;
-    state.metadata.outputTokens = response.usage.completionTokens;
-    state.metadata.totalTokens = response.usage.totalTokens;
-    const usage = response.usage as typeof response.usage & AgUiRunFinishedMetadata;
-    if (typeof response.usage.cachedInputTokens === "number") {
-      state.metadata.cachedInputTokens = response.usage.cachedInputTokens;
-    } else if (typeof response.usage.cacheReadInputTokens === "number") {
-      state.metadata.cachedInputTokens = response.usage.cacheReadInputTokens;
-    }
-    if (typeof response.usage.cacheCreationInputTokens === "number") {
-      state.metadata.cacheCreationInputTokens = response.usage.cacheCreationInputTokens;
-    }
-    if (typeof response.usage.cacheCreation1hInputTokens === "number") {
-      state.metadata.cacheCreation1hInputTokens = response.usage.cacheCreation1hInputTokens;
-    }
-    if (typeof response.usage.cacheReadInputTokens === "number") {
-      state.metadata.cacheReadInputTokens = response.usage.cacheReadInputTokens;
-    }
-    if (typeof response.usage.reasoningTokens === "number") {
-      state.metadata.reasoningTokens = response.usage.reasoningTokens;
-    }
-    if (typeof usage.billableInputTokens === "number") {
-      state.metadata.billableInputTokens = usage.billableInputTokens;
-    }
-    if (typeof usage.billableOutputTokens === "number") {
-      state.metadata.billableOutputTokens = usage.billableOutputTokens;
-    }
-    if (typeof usage.costUsd === "number") {
-      state.metadata.costUsd = usage.costUsd;
-    }
-    if (typeof usage.providerInputCostUsd === "number") {
-      state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
-    }
-    if (typeof usage.providerOutputCostUsd === "number") {
-      state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
-    }
-    if (typeof usage.providerCostUsd === "number") {
-      state.metadata.providerCostUsd = usage.providerCostUsd;
-    }
-    if (typeof usage.veryfrontInputChargeUsd === "number") {
-      state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
-    }
-    if (typeof usage.veryfrontOutputChargeUsd === "number") {
-      state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
-    }
-    if (typeof usage.veryfrontChargeUsd === "number") {
-      state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
-    }
-    if (typeof usage.veryfrontBilledUsd === "number") {
-      state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
-    }
-    if (typeof usage.costCredits === "number") {
-      state.metadata.costCredits = usage.costCredits;
-    }
-    if (usage.costSource) {
-      state.metadata.costSource = usage.costSource;
-    }
-    if (usage.billingMode) {
-      state.metadata.billingMode = usage.billingMode;
-    }
-    if (usage.usageCaptureStatus) {
-      state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
-    }
+  if (typeof response.usage!.cachedInputTokens === "number") {
+    state.metadata.cachedInputTokens = response.usage!.cachedInputTokens;
+  } else if (typeof response.usage!.cacheReadInputTokens === "number") {
+    state.metadata.cachedInputTokens = response.usage!.cacheReadInputTokens;
   }
-
-  const metadata = response.metadata && typeof response.metadata === "object"
-    ? response.metadata
-    : undefined;
-  const finishReason = metadata?.finishReason;
-  if (typeof finishReason === "string") {
-    state.metadata.finishReason = finishReason;
+  if (typeof response.usage!.cacheCreationInputTokens === "number") {
+    state.metadata.cacheCreationInputTokens = response.usage!.cacheCreationInputTokens;
   }
+  if (typeof response.usage!.cacheCreation1hInputTokens === "number") {
+    state.metadata.cacheCreation1hInputTokens = response.usage!.cacheCreation1hInputTokens;
+  }
+  if (typeof response.usage!.cacheReadInputTokens === "number") {
+    state.metadata.cacheReadInputTokens = response.usage!.cacheReadInputTokens;
+  }
+  if (typeof response.usage!.reasoningTokens === "number") {
+    state.metadata.reasoningTokens = response.usage!.reasoningTokens;
+  }
+}
+
+function applyResponseUsageBillingMetadata(
+  state: AgUiEncoderState,
+  usage: NonNullable<AgentResponse["usage"]> & AgUiRunFinishedMetadata,
+): void {
+  if (typeof usage.billableInputTokens === "number") {
+    state.metadata.billableInputTokens = usage.billableInputTokens;
+  }
+  if (typeof usage.billableOutputTokens === "number") {
+    state.metadata.billableOutputTokens = usage.billableOutputTokens;
+  }
+  if (typeof usage.costUsd === "number") {
+    state.metadata.costUsd = usage.costUsd;
+  }
+  if (typeof usage.providerInputCostUsd === "number") {
+    state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
+  }
+  if (typeof usage.providerOutputCostUsd === "number") {
+    state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
+  }
+  if (typeof usage.providerCostUsd === "number") {
+    state.metadata.providerCostUsd = usage.providerCostUsd;
+  }
+  if (typeof usage.veryfrontInputChargeUsd === "number") {
+    state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
+  }
+  if (typeof usage.veryfrontOutputChargeUsd === "number") {
+    state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
+  }
+  if (typeof usage.veryfrontChargeUsd === "number") {
+    state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.veryfrontBilledUsd === "number") {
+    state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
+  }
+  if (typeof usage.costCredits === "number") {
+    state.metadata.costCredits = usage.costCredits;
+  }
+}
+
+function applyResponseProviderCostMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const costUsd = metadata?.costUsd;
   if (typeof costUsd === "number" && numberIsFinite(costUsd) && costUsd >= 0) {
     state.metadata.costUsd = costUsd;
@@ -478,6 +465,12 @@ function applyResponseMetadata(
   ) {
     state.metadata.providerOutputCostUsd = providerOutputCostUsd;
   }
+}
+
+function applyResponseVeryfrontCostMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
   if (
     typeof veryfrontChargeUsd === "number" && numberIsFinite(veryfrontChargeUsd) &&
@@ -506,6 +499,12 @@ function applyResponseMetadata(
   ) {
     state.metadata.veryfrontBilledUsd = veryfrontBilledUsd;
   }
+}
+
+function applyResponseAccountingMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const costCredits = metadata?.costCredits;
   if (typeof costCredits === "number" && numberIsFinite(costCredits) && costCredits >= 0) {
     state.metadata.costCredits = costCredits;
@@ -524,6 +523,42 @@ function applyResponseMetadata(
   ) {
     state.metadata.billableOutputTokens = billableOutputTokens;
   }
+}
+
+function applyResponseMetadata(
+  state: AgUiEncoderState,
+  response: AgentResponse | null,
+): void {
+  if (!response) return;
+
+  if (response.usage) {
+    state.metadata.inputTokens = response.usage.promptTokens;
+    state.metadata.outputTokens = response.usage.completionTokens;
+    state.metadata.totalTokens = response.usage.totalTokens;
+    const usage = response.usage as typeof response.usage & AgUiRunFinishedMetadata;
+    applyResponseCacheTokenMetadata(state, response);
+    applyResponseUsageBillingMetadata(state, usage);
+    if (usage.costSource) {
+      state.metadata.costSource = usage.costSource;
+    }
+    if (usage.billingMode) {
+      state.metadata.billingMode = usage.billingMode;
+    }
+    if (usage.usageCaptureStatus) {
+      state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
+    }
+  }
+
+  const metadata = response.metadata && typeof response.metadata === "object"
+    ? response.metadata
+    : undefined;
+  const finishReason = metadata?.finishReason;
+  if (typeof finishReason === "string") {
+    state.metadata.finishReason = finishReason;
+  }
+  applyResponseProviderCostMetadata(state, metadata);
+  applyResponseVeryfrontCostMetadata(state, metadata);
+  applyResponseAccountingMetadata(state, metadata);
   const costSource = metadata?.costSource;
   if (costSource === "gateway" || costSource === "missing" || costSource === "partial") {
     state.metadata.costSource = costSource;
@@ -829,6 +864,137 @@ function createMessageFinishObjectSnapshotContext(): MessageFinishObjectSnapshot
   };
 }
 
+function snapshotMessageFinishArray(
+  input: unknown[],
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const output: unknown[] = [];
+  const length = typeof input.length === "number" && numberIsFinite(input.length)
+    ? mathMax(0, mathRound(input.length))
+    : 0;
+  // A runtime snapshot contains up to 100 source items plus its omission
+  // marker. Keep that bounded extra entry so another snapshot preserves N.
+  const limit = context.preserveArrayTruncationMarkers &&
+      hasMessageFinishArrayTruncationMarker(input, length)
+    ? length
+    : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
+  for (let index = 0; index < limit; index++) {
+    const property = objectGetOwnPropertyDescriptor(
+      input,
+      reflectApply(numberToString, index, []) as string,
+    );
+    let item: MessageFinishObjectSnapshot;
+    if (!property?.enumerable) {
+      item = { value: null, status: "complete", reasons: [] };
+    } else if (!objectHasOwn(property, "value")) {
+      item = {
+        value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
+        status: "partial",
+        reasons: ["accessor_property"],
+      };
+    } else {
+      item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+    }
+    primordialArrayPush(output, item.value);
+    for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+    if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
+  }
+  if (length > limit) {
+    primordialArrayPush(output, `[truncated ${length - limit} items]`);
+    addCaptureReason(reasons, "array_truncated");
+  }
+  return {
+    value: output,
+    status: reasons.length > 0 ? "partial" : "complete",
+    reasons,
+  };
+}
+
+function copyMessageFinishRecordProperty(
+  input: Record<string, unknown>,
+  key: string,
+  output: Record<string, unknown>,
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): boolean {
+  const property = objectGetOwnPropertyDescriptor(input, key);
+  if (!property?.enumerable) return false;
+  if (!objectHasOwn(property, "value")) {
+    defineDataProperty(output, key, MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR);
+    addCaptureReason(reasons, "accessor_property");
+  } else {
+    const item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+    defineDataProperty(output, key, item.value);
+    for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+    if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_property");
+  }
+  return true;
+}
+
+function snapshotMessageFinishRecord(
+  input: Record<string, unknown>,
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const prototype = objectGetPrototypeOf(input);
+  if (prototype !== null && prototype !== objectPrototype) {
+    return {
+      value: "[unsupported object]",
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const output = createNullDataRecord();
+  const keys = reflectOwnKeys(input);
+  let copiedKeys = 0;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (typeof key !== "string") continue;
+    if (!isSupportedMessageFinishObjectKey(key)) {
+      addCaptureReason(reasons, "object_key_unsupported");
+      continue;
+    }
+    if (!copyMessageFinishRecordProperty(input, key, output, context, depth, reasons)) continue;
+    copiedKeys += 1;
+    if (copiedKeys >= MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS) {
+      if (hasRemainingEligibleMessageFinishObjectProperty(input, keys, keyIndex + 1)) {
+        addCaptureReason(reasons, "object_keys_truncated");
+      }
+      break;
+    }
+  }
+  return {
+    value: output,
+    status: reasons.length > 0 ? "partial" : "complete",
+    reasons,
+  };
+}
+
+function snapshotMessageFinishString(
+  input: string,
+  context: MessageFinishObjectSnapshotContext,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const truncated = truncateMessageFinishString(context, input);
+  if (truncated.truncated) {
+    addCaptureReason(
+      reasons,
+      truncated.value === MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET
+        ? "aggregate_budget_exhausted"
+        : "string_truncated",
+    );
+  }
+  return {
+    value: truncated.value,
+    status: truncated.truncated ? "partial" : "complete",
+    reasons,
+  };
+}
+
 function snapshotMessageFinishObjectValue(
   input: unknown,
   context: MessageFinishObjectSnapshotContext = createMessageFinishObjectSnapshotContext(),
@@ -846,22 +1012,7 @@ function snapshotMessageFinishObjectValue(
   if (input === null || typeof input === "boolean") {
     return { value: input, status: "complete", reasons };
   }
-  if (typeof input === "string") {
-    const truncated = truncateMessageFinishString(context, input);
-    if (truncated.truncated) {
-      addCaptureReason(
-        reasons,
-        truncated.value === MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET
-          ? "aggregate_budget_exhausted"
-          : "string_truncated",
-      );
-    }
-    return {
-      value: truncated.value,
-      status: truncated.truncated ? "partial" : "complete",
-      reasons,
-    };
-  }
+  if (typeof input === "string") return snapshotMessageFinishString(input, context, reasons);
   if (typeof input === "number") {
     return numberIsFinite(input)
       ? { value: input, status: "complete", reasons }
@@ -883,92 +1034,9 @@ function snapshotMessageFinishObjectValue(
 
   context.seen.set(input, true);
   try {
-    if (ArrayIsArray(input)) {
-      const output: unknown[] = [];
-      const length = typeof input.length === "number" && numberIsFinite(input.length)
-        ? mathMax(0, mathRound(input.length))
-        : 0;
-      // A runtime snapshot contains up to 100 source items plus its omission
-      // marker. Keep that bounded extra entry so another snapshot preserves N.
-      const limit = context.preserveArrayTruncationMarkers &&
-          hasMessageFinishArrayTruncationMarker(input, length)
-        ? length
-        : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
-      for (let index = 0; index < limit; index++) {
-        const property = objectGetOwnPropertyDescriptor(
-          input,
-          reflectApply(numberToString, index, []) as string,
-        );
-        let item: MessageFinishObjectSnapshot;
-        if (!property?.enumerable) {
-          item = { value: null, status: "complete", reasons: [] };
-        } else if (!objectHasOwn(property, "value")) {
-          item = {
-            value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
-            status: "partial",
-            reasons: ["accessor_property"],
-          };
-        } else {
-          item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
-        }
-        primordialArrayPush(output, item.value);
-        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
-        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
-      }
-      if (length > limit) {
-        primordialArrayPush(output, `[truncated ${length - limit} items]`);
-        addCaptureReason(reasons, "array_truncated");
-      }
-      return {
-        value: output,
-        status: reasons.length > 0 ? "partial" : "complete",
-        reasons,
-      };
-    }
+    if (ArrayIsArray(input)) return snapshotMessageFinishArray(input, context, depth, reasons);
 
-    const prototype = objectGetPrototypeOf(input);
-    if (prototype !== null && prototype !== objectPrototype) {
-      return {
-        value: "[unsupported object]",
-        status: "unsupported",
-        reasons: ["unsupported_object"],
-      };
-    }
-    const output = createNullDataRecord();
-    const keys = reflectOwnKeys(input);
-    let copiedKeys = 0;
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-      const key = keys[keyIndex];
-      if (typeof key !== "string") continue;
-      if (!isSupportedMessageFinishObjectKey(key)) {
-        addCaptureReason(reasons, "object_key_unsupported");
-        continue;
-      }
-      const property = objectGetOwnPropertyDescriptor(input, key);
-      if (!property?.enumerable) continue;
-      if (!objectHasOwn(property, "value")) {
-        defineDataProperty(output, key, MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR);
-        addCaptureReason(reasons, "accessor_property");
-        copiedKeys += 1;
-      } else {
-        const item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
-        defineDataProperty(output, key, item.value);
-        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
-        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_property");
-        copiedKeys += 1;
-      }
-      if (copiedKeys >= MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS) {
-        if (hasRemainingEligibleMessageFinishObjectProperty(input, keys, keyIndex + 1)) {
-          addCaptureReason(reasons, "object_keys_truncated");
-        }
-        break;
-      }
-    }
-    return {
-      value: output,
-      status: reasons.length > 0 ? "partial" : "complete",
-      reasons,
-    };
+    return snapshotMessageFinishRecord(input as Record<string, unknown>, context, depth, reasons);
   } finally {
     context.seen.set(input, undefined as never);
   }
@@ -1190,14 +1258,10 @@ function createMessageFinishMetadataEvent(
   ];
 }
 
-/** Response payload for build AG-UI finalize. */
-export function buildAgUiFinalizeResponse(
+function copyFinalizeCacheMetadata(
   metadata: AgUiRunFinishedMetadata,
-): AgentResponse | null {
-  const responseMetadata: Record<string, unknown> = {};
-  if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
-    responseMetadata.finishReason = metadata.finishReason;
-  }
+  responseMetadata: Record<string, unknown>,
+): void {
   if (typeof metadata.cachedInputTokens === "number") {
     responseMetadata.cachedInputTokens = metadata.cachedInputTokens;
   }
@@ -1213,6 +1277,12 @@ export function buildAgUiFinalizeResponse(
   if (typeof metadata.reasoningTokens === "number") {
     responseMetadata.reasoningTokens = metadata.reasoningTokens;
   }
+}
+
+function copyFinalizeBillingMetadata(
+  metadata: AgUiRunFinishedMetadata,
+  responseMetadata: Record<string, unknown>,
+): void {
   if (typeof metadata.billableInputTokens === "number") {
     responseMetadata.billableInputTokens = metadata.billableInputTokens;
   }
@@ -1246,6 +1316,90 @@ export function buildAgUiFinalizeResponse(
   if (typeof metadata.costCredits === "number") {
     responseMetadata.costCredits = metadata.costCredits;
   }
+}
+
+function finalizeCacheUsage(metadata: AgUiRunFinishedMetadata) {
+  return {
+    ...(typeof metadata.cachedInputTokens === "number"
+      ? { cachedInputTokens: metadata.cachedInputTokens }
+      : {}),
+    ...(typeof metadata.cacheCreationInputTokens === "number"
+      ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
+      : {}),
+    ...(typeof metadata.cacheCreation1hInputTokens === "number"
+      ? { cacheCreation1hInputTokens: metadata.cacheCreation1hInputTokens }
+      : {}),
+    ...(typeof metadata.cacheReadInputTokens === "number"
+      ? { cacheReadInputTokens: metadata.cacheReadInputTokens }
+      : {}),
+    ...(typeof metadata.reasoningTokens === "number"
+      ? { reasoningTokens: metadata.reasoningTokens }
+      : {}),
+  };
+}
+
+function finalizeBillingUsage(metadata: AgUiRunFinishedMetadata) {
+  return {
+    ...(typeof metadata.billableInputTokens === "number"
+      ? { billableInputTokens: metadata.billableInputTokens }
+      : {}),
+    ...(typeof metadata.billableOutputTokens === "number"
+      ? { billableOutputTokens: metadata.billableOutputTokens }
+      : {}),
+    ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
+    ...(typeof metadata.providerInputCostUsd === "number"
+      ? { providerInputCostUsd: metadata.providerInputCostUsd }
+      : {}),
+    ...(typeof metadata.providerOutputCostUsd === "number"
+      ? { providerOutputCostUsd: metadata.providerOutputCostUsd }
+      : {}),
+    ...(typeof metadata.providerCostUsd === "number"
+      ? { providerCostUsd: metadata.providerCostUsd }
+      : {}),
+    ...(typeof metadata.veryfrontInputChargeUsd === "number"
+      ? { veryfrontInputChargeUsd: metadata.veryfrontInputChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontOutputChargeUsd === "number"
+      ? { veryfrontOutputChargeUsd: metadata.veryfrontOutputChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontChargeUsd === "number"
+      ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontBilledUsd === "number"
+      ? { veryfrontBilledUsd: metadata.veryfrontBilledUsd }
+      : {}),
+    ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
+  };
+}
+
+function buildFinalizeUsage(metadata: AgUiRunFinishedMetadata): AgentResponse["usage"] {
+  return typeof metadata.inputTokens === "number" ||
+      typeof metadata.outputTokens === "number" ||
+      typeof metadata.totalTokens === "number"
+    ? {
+      promptTokens: metadata.inputTokens ?? 0,
+      completionTokens: metadata.outputTokens ?? 0,
+      totalTokens: metadata.totalTokens ??
+        ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
+      ...finalizeCacheUsage(metadata),
+      ...finalizeBillingUsage(metadata),
+      ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
+      ...(metadata.billingMode ? { billingMode: metadata.billingMode } : {}),
+      ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
+    }
+    : undefined;
+}
+
+/** Response payload for build AG-UI finalize. */
+export function buildAgUiFinalizeResponse(
+  metadata: AgUiRunFinishedMetadata,
+): AgentResponse | null {
+  const responseMetadata: Record<string, unknown> = {};
+  if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
+    responseMetadata.finishReason = metadata.finishReason;
+  }
+  copyFinalizeCacheMetadata(metadata, responseMetadata);
+  copyFinalizeBillingMetadata(metadata, responseMetadata);
   if (metadata.costSource) {
     responseMetadata.costSource = metadata.costSource;
   }
@@ -1256,63 +1410,7 @@ export function buildAgUiFinalizeResponse(
     responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;
   }
 
-  const usage = typeof metadata.inputTokens === "number" ||
-      typeof metadata.outputTokens === "number" ||
-      typeof metadata.totalTokens === "number"
-    ? {
-      promptTokens: metadata.inputTokens ?? 0,
-      completionTokens: metadata.outputTokens ?? 0,
-      totalTokens: metadata.totalTokens ??
-        ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
-      ...(typeof metadata.cachedInputTokens === "number"
-        ? { cachedInputTokens: metadata.cachedInputTokens }
-        : {}),
-      ...(typeof metadata.cacheCreationInputTokens === "number"
-        ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
-        : {}),
-      ...(typeof metadata.cacheCreation1hInputTokens === "number"
-        ? { cacheCreation1hInputTokens: metadata.cacheCreation1hInputTokens }
-        : {}),
-      ...(typeof metadata.cacheReadInputTokens === "number"
-        ? { cacheReadInputTokens: metadata.cacheReadInputTokens }
-        : {}),
-      ...(typeof metadata.reasoningTokens === "number"
-        ? { reasoningTokens: metadata.reasoningTokens }
-        : {}),
-      ...(typeof metadata.billableInputTokens === "number"
-        ? { billableInputTokens: metadata.billableInputTokens }
-        : {}),
-      ...(typeof metadata.billableOutputTokens === "number"
-        ? { billableOutputTokens: metadata.billableOutputTokens }
-        : {}),
-      ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
-      ...(typeof metadata.providerInputCostUsd === "number"
-        ? { providerInputCostUsd: metadata.providerInputCostUsd }
-        : {}),
-      ...(typeof metadata.providerOutputCostUsd === "number"
-        ? { providerOutputCostUsd: metadata.providerOutputCostUsd }
-        : {}),
-      ...(typeof metadata.providerCostUsd === "number"
-        ? { providerCostUsd: metadata.providerCostUsd }
-        : {}),
-      ...(typeof metadata.veryfrontInputChargeUsd === "number"
-        ? { veryfrontInputChargeUsd: metadata.veryfrontInputChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontOutputChargeUsd === "number"
-        ? { veryfrontOutputChargeUsd: metadata.veryfrontOutputChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontChargeUsd === "number"
-        ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontBilledUsd === "number"
-        ? { veryfrontBilledUsd: metadata.veryfrontBilledUsd }
-        : {}),
-      ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
-      ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
-      ...(metadata.billingMode ? { billingMode: metadata.billingMode } : {}),
-      ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
-    }
-    : undefined;
+  const usage = buildFinalizeUsage(metadata);
 
   if (!usage && objectKeys(responseMetadata).length === 0) {
     return null;
