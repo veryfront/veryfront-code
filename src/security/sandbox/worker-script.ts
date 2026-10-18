@@ -1803,27 +1803,38 @@ export function assertIsolatedSsrDependencySnapshotSupported(
   );
 }
 
-function snapshotAppRouteWorkerRequest(
+function readRouteWorkerRequest(
   cloned: unknown,
   envelope: DataRecord,
-): ExecuteAppRouteRequest {
-  const type = "execute-app-route" as const;
+  kind: "execute-app-route" | "execute-pages-route",
+) {
   const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
     envelope,
   );
   const request = requireRecordShape(
     cloned,
-    [
-      "type",
-      "id",
-      "module",
-      "modulePath",
-      "method",
-      "request",
-      "params",
-      "projectDir",
-      "sourceIntegrationPolicy",
-    ],
+    kind === "execute-app-route"
+      ? [
+        "type",
+        "id",
+        "module",
+        "modulePath",
+        "method",
+        "request",
+        "params",
+        "projectDir",
+        "sourceIntegrationPolicy",
+      ]
+      : [
+        "type",
+        "id",
+        "module",
+        "modulePath",
+        "method",
+        "context",
+        "projectDir",
+        "sourceIntegrationPolicy",
+      ],
     ["projectEnv", "applicationIdentity", "traceparent"],
     "payload",
   );
@@ -1834,8 +1845,11 @@ function snapshotAppRouteWorkerRequest(
   if (!applicationIdentity.present) {
     return invalidWorkerRequest("applicationIdentity");
   }
+  return { request, sourceIntegrationPolicy, applicationIdentity };
+}
+
+function snapshotRouteWorkerRequestHead(request: DataRecord) {
   return {
-    type,
     traceparent: readOptionalDataProperty(request, "traceparent").present
       ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
       : undefined,
@@ -1860,6 +1874,22 @@ function snapshotAppRouteWorkerRequest(
       64,
       false,
     ),
+  };
+}
+
+function snapshotAppRouteWorkerRequest(
+  cloned: unknown,
+  envelope: DataRecord,
+): ExecuteAppRouteRequest {
+  const type = "execute-app-route" as const;
+  const { request, sourceIntegrationPolicy, applicationIdentity } = readRouteWorkerRequest(
+    cloned,
+    envelope,
+    type,
+  );
+  return {
+    type,
+    ...snapshotRouteWorkerRequestHead(request),
     request: snapshotSerializedRequest(
       readDataProperty(request, "request"),
     ),
@@ -2070,57 +2100,14 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
   if (type === "execute-app-route") return snapshotAppRouteWorkerRequest(cloned, envelope);
 
   if (type === "execute-pages-route") {
-    const sourceIntegrationPolicy = snapshotRequiredSourceIntegrationPolicy(
-      envelope,
-    );
-    const request = requireRecordShape(
+    const { request, sourceIntegrationPolicy, applicationIdentity } = readRouteWorkerRequest(
       cloned,
-      [
-        "type",
-        "id",
-        "module",
-        "modulePath",
-        "method",
-        "context",
-        "projectDir",
-        "sourceIntegrationPolicy",
-      ],
-      ["projectEnv", "applicationIdentity", "traceparent"],
-      "payload",
+      envelope,
+      type,
     );
-    const applicationIdentity = readOptionalDataProperty(
-      request,
-      "applicationIdentity",
-    );
-    if (!applicationIdentity.present) {
-      return invalidWorkerRequest("applicationIdentity");
-    }
     return {
       type,
-      traceparent: readOptionalDataProperty(request, "traceparent").present
-        ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
-        : undefined,
-      id: requireString(
-        readDataProperty(request, "id"),
-        "id",
-        MAX_WORKER_REQUEST_ID_CHARS,
-        false,
-      ),
-      module: snapshotPreparedWorkerModule(
-        readDataProperty(request, "module"),
-      ),
-      modulePath: requireString(
-        readDataProperty(request, "modulePath"),
-        "modulePath",
-        MAX_WORKER_PATH_CHARS,
-        false,
-      ),
-      method: requireString(
-        readDataProperty(request, "method"),
-        "method",
-        64,
-        false,
-      ),
+      ...snapshotRouteWorkerRequestHead(request),
       context: snapshotPagesContext(readDataProperty(request, "context")),
       projectDir: requireString(
         readDataProperty(request, "projectDir"),
