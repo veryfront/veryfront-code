@@ -2522,7 +2522,7 @@ it("ignores escaping and external OKF companion references", async () => {
   }
 });
 
-it("fails referenced OKF companion assets that are not valid UTF-8", async () => {
+it("preserves referenced binary OKF companion assets without UTF-8 decoding", async () => {
   const root = await makeTempDir({ prefix: "veryfront-okf-binary-companion-" });
   const outputDir = join(root, "output");
   const bundle = join(root, "bundle");
@@ -2554,12 +2554,14 @@ it("fails referenced OKF companion assets that are not valid UTF-8", async () =>
       indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
     });
-    assertEquals(result.ingested.map((item) => item.remotePath), ["knowledge/topic.md"]);
-    assertEquals(result.failed.length, 1);
-    assertEquals(result.failed[0]?.source.endsWith("bin/run.wasm"), true);
-    assertStringIncludes(
-      result.failed[0]?.message ?? "",
-      "not valid UTF-8 and cannot be uploaded through text knowledge storage",
+    assertEquals(result.ingested.map((item) => item.remotePath).sort(), [
+      "knowledge/bin/run.wasm",
+      "knowledge/topic.md",
+    ]);
+    assertEquals(result.failed, []);
+    assertEquals(
+      await Deno.readFile(join(outputDir, "bin", "run.wasm")),
+      new Uint8Array([0xff, 0xfe, 0xfd]),
     );
   } finally {
     await Deno.remove(root, { recursive: true });

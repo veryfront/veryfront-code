@@ -15,6 +15,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
+import { putBinaryKnowledgeAsset } from "./binary-assets.ts";
 import { type PublishedFileReceipt, putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
@@ -808,6 +809,7 @@ export async function ingestResolvedSources(
       remotePath: string,
       localPath: string,
       metadata?: Record<string, unknown>,
+      storageKind?: "binary",
     ) => Promise<PublishedFileReceipt>;
     destinationBranch?: string;
     indexKnowledgeDocument?: (
@@ -942,6 +944,7 @@ export async function ingestResolvedSources(
         remotePath,
         parser.sandbox_output_path,
         uploadMetadata,
+        parser.storage_kind,
       );
       published = uploaded;
       deps.signal?.throwIfAborted();
@@ -1086,10 +1089,27 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
                 projectSlug: config.projectSlug,
                 serviceLayer: "cloud",
               }, () => indexKnowledgeDocument(indexInput)),
-            uploadKnowledgeFile: (remotePath, localPath, metadata) =>
-              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath, undefined, {
-                branch: options.branch,
-              }, metadata),
+            uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+              storageKind === "binary"
+                ? putBinaryKnowledgeAsset({
+                  client,
+                  project: config.projectSlug,
+                  path: remotePath,
+                  localPath,
+                  branch: options.branch ?? "main",
+                  expected: { kind: "absent" },
+                })
+                : putRemoteFileFromLocal(
+                  client,
+                  config.projectSlug,
+                  remotePath,
+                  localPath,
+                  undefined,
+                  {
+                    branch: options.branch,
+                  },
+                  metadata,
+                ),
           });
           const runResult = buildKnowledgeIngestRunResult({
             requestedCount,

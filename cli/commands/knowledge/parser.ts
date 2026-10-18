@@ -21,6 +21,7 @@ export interface KnowledgeParserResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  storage_kind?: "binary";
   document_kind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
   okf?: {
     path: string;
@@ -284,8 +285,8 @@ async function preserveOkfCompanion(input: {
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
-  const source = decodeOkfUtf8(relativePath, bytes);
   if (relativePath.toLowerCase().endsWith(".md")) {
+    const source = decodeOkfUtf8(relativePath, bytes);
     const inspected = inspectOkfDocument(relativePath, source);
     // A reference does not demote canonical documents. Unknown explicit types
     // remain OKF types. Otherwise the explicit artifact role preserves its bytes,
@@ -304,6 +305,7 @@ async function preserveOkfCompanion(input: {
     source_path: input.filePath,
     source_filename: basename(input.filePath),
     source_type: "okf_companion",
+    storage_kind: relativePath.toLowerCase().endsWith(".md") ? undefined : "binary",
     slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
     sandbox_output_path: outputPath,
     suggested_project_path: `knowledge/${relativePath}`,

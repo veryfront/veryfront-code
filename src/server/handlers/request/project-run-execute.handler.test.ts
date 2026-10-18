@@ -3217,6 +3217,98 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("publishes a native binary companion through the retained runtime writer", async () => {
+    const branch = "33333333-3333-4333-8333-333333333333";
+    const binary = new Uint8Array([255, 254, 0, 128]);
+    const body = {
+      runId: "run_binary",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "77777777-7777-4777-8777-777777777777",
+      canonicalRunId: "12121212-1212-4121-8121-121212121212",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: branch,
+      config: {
+        path_prefix: "uploads/acme",
+        okf_bundle: true,
+        knowledge_path: "knowledge/imports/acme",
+      },
+    };
+    const respondObservation = createKnowledgeObservationResponder(body);
+    const signed = await signedRequest("/api/control-plane/runs/run_binary/execute", body, {
+      "x-token": "test-token",
+      "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+      "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+    });
+    const checksums = new Map<string, string>();
+    let binaryWrites = 0;
+    const result = await withMockFetch(
+      async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const observed = respondObservation(url.toString(), init);
+        if (observed) return observed;
+        const indexed = canonicalKnowledgeIndexResponse(url.toString(), init, checksums);
+        if (indexed) return indexed;
+        if (url.pathname === "/projects/demo-project/uploads") {
+          return Response.json({
+            data: [{ type: "file", path: "uploads/acme/guide.md" }, {
+              type: "file",
+              path: "uploads/acme/image.bin",
+            }],
+            page_info: { next: null },
+          });
+        }
+        if (url.pathname.endsWith("uploads%2Facme%2Fguide.md")) {
+          return new Response("---\ntype: Concept\nresource: image.bin\n---\n# Guide\n", {
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        if (url.pathname.endsWith("uploads%2Facme%2Fimage.bin")) {
+          return new Response(binary, {
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        if (url.pathname.includes("/knowledge/assets/")) {
+          binaryWrites++;
+          const wire = observeFetchRequestInit(init);
+          const headers = new Headers(wire.headers);
+          assertEquals(
+            headers.get("X-Veryfront-Run-Event-Token"),
+            createKnowledgeIngestEventToken(body),
+          );
+          assertEquals(headers.get("content-type"), "application/octet-stream");
+          assertEquals(headers.get("x-vf-expected-absent"), "true");
+          assertEquals(url.searchParams.get("branch_id"), branch);
+          assertEquals(wire.body, binary);
+          return Response.json({
+            file_id: branch,
+            file_version_id: branch,
+            path: "knowledge/imports/acme/image.bin",
+            byte_size: binary.length,
+            content_hash: headers.get("x-vf-content-sha256"),
+            content_type: "application/octet-stream",
+          });
+        }
+        return await canonicalKnowledgePublicationResponse(
+          "knowledge/imports/acme/guide.md",
+          init,
+          checksums,
+        );
+      },
+      () =>
+        new ProjectRunExecuteHandler().handle(
+          signed.request,
+          Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+        ),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result.summary.failed_count, 0);
+    assertEquals(payload.result.summary.ingested_count, 2);
+    assertEquals(binaryWrites, 1);
+  });
+
   for (const runtimeTargetKind of ["main_branch", "preview_branch"] as const) {
     for (
       const knowledgePath of [
