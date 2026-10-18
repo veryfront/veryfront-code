@@ -400,6 +400,31 @@ function mergePatternAnalysis(
   for (const hazard of nested.hazards) target.hazards.add(hazard);
 }
 
+function analyzeArrayBindingPattern(value: Node, analysis: BindingPatternAnalysis): void {
+  for (const element of Array.isArray(value.elements) ? value.elements : []) {
+    if (element === null || element === undefined) continue;
+    mergePatternAnalysis(analysis, analyzeBindingPattern(element));
+  }
+}
+
+function analyzeObjectBindingProperty(property: unknown, analysis: BindingPatternAnalysis): void {
+  if (!isNode(property)) {
+    analysis.hazards.add("unknown-syntax");
+    return;
+  }
+  if (property.type === "RestElement") {
+    mergePatternAnalysis(analysis, analyzeBindingPattern(property.argument));
+    return;
+  }
+  if (property.type !== "ObjectProperty") {
+    mergePatternAnalysis(analysis, analyzeBindingPattern(property));
+    analysis.hazards.add("unknown-syntax");
+    return;
+  }
+  if (property.computed === true) analysis.hazards.add("computed-key");
+  mergePatternAnalysis(analysis, analyzeBindingPattern(property.value));
+}
+
 /**
  * Classify one binding pattern without confusing its bindings with expressions
  * evaluated while destructuring. Unknown syntax stays visible as a hazard so a
@@ -444,30 +469,13 @@ function analyzeBindingPattern(value: unknown): BindingPatternAnalysis {
   }
 
   if (value.type === "ArrayPattern") {
-    for (const element of Array.isArray(value.elements) ? value.elements : []) {
-      if (element === null || element === undefined) continue;
-      mergePatternAnalysis(analysis, analyzeBindingPattern(element));
-    }
+    analyzeArrayBindingPattern(value, analysis);
     return analysis;
   }
 
   if (value.type === "ObjectPattern") {
     for (const property of Array.isArray(value.properties) ? value.properties : []) {
-      if (!isNode(property)) {
-        analysis.hazards.add("unknown-syntax");
-        continue;
-      }
-      if (property.type === "RestElement") {
-        mergePatternAnalysis(analysis, analyzeBindingPattern(property.argument));
-        continue;
-      }
-      if (property.type !== "ObjectProperty") {
-        mergePatternAnalysis(analysis, analyzeBindingPattern(property));
-        analysis.hazards.add("unknown-syntax");
-        continue;
-      }
-      if (property.computed === true) analysis.hazards.add("computed-key");
-      mergePatternAnalysis(analysis, analyzeBindingPattern(property.value));
+      analyzeObjectBindingProperty(property, analysis);
     }
     return analysis;
   }
@@ -488,6 +496,84 @@ function patternBoundNames(pattern: Node): string[] {
   return analyzeBindingPattern(pattern).bindingIds.map(nodeName).filter(
     (name): name is string => Boolean(name),
   );
+}
+
+function collectExportedHookSpecifier(
+  specifier: unknown,
+  statement: Node,
+  locals: Set<string>,
+  unhandled: string[],
+  isHook: (name: string | null | undefined) => name is string,
+): void {
+  if (!isNode(specifier)) return;
+  if (specifier.exportKind === "type") return;
+  const exported = exportName(specifier.exported);
+  if (!isHook(exported)) return;
+
+  // `export { x as getServerData } from "./loader"` never binds `x` here,
+  // so there is no body to empty and the module it points at is still
+  // pulled into the graph.
+  if (isNode(statement.source)) {
+    unhandled.push(`export { … as ${exported} } from …`);
+    return;
+  }
+
+  const local = nodeName(specifier.local);
+  if (local) locals.add(local);
+}
+
+function collectExportedHookDeclarator(
+  declarator: unknown,
+  locals: Set<string>,
+  unhandled: string[],
+  isHook: (name: string | null | undefined) => name is string,
+): void {
+  if (!isNode(declarator)) return;
+  const id = declarator.id;
+  if (!isNode(id)) return;
+
+  const name = nodeName(id);
+  if (name) {
+    if (isHook(name)) locals.add(name);
+    return;
+  }
+
+  // `export const { getServerData } = loaders`: the initialiser is a value
+  // this pass cannot take apart.
+  if (patternBoundNames(id).some(isHook)) {
+    unhandled.push("export const { … } = …");
+  }
+}
+
+function collectDirectExportedHookBindings(
+  declaration: unknown,
+  locals: Set<string>,
+  unhandled: string[],
+  isHook: (name: string | null | undefined) => name is string,
+): void {
+  if (!isNode(declaration)) return;
+
+  const direct = nodeName(declaration.id);
+  if (isHook(direct)) locals.add(direct);
+
+  for (
+    const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+  ) {
+    collectExportedHookDeclarator(declarator, locals, unhandled, isHook);
+  }
+}
+
+function collectImportEqualsHookBinding(
+  statement: Node,
+  locals: Set<string>,
+  unhandled: string[],
+  isHook: (name: string | null | undefined) => name is string,
+): void {
+  if (statement.type !== "TSImportEqualsDeclaration") return;
+  const name = nodeName(statement.id);
+  if (name && (locals.has(name) || (statement.isExport === true && isHook(name)))) {
+    unhandled.push(`import ${name} = require(…)`);
+  }
 }
 
 /**
@@ -512,56 +598,14 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
     if (statement.exportKind === "type") continue;
 
     for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
-      if (!isNode(specifier)) continue;
-      if (specifier.exportKind === "type") continue;
-      const exported = exportName(specifier.exported);
-      if (!isHook(exported)) continue;
-
-      // `export { x as getServerData } from "./loader"` never binds `x` here,
-      // so there is no body to empty and the module it points at is still
-      // pulled into the graph.
-      if (isNode(statement.source)) {
-        unhandled.push(`export { … as ${exported} } from …`);
-        continue;
-      }
-
-      const local = nodeName(specifier.local);
-      if (local) locals.add(local);
+      collectExportedHookSpecifier(specifier, statement, locals, unhandled, isHook);
     }
 
-    const declaration = statement.declaration;
-    if (!isNode(declaration)) continue;
-
-    const direct = nodeName(declaration.id);
-    if (isHook(direct)) locals.add(direct);
-
-    for (
-      const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
-    ) {
-      if (!isNode(declarator)) continue;
-      const id = declarator.id;
-      if (!isNode(id)) continue;
-
-      const name = nodeName(id);
-      if (name) {
-        if (isHook(name)) locals.add(name);
-        continue;
-      }
-
-      // `export const { getServerData } = loaders`: the initialiser is a value
-      // this pass cannot take apart.
-      if (patternBoundNames(id).some(isHook)) {
-        unhandled.push("export const { … } = …");
-      }
-    }
+    collectDirectExportedHookBindings(statement.declaration, locals, unhandled, isHook);
   }
 
   for (const statement of body) {
-    if (statement.type !== "TSImportEqualsDeclaration") continue;
-    const name = nodeName(statement.id);
-    if (name && (locals.has(name) || (statement.isExport === true && isHook(name)))) {
-      unhandled.push(`import ${name} = require(…)`);
-    }
+    collectImportEqualsHookBinding(statement, locals, unhandled, isHook);
   }
 
   return { locals, unhandled };
@@ -730,6 +774,36 @@ interface ModuleScopeDeclarationAnalysis {
   destructured: DestructuredModuleScopeDecl[];
 }
 
+function appendNamedModuleScopeDeclaration(statement: Node, decls: ModuleScopeDecl[]): void {
+  const id = statement.id;
+  const name = nodeName(id);
+  if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+}
+
+function analyzeModuleScopeDeclarator(
+  declarator: unknown,
+  statement: Node,
+  variableDecls: ModuleScopeDecl[],
+  destructured: DestructuredModuleScopeDecl[],
+): void {
+  if (!isNode(declarator)) return;
+  const id = declarator.id;
+  if (!isNode(id)) return;
+  const analysis = analyzeBindingPattern(id);
+  if (id.type !== "Identifier") {
+    destructured.push({
+      declarator,
+      bindingIds: analysis.bindingIds,
+      analysis,
+    });
+  }
+  if (analysis.hazards.size > 0) return;
+  const bindingIds = analysis.bindingIds;
+  const names = bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
+  if (names.length === 0 || names.length !== bindingIds.length) return;
+  variableDecls.push({ statement, declarator, names, bindingIds });
+}
+
 /**
  * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
  * whose bindings we could safely drop if nothing references them. Exported
@@ -744,9 +818,7 @@ function analyzeModuleScopeDeclarations(body: Node[]): ModuleScopeDeclarationAna
 
   for (const statement of body) {
     if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
-      const id = statement.id;
-      const name = nodeName(id);
-      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      appendNamedModuleScopeDeclaration(statement, decls);
       continue;
     }
 
@@ -754,9 +826,7 @@ function analyzeModuleScopeDeclarations(body: Node[]): ModuleScopeDeclarationAna
       statement.type === "TSImportEqualsDeclaration" && statement.isExport !== true &&
       !isErasedTypeNode(statement)
     ) {
-      const id = statement.id;
-      const name = nodeName(id);
-      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      appendNamedModuleScopeDeclaration(statement, decls);
       continue;
     }
 
@@ -766,22 +836,7 @@ function analyzeModuleScopeDeclarations(body: Node[]): ModuleScopeDeclarationAna
       for (
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
       ) {
-        if (!isNode(declarator)) continue;
-        const id = declarator.id;
-        if (!isNode(id)) continue;
-        const analysis = analyzeBindingPattern(id);
-        if (id.type !== "Identifier") {
-          destructured.push({
-            declarator,
-            bindingIds: analysis.bindingIds,
-            analysis,
-          });
-        }
-        if (analysis.hazards.size > 0) continue;
-        const bindingIds = analysis.bindingIds;
-        const names = bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
-        if (names.length === 0 || names.length !== bindingIds.length) continue;
-        variableDecls.push({ statement, declarator, names, bindingIds });
+        analyzeModuleScopeDeclarator(declarator, statement, variableDecls, destructured);
       }
 
       decls.push(...variableDecls);
@@ -888,6 +943,31 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
+  const visitArrayPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
+    for (const element of Array.isArray(pattern.elements) ? pattern.elements : []) {
+      if (isNode(element)) visitPatternRuntime(element, scopes);
+    }
+  };
+
+  const visitObjectPatternPropertyRuntime = (property: unknown, scopes: LexicalScope[]): void => {
+    if (!isNode(property)) return;
+    if (property.type === "RestElement") {
+      if (isNode(property.argument)) visitPatternRuntime(property.argument, scopes);
+      return;
+    }
+    if (property.type !== "ObjectProperty") {
+      visit(property, scopes);
+      return;
+    }
+    if (property.computed === true && isNode(property.key)) visit(property.key, scopes);
+    if (isNode(property.value)) visitPatternRuntime(property.value, scopes);
+  };
+
+  const visitAssignmentPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
+    if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes);
+    if (isNode(pattern.right)) visit(pattern.right, scopes);
+  };
+
   const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
     if (pattern.type === "Identifier") {
       visitDecorators(pattern, scopes);
@@ -901,8 +981,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
 
     if (pattern.type === "AssignmentPattern") {
-      if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes);
-      if (isNode(pattern.right)) visit(pattern.right, scopes);
+      visitAssignmentPatternRuntime(pattern, scopes);
       return;
     }
 
@@ -912,25 +991,13 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
 
     if (pattern.type === "ArrayPattern") {
-      for (const element of Array.isArray(pattern.elements) ? pattern.elements : []) {
-        if (isNode(element)) visitPatternRuntime(element, scopes);
-      }
+      visitArrayPatternRuntime(pattern, scopes);
       return;
     }
 
     if (pattern.type === "ObjectPattern") {
       for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
-        if (!isNode(property)) continue;
-        if (property.type === "RestElement") {
-          if (isNode(property.argument)) visitPatternRuntime(property.argument, scopes);
-          continue;
-        }
-        if (property.type !== "ObjectProperty") {
-          visit(property, scopes);
-          continue;
-        }
-        if (property.computed === true && isNode(property.key)) visit(property.key, scopes);
-        if (isNode(property.value)) visitPatternRuntime(property.value, scopes);
+        visitObjectPatternPropertyRuntime(property, scopes);
       }
       return;
     }
@@ -958,6 +1025,23 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
+  const visitFunctionBody = (
+    node: Node,
+    scopes: LexicalScope[],
+    functionScope: LexicalScope,
+  ): void => {
+    const body = node.body;
+    if (isNode(body)) {
+      if (Array.isArray(body.body)) {
+        for (const statement of body.body) {
+          if (isNode(statement)) visit(statement, [functionScope, ...scopes]);
+        }
+      } else {
+        visit(body, [functionScope, ...scopes]);
+      }
+    }
+  };
+
   const visitFunction = (node: Node, scopes: LexicalScope[]): void => {
     const functionScope: LexicalScope = { kind: "function", names: new Set() };
     if (node.type === "FunctionDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
@@ -973,16 +1057,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     bindDirectDeclarations(functionScope, isNode(node.body) ? node.body : node);
     if (isNode(node.body)) bindNestedVarDeclarations(functionScope, node.body);
 
-    const body = node.body;
-    if (isNode(body)) {
-      if (Array.isArray(body.body)) {
-        for (const statement of body.body) {
-          if (isNode(statement)) visit(statement, [functionScope, ...scopes]);
-        }
-      } else {
-        visit(body, [functionScope, ...scopes]);
-      }
-    }
+    visitFunctionBody(node, scopes, functionScope);
   };
 
   const visitObjectMember = (node: Node, scopes: LexicalScope[]): void => {
@@ -1021,168 +1096,188 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
-  const visit = (node: Node, scopes: LexicalScope[]): void => {
-    if (node.type === "ImportDeclaration") return;
-    // Same classification `referencedIdentifiers` uses. A value-emitting
-    // TypeScript node such as an enum or a namespace body falls through to the
-    // generic walk below, and its erased type operand is skipped there in turn.
-    if (isErasedTypeNode(node)) return;
-
-    if (node.type === "Identifier" || node.type === "JSXIdentifier") {
-      const name = nodeName(node);
-      if (name && !isLexicallyBound(name, scopes)) free.add(name);
-      return;
+  const visitLexicalBlock = (node: Node, scopes: LexicalScope[]): void => {
+    const scope: LexicalScope = { kind: "block", names: new Set() };
+    bindDirectDeclarations(scope, node);
+    for (const statement of Array.isArray(node.body) ? node.body : []) {
+      if (isNode(statement)) visit(statement, [scope, ...scopes]);
     }
+  };
 
+  const visitStaticBlock = (node: Node, scopes: LexicalScope[]): void => {
+    // A static block is its own var and lexical scope. Without this, a local
+    // declaration can bind the surrounding program scope and hide a later
+    // read of an imported binding with the same name.
+    const staticScope: LexicalScope = { kind: "function", names: new Set() };
+    bindDirectDeclarations(staticScope, node);
+    bindNestedVarDeclarations(staticScope, node);
+    for (const statement of Array.isArray(node.body) ? node.body : []) {
+      if (isNode(statement)) visit(statement, [staticScope, ...scopes]);
+    }
+  };
+
+  const visitEnumDeclaration = (node: Node, scopes: LexicalScope[]): void => {
+    bindPatternNames(scopes[0] ?? rootScope, node.id);
+    const container = isNode(node.body) ? node.body : node;
+    const members = Array.isArray(container.members) ? container.members : [];
+    // Member initialisers can name a preceding member without qualifying it,
+    // as in `enum Access { Read = 1, Both = Read }`. Those names resolve to
+    // the enum, not to module scope, so bind them in their own scope first:
+    // otherwise `Read` reads as free and the pass pulls an unrelated
+    // module-scope `Read` into the hook closure and deletes it.
+    const scope: LexicalScope = { kind: "block", names: new Set() };
+    for (const member of members) {
+      if (!isNode(member)) continue;
+      const memberId = isNode(member.id) ? member.id : undefined;
+      const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
+      if (memberName) scope.names.add(memberName);
+    }
+    for (const member of members) {
+      if (isNode(member) && isNode(member.initializer)) {
+        visit(member.initializer, [scope, ...scopes]);
+      }
+    }
+  };
+
+  const visitNamespaceDeclaration = (node: Node, scopes: LexicalScope[]): void => {
+    bindPatternNames(scopes[0] ?? rootScope, node.id);
+    // Every emitted namespace IIFE introduces its own binding scope. For a
+    // dotted declaration such as `namespace A.B`, B belongs to A's scope,
+    // not to the surrounding module.
+    const namespaceScope: LexicalScope = { kind: "function", names: new Set() };
+    bindPatternNames(namespaceScope, node.id);
+    if (isNode(node.body)) {
+      if (node.body.type === "TSModuleBlock") {
+        bindNestedVarDeclarations(namespaceScope, node.body);
+      }
+      visit(node.body, [namespaceScope, ...scopes]);
+    }
+  };
+
+  const visitClassDeclaration = (node: Node, scopes: LexicalScope[]): void => {
+    if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
+    visitDecorators(node, scopes);
+    if (isNode(node.superClass)) visit(node.superClass, scopes);
+    const classScope: LexicalScope = { kind: "block", names: new Set() };
+    bindPatternNames(classScope, node.id);
+    const body = node.body;
+    if (isNode(body)) visitChildren(body, [classScope, ...scopes]);
+  };
+
+  const visitCatchClause = (node: Node, scopes: LexicalScope[]): void => {
+    const scope: LexicalScope = { kind: "block", names: new Set() };
+    if (isNode(node.param)) {
+      visitPatternRuntime(node.param, [scope, ...scopes]);
+      bindPatternNames(scope, node.param);
+    }
+    if (isNode(node.body)) visit(node.body, [scope, ...scopes]);
+  };
+
+  const visitScopedStatement = (node: Node, scopes: LexicalScope[]): boolean => {
     if (
-      node.type === "Program" || node.type === "BlockStatement" ||
-      node.type === "TSModuleBlock"
+      node.type === "Program" || node.type === "BlockStatement" || node.type === "TSModuleBlock"
     ) {
-      const scope: LexicalScope = { kind: "block", names: new Set() };
-      bindDirectDeclarations(scope, node);
-      for (const statement of Array.isArray(node.body) ? node.body : []) {
-        if (isNode(statement)) visit(statement, [scope, ...scopes]);
-      }
-      return;
+      visitLexicalBlock(node, scopes);
+      return true;
     }
-
     if (node.type === "StaticBlock") {
-      // A static block is its own var and lexical scope. Without this, a local
-      // declaration can bind the surrounding program scope and hide a later
-      // read of an imported binding with the same name.
-      const staticScope: LexicalScope = { kind: "function", names: new Set() };
-      bindDirectDeclarations(staticScope, node);
-      bindNestedVarDeclarations(staticScope, node);
-      for (const statement of Array.isArray(node.body) ? node.body : []) {
-        if (isNode(statement)) visit(statement, [staticScope, ...scopes]);
-      }
-      return;
+      visitStaticBlock(node, scopes);
+      return true;
     }
-
     if (node.type === "VariableDeclaration") {
       visitVariableDeclaration(node, scopes);
-      return;
+      return true;
     }
-
     if (
       node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
       node.type === "ArrowFunctionExpression"
     ) {
       visitFunction(node, scopes);
-      return;
+      return true;
     }
+    return false;
+  };
 
-    // A runtime TypeScript declaration binds its own name and, for an enum,
-    // names its members. Only the initialisers read anything, so descending
-    // blindly would report `enum Level { Low }` as a read of an unrelated
-    // module-scope `Low` and let the pass delete it.
+  const visitRuntimeDeclaration = (node: Node, scopes: LexicalScope[]): boolean => {
     if (node.type === "TSEnumDeclaration") {
-      bindPatternNames(scopes[0] ?? rootScope, node.id);
-      const container = isNode(node.body) ? node.body : node;
-      const members = Array.isArray(container.members) ? container.members : [];
-      // Member initialisers can name a preceding member without qualifying it,
-      // as in `enum Access { Read = 1, Both = Read }`. Those names resolve to
-      // the enum, not to module scope, so bind them in their own scope first:
-      // otherwise `Read` reads as free and the pass pulls an unrelated
-      // module-scope `Read` into the hook closure and deletes it.
-      const scope: LexicalScope = { kind: "block", names: new Set() };
-      for (const member of members) {
-        if (!isNode(member)) continue;
-        const memberId = isNode(member.id) ? member.id : undefined;
-        const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
-        if (memberName) scope.names.add(memberName);
-      }
-      for (const member of members) {
-        if (isNode(member) && isNode(member.initializer)) {
-          visit(member.initializer, [scope, ...scopes]);
-        }
-      }
-      return;
+      visitEnumDeclaration(node, scopes);
+      return true;
     }
-
     if (node.type === "TSModuleDeclaration") {
-      bindPatternNames(scopes[0] ?? rootScope, node.id);
-      // Every emitted namespace IIFE introduces its own binding scope. For a
-      // dotted declaration such as `namespace A.B`, B belongs to A's scope,
-      // not to the surrounding module.
-      const namespaceScope: LexicalScope = { kind: "function", names: new Set() };
-      bindPatternNames(namespaceScope, node.id);
-      if (isNode(node.body)) {
-        if (node.body.type === "TSModuleBlock") {
-          bindNestedVarDeclarations(namespaceScope, node.body);
-        }
-        visit(node.body, [namespaceScope, ...scopes]);
-      }
-      return;
+      visitNamespaceDeclaration(node, scopes);
+      return true;
     }
-
     if (node.type === "TSImportEqualsDeclaration") {
       bindPatternNames(scopes[0] ?? rootScope, node.id);
       if (isNode(node.moduleReference)) visit(node.moduleReference, scopes);
-      return;
+      return true;
     }
-
     // `import Alias = NS.Sub`: only `NS` is a read, `Sub` is a fixed name.
     if (node.type === "TSQualifiedName") {
       if (isNode(node.left)) visit(node.left, scopes);
-      return;
+      return true;
     }
-
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
-      if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
-      visitDecorators(node, scopes);
-      if (isNode(node.superClass)) visit(node.superClass, scopes);
-      const classScope: LexicalScope = { kind: "block", names: new Set() };
-      bindPatternNames(classScope, node.id);
-      const body = node.body;
-      if (isNode(body)) visitChildren(body, [classScope, ...scopes]);
-      return;
+      visitClassDeclaration(node, scopes);
+      return true;
     }
+    return false;
+  };
 
+  const visitControlStatement = (node: Node, scopes: LexicalScope[]): boolean => {
     if (node.type === "CatchClause") {
-      const scope: LexicalScope = { kind: "block", names: new Set() };
-      if (isNode(node.param)) {
-        visitPatternRuntime(node.param, [scope, ...scopes]);
-        bindPatternNames(scope, node.param);
-      }
-      if (isNode(node.body)) visit(node.body, [scope, ...scopes]);
-      return;
+      visitCatchClause(node, scopes);
+      return true;
     }
-
     if (
       node.type === "ForStatement" || node.type === "ForInStatement" ||
       node.type === "ForOfStatement"
     ) {
       visitFor(node, scopes);
-      return;
+      return true;
     }
-
     if (node.type === "SwitchStatement") {
       visitSwitch(node, scopes);
-      return;
+      return true;
     }
+    return false;
+  };
 
+  const visitRuntimeMember = (node: Node, scopes: LexicalScope[]): boolean => {
     if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
       if (isNode(node.object)) visit(node.object, scopes);
       if (node.computed === true && isNode(node.property)) visit(node.property, scopes);
-      return;
+      return true;
     }
-
     if (
       node.type === "ObjectProperty" || node.type === "ClassProperty" ||
       node.type === "ClassAccessorProperty"
     ) {
       visitObjectMember(node, scopes);
-      return;
+      return true;
     }
-
     if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
       visitDecorators(node, scopes);
       if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
       visitFunction(node, scopes);
+      return true;
+    }
+    return false;
+  };
+
+  const visit = (node: Node, scopes: LexicalScope[]): void => {
+    if (node.type === "ImportDeclaration") return;
+    // Runtime TypeScript declarations remain visible; only erased type operands are skipped.
+    if (isErasedTypeNode(node)) return;
+    if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+      const name = nodeName(node);
+      if (name && !isLexicallyBound(name, scopes)) free.add(name);
       return;
     }
-
+    if (visitScopedStatement(node, scopes)) return;
+    if (visitRuntimeDeclaration(node, scopes)) return;
+    if (visitControlStatement(node, scopes)) return;
+    if (visitRuntimeMember(node, scopes)) return;
     visitChildren(node, scopes);
   };
 
@@ -1262,7 +1357,7 @@ function stringLiteralText(node: Node | undefined): string | null {
 }
 
 function isObjectDefineProperty(node: Node | undefined): boolean {
-  if (!node || node.type !== "MemberExpression") return false;
+  if (node?.type !== "MemberExpression") return false;
   return nodeName(node.object) === "Object" &&
     literalText(isNode(node.property) ? node.property : undefined) === "defineProperty";
 }
@@ -1289,20 +1384,43 @@ function isTrueExpression(node: Node | undefined): boolean {
     isNode(node.argument) && node.argument.value === 0;
 }
 
+interface NameDescriptorFlags {
+  hasValue: boolean;
+  configurable: boolean;
+}
+
+function readNameDescriptorProperty(
+  property: unknown,
+  valueParam: string,
+  flags: NameDescriptorFlags,
+): void {
+  if (!isNode(property) || property.type !== "ObjectProperty") return;
+  const key = literalText(isNode(property.key) ? property.key : undefined);
+  const value = isNode(property.value) ? property.value : undefined;
+  if (key === "value" && nodeName(value) === valueParam) flags.hasValue = true;
+  if (key === "configurable" && isTrueExpression(value)) flags.configurable = true;
+}
+
 function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
-  if (!node || node.type !== "ObjectExpression") return false;
+  if (node?.type !== "ObjectExpression") return false;
 
-  let hasValue = false;
-  let configurable = false;
+  const flags: NameDescriptorFlags = { hasValue: false, configurable: false };
   for (const property of Array.isArray(node.properties) ? node.properties : []) {
-    if (!isNode(property) || property.type !== "ObjectProperty") continue;
-    const key = literalText(isNode(property.key) ? property.key : undefined);
-    const value = isNode(property.value) ? property.value : undefined;
-    if (key === "value" && nodeName(value) === valueParam) hasValue = true;
-    if (key === "configurable" && isTrueExpression(value)) configurable = true;
+    readNameDescriptorProperty(property, valueParam, flags);
   }
+  return flags.hasValue && flags.configurable;
+}
 
-  return hasValue && configurable;
+function recordModuleBindingInitializer(
+  declarator: unknown,
+  initializers: Map<string, Node[]>,
+): void {
+  if (!isNode(declarator) || !isNode(declarator.init)) return;
+  const name = nodeName(declarator.id);
+  if (!name) return;
+  const existing = initializers.get(name);
+  if (existing) existing.push(declarator.init);
+  else initializers.set(name, [declarator.init]);
 }
 
 /**
@@ -1317,12 +1435,7 @@ function moduleBindingInitializers(body: Node[]): Map<string, Node[]> {
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
-      if (!isNode(declarator) || !isNode(declarator.init)) continue;
-      const name = nodeName(declarator.id);
-      if (!name) continue;
-      const existing = initializers.get(name);
-      if (existing) existing.push(declarator.init);
-      else initializers.set(name, [declarator.init]);
+      recordModuleBindingInitializer(declarator, initializers);
     }
   }
   return initializers;
@@ -1431,6 +1544,37 @@ function compilerNameHelpersWithDuplicateDefinePropertyAliases(body: Node[]): Ma
   return helpers;
 }
 
+interface CompilerNameAmbiguityCandidate {
+  target: Node;
+  targetName: string;
+  reason: string;
+}
+
+function compilerNameAmbiguityCandidate(
+  statement: Node,
+  duplicates: Set<string>,
+  duplicateAliases: Map<string, string>,
+): CompilerNameAmbiguityCandidate | undefined {
+  if (statement.type !== "ExpressionStatement" || !isNode(statement.expression)) return undefined;
+  const expression = statement.expression;
+  if (expression.type !== "CallExpression" || !isNode(expression.callee)) return undefined;
+  const calleeName = nodeName(expression.callee);
+  if (!calleeName) return undefined;
+  const duplicateAlias = duplicateAliases.get(calleeName);
+  if (!duplicates.has(calleeName) && duplicateAlias === undefined) return undefined;
+
+  const args = Array.isArray(expression.arguments) ? expression.arguments.filter(isNode) : [];
+  const target = args[0];
+  const targetName = nodeName(target);
+  if (!target || args.length !== 2 || !targetName || stringLiteralText(args[1]) === null) {
+    return undefined;
+  }
+  const reason = duplicateAlias === undefined
+    ? `compiler name helper \`${calleeName}\` is declared more than once`
+    : `compiler name helper \`${calleeName}\` uses defineProperty alias \`${duplicateAlias}\` declared more than once`;
+  return { target, targetName, reason };
+}
+
 function failOnAmbiguousCompilerNameHelperDuplicates(
   body: Node[],
   hookClosure: Set<string>,
@@ -1440,41 +1584,20 @@ function failOnAmbiguousCompilerNameHelperDuplicates(
   const duplicateAliases = compilerNameHelpersWithDuplicateDefinePropertyAliases(body);
   if (duplicates.size === 0 && duplicateAliases.size === 0) return;
 
-  const candidates: Array<{
-    target: Node;
-    targetName: string;
-    reason: string;
-  }> = [];
+  const candidates: CompilerNameAmbiguityCandidate[] = [];
   for (const statement of body) {
-    if (statement.type !== "ExpressionStatement" || !isNode(statement.expression)) continue;
-    const expression = statement.expression;
-    if (expression.type !== "CallExpression" || !isNode(expression.callee)) continue;
-    const calleeName = nodeName(expression.callee);
-    if (!calleeName) continue;
-    const duplicateAlias = duplicateAliases.get(calleeName);
-    if (!duplicates.has(calleeName) && duplicateAlias === undefined) continue;
-
-    const args = Array.isArray(expression.arguments) ? expression.arguments.filter(isNode) : [];
-    const target = args[0];
-    const targetName = nodeName(target);
-    if (!target || args.length !== 2 || !targetName || stringLiteralText(args[1]) === null) {
-      continue;
-    }
-    const reason = duplicateAlias === undefined
-      ? `compiler name helper \`${calleeName}\` is declared more than once`
-      : `compiler name helper \`${calleeName}\` uses defineProperty alias \`${duplicateAlias}\` declared more than once`;
-    candidates.push({ target, targetName, reason });
+    const candidate = compilerNameAmbiguityCandidate(statement, duplicates, duplicateAliases);
+    if (candidate) candidates.push(candidate);
   }
   if (candidates.length === 0) return;
 
   const excluded = new WeakSet<Node>();
   const scopeDeclarations = analyzeModuleScopeDeclarations(body);
-  for (const decl of scopeDeclarations.declarations) {
-    for (const id of decl.bindingIds) excluded.add(id);
-  }
-  for (const decl of scopeDeclarations.destructured) {
-    for (const id of decl.bindingIds) excluded.add(id);
-  }
+  excludeModuleScopeBindingPositions(
+    excluded,
+    scopeDeclarations.declarations,
+    scopeDeclarations.destructured,
+  );
   for (const registration of compilerNameRegistrations(body)) excluded.add(registration.target);
   for (const candidate of candidates) excluded.add(candidate.target);
   const referenced = referencedIdentifiers(body, excluded);
@@ -1675,6 +1798,129 @@ export const browserServerExportsStripInternals = Object.freeze({
   },
 });
 
+function excludeModuleScopeBindingPositions(
+  excluded: WeakSet<Node>,
+  decls: ModuleScopeDecl[],
+  destructured: DestructuredModuleScopeDecl[],
+): void {
+  for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
+  for (const decl of destructured) for (const id of decl.bindingIds) excluded.add(id);
+}
+
+function moduleScopeDestructuringDecisions(
+  destructured: DestructuredModuleScopeDecl[],
+  referenced: Set<string>,
+  hookClosure: Set<string>,
+  trustedBindings: Set<string>,
+  pinned: Set<string>,
+  filePath: string | undefined,
+): Map<Node, DestructuringDisposition> {
+  const destructuringDecisions = new Map<Node, DestructuringDisposition>();
+  for (const decl of destructured) {
+    const disposition = decideDestructuringDisposition({
+      analysis: decl.analysis,
+      clientReferences: referenced,
+      hookClosure,
+      initializerIsKnownServer: isKnownServerInitializer(
+        isNode(decl.declarator.init) ? decl.declarator.init : undefined,
+        trustedBindings,
+      ),
+      pinned,
+    });
+    if (disposition === "reject-initializer" || disposition === "reject-pattern") {
+      throwUnsafeServerDestructuring(
+        disposition,
+        filePath,
+        decl.analysis.bindingIds.map(nodeName).filter(
+          (name): name is string => Boolean(name),
+        ),
+      );
+    }
+    destructuringDecisions.set(decl.declarator, disposition);
+  }
+
+  return destructuringDecisions;
+}
+
+interface ModuleScopeRemovalPlan {
+  removableStatements: Set<Node>;
+  removableDeclarators: Map<Node, Set<Node>>;
+  removedDecls: ModuleScopeDecl[];
+}
+
+function markRemovableModuleScopeDeclaration(
+  decl: ModuleScopeDecl,
+  nameRegistrations: CompilerNameRegistration[],
+  plan: ModuleScopeRemovalPlan,
+): void {
+  plan.removedDecls.push(decl);
+  for (const registration of nameRegistrations) {
+    if (decl.names.includes(registration.targetName)) {
+      plan.removableStatements.add(registration.statement);
+    }
+  }
+  if (!decl.declarator) {
+    plan.removableStatements.add(decl.statement);
+    return;
+  }
+
+  const statementDeclarators = Array.isArray(decl.statement.declarations)
+    ? decl.statement.declarations.filter(isNode)
+    : [];
+  let statementRemoval = plan.removableDeclarators.get(decl.statement);
+  if (!statementRemoval) {
+    statementRemoval = new Set();
+    plan.removableDeclarators.set(decl.statement, statementRemoval);
+  }
+  statementRemoval.add(decl.declarator);
+
+  if (
+    statementDeclarators.length > 0 &&
+    statementDeclarators.every((declarator) => statementRemoval?.has(declarator))
+  ) {
+    plan.removableStatements.add(decl.statement);
+    plan.removableDeclarators.delete(decl.statement);
+  }
+}
+
+function planModuleScopeRemovals(
+  decls: ModuleScopeDecl[],
+  destructuringDecisions: Map<Node, DestructuringDisposition>,
+  hookClosure: Set<string>,
+  referenced: Set<string>,
+  pinned: Set<string>,
+  nameRegistrations: CompilerNameRegistration[],
+): ModuleScopeRemovalPlan {
+  const plan: ModuleScopeRemovalPlan = {
+    removableStatements: new Set<Node>(),
+    removableDeclarators: new Map<Node, Set<Node>>(),
+    removedDecls: [],
+  };
+  for (const decl of decls) {
+    const destructuringDecision = decl.declarator === undefined
+      ? undefined
+      : destructuringDecisions.get(decl.declarator);
+    const inClosure = destructuringDecision === undefined
+      ? decl.names.every((name) => hookClosure.has(name))
+      : destructuringDecision === "remove";
+    const unused = decl.names.every((name) => !referenced.has(name) && !pinned.has(name));
+    if (!inClosure || !unused) continue;
+
+    markRemovableModuleScopeDeclaration(decl, nameRegistrations, plan);
+  }
+  return plan;
+}
+
+function removeMarkedModuleDeclarators(removableDeclarators: Map<Node, Set<Node>>): void {
+  for (const [statement, declarators] of removableDeclarators) {
+    const declarations = statement.declarations;
+    if (!Array.isArray(declarations)) continue;
+    statement.declarations = declarations.filter((declarator) => {
+      return !isNode(declarator) || !declarators.has(declarator);
+    });
+  }
+}
+
 /**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
@@ -1704,8 +1950,7 @@ function dropUnusedModuleScopeBindings(
     failOnAmbiguousCompilerNameHelperDuplicates(current, hookClosure, filePath);
 
     const excluded = new WeakSet<Node>();
-    for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
-    for (const decl of destructured) for (const id of decl.bindingIds) excluded.add(id);
+    excludeModuleScopeBindingPositions(excluded, decls, destructured);
 
     // Esbuild's generated name-registration call is metadata for a declaration,
     // not an independent browser consumer of it. Ignore that target reference
@@ -1715,72 +1960,23 @@ function dropUnusedModuleScopeBindings(
     for (const registration of nameRegistrations) excluded.add(registration.target);
 
     const referenced = referencedIdentifiers(current, excluded);
-    const destructuringDecisions = new Map<Node, DestructuringDisposition>();
-    for (const decl of destructured) {
-      const disposition = decideDestructuringDisposition({
-        analysis: decl.analysis,
-        clientReferences: referenced,
-        hookClosure,
-        initializerIsKnownServer: isKnownServerInitializer(
-          isNode(decl.declarator.init) ? decl.declarator.init : undefined,
-          trustedBindings,
-        ),
-        pinned,
-      });
-      if (disposition === "reject-initializer" || disposition === "reject-pattern") {
-        throwUnsafeServerDestructuring(
-          disposition,
-          filePath,
-          decl.analysis.bindingIds.map(nodeName).filter(
-            (name): name is string => Boolean(name),
-          ),
-        );
-      }
-      destructuringDecisions.set(decl.declarator, disposition);
-    }
+    const destructuringDecisions = moduleScopeDestructuringDecisions(
+      destructured,
+      referenced,
+      hookClosure,
+      trustedBindings,
+      pinned,
+      filePath,
+    );
 
-    const removableStatements = new Set<Node>();
-    const removableDeclarators = new Map<Node, Set<Node>>();
-    const removedDecls: ModuleScopeDecl[] = [];
-    for (const decl of decls) {
-      const destructuringDecision = decl.declarator === undefined
-        ? undefined
-        : destructuringDecisions.get(decl.declarator);
-      const inClosure = destructuringDecision === undefined
-        ? decl.names.every((name) => hookClosure.has(name))
-        : destructuringDecision === "remove";
-      const unused = decl.names.every((name) => !referenced.has(name) && !pinned.has(name));
-      if (!inClosure || !unused) continue;
-
-      removedDecls.push(decl);
-      for (const registration of nameRegistrations) {
-        if (decl.names.includes(registration.targetName)) {
-          removableStatements.add(registration.statement);
-        }
-      }
-      if (!decl.declarator) {
-        removableStatements.add(decl.statement);
-        continue;
-      }
-
-      const statementDeclarators = Array.isArray(decl.statement.declarations)
-        ? decl.statement.declarations.filter(isNode)
-        : [];
-      let statementRemoval = removableDeclarators.get(decl.statement);
-      if (!statementRemoval) {
-        statementRemoval = new Set();
-        removableDeclarators.set(decl.statement, statementRemoval);
-      }
-      statementRemoval.add(decl.declarator);
-
-      if (
-        statementDeclarators.length > 0 &&
-        statementDeclarators.every((declarator) => statementRemoval?.has(declarator))
-      ) {
-        removableStatements.add(decl.statement);
-        removableDeclarators.delete(decl.statement);
-      }
-    }
+    const { removableStatements, removableDeclarators, removedDecls } = planModuleScopeRemovals(
+      decls,
+      destructuringDecisions,
+      hookClosure,
+      referenced,
+      pinned,
+      nameRegistrations,
+    );
     if (removedDecls.length === 0) return current;
 
     // Grow the closure through the removed declarations' initialisers, so a
@@ -1792,13 +1988,7 @@ function dropUnusedModuleScopeBindings(
       }
     }
 
-    for (const [statement, declarators] of removableDeclarators) {
-      const declarations = statement.declarations;
-      if (!Array.isArray(declarations)) continue;
-      statement.declarations = declarations.filter((declarator) => {
-        return !isNode(declarator) || !declarators.has(declarator);
-      });
-    }
+    removeMarkedModuleDeclarators(removableDeclarators);
 
     current = current.filter((statement) => !removableStatements.has(statement));
   }
