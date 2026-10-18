@@ -6,12 +6,12 @@ const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isCanonicalKnowledgePath(path: string): boolean {
-  return path.startsWith("knowledge/") &&
+  return path.length > 0 && path.length <= 1024 &&
+    new TextEncoder().encode(path).length <= 1024 && path.split("/").length <= 64 &&
+    path === path.normalize("NFC") && !/[\\<>:"|?*\x00-\x1f\x7f]/.test(path) &&
     path.split("/").every((part) =>
-      part.length > 0 && part !== "." && part !== ".." &&
-      ![...part].some((character) =>
-        character === "\\" || character === ":" || character.charCodeAt(0) < 32
-      )
+      part.length > 0 && part !== "." && part !== ".." && !/[. ]$/.test(part) &&
+      !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)
     );
 }
 
@@ -39,9 +39,9 @@ export async function putBinaryKnowledgeAsset(input: {
     throw new Error("Binary assets require an existing branch UUID or name");
   }
   if (
-    !isCanonicalKnowledgePath(input.path)
+    !isCanonicalKnowledgePath(input.path) || /\.(?:md|mdx|tsx?|jsx?|json|ya?ml)$/i.test(input.path)
   ) {
-    throw new Error("Binary assets require a canonical knowledge path");
+    throw new Error("Binary assets require a canonical non-source companion path");
   }
   if (input.expected.kind === "version" && !UUID.test(input.expected.versionId)) {
     throw new Error("Binary asset updates require an expected version UUID");
@@ -103,7 +103,7 @@ export async function readKnowledgeBundle(input: {
   }
   const root = input.rootPath;
   if (
-    root !== "knowledge" && !isCanonicalKnowledgePath(root)
+    !isCanonicalKnowledgePath(root)
   ) {
     throw new Error("Bundle export requires a canonical knowledge root");
   }

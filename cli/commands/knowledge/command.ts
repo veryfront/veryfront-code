@@ -28,7 +28,12 @@ import {
   type IndexKnowledgeDocumentInput,
 } from "./indexing.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
-import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
+import {
+  isOkfTextCompanionPath,
+  type KnowledgeParserResult,
+  runKnowledgeParser,
+  validateOkfTextCompanionBytes,
+} from "./parser.ts";
 import {
   buildKnowledgeIngestRunResult,
   type KnowledgeIngestFailedFileResult,
@@ -831,6 +836,15 @@ export async function ingestResolvedSources(
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
     : new Set<string>();
+  for (const source of sources) {
+    const relativePath = okfRelativePaths.get(source);
+    if (
+      relativePath && okfCompanionPaths.has(relativePath) && isOkfTextCompanionPath(relativePath)
+    ) {
+      deps.signal?.throwIfAborted();
+      validateOkfTextCompanionBytes(relativePath, await Deno.readFile(source.localPath));
+    }
+  }
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];

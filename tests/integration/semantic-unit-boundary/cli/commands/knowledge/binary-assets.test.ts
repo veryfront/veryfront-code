@@ -57,6 +57,54 @@ it("publishes exact non-UTF8 bytes with scoped CAS and verified identity", async
   }
 });
 
+it("publishes binary companions at existing custom knowledge destinations", async () => {
+  const localPath = await Deno.makeTempFile();
+  const bytes = new Uint8Array([0xff, 0xfe, 0, 0x80, 13, 10]);
+  await Deno.writeFile(localPath, bytes);
+  const hash = await hashAssetBytes(bytes);
+  let calls = 0;
+  const client = createApiClient({
+    apiUrl: "https://api.example.test",
+    apiToken: "test",
+    projectSlug: "project",
+  }, async (url, init) => {
+    calls++;
+    assertEquals(
+      String(url),
+      `https://api.example.test/projects/project/knowledge/assets/docs%2Fimports%2Facme%2Ftest.bin?branch_id=${ID}`,
+    );
+    assertEquals(init?.body, bytes);
+    assertEquals(init?.redirect, "error");
+    const headers = new Headers(init?.headers);
+    assertEquals(headers.get("content-type"), "application/octet-stream");
+    assertEquals(headers.get("x-vf-content-sha256"), hash);
+    assertEquals(headers.get("x-vf-expected-absent"), "true");
+    return Response.json({
+      file_id: ID,
+      file_version_id: ID,
+      path: "docs/imports/acme/test.bin",
+      byte_size: bytes.length,
+      content_hash: hash,
+      content_type: "application/octet-stream",
+    });
+  });
+  try {
+    const receipt = await putBinaryKnowledgeAsset({
+      client,
+      project: "project",
+      path: "docs/imports/acme/test.bin",
+      localPath,
+      branch: ID,
+      expected: { kind: "absent" },
+    });
+    assertEquals(receipt.version_id, ID);
+    assertEquals(receipt.checksum, hash);
+    assertEquals(calls, 1);
+  } finally {
+    await Deno.remove(localPath);
+  }
+});
+
 it("does not retry ambiguous binary writes and honors cancellation", async () => {
   const localPath = await Deno.makeTempFile();
   await Deno.writeFile(localPath, new Uint8Array([0xff]));
@@ -95,23 +143,23 @@ it("does not retry ambiguous binary writes and honors cancellation", async () =>
   }
 });
 
-it("exports BOM Markdown and binary companions with exact bytes and scoped immutable reads", async () => {
+it("exports custom-root BOM Markdown and binary companions with scoped immutable reads", async () => {
   const text = "\ufeff---\r\ntype: Concept\r\ncustom: preserved\r\n---\r\n![asset](image.bin)\r\n";
   const raw = new Uint8Array([0, 255, 254, 128]);
   const textBytes = new TextEncoder().encode(text);
   const hash = await hashAssetBytes(raw);
   const contentPath =
-    `/projects/${ID}/knowledge/assets/knowledge%2Fbundle%2Fimage.bin?branch_id=${ID}&file_version_id=${ID}&content_hash=${hash}`;
+    `/projects/${ID}/knowledge/assets/docs%2Fimports%2Facme%2Fimage.bin?branch_id=${ID}&file_version_id=${ID}&content_hash=${hash}`;
   const manifest = {
     project_id: ID,
-    root_path: "knowledge/bundle",
+    root_path: "docs/imports/acme",
     selector: { type: "preview_branch", id: ID },
     file_count: 2,
     total_bytes: textBytes.length + raw.length,
     files: [
       {
         kind: "text",
-        path: "knowledge/bundle/topic.md",
+        path: "docs/imports/acme/topic.md",
         file_id: ID,
         file_version_id: ID,
         byte_size: textBytes.length,
@@ -120,7 +168,7 @@ it("exports BOM Markdown and binary companions with exact bytes and scoped immut
       },
       {
         kind: "binary",
-        path: "knowledge/bundle/image.bin",
+        path: "docs/imports/acme/image.bin",
         file_id: ID,
         file_version_id: ID,
         byte_size: raw.length,
@@ -146,7 +194,7 @@ it("exports BOM Markdown and binary companions with exact bytes and scoped immut
   const files = await readKnowledgeBundle({
     client,
     project: ID,
-    rootPath: "knowledge/bundle",
+    rootPath: "docs/imports/acme",
     scope: { kind: "branch", branchId: ID },
   });
   assertEquals(files.map((file) => file.bytes), [textBytes, raw]);
@@ -157,7 +205,7 @@ it("exports BOM Markdown and binary companions with exact bytes and scoped immut
   const relativeFiles = await readKnowledgeBundle({
     client,
     project: ID,
-    rootPath: "knowledge/bundle",
+    rootPath: "docs/imports/acme",
     scope: { kind: "branch", branchId: ID },
   });
   assertEquals(relativeFiles[1]?.bytes, raw);
@@ -170,7 +218,7 @@ it("exports BOM Markdown and binary companions with exact bytes and scoped immut
       readKnowledgeBundle({
         client,
         project: ID,
-        rootPath: "knowledge/bundle",
+        rootPath: "docs/imports/acme",
         scope: { kind: "branch", branchId: ID },
       }),
     Error,

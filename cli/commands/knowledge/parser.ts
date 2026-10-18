@@ -233,6 +233,14 @@ function validateOkfCompanionRelativePath(path: string): string {
   return validateOkfBundleRelativePath(path);
 }
 
+export function isOkfTextCompanionPath(path: string): boolean {
+  return /\.(?:md|mdx|tsx?|jsx?|json|ya?ml)$/i.test(path);
+}
+
+export function validateOkfTextCompanionBytes(path: string, bytes: Uint8Array): void {
+  decodeOkfUtf8(path, bytes);
+}
+
 function decodeOkfUtf8(relativePath: string, bytes: Uint8Array): string {
   let decoded: string;
   try {
@@ -285,6 +293,7 @@ async function preserveOkfCompanion(input: {
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
+  if (isOkfTextCompanionPath(relativePath)) validateOkfTextCompanionBytes(relativePath, bytes);
   if (relativePath.toLowerCase().endsWith(".md")) {
     const source = decodeOkfUtf8(relativePath, bytes);
     const inspected = inspectOkfDocument(relativePath, source);
@@ -305,7 +314,7 @@ async function preserveOkfCompanion(input: {
     source_path: input.filePath,
     source_filename: basename(input.filePath),
     source_type: "okf_companion",
-    storage_kind: relativePath.toLowerCase().endsWith(".md") ? undefined : "binary",
+    storage_kind: isOkfTextCompanionPath(relativePath) ? undefined : "binary",
     slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
     sandbox_output_path: outputPath,
     suggested_project_path: `knowledge/${relativePath}`,

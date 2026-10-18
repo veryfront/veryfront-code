@@ -2352,6 +2352,95 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
   }
 });
 
+it("preserves structured UTF-8 companions at custom destinations and preflights protected bytes", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-companions-" });
+  const outputDir = join(root, "output");
+  const bundle = join(root, "bundle");
+  const files = new Map([
+    [
+      "topic.md",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\n    id: scripts/orphan.js\n    label: viz.html\n    description: viz.html\nattester:\n  resource: references/check.json\n  id: scripts/orphan.js\n  description: viz.html\n---\nRevenue\n",
+    ],
+    ["scripts/revenue.js", "export const revenue = 42;\r\n"],
+    ["bin/run", "#!/bin/sh\necho run\n"],
+    ["references/check.json", '{"ok":true}\n'],
+    ["references/schema.json", '\ufeff{"type":"object"}\r\n'],
+    ["references/raw.json", '{"value":42}\n'],
+  ]);
+  try {
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+    await Deno.writeTextFile(join(bundle, "viz.html"), "<html>viewer</html>");
+    await Deno.writeTextFile(join(bundle, "scripts", "orphan.js"), "export {};\n");
+    const options = createKnowledgeCommandArgs({
+      path: bundle,
+      all: true,
+      okfBundle: true,
+      knowledgePath: "docs/imports/acme",
+    });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      [
+        "bin/run",
+        "references/check.json",
+        "references/raw.json",
+        "references/schema.json",
+        "scripts/revenue.js",
+        "topic.md",
+      ],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["scripts/orphan.js", "viz.html"],
+    );
+    const uploaded = new Map<string, string>();
+    const result = await ingestResolvedSources(collection.sources, options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      outputDir,
+      runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+      uploadKnowledgeFile: async (remotePath, localPath, _metadata, storageKind) => {
+        if (/\.(?:js|json)$/.test(remotePath)) assertEquals(storageKind, undefined);
+        uploaded.set(remotePath, await Deno.readTextFile(localPath));
+        return { path: remotePath };
+      },
+    });
+    assertEquals(result.failed, []);
+    assertEquals(
+      [...uploaded].sort(),
+      [...files].map(([path, content]) => [`docs/imports/acme/${path}`, content]).sort(),
+    );
+    await Deno.writeFile(join(bundle, "references/schema.json"), new Uint8Array([255]));
+    let writes = 0;
+    await assertRejects(
+      () =>
+        ingestResolvedSources(collection.sources, options, {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir,
+          runParser: runKnowledgeParser,
+          uploadKnowledgeFile: async () => {
+            writes++;
+            return { path: "unexpected" };
+          },
+        }),
+      Error,
+      "UTF-8",
+    );
+    assertEquals(writes, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 it("preserves root-relative attester resources referenced from nested computations", async () => {
   const root = await makeTempDir({ prefix: "veryfront-okf-root-attester-" });
   const bundle = join(root, "bundle");
