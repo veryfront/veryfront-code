@@ -454,6 +454,18 @@ function createHostedProjectRemoteToolSourceFromConfig(
   const allowedNames = input.activatedRemoteToolNames !== undefined
     ? input.activatedRemoteToolNames
     : input.allowedToolNames;
+  const runtimeHookOptions = () => ({
+    ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
+    ...(input.retryToolName !== undefined ? { retryToolName: input.retryToolName } : {}),
+    ...(input.shouldRetryWithTool !== undefined
+      ? { shouldRetryWithTool: input.shouldRetryWithTool }
+      : {}),
+    ...(input.steeringPaths !== undefined ? { steeringPaths: input.steeringPaths } : {}),
+    ...(input.onSteeringMutation !== undefined
+      ? { onSteeringMutation: input.onSteeringMutation }
+      : {}),
+    ...(onProjectSwitch !== undefined ? { onProjectSwitch } : {}),
+  });
   const hostedSource = createHostedProjectRemoteToolSource({
     source: policySource,
     ...(input.defaultProjectId !== undefined ? { defaultProjectId: input.defaultProjectId } : {}),
@@ -487,16 +499,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
         },
       }
       : {}),
-    ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
-    ...(input.retryToolName !== undefined ? { retryToolName: input.retryToolName } : {}),
-    ...(input.shouldRetryWithTool !== undefined
-      ? { shouldRetryWithTool: input.shouldRetryWithTool }
-      : {}),
-    ...(input.steeringPaths !== undefined ? { steeringPaths: input.steeringPaths } : {}),
-    ...(input.onSteeringMutation !== undefined
-      ? { onSteeringMutation: input.onSteeringMutation }
-      : {}),
-    ...(onProjectSwitch !== undefined ? { onProjectSwitch } : {}),
+    ...runtimeHookOptions(),
   });
   if (!isPlatform) return hostedSource;
   const platformSource = createLivePlatformMcpSource(hostedSource);
