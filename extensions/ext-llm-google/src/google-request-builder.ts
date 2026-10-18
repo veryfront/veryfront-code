@@ -1,4 +1,11 @@
-import { jsonValuesEqual, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
+import {
+  isImageFileInput,
+  jsonValuesEqual,
+  readInlineFileData,
+  readRecord,
+  unsupportedFileInputError,
+  unwrapToolInputSchema,
+} from "veryfront/provider/shared";
 import type {
   ModelRuntimeCallOptions,
   ModelRuntimePromptMessage,
@@ -632,6 +639,14 @@ function toGoogleContents(
   };
 }
 
+/** A URI the Gemini Files API returned; Gemini reads any supported type from it. */
+function isGeminiFileUri(url: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const { protocol, hostname, pathname } = new URL(url);
+  return protocol === "https:" && hostname === "generativelanguage.googleapis.com" &&
+    /^\/v1[a-z0-9]*\/files\/[^/]+$/.test(pathname);
+}
+
 function toGoogleUserParts(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -645,13 +660,18 @@ function toGoogleUserParts(
       continue;
     }
 
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({
-        fileData: {
-          mimeType: part.mediaType,
-          fileUri: part.url,
-        },
-      });
+    const mimeType = part.mediaType.toLowerCase();
+    const data = readInlineFileData(part);
+    if (data !== undefined) {
+      content.push({ inlineData: { mimeType, data } });
+    } else if (isImageFileInput(part) || isGeminiFileUri(part.url)) {
+      content.push({ fileData: { mimeType, fileUri: part.url } });
+    } else {
+      throw unsupportedFileInputError(
+        "Google",
+        part,
+        "Send non-image files as inline data, for example with fileFromBytes, or as a Gemini Files API URI.",
+      );
     }
   }
 

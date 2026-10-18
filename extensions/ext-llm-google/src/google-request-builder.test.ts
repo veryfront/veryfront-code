@@ -101,6 +101,96 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-google/google-request-builder", () => {
+  it("preserves inline PDF bytes", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:application/pdf;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
+  it("matches inline data MIME types case-insensitively", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:Application/PDF;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
+  it("lowercases file MIME types for inline and remote image parts", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [
+          {
+            type: "file",
+            url: "data:application/pdf;base64,JVBERi0=",
+            mediaType: "Application/PDF",
+          },
+          { type: "file", url: "https://example.test/photo.png", mediaType: "IMAGE/PNG" },
+        ],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [
+        { inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } },
+        { fileData: { mimeType: "image/png", fileUri: "https://example.test/photo.png" } },
+      ],
+    }]);
+  });
+
+  it("sends Gemini Files API URIs for non-image files as fileData", () => {
+    const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{ type: "file", url: fileUri, mediaType: "application/pdf" }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ fileData: { mimeType: "application/pdf", fileUri } }],
+    }]);
+  });
+
+  it("rejects remote non-image file URLs instead of sending them as fileData", () => {
+    assertThrows(
+      () =>
+        buildGoogleGenerateContentRequest("google", {
+          prompt: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "https://example.test/report.pdf",
+              mediaType: "application/pdf",
+              filename: "report.pdf",
+            }],
+          }],
+        }, createWarningCollector()),
+      TypeError,
+      'Google does not support file input "report.pdf" (application/pdf)',
+    );
+  });
+
   it("preserves generateContent request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

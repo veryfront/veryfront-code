@@ -1,7 +1,12 @@
 import {
+  fileInputBaseName,
+  isImageFileInput,
   jsonValuesEqual,
+  readInlineFileData,
+  readRemoteFileUrl,
   stringifyToolArguments,
   stringifyToolResultValue,
+  unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -402,6 +407,46 @@ function toOpenAIResponsesInput(
   };
 }
 
+const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "application/json": "json",
+  "application/pdf": "pdf",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/markdown": "md",
+  "text/plain": "txt",
+};
+
+type RuntimeUserFilePart = Exclude<
+  Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"][number],
+  { readonly type: "text" }
+>;
+
+/**
+ * Build an inline `input_file`. OpenAI infers the file type from the filename
+ * extension, so a filename without one needs a MIME type we can name.
+ */
+function toOpenAIResponsesInlineFile(
+  part: RuntimeUserFilePart,
+  data: string,
+): Record<string, unknown> {
+  const mediaType = part.mediaType.toLowerCase();
+  const extension = INLINE_FILE_EXTENSIONS[mediaType];
+  const name = fileInputBaseName(part.filename) ?? "file";
+  const hasExtension = /.\.[^.]+$/.test(name);
+  if (!hasExtension && !extension) {
+    throw unsupportedFileInputError(
+      "OpenAI Responses",
+      part,
+      "Set a filename with an extension, for example with fileFromBytes.",
+    );
+  }
+  return {
+    type: "input_file",
+    file_data: `data:${mediaType};base64,${data}`,
+    filename: hasExtension ? name : `${name}.${extension}`,
+  };
+}
+
 function toOpenAIResponsesUserContent(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -415,16 +460,31 @@ function toOpenAIResponsesUserContent(
       continue;
     }
 
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+    if (isImageFileInput(part)) {
+      readInlineFileData(part); // Validates inline image data before inference.
       content.push({ type: "input_image", image_url: part.url, detail: "auto" });
       continue;
     }
 
-    content.push({
-      type: "input_file",
-      file_url: part.url,
-      ...(part.filename ? { filename: part.filename } : {}),
-    });
+    // Responses file inputs are documents; audio and video use other input shapes.
+    if (/^(audio|video)\//i.test(part.mediaType)) {
+      throw unsupportedFileInputError(
+        "OpenAI Responses",
+        part,
+        "Send a document such as PDF, text, or a spreadsheet.",
+      );
+    }
+    const data = readInlineFileData(part);
+    const filename = fileInputBaseName(part.filename);
+    content.push(
+      data === undefined
+        ? {
+          type: "input_file",
+          file_url: readRemoteFileUrl("OpenAI Responses", part),
+          ...(filename ? { filename } : {}),
+        }
+        : toOpenAIResponsesInlineFile(part, data),
+    );
   }
 
   return content;

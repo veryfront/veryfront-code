@@ -5,7 +5,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { registerModelProvider } from "#veryfront/provider";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ModelRuntime } from "#veryfront/provider";
-import { generate } from "./index.ts";
+import { fileFromBytes, generate } from "./index.ts";
 
 const SCHEMA: JsonSchema = {
   type: "object",
@@ -47,6 +47,34 @@ describe("llm/generate", () => {
     try {
       const result = await generate({ input: "hi", model: "stub/stub" });
       assertEquals(result.text, "hello");
+    } finally {
+      stub.dispose();
+    }
+  });
+
+  it("preserves helper file parts through the public generate facade", async () => {
+    const stub = stubProvider("summary");
+    const file = fileFromBytes({
+      bytes: new Uint8Array([0, 255, 128]),
+      filename: "report.pdf",
+      mediaType: "application/pdf",
+    });
+    try {
+      await generate({
+        model: "stub/stub",
+        input: [{
+          id: "file-request",
+          role: "user",
+          parts: [{ type: "text", text: "Summarize" }, file],
+        }],
+      });
+      const prompt = stub.calls[0]?.prompt as Array<
+        { role: string; content: Array<{ type: string }> }
+      >;
+      const files = prompt.find((message) => message.role === "user")?.content.filter((part) =>
+        part.type === "file"
+      );
+      assertEquals(JSON.parse(JSON.stringify(files)), [file]);
     } finally {
       stub.dispose();
     }

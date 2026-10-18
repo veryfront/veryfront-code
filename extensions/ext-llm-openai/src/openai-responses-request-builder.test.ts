@@ -30,6 +30,203 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  for (const provider of ["openai", "veryfront-cloud"] as const) {
+    for (const filename of ["request.pdf", undefined]) {
+      it(`sends inline PDF data through file_data for ${provider}, filename ${filename}`, () => {
+        const url = "data:application/pdf;base64,JVBERi0xLjQK";
+        const body = buildOpenAIResponsesRequest(
+          "gpt-5.5",
+          provider,
+          {
+            prompt: [{
+              role: "user",
+              content: [{ type: "file", url, mediaType: "application/pdf", filename }],
+            }],
+          },
+          true,
+          createWarningCollector(),
+        );
+
+        assertEquals(body.input, [{
+          role: "user",
+          content: [{ type: "input_file", file_data: url, filename: filename ?? "file.pdf" }],
+        }]);
+      });
+    }
+  }
+
+  function buildWithFile(file: { url: string; mediaType: string; filename?: string }) {
+    return buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      { prompt: [{ role: "user", content: [{ type: "file", ...file }] }] },
+      true,
+      createWarningCollector(),
+    );
+  }
+
+  it("validates inline file data before inference", () => {
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:text/plain;base64,aGk=",
+          mediaType: "application/pdf",
+          filename: "request.pdf",
+        }),
+      TypeError,
+      'Inline file input "request.pdf" (application/pdf) must be base64 data',
+    );
+  });
+
+  it("normalizes the inline MIME type in file_data", () => {
+    const body = buildWithFile({
+      url: "data:Application/PDF;base64,JVBERi0=",
+      mediaType: "application/pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  for (const url of ["/home/user/report.pdf", "file:///home/user/report.pdf"]) {
+    it(`rejects a file URL that is not remote: ${url}`, () => {
+      assertThrows(
+        () => buildWithFile({ url, mediaType: "application/pdf" }),
+        TypeError,
+        "OpenAI Responses does not support file input (application/pdf). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("recognizes an upper-case data URL scheme as inline data, not a file URL", () => {
+    const body = buildWithFile({
+      url: "DATA:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "request.pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "request.pdf",
+      }],
+    }]);
+  });
+
+  for (
+    const filename of [
+      "/home/user/secret/report.pdf",
+      "C:\\Users\\user\\report.pdf",
+      "C:report.pdf",
+    ]
+  ) {
+    it(`sends only the base name of a path filename: ${filename}`, () => {
+      const inline = buildWithFile({
+        url: "data:application/pdf;base64,JVBERi0=",
+        mediaType: "application/pdf",
+        filename,
+      });
+      const remote = buildWithFile({
+        url: "https://example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename,
+      });
+      assertEquals(inline.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_data: "data:application/pdf;base64,JVBERi0=",
+          filename: "report.pdf",
+        }],
+      }]);
+      assertEquals(remote.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_url: "https://example.com/report.pdf",
+          filename: "report.pdf",
+        }],
+      }]);
+    });
+  }
+
+  it("treats a dot-segment filename as missing", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "/tmp/..",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  for (
+    const [filename, mediaType] of [["a.mp3", "audio/mpeg"], ["a.mp4", "Video/MP4"]] as const
+  ) {
+    it(`rejects ${mediaType} before inference`, () => {
+      assertThrows(
+        () => buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename }),
+        TypeError,
+        `OpenAI Responses does not support file input "${filename}" (${mediaType})`,
+      );
+    });
+  }
+
+  it("rejects inline image data whose MIME type does not match the part", () => {
+    assertThrows(
+      () => buildWithFile({ url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }),
+      TypeError,
+      "must be base64 data with a matching MIME type",
+    );
+  });
+
+  it("adds the MIME extension to an inline filename without one", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "report",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "report.pdf",
+      }],
+    }]);
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:application/zip;base64,UEs=",
+          mediaType: "application/zip",
+          filename: "archive",
+        }),
+      TypeError,
+      'OpenAI Responses does not support file input "archive" (application/zip). Set a filename with an extension',
+    );
+  });
+
+  it("rejects an inline file without a filename when its type has no known extension", () => {
+    assertThrows(
+      () =>
+        buildWithFile({ url: "data:application/zip;base64,UEs=", mediaType: "application/zip" }),
+      TypeError,
+      "OpenAI Responses does not support file input (application/zip). Set a filename with an extension",
+    );
+  });
+
   it("rejects accessor provider buckets before reading OpenAI Responses options", () => {
     let getterCalls = 0;
     const providerOptions = Object.defineProperty({}, "openai", {

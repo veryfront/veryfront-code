@@ -7,7 +7,7 @@ order: 18
 ## Import
 
 ```ts
-import { generate } from "veryfront/llm";
+import { fileFromBytes, generate } from "veryfront/llm";
 ```
 
 ## Examples
@@ -58,12 +58,14 @@ const { text } = await generate({
 
 ### Functions
 
-| Name       | Description                                                   | Source                                                                           |
-| ---------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `generate` | Run a single model call without registering a reusable agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts) |
+| Name            | Description                                                        | Source                                                                           |
+| --------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `fileFromBytes` | Build a serializable message file part without uploading the file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/file.ts)  |
+| `generate`      | Run a single model call without registering a reusable agent.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts) |
 
 ### Types
 
-| Name            | Description                     | Source                                                                           |
-| --------------- | ------------------------------- | -------------------------------------------------------------------------------- |
-| `GenerateInput` | Request accepted by `generate`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts) |
+| Name             | Description                                                              | Source                                                                           |
+| ---------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `FileBytesInput` | Local file input. Read bytes with your runtime's filesystem or File API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/file.ts)  |
+| `GenerateInput`  | Request accepted by `generate`.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts) |

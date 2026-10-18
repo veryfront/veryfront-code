@@ -6,6 +6,47 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: unsupported file parts fail before inference
+
+File parts that a provider transport cannot send now throw a `TypeError` that
+names the file and MIME type, before any provider request. Before, they were
+dropped silently and the model answered without the file. This affects
+non-image files on Chat Completions transports, non-image and non-PDF files on
+Anthropic, remote non-image URLs on Google, and document URLs that are not
+`http` or `https` on OpenAI Responses and Anthropic. Audio and video files on
+OpenAI Responses fail the same way. An inline `data:` part must be
+`data:<mime>[;<param>=<value>];base64,<payload>` with the part's MIME type, or
+it fails before inference on every provider. MIME types compare
+case-insensitively, and `image/jpg` matches `image/jpeg`. Errors show an invalid
+MIME type as `invalid media type`. Other formats that a transport accepts but a model cannot
+read still reach the provider, which rejects them.
+
+OpenAI Responses requests carry only the base name of a file part's filename,
+so a stored or hand-built part with a local path does not send that path. A
+filename without an extension gets one from the MIME type.
+
+Chat and agent message preparation keeps inline `data:` file parts in user
+messages for the provider instead of rewriting unsupported types into
+`<uploaded_files>` text that carried the whole data URL. It normalizes their MIME
+type as before, for example a `.ts` file to `text/plain`, and rewrites a base64
+data URL to match. Inline files in other roles, which runtimes do not send, are
+annotated without their data URL. Uploaded `https` files are annotated as before.
+
+OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
+send a request that carries a non-image file to the Responses API, as they
+already did for hosted tools, so those requests keep working. Mistral and
+custom OpenAI-compatible base URLs stay on Chat Completions and reject the file. OpenAI Responses sends inline `data:` files as
+`file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
+files as `inlineData`. Use `fileFromBytes` from `veryfront/llm` to build inline
+file parts from local bytes.
+
+The check applies to every message in the prompt, including stored chat
+history. A conversation that already holds a document attachment now fails on a
+transport that cannot read it, instead of continuing without the file. To
+recover, set `openAITransport: "responses"` for an OpenAI model pinned to Chat
+Completions or served by a compatible server that implements Responses, switch to a document-capable provider, or remove the file parts
+from the history before the next turn.
+
 ### Changed: managed knowledge embeddings use the registered Gemini model
 
 Managed knowledge indexing defaults to `google/gemini-embedding-001` with 3072

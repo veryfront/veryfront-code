@@ -1,12 +1,16 @@
 import {
   canIdentifyProxyWithoutHooks,
   closeSchemaForOutputConfig,
+  isImageFileInput,
   isProxyWithoutHooks,
   jsonValuesEqual,
+  readInlineFileData,
   readProviderOptions,
   readRecord,
+  readRemoteFileUrl,
   snapshotProviderJsonValue,
   stringifyToolResultValue,
+  unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -1061,26 +1065,24 @@ function toAnthropicUserContent(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [];
-
   for (const part of parts) {
     if (part.type === "text") {
-      if (part.text.length > 0) {
-        content.push({ type: "text", text: part.text });
-      }
+      if (part.text.length > 0) content.push({ type: "text", text: part.text });
       continue;
     }
-
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({
-        type: "image",
-        source: {
-          type: "url",
-          url: part.url,
-        },
-      });
+    const mediaType = part.mediaType.toLowerCase();
+    const image = isImageFileInput(part);
+    if (!image && mediaType !== "application/pdf") {
+      throw unsupportedFileInputError("Anthropic", part, "Use an image or a PDF file.");
     }
+    const data = readInlineFileData(part);
+    // Image URLs keep their existing pass-through; a document URL must be remote.
+    const source = data === undefined
+      ? { type: "url", url: image ? part.url : readRemoteFileUrl("Anthropic", part) }
+      // Anthropic accepts only the standard `image/jpeg` spelling.
+      : { type: "base64", media_type: mediaType === "image/jpg" ? "image/jpeg" : mediaType, data };
+    content.push({ type: image ? "image" : "document", source });
   }
-
   return content;
 }
 

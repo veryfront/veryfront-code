@@ -50,6 +50,17 @@ export {
   type StreamRetentionOverflow,
 } from "../runtime-loader/stream-retention.ts";
 
+// Inline file parts: data URL payloads and actionable unsupported-input errors.
+export {
+  fileInputBaseName,
+  isImageFileInput,
+  promptHasDocumentInput,
+  readInlineFileData,
+  readRemoteFileUrl,
+  routesOpenAIDocumentInputToResponses,
+  unsupportedFileInputError,
+} from "../runtime-loader/inline-file.ts";
+
 // Retry, error, HTTP, usage, and JSON boundary plumbing.
 export {
   buildProviderError,

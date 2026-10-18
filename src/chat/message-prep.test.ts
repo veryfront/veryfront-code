@@ -2817,3 +2817,46 @@ Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool 
     },
   ]);
 });
+
+Deno.test("rewriteUnsupportedFilePartsAsAnnotations keeps inline data files for the provider to send or reject", () => {
+  const inline = {
+    type: "file" as const,
+    mediaType: "audio/mpeg",
+    filename: "memo.mp3",
+    url: "data:audio/mpeg;base64,SUQz",
+  };
+  const mixedCasePdf = {
+    type: "file" as const,
+    mediaType: "Application/PDF",
+    filename: "report.pdf",
+    url: "https://files.example.com/report.pdf",
+  };
+  const messages = [{ id: "user-1", role: "user" as const, parts: [inline, mixedCasePdf] }];
+
+  assertEquals(
+    rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts,
+    [inline, mixedCasePdf],
+    "inline data has no upload a tool could read, so it must not become base64 prompt text",
+  );
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's data URL matching its normalized MIME type", () => {
+  const url = "data:application/json;base64,e30=";
+  const prepared = prepareProviderModelMessagesFromUiMessages([{
+    id: "user-1",
+    role: "user",
+    parts: [{ type: "file", mediaType: "application/json", filename: "data.json", url }],
+  }]);
+
+  const content = prepared[0]!.content;
+  assertEquals(
+    Array.isArray(content) ? content.find((part) => part.type === "file") : undefined,
+    {
+      type: "file",
+      mediaType: "text/plain",
+      filename: "data.json",
+      data: "data:text/plain;base64,e30=",
+      url: "data:text/plain;base64,e30=",
+    },
+  );
+});
