@@ -198,6 +198,11 @@ describe("llm/generate", () => {
       assertEquals(result.text, '{"city":"ada@example.com"}');
       assertEquals(result.object, { city: "ada@example.com" });
       assertEquals(
+        "security" in (stub.calls[0] ?? {}),
+        false,
+        "security configures the agent and must not reach the provider call",
+      );
+      assertEquals(
         agentRegistry.getAllIds(),
         [],
         "the ephemeral agent must stay unregistered when security is false",
