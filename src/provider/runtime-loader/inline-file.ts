@@ -6,9 +6,17 @@ interface FileInputPart {
   readonly filename?: string;
 }
 
-function describeFileInput({ filename, mediaType }: FileInputPart): string {
-  // Errors reach users, so a filename that is a local path shows only its base name.
+/**
+ * The base name of a file part's filename, or `undefined` when none is usable.
+ * Requests and errors leave the machine, so a local path must not.
+ */
+export function fileInputBaseName(filename: string | undefined): string | undefined {
   const name = filename?.split(/[/\\]/).pop();
+  return name && name !== "." && name !== ".." ? name : undefined;
+}
+
+function describeFileInput({ filename, mediaType }: FileInputPart): string {
+  const name = fileInputBaseName(filename);
   return `file input${name ? ` ${JSON.stringify(name)}` : ""} (${mediaType})`;
 }
 

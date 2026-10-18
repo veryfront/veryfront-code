@@ -1,4 +1,5 @@
 import {
+  fileInputBaseName,
   isImageFileInput,
   jsonValuesEqual,
   readInlineFileData,
@@ -430,7 +431,8 @@ function toOpenAIResponsesInlineFile(
 ): Record<string, unknown> {
   const mediaType = part.mediaType.toLowerCase();
   const extension = INLINE_FILE_EXTENSIONS[mediaType];
-  if (!part.filename && !extension) {
+  const filename = fileInputBaseName(part.filename);
+  if (!filename && !extension) {
     throw unsupportedFileInputError(
       "OpenAI Responses",
       part,
@@ -440,7 +442,7 @@ function toOpenAIResponsesInlineFile(
   return {
     type: "input_file",
     file_data: `data:${mediaType};base64,${data}`,
-    filename: part.filename || `file.${extension}`,
+    filename: filename ?? `file.${extension}`,
   };
 }
 
@@ -462,13 +464,22 @@ function toOpenAIResponsesUserContent(
       continue;
     }
 
+    // Responses file inputs are documents; audio and video use other input shapes.
+    if (/^(audio|video)\//i.test(part.mediaType)) {
+      throw unsupportedFileInputError(
+        "OpenAI Responses",
+        part,
+        "Send a document such as PDF, text, or a spreadsheet.",
+      );
+    }
     const data = readInlineFileData(part);
+    const filename = fileInputBaseName(part.filename);
     content.push(
       data === undefined
         ? {
           type: "input_file",
           file_url: readRemoteFileUrl("OpenAI Responses", part),
-          ...(part.filename ? { filename: part.filename } : {}),
+          ...(filename ? { filename } : {}),
         }
         : toOpenAIResponsesInlineFile(part, data),
     );

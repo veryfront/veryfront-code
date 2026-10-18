@@ -119,6 +119,65 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     }]);
   });
 
+  for (const filename of ["/home/user/secret/report.pdf", "C:\\Users\\user\\report.pdf"]) {
+    it(`sends only the base name of a path filename: ${filename}`, () => {
+      const inline = buildWithFile({
+        url: "data:application/pdf;base64,JVBERi0=",
+        mediaType: "application/pdf",
+        filename,
+      });
+      const remote = buildWithFile({
+        url: "https://example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename,
+      });
+      assertEquals(inline.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_data: "data:application/pdf;base64,JVBERi0=",
+          filename: "report.pdf",
+        }],
+      }]);
+      assertEquals(remote.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_url: "https://example.com/report.pdf",
+          filename: "report.pdf",
+        }],
+      }]);
+    });
+  }
+
+  it("treats a dot-segment filename as missing", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "/tmp/..",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  for (
+    const [filename, mediaType] of [["a.mp3", "audio/mpeg"], ["a.mp4", "Video/MP4"]] as const
+  ) {
+    it(`rejects ${mediaType} before inference`, () => {
+      assertThrows(
+        () => buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename }),
+        TypeError,
+        `OpenAI Responses does not support file input "${filename}" (${mediaType})`,
+      );
+    });
+  }
+
   it("rejects an inline file without a filename when its type has no known extension", () => {
     assertThrows(
       () =>

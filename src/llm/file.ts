@@ -29,10 +29,15 @@ export function fileFromBytes(
       message: "File filename must be non-empty and contain no control characters (CR, LF, NUL)",
     });
   }
-  // Providers receive the filename and errors echo it, so a local path must not leak.
-  if (/[/\\]/.test(filename)) {
+  if (filename !== filename.trim()) {
     throw INVALID_ARGUMENT.create({
-      message: "File filename must be a base name without path separators (/ or \\)",
+      message: "File filename must not start or end with whitespace",
+    });
+  }
+  // Providers receive the filename and errors echo it, so a local path must not leak.
+  if (/[/\\]/.test(filename) || filename === "." || filename === "..") {
+    throw INVALID_ARGUMENT.create({
+      message: "File filename must be a base name: no path separators (/ or \\), not . or ..",
     });
   }
   if (typeof mediaType !== "string" || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(mediaType)) {

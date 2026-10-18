@@ -52,6 +52,7 @@ export {
 
 // Inline file parts: data URL payloads and actionable unsupported-input errors.
 export {
+  fileInputBaseName,
   isImageFileInput,
   promptHasDocumentInput,
   readInlineFileData,

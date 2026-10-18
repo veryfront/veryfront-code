@@ -13,8 +13,15 @@ names the file and MIME type, before any provider request. Before, they were
 dropped silently and the model answered without the file. This affects
 non-image files on Chat Completions transports, non-image and non-PDF files on
 Anthropic, remote non-image URLs on Google, and document URLs that are not
-`http` or `https` on OpenAI Responses and Anthropic. MIME types compare
-case-insensitively.
+`http` or `https` on OpenAI Responses and Anthropic. Audio and video files on
+OpenAI Responses fail the same way. An inline `data:` part must be
+`data:<mime>;base64,<payload>` with the part's MIME type and no other
+parameters, or it fails before inference on every provider. MIME types compare
+case-insensitively. Other formats that a transport accepts but a model cannot
+read still reach the provider, which rejects them.
+
+OpenAI Responses requests carry only the base name of a file part's filename,
+so a stored or hand-built part with a local path does not send that path.
 
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
 send a request that carries a non-image file to the Responses API, as they
