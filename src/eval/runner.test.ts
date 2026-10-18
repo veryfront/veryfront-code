@@ -1772,3 +1772,40 @@ describe("expected outcome gates", () => {
     });
   }
 });
+
+describe("expected outcome review regressions", () => {
+  it("marks outcome-only direct tool traces as failed for behavior gates", async () => {
+    const report = await runEval(
+      evalTool({
+        target: "tool:test",
+        dataset: [{ id: "negative", input: {}, expectedOutcome: "error" }],
+        check({ expect }) {
+          expect.noFailedTools().gate();
+        },
+      }),
+      { adapters: { tool: () => ({ output: {}, outcome: "error" }) } },
+    );
+    assertEquals(report.records[0]?.trace.toolCalls[0]?.status, "error");
+    assertEquals(report.records[0]?.checks?.[0]?.pass, false);
+    assertEquals(report.summary.failed, 1);
+  });
+
+  for (const targetKind of ["agent", "tool"] as const) {
+    it(`preserves the ${targetKind} expectation when the target times out`, async () => {
+      const define = targetKind === "agent" ? evalAgent : evalTool;
+      const report = await runEval(
+        define({
+          target: "test",
+          dataset: [{ id: "negative", input: {}, expectedOutcome: "error" }],
+        }),
+        {
+          recordTimeoutMs: 5,
+          adapters: { [targetKind]: () => new Promise(() => {}) },
+        },
+      );
+      assertEquals(report.records[0]?.expectedOutcome, "error");
+      assertEquals(report.records[0]?.outcome, undefined);
+      assertEquals(report.summary.failed, 1);
+    });
+  }
+});

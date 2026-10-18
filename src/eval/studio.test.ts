@@ -16,6 +16,37 @@ import {
 } from "veryfront/eval";
 
 describe("eval/studio", () => {
+  it("preserves expected outcomes through source documents and patches", () => {
+    for (const expectedOutcome of ["error", "success", undefined] as const) {
+      const example = { id: "case", input: {}, ...(expectedOutcome ? { expectedOutcome } : {}) };
+      const definition = evalAgent({ target: "test", dataset: [example] });
+      const document = createEvalSourceDocument({
+        id: "eval:test",
+        name: "Test",
+        filePath: "evals/test.eval.ts",
+        exportName: "default",
+        definition,
+      });
+      assertEquals(document.dataset.examples, [example]);
+      assertEquals(getEvalSourceDocumentSchema().parse(document).dataset.examples, [example]);
+      const patch = {
+        kind: "eval-source-patch" as const,
+        id: document.id,
+        source: document.source,
+        fields: { dataset: { ...document.dataset, examples: [example] } },
+      };
+      assertEquals(getEvalSourcePatchSchema().parse(patch), patch);
+      assertThrows(() =>
+        getEvalSourcePatchSchema().parse({
+          ...patch,
+          fields: {
+            dataset: { ...document.dataset, examples: [{ ...example, expectedOutcome: "failed" }] },
+          },
+        })
+      );
+    }
+  });
+
   it("creates a source document Studio can render as an edit form", () => {
     const definition = evalAgent({
       id: "eval:deep-research",

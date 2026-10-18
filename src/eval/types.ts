@@ -59,8 +59,9 @@ export interface EvalReportExportRedaction {
   includeDatasetPath?: boolean;
   /**
    * Include the deterministic dataset content hash. Defaults to false. The hash is computed
-   * over every example's id, input, reference, and metadata without a salt, so it identifies
-   * dataset content across projects and runs and can be brute-forced for low-entropy datasets.
+   * over every example's id, input, expectedOutcome (when declared), reference, and metadata
+   * without a salt. It identifies dataset content across projects and runs and can be brute-forced
+   * for low-entropy datasets.
    */
   includeDatasetHash?: boolean;
   /** Record and export context metadata keys that can be exported. Defaults to none. */

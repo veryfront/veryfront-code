@@ -194,7 +194,9 @@ function createDirectToolTraceCall(
   return {
     ...(result.toolCallId ? { id: result.toolCallId } : {}),
     name: normalizeToolTargetName(definition.target),
-    status: result.error || result.completed === false ? "error" : "ok",
+    status: result.outcome === "error" || result.error || result.completed === false
+      ? "error"
+      : "ok",
     input,
     output: result.output,
     ...(result.error ? { error: result.error } : {}),
@@ -731,6 +733,7 @@ async function runRecordWithinTimeout(
         exampleId: example.id,
         repetition,
         input: example.input,
+        ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
         output: undefined,
         ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
         ...(executionInput ? { executionInput: executionInput.value } : {}),
