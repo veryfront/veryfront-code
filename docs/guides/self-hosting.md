@@ -181,9 +181,10 @@ OUTLOOK_SERVICE_ACCOUNT_MAILBOX=intake@example.com
 ```
 
 The tenant must be a tenant ID or verified domain. Multi-tenant aliases such as
-`common` are rejected. The mailbox must be an address or Entra user ID. A
-missing or invalid value fails with an error that names the variable, before
-any request is sent.
+`common` are rejected. The mailbox must be its user principal name or Entra
+user ID. Graph does not resolve an SMTP address that differs from the user
+principal name. A missing or invalid value fails with an error that names the
+variable, before any request is sent.
 
 Create a source with the exact Outlook tools the agent can use:
 

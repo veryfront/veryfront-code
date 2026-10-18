@@ -3,6 +3,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -191,6 +192,23 @@ const SHARED_MAILBOX_CATALOG: IntegrationToolMeta[] = [
   },
 ];
 
+/** `assertThrows` narrowed to the Veryfront error it expects. */
+function throwsWith(fn: () => unknown, errorClass: typeof VeryfrontError): VeryfrontError {
+  const error = assertThrows(fn, errorClass);
+  assertInstanceOf(error, errorClass);
+  return error;
+}
+
+/** `assertRejects` narrowed to the Veryfront error it expects. */
+async function rejectsWith(
+  fn: () => Promise<unknown>,
+  errorClass: typeof VeryfrontError,
+): Promise<VeryfrontError> {
+  const error = await assertRejects(fn, errorClass);
+  assertInstanceOf(error, errorClass);
+  return error;
+}
+
 function assertNoSecrets(value: string): void {
   assertEquals(value.includes(CLIENT_SECRET), false, value);
   assertEquals(value.includes(ACCESS_TOKEN), false, value);
@@ -302,7 +320,7 @@ describe("createOutlookServiceAccountToolSource", () => {
         () => source.executeTool("outlook__list_emails", {}),
       ]
     ) {
-      const error = await assertRejects(operation, VeryfrontError);
+      const error = await rejectsWith(operation, VeryfrontError);
       assertEquals(error.slug, "local-integration-credentials-missing");
       assertStringIncludes(
         error.message,
@@ -326,7 +344,7 @@ describe("createOutlookServiceAccountToolSource", () => {
       const source = createSource({
         credentialProvider: (key) => key === name ? value : credentials[key],
       }, transport);
-      const error = await assertRejects(
+      const error = await rejectsWith(
         () => source.executeTool("outlook__list_emails", {}),
         VeryfrontError,
       );
@@ -334,6 +352,23 @@ describe("createOutlookServiceAccountToolSource", () => {
       assertStringIncludes(error.message, name!);
       assertEquals(requests.length, 0);
     }
+  });
+
+  it("accepts a user principal name that contains a number sign", async () => {
+    const { requests, transport } = recordingTransport();
+    const source = createSource({
+      credentialProvider: (key) =>
+        key === "OUTLOOK_SERVICE_ACCOUNT_MAILBOX" ? "intake#ext@example.test" : credentials[key],
+    }, transport);
+
+    await source.executeTool("outlook__list_emails", {});
+
+    assert(
+      requests[1]!.url.startsWith(
+        "https://graph.microsoft.com/v1.0/users/intake%23ext%40example.test/mailFolders/",
+      ),
+      requests[1]!.url,
+    );
   });
 
   it("lists granted tools without contacting Microsoft", async () => {
@@ -353,7 +388,7 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("does not grant a write tool unless writes are explicitly allowed", async () => {
-    const error = assertThrows(
+    const error = throwsWith(
       () => createSource({ allowedTools: ["outlook__move_email"] }),
       VeryfrontError,
     );
@@ -381,7 +416,7 @@ describe("createOutlookServiceAccountToolSource", () => {
         "outlook__find_free_time",
       ]
     ) {
-      const error = assertThrows(
+      const error = throwsWith(
         () => createSource({ allowedTools: [toolName] }),
         VeryfrontError,
       );
@@ -458,7 +493,7 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("keeps a /users/{mailbox} write tool absent unless writes are allowed", async () => {
-    const error = assertThrows(
+    const error = throwsWith(
       () =>
         createSource(
           { allowedTools: ["outlook__synthetic_move"] },
@@ -495,7 +530,7 @@ describe("createOutlookServiceAccountToolSource", () => {
         "outlook__synthetic_user_id",
       ]
     ) {
-      const error = assertThrows(
+      const error = throwsWith(
         () =>
           createSource({ allowedTools: [toolName] }, undefined, undefined, SHARED_MAILBOX_CATALOG),
         VeryfrontError,
@@ -505,7 +540,7 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("rejects tools whose Graph operation is delegated-only", () => {
-    const error = assertThrows(
+    const error = throwsWith(
       () => createSource({ allowedTools: ["outlook__find_meeting_times"] }),
       VeryfrontError,
     );
@@ -534,7 +569,7 @@ describe("createOutlookServiceAccountToolSource", () => {
       );
     const source = createSource({}, transport);
 
-    const error = await assertRejects(
+    const error = await rejectsWith(
       () => source.executeTool("outlook__list_emails", {}),
       VeryfrontError,
     );
@@ -648,7 +683,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     });
     const source = createSource({}, transport);
 
-    const error = await assertRejects(
+    const error = await rejectsWith(
       () => source.executeTool("outlook__list_emails", {}),
       VeryfrontError,
     );
@@ -681,7 +716,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     };
     const source = createSource({}, transport);
 
-    const error = await assertRejects(
+    const error = await rejectsWith(
       () => source.executeTool("outlook__list_emails", {}),
       VeryfrontError,
     );
@@ -692,6 +727,21 @@ describe("createOutlookServiceAccountToolSource", () => {
     assertEquals(error.message.includes("outlook__list_emails"), false, error.message);
     assertNoSecrets(error.message);
     assertEquals(requests, [TOKEN_URL]);
+  });
+
+  it("does not blame credentials for a throttled or failing token endpoint", async () => {
+    for (const status of [429, 500, 503]) {
+      const transport: LocalIntegrationEndpointTransport = () =>
+        Promise.resolve(Response.json({ error: "temporarily_unavailable" }, { status }));
+      const source = createSource({}, transport);
+
+      const error = await rejectsWith(
+        () => source.executeTool("outlook__list_emails", {}),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "local-integration-request-failed", String(status));
+      assertEquals(error.message.includes("OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET"), false);
+    }
   });
 
   it("rejects malformed or non-bearer token responses before calling Graph", async () => {
@@ -711,7 +761,7 @@ describe("createOutlookServiceAccountToolSource", () => {
       };
       const source = createSource({}, transport);
 
-      const error = await assertRejects(
+      const error = await rejectsWith(
         () => source.executeTool("outlook__list_emails", {}),
         VeryfrontError,
       );
@@ -762,7 +812,7 @@ describe("createOutlookServiceAccountToolSource", () => {
       },
     }, transport);
 
-    const error = await assertRejects(
+    const error = await rejectsWith(
       () => source.executeTool("outlook__list_emails", {}),
       VeryfrontError,
     );
@@ -773,7 +823,7 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("rejects a non-boolean allowWrites", () => {
-    const error = assertThrows(
+    const error = throwsWith(
       () =>
         createSource({
           allowedTools: ["outlook__move_email"],
@@ -807,7 +857,7 @@ describe("createOutlookServiceAccountToolSource", () => {
       const { requests, transport } = recordingTransport();
       const source = createSource({ allowedTools: ["outlook__get_email"] }, transport);
 
-      const error = await assertRejects(
+      const error = await rejectsWith(
         () => source.executeTool("outlook__get_email", { messageId }),
         VeryfrontError,
       );
@@ -852,7 +902,7 @@ describe("createOutlookServiceAccountToolSource", () => {
   });
 
   it("keeps the delegated catalog connector out of the local catalog source", () => {
-    const error = assertThrows(
+    const error = throwsWith(
       () => createLocalIntegrationToolSource({ tools: ["outlook__list_emails"] }),
       VeryfrontError,
     );

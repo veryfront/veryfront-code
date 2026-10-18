@@ -53,7 +53,10 @@ const MAX_MAILBOX_LENGTH = 320;
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TENANT_DOMAIN_PATTERN =
   /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
-const MAILBOX_ADDRESS_PATTERN = /^[^\s@/\\?#%]+@[^\s@/\\?#%]+$/;
+/** A user principal name; the local part may contain `#`, which is percent-encoded. */
+const MAILBOX_ADDRESS_PATTERN = /^[^\s@/\\?%]+@[^\s@/\\?#%]+$/;
+/** Token endpoint statuses that point at the client ID, secret or tenant. */
+const CREDENTIAL_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 401, 403]);
 const REJECTED_TOKEN = Symbol("rejected token");
 /** Catalog tools whose Graph operation supports delegated permissions only. */
 const DELEGATED_ONLY_TOOLS: ReadonlySet<string> = new Set(["outlook__find_meeting_times"]);
@@ -270,7 +273,9 @@ async function readConfig(
     mailbox.length > MAX_MAILBOX_LENGTH ||
     (!GUID_PATTERN.test(mailbox) && !MAILBOX_ADDRESS_PATTERN.test(mailbox))
   ) {
-    configurationError(`${MAILBOX_ENV} must be a mailbox address or Microsoft Entra user ID`);
+    configurationError(
+      `${MAILBOX_ENV} must be a user principal name or Microsoft Entra user ID`,
+    );
   }
   return Object.freeze({
     clientId: values[CLIENT_ID_ENV]!,
@@ -362,7 +367,7 @@ async function mintToken(
     result = await request;
   } catch (cause) {
     const status = observed.status();
-    if (status === undefined || (status >= 200 && status < 300)) throw cause;
+    if (status === undefined || !CREDENTIAL_REJECTION_STATUSES.has(status)) throw cause;
     throw LOCAL_INTEGRATION_REQUEST_FAILED.create({
       detail: `Microsoft Entra rejected the Outlook service-account token request with HTTP ` +
         `status ${status}. Check ${CLIENT_ID_ENV}, ${CLIENT_SECRET_ENV} and ${TENANT_ID_ENV}`,
