@@ -292,10 +292,16 @@ describe("connected local execution", () => {
 
   it("replays child admission after a lost response without executing a terminal child again", async () => {
     let attempts = 0;
+    let renewals = 0;
     const output = { text: "stored", toolCalls: 0, status: "completed" };
     const f = fixture({
       trustedClaim: true,
+      renew: () => {
+        renewals++;
+        return Promise.resolve({});
+      },
       childAdmission: async () => {
+        assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
         if (++attempts === 1) throw new TypeError("child response lost");
         return Response.json({
           id: "22222222-2222-4222-8222-222222222222",

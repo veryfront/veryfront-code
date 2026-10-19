@@ -538,8 +538,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           controller.abort(new Error(message));
         };
         let renewal: Promise<void> | undefined;
-        const renew = setInterval(() => {
-          if (finishing || renewal !== undefined) return;
+        const renewAuthority = () => {
+          if (finishing) return Promise.resolve();
+          if (renewal !== undefined) return renewal;
           renewal = client.renewLease({
             workerId: registered.id,
             runId: claim.run_id,
@@ -556,6 +557,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           }).catch(() => failLease("Veryfront local run lease renewal failed.")).finally(() => {
             renewal = undefined;
           });
+          return renewal;
+        };
+        const renew = setInterval(() => {
+          void renewAuthority();
         }, 20_000);
         const abort = () => {
           controller.abort(input.signal.reason);
@@ -632,6 +637,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           let admissionAccepted = false;
           const execute = (async () => {
             await streamMirror.flush();
+            // A child's credentials are clipped to this parent capability's expiry.
+            await renewAuthority();
+            controller.signal.throwIfAborted();
             const authority = readExternalAgentWorkerRunAuthority(client, claim!.run_id);
             const response = await transport(`${options.apiBaseUrl}/runs`, {
               method: "POST",
