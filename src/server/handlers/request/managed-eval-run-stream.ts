@@ -10,6 +10,13 @@ import { MAX_SSE_FRAME_CHARS, normalizeNewlines } from "#veryfront/utils/sse-fra
  * `span_id`, ...) are optional in the published contract; when present they must match the
  * run event envelope. Fields the contract adds later are dropped, not rejected, because the
  * API extends the frame additively.
+ *
+ * This checks field shapes only. It does not apply the `event_class` and `event_type` agreement
+ * check of `getTypedRunEventRowSchema`, because the adapter forwards only the payload and must
+ * not fail an eval over a classification it never reads. `getRunEventEnvelopeSchema` is a plain
+ * object schema built through the same `defineSchema` registry, so composing it here is safe;
+ * the tests in `managed-eval-run-stream.test.ts` fail if it gains a refinement that breaks
+ * `.partial()` or `.extend()`.
  */
 const getCanonicalFrameSchema = defineSchema((v) =>
   getRunEventEnvelopeSchema().partial().extend({
