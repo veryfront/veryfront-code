@@ -96,7 +96,12 @@ export {
   createOutlookServiceAccountToolSource,
   OUTLOOK_SERVICE_ACCOUNT_ENV_VARS,
 } from "./outlook-service-account.ts";
-export type { OutlookServiceAccountToolSourceOptions } from "./outlook-service-account.ts";
+export type {
+  OutlookAttachmentContent,
+  OutlookAttachmentContentArgs,
+  OutlookServiceAccountToolSource,
+  OutlookServiceAccountToolSourceOptions,
+} from "./outlook-service-account.ts";
 
 export { createIntegrationClient, IntegrationApiError } from "./client.ts";
 export type {

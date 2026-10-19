@@ -100,6 +100,12 @@ also expose the two supporting skill tools when skill access is enabled:
 | `veryfront__load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/`             |
 | `veryfront__execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)                       |
 
+Script execution uses the runtime's project identity for cloud sandbox billing.
+Scripts receive that identity as `VERYFRONT_PROJECT_ID` and the runtime's branch
+as `VERYFRONT_BRANCH_REF` (default `main`). Tool arguments and script environment
+input cannot override these bindings. Cloud execution requires a project binding;
+local execution can run without one.
+
 Hosted chat providers use nested `veryfront__load_skill` input. After loading a skill,
 hosted chat can read only a reference listed by that skill through
 `veryfront__load_skill({ reference: { skillId, file } })`. The `load.file` form is no

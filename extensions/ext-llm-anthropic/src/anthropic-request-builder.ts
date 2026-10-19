@@ -1076,9 +1076,8 @@ function toAnthropicUserContent(
       throw unsupportedFileInputError("Anthropic", part, "Use an image or a PDF file.");
     }
     const data = readInlineFileData(part);
-    // Image URLs keep their existing pass-through; a document URL must be remote.
     const source = data === undefined
-      ? { type: "url", url: image ? part.url : readRemoteFileUrl("Anthropic", part) }
+      ? { type: "url", url: readRemoteFileUrl("Anthropic", part) }
       // Anthropic accepts only the standard `image/jpeg` spelling.
       : { type: "base64", media_type: mediaType === "image/jpg" ? "image/jpeg" : mediaType, data };
     content.push({ type: image ? "image" : "document", source });

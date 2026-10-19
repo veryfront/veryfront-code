@@ -98,5 +98,13 @@ export function generate(
   }).generate(request);
 }
 
-/** Build an inline file message part from local bytes. */
-export { type FileBytesInput, fileFromBytes } from "./file.ts";
+/** Build inline file message parts from local bytes, with optional budgets. */
+export {
+  type FileBytesInput,
+  fileFromBytes,
+  type FilePartOmissionReason,
+  type FilePartsPlan,
+  type OmittedFilePart,
+  planFileParts,
+  type PlanFilePartsInput,
+} from "./file.ts";

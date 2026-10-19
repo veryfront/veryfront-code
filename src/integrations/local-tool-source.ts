@@ -1125,6 +1125,7 @@ function createLocalIntegrationToolSourceInternal(
         // Serialized before the credential step below; re-serializing after it
         // could send a body that was never bound-checked.
         body: validated.body,
+        requiresWrite: tool.tool.requiresWrite,
         authHeaders: auth.headers,
         allowedOrigin,
         signal: context?.abortSignal,

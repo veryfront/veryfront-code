@@ -1,22 +1,23 @@
 {
-  "project_id": "5b8644ea-f64d-429a-afae-3ec8de241982",
-  "release_id": "bee42443-35fa-4deb-98d3-6aab9c82d1e6",
+  "project_id": "0718ca25-a56c-4261-98ef-13dff74bea2e",
+  "release_id": "3fd8f8dd-f93f-4ceb-a055-b09e06d2ceea",
   "manifest_version": 2,
-  "manifest_hash": "8cc847ccf19a759b5b55b8a42772c62c267326f67638245f5ab69cb3d2a7e506",
+  "manifest_hash": "9711ba0c9f5c711ec7b815a3a865a1cfbc9ebfefc8d349c16a4fdbd736cd71d8",
   "file_count": 3,
   "total_bytes": 84,
   "files": [
     {
-      "version_id": "e697b20e-7b89-4a19-af48-f4c7d1e1737c",
+      "version_id": "05ea61a4-9166-4037-b147-cb91f0ac0185",
       "path": "knowledge/.hidden/payload.bin",
       "entity_type": "virtual_file",
       "content_hash": "5b8a0c2dcea16dbe644d32c8527f4f7769b6a99a6d437fcc1215f882145e2ee2",
       "byte_size": 7,
       "kind": "binary",
+      "content_type": "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",
       "content_base64": "77u/AP+ACg=="
     },
     {
-      "version_id": "7f2fe506-506b-4fca-ac7e-6ce203413f56",
+      "version_id": "8de3865d-ae77-459c-a7b3-5335b02e6c23",
       "path": "knowledge/.hidden/source.md",
       "entity_type": "virtual_file",
       "content_hash": "70972030ad60be4536bf26813535c04f21b5b4e37a7170657e41d524136fe49c",
@@ -25,7 +26,7 @@
       "content": "﻿---\r\nunknown: { nested: 日本語 }\r\n---\r\n# Exact source\r\n"
     },
     {
-      "version_id": "00d658e7-35f9-48f9-842c-25ee48fea2bb",
+      "version_id": "02aab9e9-c1ff-48b8-8e8f-ecda960660b5",
       "path": "knowledge/legacy.txt",
       "entity_type": "virtual_file",
       "content_hash": "fa02ccb9defd40a1fad449937f3a03a1e11d06741cfe4be128ee3f2ca343eba8",

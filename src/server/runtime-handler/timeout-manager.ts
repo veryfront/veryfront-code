@@ -13,6 +13,9 @@ import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./req
 import { ErrorPages } from "../utils/error-html.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
+import { ControlPlaneRequestError } from "#veryfront/internal-agents/control-plane-auth.ts";
+import { InternalAgentRequestBodyTooLargeError } from "#veryfront/internal-agents/request-body.ts";
+
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
@@ -125,6 +128,16 @@ export async function withRequestTimeout(
       // This waiter belongs to the disconnected caller. Independent worker failures
       // and the timeout response above retain their existing reporting semantics.
       return { response: new Response(null, { status: 499 }), settled };
+    }
+
+    if (
+      method === "POST" && /^\/api\/control-plane\/runs\/[^/]+\/execute$/.test(pathname) &&
+      (e instanceof ControlPlaneRequestError || e instanceof InternalAgentRequestBodyTooLargeError)
+    ) {
+      return {
+        response: Response.json({ error: e.message }, { status: e.status }),
+        settled,
+      };
     }
 
     const error = e instanceof Error ? e : new Error(String(e));

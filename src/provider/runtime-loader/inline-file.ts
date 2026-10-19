@@ -55,13 +55,26 @@ export function promptHasDocumentInput(prompt: unknown): boolean {
   );
 }
 
+/** Whether a base URL is OpenAI's own API. No base URL means the default, which is. */
+export function isOpenAIBaseURL(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+  if (!URL.canParse(baseURL)) return false;
+  const hostname = new URL(baseURL).hostname.toLowerCase();
+  return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
+}
+
 /**
  * Whether an OpenAI-wire provider serves document input on Responses, so the
  * `auto` transport may move a request with a document there. Mistral and
  * generic compatible servers do not, and keep the local Chat Completions error.
+ * An `openai` provider on a custom base URL is a compatible server too.
  */
-export function routesOpenAIDocumentInputToResponses(providerName: string | undefined): boolean {
-  return providerName === "openai" || providerName === "veryfront-cloud";
+export function routesOpenAIDocumentInputToResponses(
+  providerName: string | undefined,
+  baseURL?: string,
+): boolean {
+  if (providerName === "veryfront-cloud") return true;
+  return providerName === "openai" && isOpenAIBaseURL(baseURL);
 }
 
 /** Error for a file part that a provider transport cannot send. */

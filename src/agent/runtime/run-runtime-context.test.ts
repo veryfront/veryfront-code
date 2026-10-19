@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { runWithLocalEvalIdentity } from "#veryfront/runtime/local-eval-context.ts";
 import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
@@ -19,61 +20,69 @@ describe("agent run runtime context", () => {
     new Date("2026-07-19T07:30:00.000Z"),
   );
 
-  it("exposes only the host-bound canonical run id", () => {
+  it("uses local eval identity only when no durable writer is bound", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
     const sink = async () => {};
-    const id = "55555555-5555-4555-8555-555555555555";
     bindRuntimeObservationWriterCapability(
       sink,
       createRuntimeObservationWriterCapability({
         scope: {
           runId: "public-run",
-          canonicalRunId: id,
+          canonicalRunId,
           projectId: "22222222-2222-4222-8222-222222222222",
         },
       }),
     );
-    const result = runWithMandatoryRunEventSink(
-      sink,
-      () => withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()),
-    );
-    assertEquals(result.includes(`run_id: ${id}`), true);
-    assertEquals(
-      withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()).includes(
-        "run_id:",
-      ),
-      false,
-    );
+    runWithLocalEvalIdentity((runId) => {
+      assertEquals(captureAgentRunRuntimeContext().runId, runId);
+      assertEquals(
+        runWithMandatoryRunEventSink(sink, () => captureAgentRunRuntimeContext().runId),
+        canonicalRunId,
+      );
+    });
+    assertEquals(captureAgentRunRuntimeContext().runId, undefined);
   });
 
-  it("uses only the mandatory writer when public observers are active", () => {
+  it("keeps the mandatory canonical writer when a public observer is also active", () => {
     const canonicalRunId = "55555555-5555-4555-8555-555555555555";
     const mandatory = async () => {};
     const observer = async () => {};
+    bindRuntimeObservationWriterCapability(
+      mandatory,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "durable-run",
+          canonicalRunId,
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    // Even another bound sink in the public lane cannot replace mandatory authority.
     const otherObserver = async () => {};
-    for (
-      const [sink, id] of [
-        [mandatory, canonicalRunId],
-        [otherObserver, "66666666-6666-4666-8666-666666666666"],
-      ] as const
-    ) {
-      bindRuntimeObservationWriterCapability(
-        sink,
-        createRuntimeObservationWriterCapability({
-          scope: {
-            runId: id,
-            canonicalRunId: id,
-            projectId: "22222222-2222-4222-8222-222222222222",
-          },
-        }),
-      );
-    }
-    for (const publicSink of [observer, otherObserver]) {
-      const result = runWithMandatoryRunEventSink(
-        mandatory,
-        () => runWithRunEventSink(publicSink, () => captureAgentRunRuntimeContext()),
-      );
-      assertEquals(result.runId, canonicalRunId);
-    }
+    bindRuntimeObservationWriterCapability(
+      otherObserver,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "other-run",
+          canonicalRunId: "66666666-6666-4666-8666-666666666666",
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    runWithLocalEvalIdentity(() => {
+      for (const publicSink of [observer, otherObserver]) {
+        const rendered = runWithMandatoryRunEventSink(
+          mandatory,
+          () =>
+            runWithRunEventSink(
+              publicSink,
+              () => withAgentRunRuntimeContext("Read run", captureAgentRunRuntimeContext()),
+            ),
+        );
+        assertEquals(rendered.includes(`run_id: ${canonicalRunId}`), true);
+        assertEquals(rendered.includes("66666666-6666-4666-8666-666666666666"), false);
+      }
+    });
     assertEquals(
       runWithRunEventSink(otherObserver, () => captureAgentRunRuntimeContext().runId),
       undefined,
