@@ -709,6 +709,7 @@ jobs:
             tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
             tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
             tests/integration/server/agent-stream.programmatic-platform.test.ts \
+            tests/integration/server/agent-stream.project-event-persistence.test.ts \
             tests/integration/agent/managed-recovery
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership

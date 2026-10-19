@@ -856,6 +856,7 @@ done
         "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
         "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
         "tests/integration/agent/managed-recovery",
+        "tests/integration/server/agent-stream.project-event-persistence.test.ts",
       ]
     ) assertStringIncludes(command, target);
     assertStringIncludes(
