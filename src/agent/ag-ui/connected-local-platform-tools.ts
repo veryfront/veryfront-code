@@ -5,7 +5,15 @@ import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts"
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { VERYFRONT_API_MCP_SOURCE_ID } from "../runtime/mcp-server-tool-sources.ts";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import {
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { privateTextSplit } from "#veryfront/security/private-text.ts";
 import {
   configureHostedPlatformDependencySource,
   type HostedPlatformDependencyOwner,
@@ -38,24 +46,36 @@ import {
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 
 type Scope = { projectId: string; runId: string; agentId: string };
-const execution = new AsyncLocalStorage<object>();
+const execution = createPrivateAsyncLocalStorage<object>();
+const apply = Reflect.apply;
+const nativeBuffer = Buffer;
+const nativePromise = Promise;
+const bufferFrom = Buffer.from;
+const bufferToString = Buffer.prototype.toString;
+const isArray = Array.isArray;
+const entries = Object.entries;
+const replace = String.prototype.replace;
+const allSettled = Promise.allSettled;
+const throwIfAborted = AbortSignal.prototype.throwIfAborted;
 
 /** CLI-owned transport and signed grants; no project setting can install this boundary. */
 export function createConnectedLocalPlatformTools(apiUrl: string, transport: typeof fetch) {
   const verify = createConnectedLocalWriterVerifier(apiUrl);
-  const endpoint = `${apiUrl.replace(/\/$/, "")}/mcp`;
+  const endpoint = `${apply(replace, apiUrl, [/\/$/, ""])}/mcp`;
   const createSource = createRemoteMCPToolSourceFactoryWithTransport({
     trustedEndpoints: [endpoint],
     requestFetch: transport,
   });
-  const sources = new WeakMap<object, RemoteToolSource>();
-  const cleanups = new WeakMap<object, Array<() => Promise<void>>>();
+  const sources = createPrivateWeakStore<object, RemoteToolSource>();
+  const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
   return {
     verify,
     async revoke(owner: HostedPlatformDependencyOwner) {
       revokeHostedPlatformDependencies(owner);
-      await Promise.allSettled((cleanups.get(owner) ?? []).map((close) => close()));
-      cleanups.delete(owner);
+      await apply(allSettled, nativePromise, [
+        mapPrivateArray(cleanups.get(owner) ?? [], (close) => close()),
+      ]);
+      cleanups.set(owner, []);
     },
     async register(
       owner: HostedPlatformDependencyOwner,
@@ -90,10 +110,14 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
           let allowSandbox = false;
           try {
             const claims = privateJsonParse(
-              Buffer.from(token.split(".")[1]!, "base64url").toString(),
+              apply(
+                bufferToString,
+                apply(bufferFrom, nativeBuffer, [privateTextSplit(token, ".")[1]!, "base64url"]),
+                [],
+              ),
             );
-            allowSandbox = Array.isArray(claims.scope) &&
-              claims.scope.includes("sandboxes:write");
+            allowSandbox = isArray(claims.scope) &&
+              somePrivateArray(claims.scope, (scope) => scope === "sandboxes:write");
           } catch { /* A session credential without sandbox scope exposes no native tools. */ }
           if (allowSandbox) {
             const { createBashSandboxShellToolsProvider } = await importFirstPartyExtensionModule<{
@@ -107,14 +131,14 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
               getProjectId: () => childScope.projectId,
               createBashTool: createBashSandboxShellToolsProvider,
             });
-            cleanup.push(sandbox.closeSandbox);
+            pushPrivateArray(cleanup, sandbox.closeSandbox);
             const native = canonicalPlatformHostTools(markTrustedHostToolSet(sandbox.tools));
             const mcp = source;
             source = markTrustedPlatformSource({
               id: mcp.id,
               listTools: async (context) => [
                 ...await mcp.listTools(context),
-                ...Object.entries(native).map(([name, tool]) => ({
+                ...mapPrivateArray(entries(native), ([name, tool]) => ({
                   name,
                   description: tool.description ?? name,
                   parameters: (tool.inputSchemaJson ?? tool.parameters ??
@@ -147,8 +171,8 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
       ) => Promise<AgentRunToolCallAdmissionReceipt>;
     }, operation: () => Promise<T>): Promise<T> {
       const identity = {};
-      const assertActive = () => input.signal.throwIfAborted();
-      const calls = new Map<string, { name: string; args: Record<string, unknown> }>();
+      const assertActive = () => apply(throwIfAborted, input.signal, []);
+      const calls = createPrivateMap<string, { name: string; args: Record<string, unknown> }>();
       const admit: AdmitExecutorToolCall = (call) => {
         const tool = calls.get(call.occurrenceId);
         if (!tool) throw new Error("Missing connected tool dispatch");
@@ -161,12 +185,12 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
       });
       bindToolCallAdmissionOwner(admit, { ...input.scope, canonicalRunId: input.canonicalRunId });
       const source = sources.get(input.owner);
-      if (!source) throw new Error("Connected local platform source is unavailable");
+      // Legacy writers have no dependency runner and retain the no-platform execution path.
       return runWithHostedPlatformDependencies(
         input.owner,
         () =>
           runWithExactRuntimeRemoteToolSources(
-            [source],
+            source ? [source] : [],
             () =>
               execution.run(identity, () =>
                 runWithToolCallOccurrences(() =>

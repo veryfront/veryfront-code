@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import {
   bindToolCallStartOccurrence,
   getToolCallOccurrence,
@@ -10,8 +10,10 @@ export {
   retainToolCallOccurrence,
 } from "./tool-call-occurrence-carrier.ts";
 
-const enabled = new AsyncLocalStorage<true>();
-const dispatch = new AsyncLocalStorage<Readonly<{ occurrenceId: string; toolCallId: string }>>();
+const enabled = createPrivateAsyncLocalStorage<true>();
+const dispatch = createPrivateAsyncLocalStorage<
+  Readonly<{ occurrenceId: string; toolCallId: string }>
+>();
 
 /** Internal hosted streaming opt-in. No application context can enable admissions. */
 export function runWithToolCallOccurrences<T>(operation: () => T): T {
