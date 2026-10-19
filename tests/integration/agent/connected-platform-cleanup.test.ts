@@ -271,8 +271,12 @@ it("renews root and exact-child sandbox credentials without crossing run identit
     const credentials: Array<() => string> = [];
     const cleanupCredentials: string[] = [];
     let currentToken = authToken;
+    let currentAuthorityAvailable = true;
+    let rootCloseAttempts = 0;
+    let created = 0;
     const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport, {
       async createSandboxTools(input) {
+        const id = created++;
         const credential = input.getAuthToken ?? (() => input.authToken!);
         credentials.push(credential);
         const sandbox = await createAgentServiceSandboxTools(input);
@@ -280,6 +284,9 @@ it("renews root and exact-child sandbox credentials without crossing run identit
           ...sandbox,
           async closeSandbox() {
             cleanupCredentials.push(credential());
+            if (id === 0 && rootCloseAttempts++ === 0) {
+              throw new Error("root close failed");
+            }
             await sandbox.closeSandbox();
           },
         };
@@ -287,10 +294,13 @@ it("renews root and exact-child sandbox credentials without crossing run identit
     });
     const root = { runId: scope.runId };
     const child = { childRunId: "credential-child" };
-    await tools.register(root, scope, eventToken(scope.runId), authToken, () => ({
-      auth_token: currentToken,
-      run_event_token: eventToken(scope.runId),
-    }));
+    await tools.register(root, scope, eventToken(scope.runId), authToken, () => {
+      if (!currentAuthorityAvailable) throw new Error("Current worker claim authority is required");
+      return {
+        auth_token: currentToken,
+        run_event_token: eventToken(scope.runId),
+      };
+    });
     await registerHostedChildPlatformDependencies(
       root,
       child,
@@ -329,8 +339,14 @@ it("renews root and exact-child sandbox credentials without crossing run identit
       );
       return Promise.resolve();
     });
+    await assertRejects(() => tools.revoke(root), Error, "root close failed");
+    currentAuthorityAvailable = false;
     await tools.revoke(root);
-    assertEquals(cleanupCredentials, ["renewed-child-credential", "renewed-root-credential"]);
+    assertEquals(cleanupCredentials, [
+      "renewed-child-credential",
+      "renewed-root-credential",
+      "renewed-root-credential",
+    ]);
   });
 });
 

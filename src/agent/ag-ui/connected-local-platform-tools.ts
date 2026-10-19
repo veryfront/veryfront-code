@@ -77,12 +77,13 @@ export function createConnectedLocalPlatformTools(
   });
   const sources = createPrivateWeakStore<object, RemoteToolSource>();
   const credentials = createPrivateWeakStore<object, () => string>();
+  const freezeCredentials = createPrivateWeakStore<object, () => void>();
   const credentialLifetimes = createPrivateWeakStore<object, { active: boolean }>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
   const revoke = async (owner: HostedPlatformDependencyOwner) => {
     // Snapshot the newest exact-owner credential before revoking execution
     // authority so retained cleanup never falls back to its admission token.
-    credentials.get(owner)?.();
+    freezeCredentials.get(owner)?.();
     revokeHostedPlatformDependencies(owner);
     const pending = cleanups.get(owner) ?? [];
     cleanups.set(owner, []);
@@ -140,13 +141,20 @@ export function createConnectedLocalPlatformTools(
             try {
               credentialLifetimes.set(childOwner, { active: true });
               let lastCredential = token;
+              let credentialFrozen = false;
               const credential = () => {
+                if (credentialFrozen) return lastCredential;
                 const current = childScope.runId === scope.runId
                   ? currentAuthority?.().auth_token
                   : hostedPlatformDependencyCredential(childOwner);
                 if (current) lastCredential = current;
                 return lastCredential;
               };
+              freezeCredentials.set(childOwner, () => {
+                if (credentialFrozen) return;
+                credential();
+                credentialFrozen = true;
+              });
               credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
               let source = createLivePlatformMcpSource(factory({
