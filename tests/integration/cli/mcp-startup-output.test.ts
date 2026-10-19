@@ -47,6 +47,7 @@ serverLogger.info("[esbuild] Extracted binary from VFS");
 refreshLoggerConfig();
 serverLogger.debug("MCP startup debug diagnostic");
 serverLogger.warn("MCP startup warning diagnostic");
+serverLogger.error("MCP startup error diagnostic");
 Deno.exit(0);
 `;
   const copy = await createIsolatedCliCopy(root, basename(fileURLToPath(entry)), patched);
@@ -82,6 +83,8 @@ Deno.exit(0);
         assertEquals(stdout.includes("MCP startup debug diagnostic"), true);
       }
       assertEquals(stderr.includes("MCP startup warning diagnostic"), true);
+      assertEquals(stderr.includes("MCP startup error diagnostic"), true);
+      assertEquals(stdout.includes("MCP startup error diagnostic"), false);
     }
   } finally {
     await copy.cleanup();
