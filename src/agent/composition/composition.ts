@@ -186,7 +186,6 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
-
 export function agentAsTool(
   agent: Agent,
   description: string,

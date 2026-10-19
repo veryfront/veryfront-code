@@ -296,7 +296,7 @@ describe("connected local execution", () => {
       let attempts = 0;
       let renewals = 0;
       const output = {
-        text: "text" in stored ? stored.text : "",
+        text: "text" in stored ? stored.text ?? "" : "",
         ...("toolCalls" in stored ? { toolCalls: stored.toolCalls } : {}),
         status: "completed",
         ...("data" in stored ? { data: stored.data, object: stored.data } : {}),

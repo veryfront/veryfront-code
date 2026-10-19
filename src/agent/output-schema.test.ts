@@ -223,7 +223,15 @@ describe("agent output schema", () => {
         const structured = agent({
           id: "falsy-structured-output",
           system: "Return the requested value.",
-          outputSchema: { type: value === null ? "null" : typeof value },
+          outputSchema: {
+            type: value === null
+              ? "null"
+              : typeof value === "boolean"
+              ? "boolean"
+              : typeof value === "number"
+              ? "number"
+              : "string",
+          },
           resolveModelTransport: () => Promise.resolve({ model }),
         });
         const response = await structured.generate({ input: "Return the value." });

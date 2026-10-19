@@ -193,8 +193,9 @@ function buildResponseFormat(schema: JsonSchema): RuntimeResponseFormat {
 
 /** Read own structured result fields without invoking accessors. */
 export function readStructuredAgentOutput(
-  response: object,
+  response: unknown,
 ): { data: unknown; object: unknown } | undefined {
+  if (typeof response !== "object" || response === null) return undefined;
   const data = Object.getOwnPropertyDescriptor(response, "data");
   const object = Object.getOwnPropertyDescriptor(response, "object");
   if ((data && !("value" in data)) || (object && !("value" in object))) {
