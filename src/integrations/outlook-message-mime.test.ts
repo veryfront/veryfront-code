@@ -7,9 +7,12 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { connectors } from "./_data.ts";
-import { MAX_INTEGRATION_BINARY_RESPONSE_BYTES } from "./limits.ts";
+import { MAX_BINARY_CONTENT_TYPE_LENGTH, MAX_INTEGRATION_BINARY_RESPONSE_BYTES } from "./limits.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
 import {
   executeLocalIntegrationEndpoint as executeEndpoint,
@@ -177,14 +180,29 @@ describe("binary endpoint responses", () => {
     }
   });
 
-  it("returns the largest accepted body as a bounded JSON tool result", async () => {
+  it("returns a body over 1 MiB, up to the 4 MiB tool result bound", async () => {
+    assert(MAX_INTEGRATION_BINARY_RESPONSE_BYTES >= 3 * 1024 * 1024 - 4096);
     const body = new Uint8Array(MAX_INTEGRATION_BINARY_RESPONSE_BYTES);
     body.set(mime);
-    const result = await executeMime(() => new Response(body));
+    // The longest media type admitted, so the wrapper is as large as it gets.
+    const contentType = `application/${"x".repeat(MAX_BINARY_CONTENT_TYPE_LENGTH - 12)}`;
+    const result = await executeMime(() =>
+      new Response(body, { headers: { "content-type": contentType } })
+    );
 
-    // Hosted runtimes snapshot every tool result with the default JSON bounds.
-    assertEquals(snapshotBoundedJsonValue(result).success, true);
+    // Tool results are bounded by their whole 4 MiB size, so one string may use all of it.
+    const bound = JSON_VALUE_MAX_SERIALIZED_BYTES;
+    assertEquals(snapshotBoundedJsonValue(result, bound, bound).success, true);
     assertEquals((result as Record<string, unknown>).size, body.byteLength);
+    assertEquals((result as Record<string, unknown>).content_type, contentType);
+  });
+
+  it("rejects a media type too long to keep the result within its bound", async () => {
+    const contentType = `application/${"x".repeat(MAX_BINARY_CONTENT_TYPE_LENGTH)}`;
+    const error = await assertRejects(() =>
+      executeMime(() => new Response(mime, { headers: { "content-type": contentType } }))
+    );
+    assertInstanceOf(error, VeryfrontError);
   });
 
   const paddingCases: ReadonlyArray<readonly [readonly number[], string]> = [
