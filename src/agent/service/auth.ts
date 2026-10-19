@@ -44,6 +44,7 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const StringIndexOf = String.prototype.indexOf;
 const NativeURL = URL;
 const URLOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const AbortSignalTimeout = AbortSignal.timeout;
 const ResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 
 type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
@@ -1263,15 +1264,18 @@ export function createConnectedLocalWriterVerifier(
   let keys: Promise<Array<Record<string, unknown>>> | undefined;
   const loadKeys = () => {
     keys ??= chainPrivatePromise(
-      chainPrivatePromise(transport(endpoint, { redirect: "error" }), async (response) => {
-        if (!ReflectApply(ResponseOk, response, [])) {
-          throw new Error("API signing keys are unavailable");
-        }
-        const document = await ReflectApply(ResponseJson, response, []);
-        const keys = readOwnDataProperty(document, "keys", "API signing keys");
-        if (!ArrayIsArray(keys)) throw new Error("Invalid API signing keys");
-        return keys;
-      }),
+      chainPrivatePromise(
+        transport(endpoint, { redirect: "error", signal: AbortSignalTimeout(15_000) }),
+        async (response) => {
+          if (!ReflectApply(ResponseOk, response, [])) {
+            throw new Error("API signing keys are unavailable");
+          }
+          const document = await ReflectApply(ResponseJson, response, []);
+          const keys = readOwnDataProperty(document, "keys", "API signing keys");
+          if (!ArrayIsArray(keys)) throw new Error("Invalid API signing keys");
+          return keys;
+        },
+      ),
       (value) => value,
       (error) => {
         keys = undefined;

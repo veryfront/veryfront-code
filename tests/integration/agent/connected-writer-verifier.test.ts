@@ -156,7 +156,16 @@ for (const apiUrl of ["http://localhost:4000", "https://api.veryfront.com"]) {
   });
 }
 
-for (const attack of ["split", "filter", "iterator", "rotation", "same-key-rotation"] as const) {
+for (
+  const attack of [
+    "split",
+    "filter",
+    "iterator",
+    "rotation",
+    "same-key-rotation",
+    "timeout",
+  ] as const
+) {
   it(`verifies connected writer credentials across ${attack}`, async () => {
     const first = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const second = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -186,8 +195,18 @@ for (const attack of ["split", "filter", "iterator", "rotation", "same-key-rotat
     let requests = 0;
     let useSecond = false;
     let leaked = false;
-    await withMockFetch(async () => {
+    let timeoutSignal: AbortSignal | null | undefined;
+    await withMockFetch(async (_url, init) => {
       requests++;
+      if (attack === "timeout") {
+        timeoutSignal = init?.signal;
+        if (!timeoutSignal) throw new Error("Missing signing key deadline");
+        return await new Promise<Response>((_resolve, reject) => {
+          timeoutSignal!.addEventListener("abort", () => reject(timeoutSignal!.reason), {
+            once: true,
+          });
+        });
+      }
       const key = useSecond ? second : first;
       return Response.json({
         keys: [{
@@ -198,6 +217,17 @@ for (const attack of ["split", "filter", "iterator", "rotation", "same-key-rotat
       });
     }, async () => {
       const verify = createConnectedLocalWriterVerifier("https://api.veryfront.com");
+      if (attack === "timeout") {
+        const keepAlive = setInterval(() => {}, 1000);
+        try {
+          assertEquals((await verify({ ...scope, token })).verified, false);
+          assertEquals(timeoutSignal?.aborted, true);
+          assertEquals(requests, 1);
+        } finally {
+          clearInterval(keepAlive);
+        }
+        return;
+      }
       assertEquals((await verify({ ...scope, token })).verified, true);
       if (attack === "rotation" || attack === "same-key-rotation") {
         useSecond = true;
