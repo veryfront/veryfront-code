@@ -1,16 +1,24 @@
 import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { CanonicalRunStreamFrame } from "#veryfront/runs/target/client.ts";
+import { getRunEventEnvelopeSchema } from "#veryfront/run-events/envelope.ts";
 import { MAX_SSE_FRAME_CHARS, normalizeNewlines } from "#veryfront/utils/sse-frames.ts";
 
+/**
+ * One `RunStreamFrame` as the Runs API publishes it. The five base fields are required and
+ * are what this adapter reads. The run event envelope fields (`run_id`, `event_class`,
+ * `span_id`, ...) are optional in the published contract; when present they must match the
+ * run event envelope. Fields the contract adds later are dropped, not rejected, because the
+ * API extends the frame additively.
+ */
 const getCanonicalFrameSchema = defineSchema((v) =>
-  v.object({
+  getRunEventEnvelopeSchema().partial().extend({
     event_id: v.number().int().nonnegative().nullable(),
     event_type: v.string().min(1),
     payload: v.object({ type: v.string().min(1) }).passthrough(),
     is_error: v.boolean(),
     created_at: v.string().nullable(),
-  }).strict()
+  }).strip()
 );
 
 function invalidFrame(): never {
