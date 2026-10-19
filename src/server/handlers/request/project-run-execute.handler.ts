@@ -84,6 +84,7 @@ import {
   readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
+  consumeControlPlaneExecuteIngress,
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
@@ -5876,12 +5877,13 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
       try {
-        const rawBody = await readInternalAgentRequestBody(
+        const ingress = consumeControlPlaneExecuteIngress(req, ctx, runId);
+        const rawBody = ingress?.rawBody ?? await readInternalAgentRequestBody(
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
         const request = parseExecuteRequest(JSON.parse(rawBody), runId);
-        const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
+        const claims = ingress?.claims ?? await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
