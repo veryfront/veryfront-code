@@ -183,6 +183,31 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       );
     });
   }
+  for (
+    const url of [
+      "/home/user/photo.png",
+      "file:///home/user/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-5",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
   it("rejects a PDF whose URL is a local path instead of sending it", () => {
     assertThrows(
       () =>

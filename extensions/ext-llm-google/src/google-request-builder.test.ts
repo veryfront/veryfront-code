@@ -172,6 +172,39 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  for (
+    const url of [
+      "/home/user/photo.png",
+      "file:///home/user/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+          }, createWarningCollector()),
+        TypeError,
+        "Google does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("sends a remote image URL as fileData", () => {
+    const fileUri = "https://example.test/photo.png";
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{ type: "image", url: fileUri, mediaType: "image/png" }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ fileData: { mimeType: "image/png", fileUri } }],
+    }]);
+  });
+
   it("rejects remote non-image file URLs instead of sending them as fileData", () => {
     assertThrows(
       () =>

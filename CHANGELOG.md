@@ -23,8 +23,9 @@ File parts that a provider transport cannot send now throw a `TypeError` that
 names the file and MIME type, before any provider request. Before, they were
 dropped silently and the model answered without the file. This affects
 non-image files on Chat Completions transports, non-image and non-PDF files on
-Anthropic, remote non-image URLs on Google, and document URLs that are not
-`http` or `https` on OpenAI Responses and Anthropic. Audio and video files on
+Anthropic, remote non-image URLs on Google, document URLs that are not
+`http` or `https` on OpenAI Responses and Anthropic, and image URLs that are not
+`data:`, `http`, or `https` on every provider. Audio and video files on
 OpenAI Responses fail the same way. An inline `data:` part must be
 `data:<mime>[;<param>=<value>];base64,<payload>` with the part's MIME type, or
 it fails before inference on every provider. MIME types compare
