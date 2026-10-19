@@ -13,7 +13,8 @@ function terminalAgentOutput(output: unknown): unknown {
   if (
     !text || !("value" in text) || typeof text.value !== "string" ||
     !status || !("value" in status) || status.value !== "completed" ||
-    !calls || !("value" in calls) || typeof calls.value !== "number"
+    !calls || !("value" in calls) ||
+    (typeof calls.value !== "number" && !Array.isArray(calls.value))
   ) return output;
   const structured = readStructuredAgentOutput(output);
   return structured ? structured.data : undefined;

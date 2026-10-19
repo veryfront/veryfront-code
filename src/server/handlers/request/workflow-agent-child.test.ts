@@ -152,6 +152,36 @@ describe("workflow agent child protocol", () => {
     assertEquals(children, [children[0], children[0], children[0]]);
   });
 
+  for (const structured of [false, true]) {
+    it(`stores only ${structured ? "structured" : "text-only"} workflow agent results`, async () => {
+      const output = {
+        text: "brief",
+        toolCalls: [],
+        status: "completed",
+        usage: { totalTokens: 1 },
+        ...(structured ? { object: { category: "billing" } } : {}),
+      };
+      let finalized: unknown;
+      const send: typeof fetch = (url, init) => {
+        if (String(url).endsWith("/runs")) return Promise.resolve(admission());
+        if (String(url).endsWith("/finalize")) {
+          finalized = requestJsonBody(init);
+          return Promise.resolve(json({ id: childId, status: "completed" }));
+        }
+        return Promise.resolve(json({}));
+      };
+      const result = await runner(send)({
+        ...invocation,
+        execute: () => Promise.resolve({ success: true, output, executionTime: 1 }),
+      });
+      assertEquals(result.output, output);
+      assertEquals(finalized, {
+        status: "completed",
+        ...(structured ? { output: { category: "billing" } } : {}),
+      });
+    });
+  }
+
   it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
     const order: string[] = [];
     const send: typeof fetch = (_url, init) => {
@@ -341,6 +371,7 @@ describe("workflow agent child protocol", () => {
     >();
     const starts = new Set<string>();
     const cursors = new Map<string, number>();
+    const texts = new Map<string, string>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
       const body = requestJsonBody(init);
@@ -367,6 +398,11 @@ describe("workflow agent child protocol", () => {
       }
       const id = path.split("/")[2]!;
       if (path.endsWith("/events")) {
+        for (const event of body.events) {
+          if (event.type === "TEXT_MESSAGE_CONTENT") {
+            texts.set(id, (texts.get(id) ?? "") + event.delta);
+          }
+        }
         const cursor = (cursors.get(id) ?? 0) + body.events.length;
         cursors.set(id, cursor);
         return Promise.resolve(
@@ -380,7 +416,7 @@ describe("workflow agent child protocol", () => {
       }
       const record = [...records.values()].find((value) => value.id === id)!;
       record.status = body.status;
-      record.output = body.output;
+      record.output = Object.hasOwn(body, "output") ? body.output : { text: texts.get(id) ?? "" };
       return Promise.resolve(json({ id, status: body.status }));
     };
     const freshRun = (): WorkflowRun => ({
