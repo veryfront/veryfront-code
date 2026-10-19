@@ -212,3 +212,22 @@ export function readStructuredAgentOutput(
   const value = data ? data.value : object!.value;
   return { data: value, object: value };
 }
+
+/** Keep one canonical structured result on JSON wire boundaries; readers restore `object`. */
+export function structuredAgentOutputForWire<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value;
+  const type = Object.getOwnPropertyDescriptor(value, "type");
+  if (!type || !("value" in type) || (type.value !== "message-finish" && type.value !== "finish")) {
+    return value;
+  }
+  const data = Object.getOwnPropertyDescriptor(value, "data");
+  const object = Object.getOwnPropertyDescriptor(value, "object");
+  if (
+    !data || !("value" in data) || !object || !("value" in object) ||
+    !Object.is(data.value, object.value)
+  ) {
+    return value;
+  }
+  const { object: _legacyAlias, ...wireValue } = value as Record<string, unknown>;
+  return wireValue as T;
+}

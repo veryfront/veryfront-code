@@ -354,8 +354,8 @@ describe("agent output schema", () => {
       assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
       assertEquals(finished, { city: "Berlin", tempC: 12 });
       assertStringIncludes(body, '"type":"message-finish"');
-      assertStringIncludes(body, '"object":{"city":"Berlin","tempC":12}');
       assertStringIncludes(body, '"data":{"city":"Berlin","tempC":12}');
+      assertEquals(body.includes('"object":{"city":"Berlin","tempC":12}'), false);
       const finishLine = body.split("\n").find((line) =>
         line.startsWith("data: ") && line.includes('"type":"message-finish"')
       );

@@ -259,11 +259,15 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
   ) {
     try {
       const structured = readStructuredAgentOutput(value);
-      const aliases = executorAgentJson(structured, "EXECUTOR_AGENT_INVALID_STREAM");
-      if (!aliases || typeof aliases !== "object" || Array.isArray(aliases)) {
+      if (!structured) {
         throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
       }
-      return { ...value, ...aliases, type: value.type };
+      return {
+        ...value,
+        data: value.data,
+        object: value.data,
+        type: value.type,
+      } as JsonValue & { type: string };
     } catch {
       throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
     }

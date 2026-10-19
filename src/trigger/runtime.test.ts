@@ -827,6 +827,40 @@ describe("trigger runtime", () => {
     assertEquals(result.durationMs >= 0, true);
   });
 
+  it("preserves an explicitly undefined structured output and its legacy alias", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/undefined-output.ts": [
+        "export default {",
+        '  id: "undefined-output",',
+        '  config: { id: "undefined-output", model: "auto" },',
+        "  async generate() {",
+        '    return { text: "done", status: "completed", toolCalls: [], data: undefined };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "undefined-output" },
+      agentInput: "Run once.",
+    });
+
+    const output = result.output as Record<string, unknown>;
+    assertEquals(Object.hasOwn(output, "data"), true);
+    assertEquals(Object.hasOwn(output, "object"), true);
+    assertEquals(output.data, undefined);
+    assertEquals(output.object, undefined);
+  });
+
   it("rejects conflicting structured aliases", async () => {
     const adapter = createRuntimeAdapter({
       "/project/agents/signal-aware.ts": [

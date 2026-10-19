@@ -270,6 +270,7 @@ function summarizeAgentResponse(
   text: string;
   status: "completed" | "error";
   toolCalls: number;
+  hasStructuredOutput: boolean;
   data?: unknown;
   object?: unknown;
 } | null {
@@ -308,6 +309,7 @@ function summarizeAgentResponse(
       text: textDescriptor.value,
       status: statusDescriptor.value,
       toolCalls: toolCallCount,
+      hasStructuredOutput: structured !== undefined,
     };
   } catch {
     return null;
@@ -359,7 +361,7 @@ async function runAgentTarget(
       kind: "agent",
       id: options.target.id,
       output: {
-        ...(summary.data !== undefined ? { data: summary.data, object: summary.data } : {}),
+        ...(summary.hasStructuredOutput ? { data: summary.data, object: summary.data } : {}),
         text: summary.text,
         status: summary.status,
         toolCalls: summary.toolCalls,

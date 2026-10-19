@@ -13,6 +13,7 @@ import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts"
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
+import { structuredAgentOutputForWire } from "#veryfront/agent/output-schema.ts";
 import { readExecutorDataEvents } from "../streaming/executor-data-stream.ts";
 import {
   getExecutorAgentStreamFrameSchema,
@@ -101,7 +102,10 @@ export function createExecutorAgentOperations(options: {
         for await (
           const event of getPrivateAsyncIterator(readExecutorDataEvents(stream, context.signal))
         ) {
-          yield executorAgentJson({ type: "event", event }, "EXECUTOR_AGENT_INVALID_STREAM");
+          yield executorAgentJson(
+            { type: "event", event: structuredAgentOutputForWire(event) },
+            "EXECUTOR_AGENT_INVALID_STREAM",
+          );
         }
       } catch (error) {
         failure = {
