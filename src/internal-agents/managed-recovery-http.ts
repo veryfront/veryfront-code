@@ -43,10 +43,14 @@ import {
 } from "./recovery-admission-schema.ts";
 import { MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES } from "./recovery-suffix.ts";
 import {
+  assertOwnRecoveryBinaryContentType,
   createRecoverySourceManifest,
   MAX_RECOVERY_SOURCE_RESPONSE_BYTES,
 } from "./recovery-source-manifest.ts";
 
+const hasOwn = Object.hasOwn;
+const defineProperty = Object.defineProperty;
+const isArray = Array.isArray;
 const ceil = Math.ceil;
 const byteLength = Buffer.byteLength;
 const NativeURL = URL;
@@ -137,12 +141,15 @@ const getNativeManifestSchema = defineSchema((v) => {
     manifest_hash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
     file_count: v.number().int().min(0).max(10_000),
     total_bytes: v.number().int().min(0).max(64 * 1024 * 1024),
-    files: v.array(v.union([
+    files: v.array(v.discriminatedUnion("kind", [
       v.object({ ...identity, kind: v.literal("text"), content: v.string() }).strict(),
       v.object({
         ...identity,
         kind: v.literal("binary"),
         content_base64: v.string().max(4 * ceil(8 * 1024 * 1024 / 3)),
+        content_type: v.string().min(1).max(200).refine((value) =>
+          testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+        ),
       }).strict(),
     ])).min(1).max(10_000).refine(
       (files) => somePrivateArray(files, (file) => file.kind === "binary"),
@@ -399,9 +406,27 @@ export function createManagedRecoveryHttpTransport(
           authorization: `Bearer ${credentials.source}`,
         },
       );
-      const manifest = getManifestSchema().parse(
-        await readBoundedJson(response, MAX_RECOVERY_SOURCE_RESPONSE_BYTES),
-      );
+      const rawManifest = await readBoundedJson(response, MAX_RECOVERY_SOURCE_RESPONSE_BYTES);
+      let rawContentTypes: (string | undefined)[] = [];
+      if (
+        typeof rawManifest === "object" && rawManifest !== null &&
+        hasOwn(rawManifest, "files") && "files" in rawManifest && isArray(rawManifest.files)
+      ) {
+        rawContentTypes = mapPrivateArray(rawManifest.files, (file) => {
+          return assertOwnRecoveryBinaryContentType(file, "content_type");
+        });
+      }
+      const manifest = getManifestSchema().parse(rawManifest);
+      if (manifest.manifest_version === 2) {
+        mapPrivateArray(manifest.files, (file, index) => {
+          if (file.kind === "binary") {
+            defineProperty(file, "content_type", {
+              value: rawContentTypes[index],
+              enumerable: true,
+            });
+          }
+        });
+      }
       const verifyText = (file: { content: string; byte_size: number; content_hash: string }) => {
         if (
           byteLength(file.content, "utf8") !== file.byte_size ||
@@ -428,6 +453,7 @@ export function createManagedRecoveryHttpTransport(
             path: file.path,
             entityType: file.entity_type,
             contentBase64: file.content_base64,
+            contentType: file.content_type,
             contentHash: file.content_hash,
             byteSize: file.byte_size,
           };

@@ -8,6 +8,8 @@ import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const hasOwn = Object.hasOwn;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ceil = Math.ceil;
 const isArray = Array.isArray;
 const apply = Reflect.apply;
@@ -29,7 +31,7 @@ const getReleaseFileSchema = defineSchema((v) =>
   }).strict()
 );
 const getNativeReleaseFileSchema = defineSchema((v) =>
-  v.union([
+  v.discriminatedUnion("kind", [
     v.object({
       kind: v.literal("text"),
       path: v.string().min(1).max(1_024),
@@ -41,6 +43,9 @@ const getNativeReleaseFileSchema = defineSchema((v) =>
       path: v.string().min(1).max(1_024),
       entityType: v.enum(["page", "component", "function", "virtual_file"]),
       contentBase64: v.string().max(4 * ceil(8 * 1024 * 1024 / 3)),
+      contentType: v.string().min(1).max(200).refine((value) =>
+        testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+      ),
       contentHash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
       byteSize: v.number().int().min(0).max(8 * 1024 * 1024),
     }).strict(),
@@ -54,6 +59,24 @@ function isNativeReleaseFile(file: ReleaseFile): file is Extract<ReleaseFile, { 
   return hasOwn(file, "kind") && "kind" in file;
 }
 const hash = (value: string) => privateSha256Hex(value);
+
+/** Reject inherited binary metadata before schema parsing can read a prototype getter. */
+export function assertOwnRecoveryBinaryContentType(
+  file: unknown,
+  property: "contentType" | "content_type",
+): string | undefined {
+  if (
+    typeof file !== "object" || file === null || !hasOwn(file, "kind") ||
+    !("kind" in file) || file.kind !== "binary"
+  ) return undefined;
+  const descriptor = getOwnPropertyDescriptor(file, property);
+  const value: unknown = descriptor?.value;
+  if (
+    typeof value !== "string" || value.length < 1 || value.length > 200 ||
+    !testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+  ) throw new Error("Native binary source requires its own printable content type");
+  return value;
+}
 
 /**
  * Immutable release-source manifests: unchanged UTF-8 v1 and native mixed-byte v2.
@@ -74,7 +97,14 @@ export function createRecoverySourceManifest(value: unknown): {
   let hasBinary = false;
   let totalBytes = 0;
   const parsed = mapPrivateArray(value, (entry) => {
+    const contentType = assertOwnRecoveryBinaryContentType(entry, "contentType");
     const file = getAnyReleaseFileSchema().parse(entry);
+    if (
+      isNativeReleaseFile(file) && file.kind === "binary" &&
+      contentType !== undefined
+    ) {
+      defineProperty(file, "contentType", { value: contentType, enumerable: true });
+    }
     if (isNativeReleaseFile(file)) native = true;
     if (isNativeReleaseFile(file) && file.kind === "binary") hasBinary = true;
     const size = isNativeReleaseFile(file) && file.kind === "binary"
@@ -121,7 +151,14 @@ export function createRecoverySourceManifest(value: unknown): {
       contentHash = hash(file.content);
     }
     return native && isNativeReleaseFile(file)
-      ? { path: file.path, type: file.entityType, kind: file.kind, contentHash, byteSize }
+      ? {
+        path: file.path,
+        type: file.entityType,
+        kind: file.kind,
+        contentHash,
+        byteSize,
+        ...(file.kind === "binary" ? { contentType: file.contentType } : {}),
+      }
       : { path: file.path, type: file.entityType, contentHash, byteSize };
   });
   apply(sort, files, [

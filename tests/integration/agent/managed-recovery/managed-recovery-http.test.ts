@@ -479,7 +479,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
   const value = admission();
   value.identity = {
     ...identity,
-    sourceHash: "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6",
+    sourceHash: "f41a2ea57c6e706a4c469dcf8167adf5882e810d1f3dece05de0ba2de17b8e58",
   };
   const text = {
     kind: "text",
@@ -496,6 +496,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
     path: "knowledge/raw.bin",
     entity_type: "virtual_file",
     content_base64: "AP+ACg==",
+    content_type: "application/octet-stream",
     byte_size: 4,
     content_hash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
   };
@@ -562,6 +563,26 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       Array.prototype.some = originalSome;
     }
     assertEquals(exposedListings, 0);
+    const mimeDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "content_type");
+    const { content_type: _omitted, ...missingMime } = binary;
+    let mimeExposures = 0;
+    try {
+      Object.defineProperty(Object.prototype, "content_type", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return "application/octet-stream";
+        },
+      });
+      response = { ...valid, files: [text, missingMime] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      response = valid;
+      await transport.listImmutableReleaseFiles(claims);
+    } finally {
+      if (mimeDescriptor) Object.defineProperty(Object.prototype, "content_type", mimeDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "content_type");
+    }
+    assertEquals(mimeExposures, 0);
     assertEquals(createRecoverySourceManifest(listing.files), {
       version: 2,
       hash: value.identity.sourceHash,
@@ -575,6 +596,9 @@ it("native release transport preserves exact binary bytes and refuses incomplete
         { ...valid, files: [text, { ...binary, content_base64: "AP+ACn==" }] },
         { ...valid, files: [text, { ...binary, content_hash: "a".repeat(64) }] },
         { ...valid, files: [text, { ...binary, byte_size: 3 }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png" }] },
+        { ...valid, files: [text, { ...binary, content_type: undefined }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png\n" }] },
         { ...valid, files: [text, { ...binary, byte_size: 8 * 1024 * 1024 + 1 }] },
         { ...valid, release_id: "88888888-8888-4888-8888-888888888888" },
         { ...valid, project_id: "88888888-8888-4888-8888-888888888888" },
@@ -664,6 +688,10 @@ it("native API fixture passes transport integrity and independent host admission
       });
       const binary = fixture.files.find((file) => file.kind === "binary");
       assert(typeof binary?.content_base64 === "string");
+      assert(typeof binary.content_type === "string");
+      const listedBinary = listing.files.find((file) => "kind" in file && file.kind === "binary");
+      assert(listedBinary && "contentType" in listedBinary);
+      assertEquals(listedBinary.contentType, binary.content_type);
       assertEquals(Array.from(Buffer.from(binary.content_base64, "base64")), [
         239,
         187,
@@ -701,7 +729,38 @@ it("native API fixture passes transport integrity and independent host admission
         payload = invalid;
         await assertRejects(() => transport.listImmutableReleaseFiles(claims));
       }
+      payload = {
+        ...fixture,
+        files: fixture.files.map((file) =>
+          file.kind === "binary"
+            ? {
+              ...file,
+              content_type: file.content_type === "image/png"
+                ? "application/octet-stream"
+                : "image/png",
+            }
+            : file
+        ),
+      };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
       payload = fixture;
+      overrideFiles = listing.files.map((file) =>
+        "kind" in file && file.kind === "binary"
+          ? {
+            ...file,
+            contentType: "contentType" in file && file.contentType === "image/png"
+              ? "application/octet-stream"
+              : "image/png",
+          }
+          : file
+      );
+      await assertRejects(() =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: "fixture-thread",
+          claims,
+        })
+      );
       overrideFiles = listing.files.slice(0, -1);
       await assertRejects(() =>
         manager.startManagedRecoveryRun({
@@ -832,6 +891,7 @@ it("transport preserves the producer-admitted 96 MiB JSON boundary for v1 and na
           path: "knowledge/raw.bin",
           entityType: "virtual_file" as const,
           contentBase64: bytes.toString("base64"),
+          contentType: "application/octet-stream",
           contentHash: createHash("sha256").update(bytes).digest("hex"),
           byteSize: bytes.length,
         }]
@@ -855,7 +915,7 @@ it("transport preserves the producer-admitted 96 MiB JSON boundary for v1 and na
           byte_size: "content" in file ? Buffer.byteLength(file.content) : file.byteSize,
           ...("content" in file
             ? { content: file.content }
-            : { content_base64: file.contentBase64 }),
+            : { content_base64: file.contentBase64, content_type: file.contentType }),
         })),
       };
       return { digest, payload };
