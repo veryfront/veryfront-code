@@ -3,6 +3,7 @@ import {
   jsonValuesEqual,
   readInlineFileData,
   readRecord,
+  readRemoteFileUrl,
   unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
@@ -695,8 +696,10 @@ function toGoogleUserParts(
         );
       }
       content.push({ inlineData: { mimeType, data } });
-    } else if (isImageFileInput(part) || isGeminiFileUri(part.url)) {
+    } else if (isGeminiFileUri(part.url)) {
       content.push({ fileData: { mimeType, fileUri: part.url } });
+    } else if (isImageFileInput(part)) {
+      content.push({ fileData: { mimeType, fileUri: readRemoteFileUrl("Google", part) } });
     } else {
       throw unsupportedFileInputError(
         "Google",

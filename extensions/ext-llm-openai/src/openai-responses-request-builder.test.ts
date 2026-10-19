@@ -103,6 +103,31 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     });
   }
 
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () => buildWithFile({ url, mediaType: "image/png" }),
+        TypeError,
+        "OpenAI Responses does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("sends remote and inline image URLs as input_image", () => {
+    for (const url of ["https://example.test/photo.png", "data:image/png;base64,iVBORw=="]) {
+      assertEquals(buildWithFile({ url, mediaType: "image/png" }).input, [{
+        role: "user",
+        content: [{ type: "input_image", image_url: url, detail: "auto" }],
+      }]);
+    }
+  });
+
   it("recognizes an upper-case data URL scheme as inline data, not a file URL", () => {
     const body = buildWithFile({
       url: "DATA:application/pdf;base64,JVBERi0=",

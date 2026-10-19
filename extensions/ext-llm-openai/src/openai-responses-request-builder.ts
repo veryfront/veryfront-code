@@ -528,8 +528,11 @@ function toOpenAIResponsesUserContent(
     }
 
     if (isImageFileInput(part)) {
-      readInlineFileData(part); // Validates inline image data before inference.
-      content.push({ type: "input_image", image_url: part.url, detail: "auto" });
+      // Inline data is validated; any other image URL must be remote.
+      const imageUrl = readInlineFileData(part) === undefined
+        ? readRemoteFileUrl("OpenAI Responses", part)
+        : part.url;
+      content.push({ type: "input_image", image_url: imageUrl, detail: "auto" });
       continue;
     }
 
