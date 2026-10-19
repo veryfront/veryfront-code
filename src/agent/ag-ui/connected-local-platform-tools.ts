@@ -45,7 +45,6 @@ import {
   runWithToolCallAdmissionReceipt,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
-import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { runWithVerifiedSkillScriptExecutionCredential } from "#veryfront/skill/execution-credential.ts";
 
 type Scope = { projectId: string; runId: string; agentId: string };
@@ -59,13 +58,15 @@ const isArray = Array.isArray;
 const entries = Object.entries;
 const replace = String.prototype.replace;
 const allSettled = Promise.allSettled;
-const throwIfAborted = AbortSignal.prototype.throwIfAborted;
 
 /** CLI-owned transport and signed grants; no project setting can install this boundary. */
 export function createConnectedLocalPlatformTools(
   apiUrl: string,
   transport: typeof fetch,
-  dependencies: { createSandboxTools?: typeof createAgentServiceSandboxTools } = {},
+  dependencies: {
+    createSandboxTools?: typeof createAgentServiceSandboxTools;
+    projectContext?: { projectSlug: string; branch: string | null };
+  } = {},
 ) {
   const verify = createConnectedLocalWriterVerifier(apiUrl);
   const endpoint = `${apply(replace, apiUrl, [/\/$/, ""])}/mcp`;
@@ -75,6 +76,7 @@ export function createConnectedLocalPlatformTools(
   });
   const sources = createPrivateWeakStore<object, RemoteToolSource>();
   const credentials = createPrivateWeakStore<object, () => string>();
+  const credentialLifetimes = createPrivateWeakStore<object, { active: boolean }>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
   const revoke = async (owner: HostedPlatformDependencyOwner) => {
     revokeHostedPlatformDependencies(owner);
@@ -91,6 +93,8 @@ export function createConnectedLocalPlatformTools(
       if (close) pushPrivateArray(retry, close);
       failure ??= result.reason;
     });
+    const credentialLifetime = credentialLifetimes.get(owner);
+    if (credentialLifetime) credentialLifetime.active = false;
     if (retry.length > 0) {
       const current = cleanups.get(owner) ?? [];
       forEachPrivateArray(retry, (close) => pushPrivateArray(current, close));
@@ -130,6 +134,7 @@ export function createConnectedLocalPlatformTools(
               }
             }
             try {
+              credentialLifetimes.set(childOwner, { active: true });
               const credential = () =>
                 childScope.runId === scope.runId ? currentAuthority?.().auth_token ?? token : token;
               credentials.set(childOwner, credential);
@@ -234,7 +239,11 @@ export function createConnectedLocalPlatformTools(
       ) => Promise<AgentRunToolCallAdmissionReceipt>;
     }, operation: () => Promise<T>): Promise<T> {
       const identity = {};
-      const assertActive = () => apply(throwIfAborted, input.signal, []);
+      const assertActive = () => {
+        if (credentialLifetimes.get(input.owner)?.active !== true) {
+          throw new Error("Connected run credential is no longer active");
+        }
+      };
       const calls = createPrivateMap<string, { name: string; args: Record<string, unknown> }>();
       const admit: AdmitExecutorToolCall = (call) => {
         const tool = calls.get(call.occurrenceId);
@@ -250,10 +259,7 @@ export function createConnectedLocalPlatformTools(
       const source = sources.get(input.owner);
       const credential = credentials.get(input.owner);
       if (!credential) throw new Error("Connected run credential is unavailable");
-      const requestContext = getRuntimeRequestContext();
-      const projectContext = requestContext?.projectId === input.scope.projectId
-        ? requestContext
-        : undefined;
+      const projectContext = dependencies.projectContext;
       // Legacy writers have no delegated dependency runner, but still retain their
       // directly authenticated first-party platform source.
       return runWithHostedPlatformDependencies(
@@ -266,7 +272,7 @@ export function createConnectedLocalPlatformTools(
                 apiUrl,
                 authToken: credential(),
                 projectId: input.scope.projectId,
-                ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+                ...(projectContext ? { projectSlug: projectContext.projectSlug } : {}),
                 ...(projectContext ? { branch: projectContext.branch } : {}),
                 runId: input.scope.runId,
                 agentId: input.scope.agentId,

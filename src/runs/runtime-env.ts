@@ -11,6 +11,7 @@ const UNSAFE_INJECTED_ENV_KEYS = new Set(["__proto__", "constructor", "prototype
 
 export const RESERVED_TASK_ENV_KEYS = Object.freeze([
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_API_URL",
   "VERYFRONT_PROJECT_API_URL",
   "VERYFRONT_API_BASE_URL",

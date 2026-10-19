@@ -88,9 +88,20 @@ async function executeSandboxCommandBody(
   for (const [sandboxPath, localPath] of sandboxPathMap) {
     command = command.replaceAll(sandboxPath, localPath);
   }
+  const environment = body.env
+    ? Object.fromEntries(
+      Object.entries(body.env).map(([key, value]) => {
+        let mappedValue = value;
+        for (const [sandboxPath, localPath] of sandboxPathMap) {
+          mappedValue = mappedValue.replaceAll(sandboxPath, localPath);
+        }
+        return [key, mappedValue];
+      }),
+    )
+    : undefined;
   const output = await new Deno.Command("sh", {
     args: ["-c", command],
-    env: body.env,
+    env: environment,
     stdout: "piped",
     stderr: "piped",
   }).output();
@@ -98,6 +109,45 @@ async function executeSandboxCommandBody(
     stdout: new TextDecoder().decode(output.stdout),
     stderr: new TextDecoder().decode(output.stderr),
     exitCode: output.code,
+  };
+}
+
+function materializeSandboxFiles(
+  root: string,
+  paths: Map<string, string>,
+): MockResponseEntry {
+  return async (_input, init) => {
+    const files = JSON.parse(String(init?.body)).files as Array<{
+      path: string;
+      content: string;
+    }>;
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]!;
+      const ordinal = paths.size;
+      const localPath = `${root}/${ordinal}-staged`;
+      paths.set(file.path, localPath);
+      if (file.path.endsWith("/token.next")) {
+        paths.set(file.path.slice(0, -".next".length), `${root}/${ordinal}-published`);
+        paths.set(file.path.slice(0, -"/token.next".length), root);
+      }
+      await Deno.writeTextFile(localPath, file.content);
+    }
+    return jsonResponse({
+      results: files.map((file) => ({ path: file.path, status: "written", error: null })),
+    });
+  };
+}
+
+function executeSandboxCommandResponse(
+  paths: ReadonlyMap<string, string>,
+): MockResponseEntry {
+  return async (_input, init) => {
+    const output = await executeSandboxCommandBody(init, paths);
+    return commandResponse([
+      { type: "stdout", data: output.stdout },
+      { type: "stderr", data: output.stderr },
+      { type: "exit", exitCode: output.exitCode },
+    ]);
   };
 }
 
@@ -444,22 +494,10 @@ describe("src/skill/executor", () => {
             workspace_storage: "ephemeral",
           });
         },
-        async (_input, init) => {
-          const files = JSON.parse(String(init?.body)).files as Array<{
-            path: string;
-            content: string;
-          }>;
-          for (let index = 0; index < files.length; index += 1) {
-            const file = files[index]!;
-            const localPath = `${materializedRoot}/${index}`;
-            sandboxPathMap.set(file.path, localPath);
-            await Deno.writeTextFile(localPath, file.content);
-          }
-          return jsonResponse({
-            results: files.map((file) => ({ path: file.path, status: "written", error: null })),
-          });
-        },
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
         commandResponse([{ type: "exit", exitCode: 0 }]),
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
+        executeSandboxCommandResponse(sandboxPathMap),
         async (_input, init) => {
           executed = await executeSandboxCommandBody(init, sandboxPathMap);
           return backgroundCommandResponse("running", "", null);
@@ -530,11 +568,15 @@ describe("src/skill/executor", () => {
         command: string;
         env: Record<string, string>;
       };
+      const tokenFile = scriptCommandBody.env.VERYFRONT_API_TOKEN_FILE;
+      assertEquals(typeof tokenFile, "string");
+      if (!tokenFile) throw new Error("renewable credential path missing");
       const command = scriptCommandBody.command;
       assertEquals(scriptCommandBody.env, {
         SAFE_INPUT: "preserved",
         VERYFRONT_DEFAULT_MODEL: "caller-selected-model",
         VERYFRONT_API_TOKEN: "renewed-run-credential",
+        VERYFRONT_API_TOKEN_FILE: tokenFile,
         VERYFRONT_API_URL: "https://api.test.com",
         VERYFRONT_API_BASE_URL: "https://api.test.com",
         VERYFRONT_PROJECT_API_URL: "https://api.test.com",
@@ -562,7 +604,7 @@ describe("src/skill/executor", () => {
       assertEquals(command.includes("'-u' 'VERYFRONT_PROJECT_ID'"), false);
     });
 
-    it("keeps a verified run credential out of synchronous command history", async () => {
+    it("keeps a verified run credential out of command history", async () => {
       const materializedRoot = await makeTempDir({ prefix: "vf-sandbox-command-" });
       const sandboxPathMap = new Map<string, string>();
       mockFetch([
@@ -572,30 +614,19 @@ describe("src/skill/executor", () => {
           status: "running",
           workspace_storage: "ephemeral",
         }),
-        async (_input, init) => {
-          const files = JSON.parse(String(init?.body)).files as Array<{
-            path: string;
-            content: string;
-          }>;
-          for (let index = 0; index < files.length; index += 1) {
-            const file = files[index]!;
-            const localPath = `${materializedRoot}/${index}`;
-            sandboxPathMap.set(file.path, localPath);
-            await Deno.writeTextFile(localPath, file.content);
-          }
-          return jsonResponse({
-            results: files.map((file) => ({ path: file.path, status: "written", error: null })),
-          });
-        },
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
         commandResponse([{ type: "exit", exitCode: 0 }]),
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
+        executeSandboxCommandResponse(sandboxPathMap),
         async (_input, init) => {
           const output = await executeSandboxCommandBody(init, sandboxPathMap);
-          return commandResponse([
-            { type: "stdout", data: output.stdout },
-            { type: "stderr", data: output.stderr },
-            { type: "exit", exitCode: output.exitCode },
-          ]);
+          return backgroundCommandResponse("running", output.stdout, output.exitCode);
         },
+        backgroundCommandResponse(
+          "completed",
+          "sync-run-credential|22222222-2222-4222-8222-222222222222\n",
+          0,
+        ),
         textResponse(""),
       ]);
 
@@ -622,7 +653,7 @@ describe("src/skill/executor", () => {
         exitCode: 0,
       });
       const scriptCommandCall = fetchCalls.find((call, index) =>
-        index > 2 && call.url.endsWith("/commands/run")
+        index > 2 && call.url.endsWith("/commands")
       );
       const body = JSON.parse(String(scriptCommandCall?.init?.body)) as {
         command: string;
@@ -630,7 +661,84 @@ describe("src/skill/executor", () => {
       };
       assertEquals(body.command.includes("sync-run-credential"), false);
       assertEquals(body.env.VERYFRONT_API_TOKEN, "sync-run-credential");
+      assertEquals(typeof body.env.VERYFRONT_API_TOKEN_FILE, "string");
       assertEquals(body.env.VERYFRONT_API_BASE_URL, "https://api.test.com");
+    });
+
+    it("publishes a renewed run credential while a script remains active", async () => {
+      let currentAuthToken = "initial-run-credential";
+      let scriptCommandInit: RequestInit | undefined;
+      const materializedRoot = await makeTempDir({ prefix: "vf-sandbox-renewal-" });
+      const sandboxPathMap = new Map<string, string>();
+      mockFetch([
+        jsonResponse({
+          id: "renewing-run-credential-sandbox",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+          workspace_storage: "ephemeral",
+        }),
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
+        executeSandboxCommandResponse(sandboxPathMap),
+        (_input, init) => {
+          scriptCommandInit = init;
+          return backgroundCommandResponse("running", "", null);
+        },
+        () => {
+          currentAuthToken = "renewed-run-credential";
+          return backgroundCommandResponse("running", "", null);
+        },
+        materializeSandboxFiles(materializedRoot, sandboxPathMap),
+        executeSandboxCommandResponse(sandboxPathMap),
+        async () => {
+          if (!scriptCommandInit) throw new Error("script command was not started");
+          const output = await executeSandboxCommandBody(scriptCommandInit, sandboxPathMap);
+          if (output.exitCode !== 0) {
+            throw new Error(`Late script command failed: ${output.stderr}`);
+          }
+          return backgroundCommandResponse(
+            "completed",
+            output.stdout,
+            output.exitCode,
+          );
+        },
+        textResponse(""),
+      ]);
+
+      const result = await runWithVerifiedSkillScriptExecutionCredential({
+        assertActive() {},
+        read: () => ({
+          apiUrl: "https://api.test.com",
+          authToken: currentAuthToken,
+          projectId: "22222222-2222-4222-8222-222222222222",
+          runId: "run-renewal",
+          agentId: "extraction-agent",
+        }),
+      }, () =>
+        getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: 'cat "$VERYFRONT_API_TOKEN_FILE"',
+          timeoutMs: 60_000,
+        }));
+
+      await Deno.remove(materializedRoot, { recursive: true });
+      assertEquals(result, {
+        stdout: "renewed-run-credential\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      assertEquals(
+        new Headers(fetchCalls[7]!.init?.headers).get("authorization"),
+        "Bearer renewed-run-credential",
+      );
+      const scriptCommand = JSON.parse(String(fetchCalls[5]!.init?.body)) as {
+        command: string;
+        env: Record<string, string>;
+      };
+      assertEquals(scriptCommand.command.includes("initial-run-credential"), false);
+      assertEquals(scriptCommand.command.includes("renewed-run-credential"), false);
+      assertEquals(typeof scriptCommand.env.VERYFRONT_API_TOKEN_FILE, "string");
     });
 
     it("cancels and deletes the sandbox before an aborted execution settles", async () => {
@@ -655,6 +763,15 @@ describe("src/skill/executor", () => {
             workspace_storage: "ephemeral",
           });
         },
+        (_input, init) =>
+          jsonResponse({
+            results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         (_input, init) =>
           jsonResponse({
             results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
@@ -698,18 +815,18 @@ describe("src/skill/executor", () => {
       await deleteStarted;
       await Promise.resolve();
       assertEquals(settled, false);
-      assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
-      assertEquals(fetchCalls[6]!.init?.method, "DELETE");
+      assertEquals(fetchCalls[7]!.url.endsWith("/commands/script-command/cancel"), true);
+      assertEquals(fetchCalls[8]!.init?.method, "DELETE");
       assertEquals(
         new Headers(fetchCalls[0]!.init?.headers).get("authorization"),
         "Bearer initial-run-credential",
       );
       assertEquals(
-        new Headers(fetchCalls[5]!.init?.headers).get("authorization"),
+        new Headers(fetchCalls[7]!.init?.headers).get("authorization"),
         "Bearer renewed-run-credential",
       );
       assertEquals(
-        new Headers(fetchCalls[6]!.init?.headers).get("authorization"),
+        new Headers(fetchCalls[8]!.init?.headers).get("authorization"),
         "Bearer renewed-run-credential",
       );
       releaseDelete();

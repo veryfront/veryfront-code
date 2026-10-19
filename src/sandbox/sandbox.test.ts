@@ -1099,6 +1099,37 @@ describe("Sandbox", () => {
       assertEquals(jsonBody(fetchCalls, 0), { access_scope: "project", ttl_mode: "default" });
     });
 
+    it("cancels readiness and deletes a partially provisioned sandbox", async () => {
+      const controller = new AbortController();
+      const canceled = new Error("setup deadline reached");
+      mockFetch([
+        jsonResponse({
+          id: "session-canceled-setup",
+          endpoint: "https://sandbox.example.com",
+          status: "creating",
+        }),
+        textResponse(""),
+      ]);
+
+      const creation = Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        signal: controller.signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.abort(canceled);
+      let rejection: unknown;
+      try {
+        await creation;
+      } catch (error) {
+        rejection = error;
+      }
+
+      assertEquals(rejection, canceled);
+      assertEquals(fetchCalls[1]!.init?.method, "DELETE");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/session-canceled-setup");
+    });
+
     it("should pass project_reference when creating a project-scoped sandbox", async () => {
       mockFetch([
         jsonResponse({

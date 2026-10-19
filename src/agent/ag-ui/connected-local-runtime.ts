@@ -235,6 +235,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     : (dependencies.createPlatformTools ?? createConnectedLocalPlatformTools)(
       options.apiBaseUrl,
       transport,
+      { projectContext: { projectSlug: options.projectSlug, branch: "main" } },
     );
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;

@@ -431,8 +431,10 @@ function setEnvironmentValue(
 function setVerifiedCredentialEnvironment(
   environment: Record<string, string>,
   credential: VerifiedSkillScriptExecutionCredential,
+  tokenFile?: string,
 ): void {
   setEnvironmentValue(environment, "VERYFRONT_API_TOKEN", credential.authToken);
+  if (tokenFile) setEnvironmentValue(environment, "VERYFRONT_API_TOKEN_FILE", tokenFile);
   setEnvironmentValue(environment, "VERYFRONT_API_URL", credential.apiUrl);
   setEnvironmentValue(environment, "VERYFRONT_API_BASE_URL", credential.apiUrl);
   setEnvironmentValue(environment, "VERYFRONT_PROJECT_API_URL", credential.apiUrl);
@@ -455,6 +457,11 @@ function createSandboxScriptPath(scriptPath: string): string {
 function createSandboxScriptRoot(): string {
   const suffix = crypto.randomUUID().slice(0, 8);
   return `/workspace/.veryfront-skill-script-${Date.now()}-${suffix}`;
+}
+
+function createSandboxCredentialRoot(): string {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  return `/workspace/.veryfront-run-credential-${suffix}`;
 }
 
 function getSandboxAuthOverride(): string | undefined {
@@ -590,6 +597,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           authToken: credential.authToken,
           getAuthToken: () => requireVerifiedSkillScriptExecutionCredential().authToken,
           projectReference: credential.projectId,
+          signal: input.abortSignal,
         }
         : {
           projectReference: input.projectId,
@@ -615,9 +623,11 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         }
       }
 
-      await sandbox.writeFiles(sandboxFiles);
+      await sandbox.writeFiles(sandboxFiles, { signal: input.abortSignal });
       if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
-      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
+      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]), {
+        signal: input.abortSignal,
+      });
       if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
 
       const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
@@ -627,12 +637,38 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const currentCredential = credential
         ? requireVerifiedSkillScriptExecutionCredential()
         : undefined;
+      const credentialRoot = currentCredential ? createSandboxCredentialRoot() : undefined;
+      const credentialPath = credentialRoot ? `${credentialRoot}/token` : undefined;
+      let publishedCredential: string | undefined;
+      const publishCurrentCredential = async (): Promise<void> => {
+        if (!credentialRoot || !credentialPath) return;
+        const nextCredential = requireVerifiedSkillScriptExecutionCredential().authToken;
+        if (publishedCredential === nextCredential) return;
+        const stagedPath = `${credentialRoot}/token.next`;
+        await sandbox.writeFiles([{ path: stagedPath, content: `${nextCredential}\n` }], {
+          signal: input.abortSignal,
+        });
+        await sandbox.runCommand(
+          buildShellCommand([
+            "sh",
+            "-c",
+            `chmod 700 "$3" && chmod 600 "$1" && mv -f "$1" "$2"`,
+            "veryfront-credential-publish",
+            stagedPath,
+            credentialPath,
+            credentialRoot,
+          ]),
+          { signal: input.abortSignal },
+        );
+        publishedCredential = nextCredential;
+      };
+      await publishCurrentCredential();
       const commandEnvironment = buildCommandEnvironment(
         scriptEnvironment(input),
         currentCredential !== undefined,
       );
       if (currentCredential) {
-        setVerifiedCredentialEnvironment(commandEnvironment, currentCredential);
+        setVerifiedCredentialEnvironment(commandEnvironment, currentCredential, credentialPath);
       }
       const commandParts = currentCredential
         ? [
@@ -654,14 +690,17 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const commandDeadline = performance.now() + timeoutMs;
       const commandOptions = {
         timeoutSeconds,
+        ...(input.abortSignal ? { signal: input.abortSignal } : {}),
         ...(objectKeys(commandEnvironment).length > 0 ? { env: commandEnvironment } : {}),
       };
-      const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
+      const commandPromise = !currentCredential &&
+          timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
         ? sandbox.runCommand(cmdString, commandOptions)
         : (async () => {
           const command = await sandbox.startBackgroundCommand(cmdString, commandOptions);
           backgroundCommandId = command.id;
           while (!polling.signal.aborted) {
+            await publishCurrentCredential();
             const output = await sandbox.getBackgroundCommandOutput(command.id);
             if (output.stdoutTruncated || output.stderrTruncated) {
               outputLimitCleanupRequired = output.status === "pending" ||

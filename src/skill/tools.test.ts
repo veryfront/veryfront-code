@@ -827,6 +827,47 @@ Do work.`,
     assertEquals(settled, true);
   });
 
+  it("execute_skill_script applies its deadline through executor setup and cleanup", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let cleanupComplete = false;
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          return new Promise((_resolve, reject) => {
+            input.abortSignal?.addEventListener("abort", () => {
+              setTimeout(() => {
+                cleanupComplete = true;
+                reject(input.abortSignal?.reason);
+              }, 5);
+            }, { once: true });
+          });
+        },
+      },
+    });
+
+    await assertRejects(
+      () =>
+        scriptTool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          timeoutMs: 20,
+        }, {
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: ["scripts/run.sh"],
+          },
+        }),
+      Error,
+      "timed out",
+    );
+    assertEquals(cleanupComplete, true);
+  });
+
   it("execute_skill_script reuses its authoritative script listing", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "listed-once";',

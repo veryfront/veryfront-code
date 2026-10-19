@@ -6,6 +6,14 @@ export interface CommandOptions {
   timeoutSeconds?: number;
   /** Additional environment variables for the command. */
   env?: Record<string, string>;
+  /** Cancel the request before the sandbox command starts. */
+  signal?: AbortSignal;
+}
+
+/** Options for writing files into a sandbox workspace. */
+export interface SandboxWriteFilesOptions {
+  /** Cancel the request before the file batch is written. */
+  signal?: AbortSignal;
 }
 
 /** Sandbox access, storage and lifetime policies. */
@@ -30,6 +38,8 @@ export interface SandboxCapabilitiesOptions extends SandboxClientOptions {
 export interface SandboxOptions extends SandboxClientOptions {
   /** Read the current credential before each request when the host renews it. */
   getAuthToken?: () => string;
+  /** Cancel sandbox provisioning and readiness polling. */
+  signal?: AbortSignal;
   /** Project UUID or slug used for billing. */
   projectReference?: string;
   /** Project access or creator-only access. Defaults to project. */

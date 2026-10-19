@@ -314,6 +314,36 @@ it("renews only the root sandbox credential and keeps child credentials isolated
   });
 });
 
+it("keeps cleanup credential authority active after execution cancellation", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const owner = { runId: scope.runId };
+    await tools.register(owner, scope, eventToken(scope.runId), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    const controller = new AbortController();
+    await tools.run({
+      owner,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: controller.signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      controller.abort(new Error("run canceled"));
+      assertEquals(getVerifiedSkillScriptExecutionCredential()?.authToken, authToken);
+      return Promise.resolve();
+    });
+    await tools.revoke(owner);
+  });
+});
+
 it("binds each delegated child script to its own run and role credential", async () => {
   await fixture(async ({ transport, scope, eventToken, authToken }) => {
     const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
