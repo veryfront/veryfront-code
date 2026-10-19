@@ -1,3 +1,5 @@
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { getRuntimeObservationWriterBinding } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { concatPrivateArrays, flatMapPrivateArray } from "#veryfront/security/private-array.ts";
 import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { execPrivateRegExp, replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
@@ -14,15 +16,19 @@ export type AgentRunRuntimeContext = Readonly<{
   currentTimeUtc: string;
   currentDateUtc: string;
   runStartedAtUtc: string;
+  runId?: string;
 }>;
 
 /** Capture the immutable UTC snapshot for one agent run. */
 export function captureAgentRunRuntimeContext(now = new Date()): AgentRunRuntimeContext {
   const runStartedAtUtc = now.toISOString();
+  const writer = getRuntimeObservationWriterBinding(getActiveRunEventSink());
+  writer?.assertActive();
   return Object.freeze({
     currentTimeUtc: runStartedAtUtc,
     currentDateUtc: privateTextSlice(runStartedAtUtc, 0, 10),
     runStartedAtUtc,
+    ...(writer ? { runId: writer.scope.canonicalRunId } : {}),
   });
 }
 
@@ -72,7 +78,9 @@ export function buildAgentRunRuntimeContextPromptBlock(
 ): string {
   return createRuntimePromptBlock({
     name: "runtime_context",
-    content: `current_time_utc: ${context.currentTimeUtc}
+    content: `${
+      context.runId ? `run_id: ${context.runId}\n` : ""
+    }current_time_utc: ${context.currentTimeUtc}
 current_date_utc: ${context.currentDateUtc}
 run_started_at_utc: ${context.runStartedAtUtc}
 

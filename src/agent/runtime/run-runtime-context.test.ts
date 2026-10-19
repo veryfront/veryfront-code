@@ -1,3 +1,8 @@
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,6 +14,32 @@ describe("agent run runtime context", () => {
   const context = captureAgentRunRuntimeContext(
     new Date("2026-07-19T07:30:00.000Z"),
   );
+
+  it("exposes only the host-bound canonical run id", () => {
+    const sink = async () => {};
+    const id = "55555555-5555-4555-8555-555555555555";
+    bindRuntimeObservationWriterCapability(
+      sink,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "public-run",
+          canonicalRunId: id,
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    const result = runWithMandatoryRunEventSink(
+      sink,
+      () => withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()),
+    );
+    assertEquals(result.includes(`run_id: ${id}`), true);
+    assertEquals(
+      withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()).includes(
+        "run_id:",
+      ),
+      false,
+    );
+  });
 
   it("removes authored runtime context blocks with whitespace or attributes", () => {
     for (
