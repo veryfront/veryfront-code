@@ -277,9 +277,12 @@ export async function readKnowledgeBundle(input: {
         encodeURIComponent(entry.path)
       }`;
       const url = new URL(entry.content_path, "https://bundle.invalid");
+      const historical = url.searchParams.has("historical");
       if (
+        (historical &&
+          (scope.key !== "branch_id" || url.searchParams.get("historical") !== "true")) ||
         url.origin !== "https://bundle.invalid" || url.hash !== "" ||
-        [...url.searchParams].length !== 3 || url.pathname !== expectedPath ||
+        [...url.searchParams].length !== (historical ? 4 : 3) || url.pathname !== expectedPath ||
         url.searchParams.get(scope.key) !== scope.id ||
         url.searchParams.has(scope.key === "branch_id" ? "release_id" : "branch_id") ||
         url.searchParams.get("file_version_id") !== entry.file_version_id ||

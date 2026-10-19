@@ -479,7 +479,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
   const value = admission();
   value.identity = {
     ...identity,
-    sourceHash: "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6",
+    sourceHash: "f41a2ea57c6e706a4c469dcf8167adf5882e810d1f3dece05de0ba2de17b8e58",
   };
   const text = {
     kind: "text",
@@ -496,6 +496,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
     path: "knowledge/raw.bin",
     entity_type: "virtual_file",
     content_base64: "AP+ACg==",
+    content_type: "application/octet-stream",
     byte_size: 4,
     content_hash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
   };
@@ -525,7 +526,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (++emitted <= 449) controller.enqueue(chunk);
+            if (++emitted <= 98) controller.enqueue(chunk);
             else controller.close();
           },
           cancel() {
@@ -562,6 +563,62 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       Array.prototype.some = originalSome;
     }
     assertEquals(exposedListings, 0);
+    const mimeDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "content_type");
+    const { content_type: _omitted, ...missingMime } = binary;
+    const kindDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "kind");
+    const versionDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "manifest_version");
+    const filesDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "files");
+    let mimeExposures = 0;
+    try {
+      Object.defineProperty(Object.prototype, "content_type", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return "application/octet-stream";
+        },
+      });
+      response = { ...valid, files: [text, missingMime] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { kind: _kind, ...withoutKind } = missingMime;
+      Object.defineProperty(Object.prototype, "kind", { configurable: true, value: "binary" });
+      response = { ...valid, files: [text, withoutKind] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
+      const { manifest_version: _version, ...withoutVersion } = valid;
+      Object.defineProperty(Object.prototype, "manifest_version", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return 2;
+        },
+      });
+      response = withoutVersion;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { files: _files, ...withoutFiles } = valid;
+      Object.defineProperty(Object.prototype, "files", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return valid.files;
+        },
+      });
+      response = withoutFiles;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      response = valid;
+      await transport.listImmutableReleaseFiles(claims);
+    } finally {
+      if (filesDescriptor) Object.defineProperty(Object.prototype, "files", filesDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "files");
+      if (versionDescriptor) {
+        Object.defineProperty(Object.prototype, "manifest_version", versionDescriptor);
+      } else Reflect.deleteProperty(Object.prototype, "manifest_version");
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
+      if (mimeDescriptor) Object.defineProperty(Object.prototype, "content_type", mimeDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "content_type");
+    }
+    assertEquals(mimeExposures, 0);
     assertEquals(createRecoverySourceManifest(listing.files), {
       version: 2,
       hash: value.identity.sourceHash,
@@ -575,6 +632,9 @@ it("native release transport preserves exact binary bytes and refuses incomplete
         { ...valid, files: [text, { ...binary, content_base64: "AP+ACn==" }] },
         { ...valid, files: [text, { ...binary, content_hash: "a".repeat(64) }] },
         { ...valid, files: [text, { ...binary, byte_size: 3 }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png" }] },
+        { ...valid, files: [text, { ...binary, content_type: undefined }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png\n" }] },
         { ...valid, files: [text, { ...binary, byte_size: 8 * 1024 * 1024 + 1 }] },
         { ...valid, release_id: "88888888-8888-4888-8888-888888888888" },
         { ...valid, project_id: "88888888-8888-4888-8888-888888888888" },
@@ -664,6 +724,10 @@ it("native API fixture passes transport integrity and independent host admission
       });
       const binary = fixture.files.find((file) => file.kind === "binary");
       assert(typeof binary?.content_base64 === "string");
+      assert(typeof binary.content_type === "string");
+      const listedBinary = listing.files.find((file) => "kind" in file && file.kind === "binary");
+      assert(listedBinary && "contentType" in listedBinary);
+      assertEquals(listedBinary.contentType, binary.content_type);
       assertEquals(Array.from(Buffer.from(binary.content_base64, "base64")), [
         239,
         187,
@@ -701,7 +765,38 @@ it("native API fixture passes transport integrity and independent host admission
         payload = invalid;
         await assertRejects(() => transport.listImmutableReleaseFiles(claims));
       }
+      payload = {
+        ...fixture,
+        files: fixture.files.map((file) =>
+          file.kind === "binary"
+            ? {
+              ...file,
+              content_type: file.content_type === "image/png"
+                ? "application/octet-stream"
+                : "image/png",
+            }
+            : file
+        ),
+      };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
       payload = fixture;
+      overrideFiles = listing.files.map((file) =>
+        "kind" in file && file.kind === "binary"
+          ? {
+            ...file,
+            contentType: "contentType" in file && file.contentType === "image/png"
+              ? "application/octet-stream"
+              : "image/png",
+          }
+          : file
+      );
+      await assertRejects(() =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: "fixture-thread",
+          claims,
+        })
+      );
       overrideFiles = listing.files.slice(0, -1);
       await assertRejects(() =>
         manager.startManagedRecoveryRun({
@@ -803,7 +898,7 @@ it("empty and all-text release transport stays v1 and rejects internally consist
   }
 });
 
-it("native transport accepts maximum decoded bytes with maximum path metadata above 96 MiB", async () => {
+it("transport preserves the producer-admitted 96 MiB JSON boundary for v1 and native v2", async () => {
   const { createHash } = await import("node:crypto");
   const { Buffer } = await import("node:buffer");
   const { createRecoverySourceManifest } = await import(
@@ -812,55 +907,64 @@ it("native transport accepts maximum decoded bytes with maximum path metadata ab
   const { bindManagedRecoveryCredentials, createManagedRecoveryHttpTransport } = await import(
     "#veryfront/internal-agents/managed-recovery-http.ts"
   );
-  const bytes = Buffer.alloc(8 * 1024 * 1024, 0xff);
-  const contentBase64 = bytes.toString("base64");
-  const contentHash = createHash("sha256").update(bytes).digest("hex");
-  for (const escapedText of [false, true]) {
-    const files = Array.from({ length: 10_000 }, (_, index) => {
-      const path = `${String(index).padStart(5, "0")}${"p".repeat(1019)}`;
-      if (escapedText && index < 2) {
-        return {
-          kind: "text" as const,
-          path,
-          entityType: "virtual_file" as const,
-          content: "\u0000".repeat(8 * 1024 * 1024),
-        };
-      }
-      return index < (escapedText ? 3 : 8)
-        ? {
-          kind: "binary" as const,
-          path,
-          entityType: "virtual_file" as const,
-          contentBase64,
-          contentHash,
-          byteSize: bytes.length,
-        }
-        : { kind: "text" as const, path, entityType: "virtual_file" as const, content: "" };
-    });
-    const digest = createRecoverySourceManifest(files);
+  // Same admitted recipe exercised through the API producer and registered Hono route:
+  // two valid UTF-8 control-character text files, plus seven raw bytes for v2.
+  // Encoded JSON, rather than raw text/base64 capacity, is limited to 96 MiB.
+  for (const native of [false, true]) {
     const value = admission();
-    value.identity = { ...identity, sourceHash: digest.hash };
-    const payload = {
-      project_id: value.sourceBinding.projectId,
-      release_id: value.sourceBinding.releaseId,
-      manifest_version: 2,
-      manifest_hash: digest.hash,
-      file_count: digest.fileCount,
-      total_bytes: digest.totalBytes,
-      files: files.map((file) => ({
-        version_id: "55555555-5555-4555-8555-555555555555",
-        path: file.path,
-        entity_type: file.entityType,
-        kind: file.kind,
-        content_hash: file.kind === "binary"
-          ? file.contentHash
-          : createHash("sha256").update(file.content).digest("hex"),
-        byte_size: file.kind === "binary" ? file.byteSize : Buffer.byteLength(file.content),
-        ...(file.kind === "binary"
-          ? { content_base64: file.contentBase64 }
-          : { content: file.content }),
-      })),
+    const texts = ["\u0001".repeat(8 * 1024 * 1024), "x"];
+    const bytes = Buffer.from([239, 187, 191, 0, 255, 128, 10]);
+    const build = () => {
+      const files = texts.map((content, index) => ({
+        path: `knowledge/text-${index}.md`,
+        entityType: "virtual_file" as const,
+        ...(native ? { kind: "text" as const } : {}),
+        content,
+      }));
+      const all = native
+        ? [...files, {
+          kind: "binary" as const,
+          path: "knowledge/raw.bin",
+          entityType: "virtual_file" as const,
+          contentBase64: bytes.toString("base64"),
+          contentType: "application/octet-stream",
+          contentHash: createHash("sha256").update(bytes).digest("hex"),
+          byteSize: bytes.length,
+        }]
+        : files;
+      const digest = createRecoverySourceManifest(all);
+      const payload = {
+        project_id: value.sourceBinding.projectId,
+        release_id: value.sourceBinding.releaseId,
+        manifest_version: native ? 2 : 1,
+        manifest_hash: digest.hash,
+        file_count: digest.fileCount,
+        total_bytes: digest.totalBytes,
+        files: all.map((file, index) => ({
+          version_id: `30000000-3000-4000-8000-00000000000${index}`,
+          path: file.path,
+          entity_type: file.entityType,
+          ...(native ? { kind: file.kind } : {}),
+          content_hash: "content" in file
+            ? createHash("sha256").update(file.content).digest("hex")
+            : file.contentHash,
+          byte_size: "content" in file ? Buffer.byteLength(file.content) : file.byteSize,
+          ...("content" in file
+            ? { content: file.content }
+            : { content_base64: file.contentBase64, content_type: file.contentType }),
+        })),
+      };
+      return { digest, payload };
     };
+    const cap = 96 * 1024 * 1024;
+    const seed = Buffer.byteLength(JSON.stringify(build().payload));
+    // Leave room for total_bytes digit growth, then fill the exact encoded remainder.
+    const available = cap - seed - 64;
+    texts[1] = "\u0001".repeat(Math.floor(available / 6)) + "x".repeat(available % 6);
+    texts[1] += "x".repeat(cap - Buffer.byteLength(JSON.stringify(build().payload)));
+    const { digest, payload } = build();
+    assertEquals(Buffer.byteLength(JSON.stringify(payload)), cap);
+    value.identity = { ...identity, sourceHash: digest.hash };
     const previous = Deno.env.get(envKey);
     try {
       const claims = await signed(value);
@@ -874,7 +978,6 @@ it("native transport accepts maximum decoded bytes with maximum path metadata ab
         async () => Response.json(payload),
       );
       const actual = await transport.listImmutableReleaseFiles(claims);
-      assertEquals(actual.files.length, 10_000);
       assertEquals(createRecoverySourceManifest(actual.files), digest);
     } finally {
       if (previous === undefined) Deno.env.delete(envKey);
