@@ -31,6 +31,8 @@ const MAX_BLOB_METADATA_VALUE_BYTES = 8 * 1024;
 const MAX_BLOB_USER_METADATA_BYTES = 64 * 1024;
 const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
 const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
+// Bounds list() against an API that keeps answering with a continuation.
+const MAX_LIST_PAGES = 1_000;
 const textEncoder = new TextEncoder();
 // Stored-login credentials are attached after project code may have loaded.
 // Construct and mutate their header container through captured intrinsics.
@@ -81,6 +83,7 @@ const getUploadSignedUrlResponseSchema = defineSchema((v) =>
 const getUploadListResponseSchema = defineSchema((v) =>
   v.object({
     data: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
+    page_info: v.object({ next: v.string().nullable().optional() }).passthrough().optional(),
   })
 );
 
@@ -540,30 +543,45 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         });
       }
 
-      await this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
+      // Metadata first, data last: reads return the data object, so a put that fails at either step
+      // leaves an existing blob readable as it was. A failed data upload restores the previous metadata
+      // sidecar, or removes the new one when the blob did not exist.
+      const previousMetadata = await this.#downloadUploadText(metadataPath, resolved);
+      await this.#uploadFile(
+        metadataPath,
+        "application/json",
+        metadataBytes.byteLength,
+        metadataBytes,
+        resolved,
+        scope.signal,
+      );
 
       try {
-        await this.#uploadFile(
-          metadataPath,
-          "application/json",
-          metadataBytes.byteLength,
-          metadataBytes,
-          resolved,
-          scope.signal,
-        );
+        await this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
       } catch (error) {
-        logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
+        logger.warn("Failed to upload blob data, restoring the metadata sidecar", {
           id,
           dataPath,
           error: error instanceof Error ? error.message : String(error),
         });
 
         try {
-          await this.#deleteUpload(dataPath, resolved);
+          if (previousMetadata === null) {
+            await this.#deleteUpload(metadataPath, resolved, { ignoreNotFound: true });
+          } else {
+            const previousBytes = textEncoder.encode(previousMetadata);
+            await this.#uploadFile(
+              metadataPath,
+              "application/json",
+              previousBytes.byteLength,
+              previousBytes,
+              resolved,
+            );
+          }
         } catch (cleanupError) {
-          logger.warn("Failed to clean up primary upload after metadata failure", {
+          logger.warn("Failed to restore the metadata sidecar after a data upload failure", {
             id,
-            dataPath,
+            metadataPath,
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           });
         }
@@ -649,33 +667,43 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
    * (`GET /projects/{slug}/uploads`) carries only paths — the original filename
    * lives in each blob's sidecar — so ids are recovered from the `.blob` data
    * paths and enriched via {@link stat} (one extra request per blob). Suitable
-   * for an uploads panel; not a hot path.
-   *
-   * Note: a single page is fetched. If the project accumulates more uploads than
-   * one page, pagination will need wiring here.
+   * for an uploads panel; not a hot path. Every page is read, following
+   * `page_info.next`.
    */
   async list(): Promise<BlobRef[]> {
     const resolved = this.#resolveConfig();
-    const raw = await this.#requestJson(
-      "GET",
-      `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
-      resolved,
-      { headers: { Accept: "application/json" }, allowNotFound: true },
-    );
-    if (!raw) return [];
-
-    const parsed = UploadListResponseSchema.parse(raw);
     const ids: string[] = [];
-    for (const item of parsed.data ?? []) {
-      const path = item.path;
-      // Only the data objects under our prefix — skip `.meta.json` sidecars and
-      // anything another store namespaced elsewhere.
-      if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
-      const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
-      if (isSafeBlobId(id)) ids.push(id);
-    }
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      if (pages++ === MAX_LIST_PAGES) {
+        throw API_ERROR.create({
+          detail: `Veryfront Cloud upload listing exceeded ${MAX_LIST_PAGES} pages`,
+        });
+      }
+      const query: string = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const raw = await this.#requestJson(
+        "GET",
+        `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads${query}`,
+        resolved,
+        { headers: { Accept: "application/json" }, allowNotFound: true },
+      );
+      if (!raw) break;
 
-    const refs = await Promise.all(ids.map((id) => this.stat(id)));
+      const parsed = UploadListResponseSchema.parse(raw);
+      for (const item of parsed.data ?? []) {
+        const path = item.path;
+        // Only the data objects under our prefix — skip `.meta.json` sidecars and
+        // anything another store namespaced elsewhere.
+        if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
+        const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
+        if (isSafeBlobId(id)) ids.push(id);
+      }
+      cursor = parsed.page_info?.next ?? null;
+    } while (cursor);
+
+    // A blob created while paging can appear on two pages.
+    const refs = await Promise.all([...new Set(ids)].map((id) => this.stat(id)));
     return refs
       .filter((ref): ref is BlobRef => ref !== null)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
