@@ -247,12 +247,22 @@ describe("Outlook shared-mailbox catalog routes", () => {
     }
   });
 
-  it("returns the next-page link from folder lists and accepts it as $skip", async () => {
+  it("returns the next-page link from $skip-paged lists and accepts it as $skip", async () => {
+    const window = { startDateTime: "2026-01-01T00:00:00Z", endDateTime: "2026-02-01T00:00:00Z" };
     for (
       const [toolId, args] of [
         ["list_folders", {}],
         ["list_shared_mailbox_folders", { mailbox }],
         ["list_shared_mailbox_child_folders", { mailbox, folderId: "inbox" }],
+        ["list_emails", {}],
+        ["list_drafts", {}],
+        ["list_threads", {}],
+        ["list_conversation_messages", { conversationId: "conversation-1" }],
+        ["list_shared_mailbox_emails", { mailbox }],
+        ["list_calendars", {}],
+        ["list_events", { calendarId: "calendar-1" }],
+        ["list_calendar_view", window],
+        ["get_event_instances", { eventId: "event-1", ...window }],
       ] as const
     ) {
       const requests: LocalIntegrationEndpointTransportRequest[] = [];
@@ -267,7 +277,7 @@ describe("Outlook shared-mailbox catalog routes", () => {
         transport: (request) => {
           requests.push(request);
           return Promise.resolve(Response.json({
-            value: [{ id: "folder-1" }, { id: "folder-2" }],
+            value: [{ id: "item-1" }, { id: "item-2" }],
             "@odata.nextLink": nextLink,
           }));
         },
@@ -276,7 +286,7 @@ describe("Outlook shared-mailbox catalog routes", () => {
       assertEquals(requests[0]?.url.searchParams.get("$skip"), "2", toolId);
       assertEquals(
         result,
-        { value: [{ id: "folder-1" }, { id: "folder-2" }], "@odata.nextLink": nextLink },
+        { value: [{ id: "item-1" }, { id: "item-2" }], "@odata.nextLink": nextLink },
         toolId,
       );
     }
