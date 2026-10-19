@@ -416,6 +416,36 @@ const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
   "text/plain": "txt",
 };
 
+/**
+ * Inline document types Responses reads, besides `text/*` (text and code).
+ * Other types, such as archives, fail before inference.
+ */
+const RESPONSES_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "application/pdf",
+  "application/json",
+  "application/xml",
+  "application/rtf",
+  "application/csv",
+  "application/x-iif",
+  "application/javascript",
+  "application/x-javascript",
+  "application/x-python",
+  "application/x-sh",
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.apple.pages",
+  "application/vnd.apple.keynote",
+  "application/vnd.apple.iwork",
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+  "application/vnd.google-apps.presentation",
+]);
+
 type RuntimeUserFilePart = Exclude<
   Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"][number],
   { readonly type: "text" }
@@ -430,6 +460,13 @@ function toOpenAIResponsesInlineFile(
   data: string,
 ): Record<string, unknown> {
   const mediaType = part.mediaType.toLowerCase();
+  if (!mediaType.startsWith("text/") && !RESPONSES_DOCUMENT_TYPES.has(mediaType)) {
+    throw unsupportedFileInputError(
+      "OpenAI Responses",
+      part,
+      "Send a document such as PDF, text, or a spreadsheet.",
+    );
+  }
   const extension = INLINE_FILE_EXTENSIONS[mediaType];
   const name = fileInputBaseName(part.filename) ?? "file";
   const hasExtension = /.\.[^.]+$/.test(name);
