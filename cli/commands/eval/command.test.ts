@@ -963,6 +963,34 @@ describe("eval CLI command helpers", () => {
     assertEquals(observed.at(-1), ["local_mock"]);
   });
 
+  it("binds one runtime identity to each example repetition and its mock tools", async () => {
+    const generatedIds: unknown[] = [];
+    const mockIds: unknown[] = [];
+    const agent = makeAgentStub(async (input) => {
+      generatedIds.push(input.context?.runId);
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:runtime-identity",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Find docs" }]),
+      mockTools: (context) => {
+        mockIds.push(context.runId);
+        return {};
+      },
+    });
+    const adapter = createAgentAdapter(agent, createEvalOptions());
+    for (const [exampleId, repetition] of [["q1", 1], ["q2", 1], ["q1", 2]] as const) {
+      await adapter({ definition, example: { id: exampleId, input: "Find docs" }, repetition });
+    }
+    assertEquals(
+      generatedIds.every((id) => typeof id === "string" && id.startsWith("evalrun_")),
+      true,
+    );
+    assertEquals(mockIds, generatedIds);
+    assertEquals(new Set(generatedIds).size, 3);
+  });
+
   it("passes static mock tools into real agent.generate and keeps real traces", async () => {
     const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
     let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
@@ -1585,7 +1613,7 @@ describe("eval CLI command helpers", () => {
       );
 
       assertEquals(exitCode, 1);
-      assertEquals(contexts, [
+      assertEquals(contexts.map((context) => ({ eval: (context as { eval: unknown }).eval })), [
         {
           eval: {
             definitionId: "eval:alpha",

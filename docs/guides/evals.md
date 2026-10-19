@@ -630,7 +630,10 @@ export default evalAgent({
 ```
 
 `mockTools` can also be a resolver. The local CLI calls it once for each
-example repetition so each record can receive fresh state:
+example repetition so each record can receive fresh state. The resolver receives
+`runId`, the same local runtime identity passed to the agent for that case. Each
+case gets a separate ID. This does not create a persisted platform run; mock run
+lookups should validate this ID instead of accepting any model-supplied value.
 
 ```ts
 export default evalAgent({

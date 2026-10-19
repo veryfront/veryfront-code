@@ -38,7 +38,12 @@ import {
   type EvalReportExportRedaction,
 } from "veryfront/extensions/eval";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
-import { exportEvalReport, resolveEvalRunProvenance, runEval } from "veryfront/eval";
+import {
+  createEvalRunId,
+  exportEvalReport,
+  resolveEvalRunProvenance,
+  runEval,
+} from "veryfront/eval";
 import { getVeryfrontCloudBootstrap } from "../../../src/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -865,10 +870,12 @@ export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTim
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
   return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
     const started = Date.now();
+    const runId = createEvalRunId();
     const mockTools = await resolveEvalMockTools(definition.mockTools, {
       definition,
       example,
       repetition,
+      runId,
       // A resolver that awaits network work cancels with the case.
       ...(signal ? { signal } : {}),
     });
@@ -879,6 +886,7 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       agent.generate({
         input: normalizeEvalInputForAgent(example.input),
         context: {
+          runId,
           eval: {
             definitionId: definition.id,
             exampleId: example.id,
