@@ -81,17 +81,27 @@ import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-poli
 
 /** @internal Validate the result returned by durable local child execution. */
 export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
-  if (
-    !value || typeof value !== "object" || !("text" in value) ||
-    typeof value.text !== "string" || !("toolCalls" in value) ||
-    typeof value.toolCalls !== "number" || !("status" in value) ||
-    typeof value.status !== "string"
-  ) throw ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+  const invalid = () =>
+    ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+  if (!value || typeof value !== "object") throw invalid();
+  const text = Object.getOwnPropertyDescriptor(value, "text");
+  const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
+  const status = Object.getOwnPropertyDescriptor(value, "status");
+  if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
+  const structured = readStructuredAgentOutput(value);
+  if (!text && !structured) throw invalid();
+  if (calls || status) {
+    if (
+      !calls || !("value" in calls) || typeof calls.value !== "number" ||
+      !status || !("value" in status) || typeof status.value !== "string"
+    ) throw invalid();
+  }
   return {
-    text: value.text,
-    toolCalls: value.toolCalls,
-    status: value.status,
-    ...readStructuredAgentOutput(value),
+    text: text?.value ?? "",
+    // Canonical receipts do not contain the historical tool count. Keep it absent.
+    ...(calls ? { toolCalls: calls.value } : {}),
+    status: status?.value ?? "completed",
+    ...structured,
   };
 }
 

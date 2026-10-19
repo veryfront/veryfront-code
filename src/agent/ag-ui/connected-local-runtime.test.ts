@@ -281,81 +281,98 @@ describe("connected local execution", () => {
     }
   });
 
-  it("replays child admission after a lost response without executing a terminal child again", async () => {
-    let attempts = 0;
-    let renewals = 0;
-    const output = { text: "stored", toolCalls: 0, status: "completed" };
-    const f = fixture({
-      trustedClaim: true,
-      renew: () => {
-        renewals++;
-        return Promise.resolve({});
-      },
-      childAdmission: async () => {
-        assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
-        if (++attempts === 1) throw new TypeError("child response lost");
-        return Response.json({
-          id: "22222222-2222-4222-8222-222222222222",
-          status: "completed",
-          output,
-          project_id: "11111111-1111-4111-8111-111111111111",
-          parent_run_id: "run-1",
-          target: { type: "agent", id: "child" },
-          conversation_id: "33333333-3333-4333-8333-333333333333",
-          output_message_id: "44444444-4444-4444-8444-444444444444",
-        }, { status: 202, headers: { "Cache-Control": "no-store" } });
-      },
-    });
-    const run = await f.runtime.admit({
-      agentId: "assistant",
-      threadId: "thread",
-      messages: [],
-      signal: new AbortController().signal,
-    });
-    let executions = 0;
-    try {
-      await run.execute(async () => {
-        await observeAdmittedAgentToolCalls({
-          id: "message",
-          role: "assistant",
-          parts: [{
-            type: "tool-call",
-            toolCallId: "child-call",
-            toolName: "invoke_agent",
-            args: { agent_id: "child" },
-          }],
-        });
-        const invoke = () =>
-          executeLocalChild({
-            agentId: "child",
-            input: "task",
-            toolName: "invoke_agent",
-            toolInput: { agent_id: "child" },
-            context: { toolCallId: "child-call" },
-            execute: async () => {
-              executions++;
-              return output;
-            },
-          });
-        await assertRejects(invoke, TypeError, "child response lost");
-        assertEquals(await invoke(), output);
+  for (
+    const stored of [
+      { text: "stored", toolCalls: 2, status: "completed" },
+      { text: "stored" },
+      { text: "stored", data: { selected_count: 1 } },
+      { data: false },
+      { data: null },
+      { data: 0 },
+      { data: [1, 2] },
+    ]
+  ) {
+    it(`replays canonical or legacy child output ${JSON.stringify(stored)} without reexecution`, async () => {
+      let attempts = 0;
+      let renewals = 0;
+      const output = {
+        text: "text" in stored ? stored.text : "",
+        ...("toolCalls" in stored ? { toolCalls: stored.toolCalls } : {}),
+        status: "completed",
+        ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
+      };
+      const f = fixture({
+        trustedClaim: true,
+        renew: () => {
+          renewals++;
+          return Promise.resolve({});
+        },
+        childAdmission: async () => {
+          assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
+          if (++attempts === 1) throw new TypeError("child response lost");
+          return Response.json({
+            id: "22222222-2222-4222-8222-222222222222",
+            status: "completed",
+            output: stored,
+            project_id: "11111111-1111-4111-8111-111111111111",
+            parent_run_id: "run-1",
+            target: { type: "agent", id: "child" },
+            conversation_id: "33333333-3333-4333-8333-333333333333",
+            output_message_id: "44444444-4444-4444-8444-444444444444",
+          }, { status: 202, headers: { "Cache-Control": "no-store" } });
+        },
       });
-      const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
-      assertEquals(requests.length, 2);
-      assertEquals(requests.map((request) => request.body.input), [{ text: "task" }, {
-        text: "task",
-      }]);
-      assert(requests[0] && requests[1]);
-      assertEquals(
-        requests[0].headers.get("Idempotency-Key"),
-        requests[1].headers.get("Idempotency-Key"),
-      );
-      assertEquals(requests[1].headers.get("Authorization"), "Bearer claim-invocation");
-      assertEquals(executions, 0);
-    } finally {
-      await run.finish("completed");
-    }
-  });
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      let executions = 0;
+      try {
+        await run.execute(async () => {
+          await observeAdmittedAgentToolCalls({
+            id: "message",
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCallId: "child-call",
+              toolName: "invoke_agent",
+              args: { agent_id: "child" },
+            }],
+          });
+          const invoke = () =>
+            executeLocalChild({
+              agentId: "child",
+              input: "task",
+              toolName: "invoke_agent",
+              toolInput: { agent_id: "child" },
+              context: { toolCallId: "child-call" },
+              execute: async () => {
+                executions++;
+                return output;
+              },
+            });
+          await assertRejects(invoke, TypeError, "child response lost");
+          assertEquals(await invoke(), output);
+        });
+        const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
+        assertEquals(requests.length, 2);
+        assertEquals(requests.map((request) => request.body.input), [{ text: "task" }, {
+          text: "task",
+        }]);
+        assert(requests[0] && requests[1]);
+        assertEquals(
+          requests[0].headers.get("Idempotency-Key"),
+          requests[1].headers.get("Idempotency-Key"),
+        );
+        assertEquals(requests[1].headers.get("Authorization"), "Bearer claim-invocation");
+        assertEquals(executions, 0);
+      } finally {
+        await run.finish("completed");
+      }
+    });
+  }
 
   for (const structured of [false, true]) {
     it(`finalizes ${structured ? "structured" : "text-only"} child output without a wrapper`, async () => {
