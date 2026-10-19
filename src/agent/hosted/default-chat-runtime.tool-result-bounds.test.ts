@@ -3,8 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import { JSON_VALUE_MAX_SERIALIZED_BYTES } from "#veryfront/schemas/json-value.ts";
-import { defineSchema } from "../../schemas/define.ts";
-import { scopeHostedRuntimeToolResults } from "./default-chat-runtime.ts";
+import { defineSchema } from "#veryfront/schemas/define.ts";
+import { scopeHostedRuntimeToolResults } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 
 function toolReturning(result: unknown) {
   return scopeHostedRuntimeToolResults(createToolsFromHostDefinitions({

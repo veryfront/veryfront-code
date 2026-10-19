@@ -395,7 +395,12 @@ function parseCallToolErrorText(
 
 function isOauthExpiredMessage(value: unknown): boolean {
   // Error values come from a byte-bounded call response, so one string may use all of it.
-  const snapshot = snapshotBoundedJsonValue(value, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
+  // Detection only reads the value, so leave room for the error wrapper added around the text.
+  const snapshot = snapshotBoundedJsonValue(
+    value,
+    MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+    2 * MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+  );
   const safeValue = snapshot.success ? snapshot.value : undefined;
 
   // Check structured OAuth error field first (RFC 6749 / RFC 6750 error codes).
