@@ -4293,6 +4293,63 @@ describe("Sandbox", () => {
       }
     });
 
+    it("cancels a command while failed-exec reprovision cleanup remains pending", async () => {
+      const connectionRefusedError = () =>
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", syscall: "connect" } });
+      const controller = new AbortController();
+      let reportDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>((resolve) => reportDeleteStarted = resolve);
+      let releaseDelete!: (response: Response) => void;
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-cancel-reprovision",
+          endpoint: "https://1111111111.sandbox.example.com",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseDelete = resolve;
+            reportDeleteStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        execStartRetryDelayMs: 0,
+        resolveRuntimeEndpoint: ({ sandboxId }) =>
+          `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local`,
+      });
+      const execution = Array.fromAsync(
+        sandbox.streamCommand("echo cancel", { signal: controller.signal }),
+      );
+      await deleteStarted;
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => execution, Error, "caller cancelled");
+
+      releaseDelete(jsonResponse({ ok: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
+    });
+
     it("keeps client heartbeats active while proxy-routed async commands run", async () => {
       const originalSetInterval = webTimers.setInterval;
       const originalClearInterval = webTimers.clearInterval;

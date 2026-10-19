@@ -339,7 +339,8 @@ export class LazySandbox {
     let outcome = await this.startExec(command, options);
     if (outcome.kind === "fetch-failure") {
       if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
-      await this.reprovisionAfterExecStartFailure();
+      throwIfAborted(options?.signal);
+      await awaitAbortable(this.reprovisionAfterExecStartFailure(), options?.signal);
       await this.#touchSessionForCommand(options?.signal);
       outcome = await this.startExec(command, options);
       if (outcome.kind === "fetch-failure") throw outcome.error;
