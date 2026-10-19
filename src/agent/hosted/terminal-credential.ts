@@ -203,6 +203,7 @@ export function hostedTerminalToolSourceFactory(
   request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
   fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
+  getAuthToken?: () => string | undefined,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
   const authority = request ? credentials.get(request) : undefined;
   if (!authority) return fallback;
@@ -210,16 +211,25 @@ export function hostedTerminalToolSourceFactory(
   const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
-    const ordinary = fallback(config);
+    const liveHeaders: NonNullable<RemoteMCPToolSourceConfig["headers"]> = async (context) => {
+      const original = typeof config.headers === "function"
+        ? await config.headers(context)
+        : config.headers;
+      const headers = new NativeHeaders(original);
+      if (getAuthToken) {
+        const token = getAuthToken();
+        if (!token) throw new Error("Hosted MCP credential authority is unavailable");
+        apply(headersSet, headers, ["Authorization", `Bearer ${token}`]);
+      }
+      return headers;
+    };
+    const ordinary = fallback({ ...config, headers: liveHeaders });
     const mutation = authority.eventToken
       ? fallback({
         ...config,
         endpoint: expectedEndpoint,
         headers: async (context) => {
-          const original = typeof config.headers === "function"
-            ? await config.headers(context)
-            : config.headers;
-          const headers = new NativeHeaders(original);
+          const headers = new NativeHeaders(await liveHeaders(context));
           if (context?.projectId === authority.projectId && context.runId === authority.runId) {
             apply(headersSet, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER, authority.eventToken!]);
           }
@@ -231,10 +241,7 @@ export function hostedTerminalToolSourceFactory(
       ...config,
       endpoint: expectedEndpoint,
       headers: async (context) => {
-        const original = typeof config.headers === "function"
-          ? await config.headers(context)
-          : config.headers;
-        const headers = new NativeHeaders(original);
+        const headers = new NativeHeaders(await liveHeaders(context));
         if (
           context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context)
         ) {

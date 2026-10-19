@@ -14,6 +14,11 @@ import {
   runWithHostedPlatformDependencies,
 } from "../../../src/agent/hosted/platform-dependency-credential.ts";
 import { getVerifiedSkillScriptExecutionCredential } from "../../../src/skill/execution-credential.ts";
+import { applyRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 
 async function fixture(
   operation: (input: {
@@ -264,11 +269,20 @@ it("attempts all descendant closes and retries a failed close", async () => {
 it("renews root and exact-child sandbox credentials without crossing run identity", async () => {
   await fixture(async ({ transport, scope, eventToken, authToken }) => {
     const credentials: Array<() => string> = [];
+    const cleanupCredentials: string[] = [];
     let currentToken = authToken;
     const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport, {
       async createSandboxTools(input) {
-        credentials.push(input.getAuthToken ?? (() => input.authToken!));
-        return await createAgentServiceSandboxTools(input);
+        const credential = input.getAuthToken ?? (() => input.authToken!);
+        credentials.push(credential);
+        const sandbox = await createAgentServiceSandboxTools(input);
+        return {
+          ...sandbox,
+          async closeSandbox() {
+            cleanupCredentials.push(credential());
+            await sandbox.closeSandbox();
+          },
+        };
       },
     });
     const root = { runId: scope.runId };
@@ -291,7 +305,8 @@ it("renews root and exact-child sandbox credentials without crossing run identit
     assertEquals(credentials[1]!(), authToken);
     rotateHostedPlatformDependencyCredential(child, "renewed-child-credential");
     assertEquals(credentials[0]!(), currentToken);
-    assertEquals(credentials[1]!(), "renewed-child-credential");
+    await tools.revoke(child);
+    assertEquals(cleanupCredentials, ["renewed-child-credential"]);
     const writer = createHostedRunEventWriterCapability({
       apiUrl: "https://api.veryfront.com",
       runId: scope.runId,
@@ -315,6 +330,7 @@ it("renews root and exact-child sandbox credentials without crossing run identit
       return Promise.resolve();
     });
     await tools.revoke(root);
+    assertEquals(cleanupCredentials, ["renewed-child-credential", "renewed-root-credential"]);
   });
 });
 
@@ -344,6 +360,61 @@ it("keeps cleanup credential authority active after execution cancellation", asy
       assertEquals(getVerifiedSkillScriptExecutionCredential()?.authToken, authToken);
       return Promise.resolve();
     });
+    await tools.revoke(owner);
+  });
+});
+
+it("rejects an admitted tool after cancellation while retaining cleanup authority", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const owner = { runId: scope.runId };
+    await tools.register(owner, scope, eventToken(scope.runId), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    const controller = new AbortController();
+    let releaseAdmission!: () => void;
+    const admissionGate = new Promise<void>((resolve) => releaseAdmission = resolve);
+    let executed = false;
+    const operation = tools.run({
+      owner,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: controller.signal,
+      admit: async (call) => {
+        await admissionGate;
+        return {
+          occurrenceId: call.occurrenceId,
+          admissionEventId: "admission",
+          startEventId: "start",
+          toolCallId: call.toolCallId,
+          publicToolCallId: call.toolCallId,
+          projectId: scope.projectId,
+          runId: scope.runId,
+        };
+      },
+    }, async () => {
+      const call = { id: "cancelled-call" };
+      introduceToolCallOccurrence(call);
+      return await runWithToolCallOccurrenceDispatch(call, () =>
+        applyRecoveryToolExecutionPolicy(
+          { toolName: "mutating-tool", input: {} },
+          () => {
+            executed = true;
+            return Promise.resolve("executed");
+          },
+        ));
+    });
+
+    await Promise.resolve();
+    controller.abort(new Error("run cancelled"));
+    releaseAdmission();
+    await assertRejects(() => operation, Error, "run cancelled");
+    assertEquals(executed, false);
     await tools.revoke(owner);
   });
 });

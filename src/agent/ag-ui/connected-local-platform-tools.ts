@@ -80,6 +80,9 @@ export function createConnectedLocalPlatformTools(
   const credentialLifetimes = createPrivateWeakStore<object, { active: boolean }>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
   const revoke = async (owner: HostedPlatformDependencyOwner) => {
+    // Snapshot the newest exact-owner credential before revoking execution
+    // authority so retained cleanup never falls back to its admission token.
+    credentials.get(owner)?.();
     revokeHostedPlatformDependencies(owner);
     const pending = cleanups.get(owner) ?? [];
     cleanups.set(owner, []);
@@ -94,14 +97,14 @@ export function createConnectedLocalPlatformTools(
       if (close) pushPrivateArray(retry, close);
       failure ??= result.reason;
     });
-    const credentialLifetime = credentialLifetimes.get(owner);
-    if (credentialLifetime) credentialLifetime.active = false;
     if (retry.length > 0) {
       const current = cleanups.get(owner) ?? [];
       forEachPrivateArray(retry, (close) => pushPrivateArray(current, close));
       cleanups.set(owner, current);
       throw failure;
     }
+    const credentialLifetime = credentialLifetimes.get(owner);
+    if (credentialLifetime) credentialLifetime.active = false;
   };
   return {
     verify,
@@ -136,10 +139,14 @@ export function createConnectedLocalPlatformTools(
             }
             try {
               credentialLifetimes.set(childOwner, { active: true });
-              const credential = () =>
-                childScope.runId === scope.runId
-                  ? currentAuthority?.().auth_token ?? token
-                  : hostedPlatformDependencyCredential(childOwner) ?? token;
+              let lastCredential = token;
+              const credential = () => {
+                const current = childScope.runId === scope.runId
+                  ? currentAuthority?.().auth_token
+                  : hostedPlatformDependencyCredential(childOwner);
+                if (current) lastCredential = current;
+                return lastCredential;
+              };
               credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
               let source = createLivePlatformMcpSource(factory({
@@ -242,10 +249,14 @@ export function createConnectedLocalPlatformTools(
       ) => Promise<AgentRunToolCallAdmissionReceipt>;
     }, operation: () => Promise<T>): Promise<T> {
       const identity = {};
-      const assertActive = () => {
+      const assertCredentialActive = () => {
         if (credentialLifetimes.get(input.owner)?.active !== true) {
           throw new Error("Connected run credential is no longer active");
         }
+      };
+      const assertToolActive = () => {
+        input.signal.throwIfAborted();
+        assertCredentialActive();
       };
       const calls = createPrivateMap<string, { name: string; args: Record<string, unknown> }>();
       const admit: AdmitExecutorToolCall = (call) => {
@@ -270,7 +281,7 @@ export function createConnectedLocalPlatformTools(
         () =>
           runWithVerifiedSkillScriptExecutionCredential(
             {
-              assertActive,
+              assertActive: assertCredentialActive,
               read: () => ({
                 apiUrl,
                 authToken: credential(),
@@ -292,7 +303,7 @@ export function createConnectedLocalPlatformTools(
                         if (execution.getStore() !== identity) {
                           return execute();
                         }
-                        assertActive();
+                        assertToolActive();
                         const call = getCurrentToolCallOccurrenceIdentity();
                         if (!call) {
                           throw new Error("Connected tool has no private occurrence");
@@ -302,7 +313,7 @@ export function createConnectedLocalPlatformTools(
                         calls.delete(call.occurrenceId);
                         return runWithToolCallAdmissionReceipt(
                           receipt,
-                          assertActive,
+                          assertToolActive,
                           execute,
                           admit,
                         );

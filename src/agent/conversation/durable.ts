@@ -1051,6 +1051,8 @@ function formatConversationRunBatchRecovery(
 /** Flush conversation run event batches. */
 export async function flushConversationRunEventBatches(input: {
   authToken: string;
+  /** Resolve the current exact-run writer credential before each append request. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1134,7 +1136,7 @@ export async function flushConversationRunEventBatches(input: {
     try {
       input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
-        authToken: input.authToken,
+        authToken: input.getAuthToken?.() ?? input.authToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
@@ -1232,6 +1234,8 @@ function formatConversationRunQueueFailure(
 /** Flush conversation run event queue. */
 export async function flushConversationRunEventQueue(input: {
   authToken: string;
+  /** Resolve the current exact-run writer credential before each append request. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1293,6 +1297,7 @@ export async function flushConversationRunEventQueue(input: {
 
     const flushed = await flushConversationRunEventBatches({
       authToken: input.authToken,
+      getAuthToken: input.getAuthToken,
       apiUrl: input.apiUrl,
       conversationId: input.conversationId,
       runId: input.runId,
@@ -1454,7 +1459,8 @@ export function createConversationRunEventQueueController(input: {
     let flushed;
     try {
       flushed = await flushConversationRunEventQueue({
-        authToken: input.getAuthToken?.() ?? input.authToken,
+        authToken: input.authToken,
+        getAuthToken: input.getAuthToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
