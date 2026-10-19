@@ -84,10 +84,21 @@ import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
 /** @internal Validate the result returned by durable local child execution. */
-function restoreInheritedAgentResponse(value: unknown): Record<string, unknown> {
+function restoreInheritedAgentResponse(
+  value: unknown,
+  outputFormat?: "text-data-v1",
+): Record<string, unknown> {
   const invalid = () =>
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (value === undefined) throw invalid();
+  if (outputFormat === "text-data-v1") {
+    return {
+      text: privateJsonStringify(value),
+      data: value,
+      object: value,
+      status: "completed",
+    };
+  }
   if (typeof value !== "object" || value === null) {
     return {
       text: privateJsonStringify(value),
@@ -162,7 +173,7 @@ export async function runInheritedLocalAgent(
     return receipt.status === "completed"
       ? {
         success: true,
-        output: restoreInheritedAgentResponse(receipt.output),
+        output: restoreInheritedAgentResponse(receipt.output, receipt.outputFormat),
         executionTime: 0,
       }
       : {

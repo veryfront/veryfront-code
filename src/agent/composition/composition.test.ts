@@ -493,10 +493,24 @@ describe("agentAsTool", () => {
     );
   });
 
-  for (const data of [false, { category: "billing" }]) {
+  for (
+    const data of [
+      false,
+      { category: "billing" },
+      { text: "business" },
+      { data: { id: 1 } },
+      { object: 42 },
+    ]
+  ) {
     it(`restores canonical structured replay ${JSON.stringify(data)}`, async () => {
       const result = await runInheritedLocalAgent(
-        { terminalReceipt: { status: "completed", output: data } },
+        {
+          terminalReceipt: {
+            status: "completed",
+            output: data,
+            outputFormat: "text-data-v1",
+          },
+        },
         { projectId: "project", apiUrl: "https://api.example.test", fetch },
         () => {
           throw new Error("must not execute");
@@ -515,6 +529,39 @@ describe("agentAsTool", () => {
       });
     });
   }
+
+  it("restores an unmarked legacy agent response without interpreting business keys", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: {
+            text: "stored",
+            data: { selected_count: 1 },
+            object: { selected_count: 1 },
+            toolCalls: 2,
+            status: "completed",
+          },
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: {
+        text: "stored",
+        data: { selected_count: 1 },
+        object: { selected_count: 1 },
+        toolCalls: 2,
+        status: "completed",
+      },
+      executionTime: 0,
+    });
+  });
 
   it("ignores an object value the child response only inherits", async () => {
     const childAgent = createMinimalAgent("writer");
