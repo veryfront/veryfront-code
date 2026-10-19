@@ -11,6 +11,7 @@ import {
 } from "#veryfront/utils";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost, validateHTTPImports } from "./http-validator.ts";
+import { getLoaderForFile } from "./loader-helpers.ts";
 import {
   type ImportMetaSpecifierResolver,
   rewriteImportMetaLocations,
@@ -68,7 +69,7 @@ async function validateRemoteModuleSource(
   resolveImportMetaSpecifier?: ImportMetaSpecifierResolver,
 ): Promise<{
   readonly contents: string;
-  readonly loader: "js";
+  readonly loader: "js" | "jsx" | "ts" | "tsx";
 }> {
   // A fetched module is ESM; a top-level `return` must not parse as CommonJS.
   const scan = await validateHTTPImports(contents, allowedHosts, { commonJS: false });
@@ -87,7 +88,10 @@ async function validateRemoteModuleSource(
       "[API] handler build failed: import.meta location cannot be preserved because the remote module source could not be parsed or its resolver is dynamic",
     );
   }
-  return { contents: rewritten, loader: "js" };
+  const loader = getLoaderForFile(new URL(moduleUrl).pathname.toLowerCase());
+  // Remote sources are validated as executable modules, not JSON. Query
+  // parameters and redirect aliases must not determine their source grammar.
+  return { contents: rewritten, loader: loader === "json" ? "js" : loader };
 }
 
 function describeRemoteModuleUrl(value: string): string {
