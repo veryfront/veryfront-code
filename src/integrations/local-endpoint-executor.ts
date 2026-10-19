@@ -128,6 +128,12 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
    * would not be the body that was checked.
    */
   readonly body?: string | undefined;
+  /**
+   * The catalog tool's `requiresWrite`; when absent, any non-GET call is a
+   * write. An over-limit response to a write is reported as succeeded rather
+   * than failed, so the caller does not repeat it.
+   */
+  readonly requiresWrite?: boolean | undefined;
   /** Internal test seam. Production callers use the standard integration deadline. */
   readonly timeoutMs?: number;
   /** Internal test seam. Production callers use the guarded egress transport. */
@@ -755,16 +761,34 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
+/**
+ * Why a 2xx write response body was dropped. The provider already applied the
+ * write, so failing the call would invite the caller to repeat it.
+ */
+type OmittedResponse = "too_large" | "unreadable";
+
+class ResponseOmitted {
+  constructor(readonly reason: OmittedResponse) {}
+}
+
+/**
+ * Reads a bounded JSON body. A body that is over the limits, unreadable, or not
+ * JSON fails the call, except after a write, where it is dropped and returned
+ * as a `ResponseOmitted` instead.
+ */
 async function readResponseJson(
   response: Response,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  write: boolean,
 ): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) {
+  const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
-    responseInvalid(identity, status);
-  }
+    if (!write) responseInvalid(identity, status);
+    return new ResponseOmitted(reason);
+  };
+  if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
   try {
@@ -775,13 +799,13 @@ async function readResponseJson(
       { fatalUtf8: true },
     ));
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   if (
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
-    responseInvalid(identity, status);
+    return unusable("too_large");
   }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
@@ -789,11 +813,12 @@ async function readResponseJson(
   try {
     parsed = jsonParse(text);
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   // The source text is already bounded, so one string may use the whole response.
   const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
-  if (!snapshot.success) responseInvalid(identity, status);
+  // Over a structural bound (node count, depth): too large as well.
+  if (!snapshot.success) return unusable("too_large");
   return snapshot.value;
 }
 
@@ -910,6 +935,7 @@ async function executeTransportRequest(
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   binary = false,
+  write = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -934,29 +960,50 @@ async function executeTransportRequest(
   if (status === 204) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status),
+    value: await readResponseJson(response, signal, identity, status, write),
   });
 }
 
+/**
+ * Selects `response.transform` from a parsed body.
+ *
+ * When the selection is a list and the catalog declares paging output fields
+ * (such as `@odata.nextLink`), those fields are kept beside the list under its
+ * own key, so a caller can still request the next page.
+ */
 function transformResponse(
   value: unknown,
-  transform: string | undefined,
+  response: IntegrationEndpoint["response"],
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
 ): unknown {
+  const transform = response?.transform;
   if (transform === undefined || transform === "") return value;
+  let parent: Record<string, unknown> | undefined;
+  let segment = "";
   let current = value;
   let start = 0;
   for (let index = 0; index <= transform.length; index++) {
     if (index < transform.length && charCodeAt(transform, index) !== 46) continue;
-    const segment = slice(transform, start, index);
+    segment = slice(transform, start, index);
     if (segment === "" || !isRecord(current)) responseInvalid(identity, status);
+    parent = current;
     const next = ownValue(current, segment);
     if (!next.present) responseInvalid(identity, status);
     current = next.value;
     start = index + 1;
   }
-  return current;
+  const outputFields = response?.historicalSummary?.outputFields ?? [];
+  if (!parent || !arrayIsArray(current) || outputFields.length === 0) return current;
+  const result: Record<string, unknown> = {};
+  objectDefineProperty(result, segment, { enumerable: true, value: current });
+  for (let index = 0; index < outputFields.length; index++) {
+    const name = outputFields[index]!.name;
+    if (name === segment) continue;
+    const field = ownValue(parent, name);
+    if (field.present) objectDefineProperty(result, name, { enumerable: true, value: field.value });
+  }
+  return freeze(result);
 }
 
 /** Execute one admitted catalog REST endpoint through a bounded guarded transport. */
@@ -984,21 +1031,29 @@ export async function executeLocalIntegrationEndpoint(
       body,
     );
     const binary = isBinaryResponse(options.endpoint);
+    const write = options.requiresWrite ?? options.endpoint.method !== "GET";
     const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
       options,
       binary,
+      write,
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
-    return transformResponse(
-      result.value,
-      options.endpoint.response?.transform,
-      options,
-      result.status,
-    );
+    let omitted: OmittedResponse;
+    if (result.value instanceof ResponseOmitted) omitted = result.value.reason;
+    else {
+      try {
+        return transformResponse(result.value, options.endpoint.response, options, result.status);
+      } catch (cause) {
+        // A completed write must not fail on its response shape either.
+        if (!write) throw cause;
+        omitted = "unreadable";
+      }
+    }
+    return freeze({ success: true, status: result.status, response_omitted: omitted });
   } catch (cause) {
     throwIfCallerAborted(options.signal);
     throw cause;

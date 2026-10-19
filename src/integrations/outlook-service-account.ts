@@ -84,6 +84,7 @@ export interface OutlookServiceAccountToolSourceOptions {
 interface AdmittedOutlookTool {
   readonly id: string;
   readonly endpoint: OutlookEndpoint;
+  readonly requiresWrite: boolean | undefined;
   readonly definition: ToolDefinition;
 }
 
@@ -186,6 +187,7 @@ function admitTool(
   return Object.freeze({
     id: toolName,
     endpoint: Object.freeze(endpoint),
+    requiresWrite: catalogTool.requiresWrite,
     definition: toolDefinition(
       { ...structuredClone(catalogTool), id: toolName },
       endpoint,
@@ -480,6 +482,7 @@ function createOutlookServiceAccountToolSourceInternal(
             endpoint,
             args: validated.args,
             body: validated.body,
+            requiresWrite: tool.requiresWrite,
             authHeaders: { Authorization: authorizationHeader },
             allowedOrigin: GRAPH_ORIGIN,
             signal: context?.abortSignal,
