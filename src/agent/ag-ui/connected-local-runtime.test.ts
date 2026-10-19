@@ -13,6 +13,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
+import { RUN_TERMINAL_TOKEN_HEADER } from "../hosted/terminal-credential.ts";
 
 function fixture(
   options: {
@@ -40,6 +41,8 @@ function fixture(
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
     workerDisplayName?: string;
+    claimedRunId?: string;
+    acceptedRunId?: string;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -115,8 +118,9 @@ function fixture(
             run_event_token: "claim-event",
             run_terminal_token: `header.${
               btoa(JSON.stringify({
-                runId: `run-${id}`,
-                canonicalRunId: "77777777-7777-4777-8777-777777777777",
+                runId: options.claimedRunId ?? `run-${id}`,
+                canonicalRunId: options.acceptedRunId ??
+                  "77777777-7777-4777-8777-777777777777",
                 tokenUse: "run_event_writer",
                 writerPurpose: "current_run_terminal",
                 dispatchNonce: "generation",
@@ -124,7 +128,7 @@ function fixture(
             }.signature`,
           },
           run: {
-            run_id: `run-${id}`,
+            run_id: options.claimedRunId ?? `run-${id}`,
             conversation_id: "33333333-3333-4333-8333-333333333333",
             message_id: "44444444-4444-4444-8444-444444444444",
             project_id: "11111111-1111-4111-8111-111111111111",
@@ -212,7 +216,9 @@ function fixture(
           }),
         );
       }
-      return Promise.resolve(Response.json({ id: `run-${id}` }));
+      return Promise.resolve(Response.json({
+        id: path === "/runs" && options.acceptedRunId ? options.acceptedRunId : `run-${id}`,
+      }));
     }) as typeof fetch,
     log: (message) => logs.push(message),
   });
@@ -285,21 +291,22 @@ describe("connected local execution", () => {
   for (
     const stored of [
       { text: "stored", toolCalls: 2, status: "completed" },
-      { text: "stored" },
-      { text: "stored", data: { selected_count: 1 } },
-      { data: false },
-      { data: null },
-      { data: 0 },
-      { data: [1, 2] },
+      {
+        text: "stored",
+        data: { selected_count: 1 },
+        object: { selected_count: 1 },
+        toolCalls: 2,
+        status: "completed",
+      },
     ]
   ) {
     it(`replays canonical or legacy child output ${JSON.stringify(stored)} without reexecution`, async () => {
       let attempts = 0;
       let renewals = 0;
       const output: LocalChildResult = {
-        text: "text" in stored ? stored.text ?? "" : "",
-        ...(typeof stored.toolCalls === "number" ? { toolCalls: stored.toolCalls } : {}),
-        status: "completed",
+        text: stored.text,
+        toolCalls: stored.toolCalls,
+        status: stored.status,
         ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
       };
       const f = fixture({
@@ -374,6 +381,83 @@ describe("connected local execution", () => {
       }
     });
   }
+
+  it("preserves marked canonical business data without inventing tool calls", async () => {
+    const parentRunId = "77777777-7777-4777-8777-777777777777";
+    const childRunId = "22222222-2222-4222-8222-222222222222";
+    const childToken = `header.${
+      btoa(JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId: "child-run",
+        canonicalRunId: childRunId,
+        dispatchNonce: "child-dispatch",
+      }))
+    }.signature`;
+    const f = fixture({
+      trustedClaim: true,
+      claimedRunId: parentRunId,
+      acceptedRunId: parentRunId,
+      childAdmission: () =>
+        Promise.resolve(Response.json({
+          version: 1,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          parentRunId,
+          agentId: "child",
+          canonicalRunId: childRunId,
+          dispatchNonce: "child-dispatch",
+          conversationId: "33333333-3333-4333-8333-333333333333",
+          outputMessageId: "44444444-4444-4444-8444-444444444444",
+          status: "completed",
+          output: { data: { text: "business" } },
+          outputFormat: "text-data-v1",
+        }, {
+          status: 202,
+          headers: {
+            "Content-Type": "application/vnd.veryfront.inherited-run+json",
+            "Cache-Control": "no-store",
+            [RUN_TERMINAL_TOKEN_HEADER]: childToken,
+          },
+        })),
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    try {
+      await run.execute(async () => {
+        await observeAdmittedAgentToolCalls({
+          id: "message",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "child-call",
+            toolName: "invoke_agent",
+            args: { agent_id: "child" },
+          }],
+        });
+        const output = await executeLocalChild({
+          agentId: "child",
+          input: "task",
+          toolName: "invoke_agent",
+          toolInput: { agent_id: "child" },
+          context: { toolCallId: "child-call" },
+          execute: () => Promise.reject(new Error("must not execute")),
+        });
+        assertEquals(output, {
+          text: '{"text":"business"}',
+          data: { text: "business" },
+          object: { text: "business" },
+          status: "completed",
+        });
+        assertEquals(Object.hasOwn(output, "toolCalls"), false);
+      });
+    } finally {
+      await run.finish("completed");
+    }
+  });
 
   for (const structured of [false, true]) {
     it(`finalizes ${structured ? "structured" : "text-only"} child output without a wrapper`, async () => {

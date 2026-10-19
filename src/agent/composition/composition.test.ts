@@ -33,7 +33,11 @@ import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { runInheritedLocalAgent, terminalAgentOutput } from "./inherited-local-agent.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+  terminalAgentOutput,
+} from "./inherited-local-agent.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -550,6 +554,7 @@ describe("agentAsTool", () => {
       output: { text: "done", status: "completed" },
       executionTime: 0,
     });
+    assertEquals(Object.hasOwn(result.output as object, "toolCalls"), false);
   });
 
   it("restores an explicit canonical no-value replay without structured aliases", async () => {
@@ -639,6 +644,16 @@ describe("agentAsTool", () => {
       );
 
       assertEquals(result, { success: true, output: stored, executionTime: 0 });
+    });
+  }
+
+  for (const stored of [{ text: "stored" }, { data: { id: 1 } }, { object: 42 }]) {
+    it(`rejects bare business output at the SDK result boundary ${JSON.stringify(stored)}`, () => {
+      assertThrows(
+        () => readInheritedLocalChildResult(stored),
+        Error,
+        "Stored local child result is invalid",
+      );
     });
   }
 

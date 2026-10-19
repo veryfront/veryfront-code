@@ -84,76 +84,51 @@ import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
 /** @internal Validate the result returned by durable local child execution. */
-function restoreInheritedAgentResponse(
-  value: unknown,
-  outputFormat?: "text-data-v1",
-): Record<string, unknown> {
+function restoreCanonicalAgentResponse(value: unknown): Record<string, unknown> {
   const invalid = () =>
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (value === undefined) throw invalid();
-  if (outputFormat === "text-data-v1") {
-    if (value === null) return { text: "", status: "completed" };
-    if (typeof value !== "object" || Array.isArray(value)) throw invalid();
-    const keys = Reflect.ownKeys(value);
-    if (
-      keys.length === 0 ||
-      keys.some((key) => key !== "text" && key !== "data")
-    ) throw invalid();
-    const text = Object.getOwnPropertyDescriptor(value, "text");
-    const data = Object.getOwnPropertyDescriptor(value, "data");
-    if (
-      (text && (!("value" in text) || typeof text.value !== "string")) ||
-      (data && !("value" in data))
-    ) throw invalid();
-    return {
-      text: text && "value" in text ? text.value : privateJsonStringify(data!.value),
-      ...(data && "value" in data ? { data: data.value, object: data.value } : {}),
-      status: "completed",
-    };
-  }
-  if (typeof value !== "object" || value === null) {
-    return {
-      text: privateJsonStringify(value),
-      data: value,
-      object: value,
-      status: "completed",
-    };
-  }
-  const text = Object.getOwnPropertyDescriptor(value, "text");
-  const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
-  const status = Object.getOwnPropertyDescriptor(value, "status");
-  if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
-  const structured = readStructuredAgentOutput(value);
-  if (!text && !structured) {
-    return {
-      text: privateJsonStringify(value),
-      data: value,
-      object: value,
-      status: "completed",
-    };
-  }
+  if (value === null) return { text: "", status: "completed" };
+  if (typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const keys = Reflect.ownKeys(value);
   if (
-    calls && (!("value" in calls) ||
-      (typeof calls.value !== "number" && !Array.isArray(calls.value)))
+    keys.length === 0 ||
+    keys.some((key) => key !== "text" && key !== "data")
   ) throw invalid();
-  if (status && (!("value" in status) || typeof status.value !== "string")) throw invalid();
+  const text = Object.getOwnPropertyDescriptor(value, "text");
+  const data = Object.getOwnPropertyDescriptor(value, "data");
+  if (
+    (text && (!("value" in text) || typeof text.value !== "string")) ||
+    (data && !("value" in data))
+  ) throw invalid();
   return {
-    text: text?.value ?? "",
-    ...(calls ? { toolCalls: calls.value } : {}),
-    status: status?.value ?? "completed",
-    ...structured,
+    text: text && "value" in text ? text.value : privateJsonStringify(data!.value),
+    ...(data && "value" in data ? { data: data.value, object: data.value } : {}),
+    status: "completed",
   };
 }
 
 /** Restore the tool protocol while preserving known legacy call counts. */
 export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
-  const response = restoreInheritedAgentResponse(value);
+  const invalid = () =>
+    ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+  if (typeof value !== "object" || value === null) throw invalid();
+  const text = Object.getOwnPropertyDescriptor(value, "text");
+  const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
+  const status = Object.getOwnPropertyDescriptor(value, "status");
+  if (!text || !("value" in text) || typeof text.value !== "string") throw invalid();
+  if (
+    !calls || !("value" in calls) ||
+    (typeof calls.value !== "number" && !Array.isArray(calls.value))
+  ) throw invalid();
+  if (!status || !("value" in status) || typeof status.value !== "string") throw invalid();
+  const structured = readStructuredAgentOutput(value);
   return {
-    ...response,
-    text: response.text as string,
-    status: response.status as string,
-    ...(Array.isArray(response.toolCalls) ? { toolCalls: response.toolCalls.length } : {}),
-  } as LocalChildResult;
+    text: text.value,
+    toolCalls: Array.isArray(calls.value) ? calls.value.length : calls.value,
+    status: status.value,
+    ...structured,
+  };
 }
 
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
@@ -185,7 +160,7 @@ export async function runInheritedLocalAgent(
       ? {
         success: true,
         output: receipt.outputFormat === "text-data-v1"
-          ? restoreInheritedAgentResponse(receipt.output, receipt.outputFormat)
+          ? restoreCanonicalAgentResponse(receipt.output)
           : receipt.output,
         executionTime: 0,
       }
@@ -388,7 +363,10 @@ export async function runInheritedLocalAgent(
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
                     }
-                    const output = readInheritedLocalChildResult(delegatedResult.output);
+                    const output = "terminalReceipt" in delegated &&
+                        delegated.terminalReceipt.outputFormat === "text-data-v1"
+                      ? delegatedResult.output as LocalChildResult
+                      : readInheritedLocalChildResult(delegatedResult.output);
                     if (!completedTools.has(toolCallId)) {
                       completedTools.add(toolCallId);
                       await mirror.handleChunk({

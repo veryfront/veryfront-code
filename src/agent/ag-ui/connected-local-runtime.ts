@@ -7,6 +7,7 @@ import {
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type LocalChildInvocation,
+  type LocalChildResult,
   withLocalChildExecution,
 } from "../composition/local-child-execution.ts";
 import {
@@ -694,7 +695,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               platformTools ? { tools: platformTools, agentId: invocation.agentId } : undefined,
             );
             if (!result.success) throw new Error(result.error ?? "Local child failed.");
-            return readInheritedLocalChildResult(result.output);
+            return "terminalReceipt" in delegated &&
+                delegated.terminalReceipt.outputFormat === "text-data-v1"
+              ? result.output as LocalChildResult
+              : readInheritedLocalChildResult(result.output);
           })().finally(() => {
             if (!admissionAccepted && childExecutions.get(toolCallId) === execute) {
               childExecutions.delete(toolCallId);
