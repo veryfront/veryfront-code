@@ -79,6 +79,7 @@ const stringSlice = String.prototype.slice;
 const textEncoder = new TextEncoder();
 const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
+const URLSearchParamsConstructor = URLSearchParams;
 const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlSearchParams = Object.getOwnPropertyDescriptor(URL.prototype, "searchParams")?.get;
 const urlSearchParamsAppend = URLSearchParams.prototype.append;
@@ -528,12 +529,14 @@ function snapshotAndValidateArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
-    // Path and header arguments are fully validated here, not only where the
-    // request is built: `executeTool` mints credentials between this snapshot
-    // and `buildRequest`, so a rejection that waits for build time would
-    // already have sent the client credentials to the token endpoint.
+    // Path, query and header arguments are fully validated here, not only where
+    // the request is built: `executeTool` mints credentials between this
+    // snapshot and `buildRequest`, so a rejection that waits for build time
+    // would already have sent the client credentials to the token endpoint.
     if (field.in === "path") pathSegment(resolved.value);
-    else if (field.in === "header") {
+    else if (field.in === "query") {
+      appendQueryValue(new URLSearchParamsConstructor(), name, resolved.value, field);
+    } else if (field.in === "header") {
       setHeader(
         new HeadersConstructor(),
         field.headerName ?? name,

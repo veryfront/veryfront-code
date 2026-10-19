@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
@@ -13,6 +14,7 @@ import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
   type LocalIntegrationEndpointTransportRequest,
+  snapshotLocalIntegrationEndpointArguments,
 } from "./local-endpoint-executor.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
@@ -328,17 +330,12 @@ describe("Outlook shared-mailbox catalog routes", () => {
         toolId,
       );
 
-      // A malformed escape is reported, never sent.
-      await assertRejects(
+      // A malformed escape is rejected before credentials are minted.
+      assertThrows(
         () =>
-          executeLocalIntegrationEndpoint({
-            connectorName: "outlook",
-            toolId: `outlook__${toolId}`,
-            endpoint: outlookEndpoint(toolId),
-            args: { ...args, $skiptoken: "page%E0%A4%A" },
-            authHeaders: { Authorization: `Bearer ${SECRET}` },
-            allowedOrigin: graph,
-            transport: () => Promise.reject(new Error("must not send")),
+          snapshotLocalIntegrationEndpointArguments(outlookEndpoint(toolId), {
+            ...args,
+            $skiptoken: "page%E0%A4%A",
           }),
         VeryfrontError,
         "must be the $skiptoken value from @odata.nextLink",
