@@ -431,6 +431,12 @@ describe("src/skill/executor", () => {
           },
           (_input, init) => {
             const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            assertEquals(
+              body.files.every((file) =>
+                file.path.startsWith("/workspace/.veryfront-skill-script-")
+              ),
+              true,
+            );
             return jsonResponse({
               results: body.files.map((file) => ({
                 path: file.path,
@@ -500,6 +506,12 @@ describe("src/skill/executor", () => {
           }),
           (_input, init) => {
             const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            assertEquals(
+              body.files.every((file) =>
+                file.path.startsWith("/workspace/.veryfront-skill-script-")
+              ),
+              true,
+            );
             return jsonResponse({
               results: body.files.map((file) => ({
                 path: file.path,
@@ -536,7 +548,10 @@ describe("src/skill/executor", () => {
         assertEquals(body.files.length, 2);
         assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
         assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
-        assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+        assertStringIncludes(
+          fetchCalls[3]!.init?.body?.toString() ?? "",
+          "cd '/workspace/.veryfront-skill-script-",
+        );
       });
     }
 
@@ -946,6 +961,10 @@ describe("src/skill/executor", () => {
         }),
         (_input, init) => {
           const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+          assertEquals(
+            body.files.every((file) => file.path.startsWith("/workspace/.veryfront-skill-script-")),
+            true,
+          );
           return jsonResponse({
             results: body.files.map((file) => ({
               path: file.path,
