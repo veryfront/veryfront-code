@@ -37939,6 +37939,13 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink",
+            "pattern": "^[^%]+$",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -39027,6 +39034,13 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25,
+          },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink",
+            "pattern": "^[^%]+$",
           },
           "$select": {
             "type": "string",
