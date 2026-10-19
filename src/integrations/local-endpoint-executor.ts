@@ -44,6 +44,7 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const clearTimeoutIntrinsic = clearTimeout;
 const DOMExceptionConstructor = DOMException;
+const decodeUriComponent = decodeURIComponent;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
@@ -367,6 +368,21 @@ function pathSegment(value: unknown): string {
   return encoded;
 }
 
+/**
+ * Decodes a `$skiptoken` copied from `@odata.nextLink`. The link carries it
+ * URL-encoded, and URLSearchParams encodes it again, so an undecoded token would
+ * reach Graph as a different token and the next page would be lost.
+ */
+function graphSkipToken(value: string, name: string): string {
+  try {
+    return decodeUriComponent(value);
+  } catch {
+    requestInvalid(
+      `Local integration argument "${name}" must be the $skiptoken value from @odata.nextLink`,
+    );
+  }
+}
+
 function appendQueryValue(
   searchParams: URLSearchParams,
   name: string,
@@ -378,6 +394,8 @@ function appendQueryValue(
       ? `"${replaceAll(item, '"', '\\"')}"`
       : field.queryValueFormat === "microsoft-graph-conversation-id"
       ? `conversationId eq '${replaceAll(item, "'", "''")}'`
+      : field.queryValueFormat === "microsoft-graph-skiptoken"
+      ? graphSkipToken(item, name)
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
