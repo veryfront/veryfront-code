@@ -6,6 +6,8 @@ export interface RuntimeMetadata {
   readonly modelProvider?: string;
   /** OpenAI wire transport selected by an OpenAI-compatible runtime, if known. */
   readonly openAITransport?: "auto" | "chat-completions" | "responses";
+  /** Whether an `auto` OpenAI runtime sends a request with a document to Responses. */
+  readonly openAIResponsesDocumentInput?: boolean;
   readonly [key: string]: unknown;
 }
 

@@ -184,6 +184,48 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     });
   }
 
+  for (
+    const [filename, mediaType] of [
+      ["a.zip", "application/zip"],
+      ["a.bin", "application/octet-stream"],
+    ] as const
+  ) {
+    it(`rejects inline ${mediaType} data before inference`, () => {
+      assertThrows(
+        () => buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename }),
+        TypeError,
+        `OpenAI Responses does not support file input "${filename}" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const [filename, mediaType] of [
+      ["a.csv", "text/csv"],
+      ["a.py", "Text/X-Python"],
+      ["a.json", "application/json"],
+      ["a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      ["a.xls", "application/vnd.ms-excel"],
+      ["a.ts", "application/typescript"],
+      ["a.sql", "application/x-sql"],
+      ["a.eml", "message/rfc822"],
+      ["a.yaml", "application/yaml"],
+      ["a.jsonld", "application/ld+json"],
+    ] as const
+  ) {
+    it(`sends inline ${mediaType} data`, () => {
+      const body = buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename });
+      assertEquals(body.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_data: `data:${mediaType.toLowerCase()};base64,AAAA`,
+          filename,
+        }],
+      }]);
+    });
+  }
+
   it("rejects inline image data whose MIME type does not match the part", () => {
     assertThrows(
       () => buildWithFile({ url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }),
@@ -209,21 +251,24 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertThrows(
       () =>
         buildWithFile({
-          url: "data:application/zip;base64,UEs=",
-          mediaType: "application/zip",
-          filename: "archive",
+          url: "data:application/msword;base64,0M8=",
+          mediaType: "application/msword",
+          filename: "letter",
         }),
       TypeError,
-      'OpenAI Responses does not support file input "archive" (application/zip). Set a filename with an extension',
+      'OpenAI Responses does not support file input "letter" (application/msword). Set a filename with an extension',
     );
   });
 
   it("rejects an inline file without a filename when its type has no known extension", () => {
     assertThrows(
       () =>
-        buildWithFile({ url: "data:application/zip;base64,UEs=", mediaType: "application/zip" }),
+        buildWithFile({
+          url: "data:application/msword;base64,0M8=",
+          mediaType: "application/msword",
+        }),
       TypeError,
-      "OpenAI Responses does not support file input (application/zip). Set a filename with an extension",
+      "OpenAI Responses does not support file input (application/msword). Set a filename with an extension",
     );
   });
 

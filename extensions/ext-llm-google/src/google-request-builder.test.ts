@@ -118,6 +118,52 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  for (const mediaType of ["application/zip", "application/octet-stream"]) {
+    it(`rejects inline ${mediaType} data before inference`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: `data:${mediaType};base64,AAAA`,
+                mediaType,
+                filename: "archive.bin",
+              }],
+            }],
+          }, createWarningCollector()),
+        TypeError,
+        `Google does not support file input "archive.bin" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const mediaType of [
+      "text/plain",
+      "Text/Markdown",
+      "application/json",
+      "application/ld+json",
+      "audio/mpeg",
+      "video/mp4",
+      "image/webp",
+    ]
+  ) {
+    it(`sends inline ${mediaType} data`, () => {
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: `data:${mediaType};base64,AAAA`, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
+        role: "user",
+        parts: [{ inlineData: { mimeType: mediaType.toLowerCase(), data: "AAAA" } }],
+      }]);
+    });
+  }
+
   it("matches inline data MIME types case-insensitively", () => {
     const body = buildGoogleGenerateContentRequest("google", {
       prompt: [{
