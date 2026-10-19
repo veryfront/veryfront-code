@@ -547,13 +547,16 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
 
       // Reads return the data object, and stat() trusts the metadata sidecar. An overwrite writes the
       // sidecar first and the data last, so a put that fails at either step leaves the blob readable as
-      // it was, and restores the previous sidecar. A new blob writes the data first, so it is not
-      // reported before its data exists, and a failed put removes both.
+      // it was, and restores the previous sidecar (or removes the new one). A new blob writes the data
+      // first, so it is not reported before its data exists, and a failed put removes both.
       const previousMetadata = await this.#downloadUploadText(
         metadataPath,
         resolved,
         scope.signal,
       );
+      // A blob can exist without a sidecar (see stat()).
+      const isNew = previousMetadata === null &&
+        await this.#getUploadMetadata(dataPath, resolved, scope.signal) === null;
       const uploadMetadata = () =>
         this.#uploadFile(
           metadataPath,
@@ -567,7 +570,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
       try {
         // Inside the rollback too: an upload can commit and still fail to report it.
-        if (previousMetadata === null) {
+        if (isNew) {
           await uploadData();
           await uploadMetadata();
         } else {
@@ -582,11 +585,13 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         });
 
         try {
-          if (previousMetadata === null) {
+          if (isNew) {
             await Promise.all([
               this.#deleteUpload(metadataPath, resolved, { ignoreNotFound: true }),
               this.#deleteUpload(dataPath, resolved, { ignoreNotFound: true }),
             ]);
+          } else if (previousMetadata === null) {
+            await this.#deleteUpload(metadataPath, resolved, { ignoreNotFound: true });
           } else {
             const previousBytes = textEncoder.encode(previousMetadata);
             await this.#uploadFile(
@@ -865,6 +870,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   async #getUploadMetadata(
     path: string,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<UploadMetadataResponse | null> {
     const raw = await this.#requestJson(
       "GET",
@@ -873,6 +879,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       {
         headers: { Accept: "application/json" },
         allowNotFound: true,
+        signal,
       },
     );
 

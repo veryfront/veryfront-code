@@ -692,6 +692,33 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
+  it("keeps a blob without a metadata sidecar when its overwrite's data upload fails", async () => {
+    const options = { failDataUpload: false };
+    const service = createMockUploadService(options);
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      await storage.put("first version", { id: "doc", mimeType: "text/plain" });
+      service.uploads.delete(makeStorageKey("demo-project", ".vf-test/doc.meta.json"));
+      options.failDataUpload = true;
+      await assertRejects(() => storage.put("second", { id: "doc", mimeType: "text/plain" }));
+
+      assertEquals(await storage.getText("doc"), "first version");
+      assertEquals(
+        service.uploads.has(makeStorageKey("demo-project", ".vf-test/doc.meta.json")),
+        false,
+      );
+    } finally {
+      service.restore();
+    }
+  });
+
   it("does not report a new blob before its data is stored", async () => {
     let release!: () => void;
     const service = createMockUploadService({

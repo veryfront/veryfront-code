@@ -410,13 +410,17 @@ describe("createUploadHandler", () => {
         });
       }
 
-      // A new blob has no metadata sidecar to keep.
+      // A new blob: no metadata sidecar and no data to keep.
       if (
         method === "GET" &&
-        url ===
-          `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/${
-            encodeURIComponent(".veryfront/rag/uploads/doc-123.meta.json")
-          }/url`
+        (url ===
+            `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/${
+              encodeURIComponent(".veryfront/rag/uploads/doc-123.meta.json")
+            }/url` ||
+          url ===
+            `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/${
+              encodeURIComponent(".veryfront/rag/uploads/doc-123.blob")
+            }`)
       ) {
         calls.push({ method, url });
         return new Response(null, { status: 404 });
@@ -444,31 +448,31 @@ describe("createUploadHandler", () => {
 
       assertEquals(response.status, 200);
       // A new blob: the data is written before its metadata sidecar.
-      assertEquals(calls.length, 5);
-      assertEquals(calls[0]?.method, "GET");
-      assertEquals(calls[1]?.method, "POST");
+      assertEquals(calls.length, 6);
+      assertEquals([calls[0]?.method, calls[1]?.method], ["GET", "GET"]);
+      assertEquals(calls[2]?.method, "POST");
       assertEquals(
-        calls[1]?.url,
+        calls[2]?.url,
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
-      assertEquals(calls[1]?.body, {
+      assertEquals(calls[2]?.body, {
         path: ".veryfront/rag/uploads/doc-123.blob",
         content_type: "text/plain",
         size_bytes: 11,
       });
-      assertEquals(calls[2]?.method, "PUT");
-      assertEquals(calls[2]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
-      assertEquals(calls[3]?.method, "POST");
+      assertEquals(calls[3]?.method, "PUT");
+      assertEquals(calls[3]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
+      assertEquals(calls[4]?.method, "POST");
       assertEquals(
-        calls[3]?.url,
+        calls[4]?.url,
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
-      const metadataCreateBody = calls[3]?.body as Record<string, unknown>;
+      const metadataCreateBody = calls[4]?.body as Record<string, unknown>;
       assertEquals(metadataCreateBody.path, ".veryfront/rag/uploads/doc-123.meta.json");
       assertEquals(metadataCreateBody.content_type, "application/json");
       assertEquals(typeof metadataCreateBody.size_bytes, "number");
-      assertEquals(calls[4]?.method, "PUT");
-      assertEquals(calls[4]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
+      assertEquals(calls[5]?.method, "PUT");
+      assertEquals(calls[5]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
     });
   });
 
