@@ -17,6 +17,7 @@ import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/erro
 import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { isRetriableConnectFailure } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import {
   fetchSandboxRuntimeUrl,
@@ -273,17 +274,20 @@ export class LazySandbox {
   }
 
   async runCommand(command: string, options?: CommandOptions): Promise<CommandResult> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
         const outcome = await withSandboxRequestDeadline<CommandFetchAttempt<CommandResult>>(
           sandboxCommandRequestTimeoutMs(options),
           async (signal) => {
+            const requestSignal = options?.signal && signal
+              ? anyAbortSignal([options.signal, signal])
+              : options?.signal ?? signal;
             const init: RequestInit = {
               method: "POST",
               headers: this.#jsonHeaders(),
-              signal,
+              signal: requestSignal,
               body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
             };
             let response: Response;
@@ -303,7 +307,7 @@ export class LazySandbox {
         if (attempt >= this.execStartMaxAttempts || !isPreDispatchExecStartFailure(outcome.error)) {
           throw outcome.error;
         }
-        await this.waitForExecStartRetry();
+        await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
       }
     }
     let stdout = "";
@@ -331,12 +335,12 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): AsyncGenerator<CommandStreamEvent> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     let outcome = await this.startExec(command, options);
     if (outcome.kind === "fetch-failure") {
       if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
       await this.reprovisionAfterExecStartFailure();
-      await this.touchSession();
+      await this.#touchSessionForCommand(options?.signal);
       outcome = await this.startExec(command, options);
       if (outcome.kind === "fetch-failure") throw outcome.error;
     }
@@ -396,7 +400,7 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): Promise<BackgroundCommand> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
@@ -405,6 +409,7 @@ export class LazySandbox {
       {
         method: "POST",
         headers: this.#jsonHeaders(),
+        signal: options?.signal,
         body: JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) }),
       },
       route.kind,
@@ -866,6 +871,11 @@ export class LazySandbox {
     await this.heartbeat();
   }
 
+  async #touchSessionForCommand(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await awaitAbortable(this.touchSession(), signal);
+  }
+
   private heartbeatFailureCount = 0;
   private static readonly HEARTBEAT_WARN_AFTER_FAILURES = 3;
 
@@ -1061,7 +1071,7 @@ export class LazySandbox {
       if (!isPreDispatchExecStartFailure(outcome.error) || attempt >= this.execStartMaxAttempts) {
         return outcome;
       }
-      await this.waitForExecStartRetry();
+      await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
     }
     throw new Error("Sandbox exec failed before a request was made");
   }
@@ -1277,7 +1287,13 @@ async function fetchWithTimeout(
   return await withSandboxRequestDeadline(
     timeoutMs,
     async (signal) => {
-      const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+      const requestSignal = init.signal && signal
+        ? anyAbortSignal([init.signal, signal])
+        : init.signal ?? signal;
+      const response = await fetchUrl(
+        url,
+        requestSignal ? { ...init, signal: requestSignal } : init,
+      );
       // Control responses are finite receipts/data; consume their bytes while the
       // request deadline can still abort a partial body. Exec streams stay streaming.
       if (!bufferResponseBody || !response.body) return response;

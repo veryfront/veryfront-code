@@ -3826,6 +3826,100 @@ describe("Sandbox", () => {
       }
     });
 
+    it("cancels a stalled synchronous proxy request with the caller signal", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "sync-cancel",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 120_000,
+      });
+      try {
+        const execution = sandbox.runCommand("echo cancel", { signal: controller.signal });
+        await started;
+        controller.abort(new Error("caller cancelled"));
+        await assertRejects(() => execution, Error);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("cancels a command while shared lazy bootstrap remains pending", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      let releaseCreate!: (response: Response) => void;
+      mockFetch([
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseCreate = resolve;
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 120_000,
+      });
+      const execution = sandbox.runCommand("echo cancel", { signal: controller.signal });
+      await started;
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => execution, Error, "caller cancelled");
+
+      releaseCreate(jsonResponse({
+        id: "bootstrap-after-cancel",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      }));
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.some((call) => call.url.endsWith("/commands/run")),
+        false,
+      );
+    });
+
+    it("does not provision for a command whose caller signal is already aborted", async () => {
+      mockFetch([]);
+      const controller = new AbortController();
+      controller.abort(new Error("already cancelled"));
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+
+      await assertRejects(
+        () => sandbox.runCommand("echo never", { signal: controller.signal }),
+        Error,
+        "already cancelled",
+      );
+      assertEquals(fetchCalls.length, 0);
+    });
+
     it("retries failed bootstrap cleanup before allocating another workspace", async () => {
       mockFetch([
         jsonResponse({
@@ -3944,6 +4038,44 @@ describe("Sandbox", () => {
         );
         assertEquals(capturedSignal?.aborted, true);
         assertEquals(fetchCalls[2]!.init?.signal instanceof AbortSignal, true);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("cancels a stalled lazy background-command request with the caller signal", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "background-cancel",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        const execution = sandbox.startBackgroundCommand("npm test", {
+          signal: controller.signal,
+        });
+        await started;
+        controller.abort(new Error("caller cancelled"));
+        await assertRejects(() => execution, Error);
       } finally {
         await sandbox.close();
       }
