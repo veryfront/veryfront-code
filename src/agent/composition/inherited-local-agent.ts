@@ -16,7 +16,7 @@ function terminalAgentOutput(output: unknown): unknown {
     !calls || !("value" in calls) || typeof calls.value !== "number"
   ) return output;
   const structured = readStructuredAgentOutput(output);
-  return structured ? structured.data : text.value;
+  return structured ? structured.data : undefined;
 }
 
 const localToolAdmissions = createPrivateWeakStore<
@@ -232,7 +232,7 @@ export async function runInheritedLocalAgent(
       conversationId: child.conversationId,
       runId: child.runId,
       status: terminalState.status,
-      output: terminalAgentOutput(terminalState.output) ?? null,
+      output: terminalAgentOutput(terminalState.output),
       model: "",
       provider: "",
       terminalErrorCode: terminalState.terminalErrorCode ?? undefined,

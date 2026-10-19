@@ -599,9 +599,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               await client.completeRun({
                 runId: claim!.run_id,
                 status: terminalStatus,
-                output: streamState.finishObject !== undefined
-                  ? streamState.finishObject.value
-                  : output,
+                ...(streamState.finishObject !== undefined
+                  ? { output: streamState.finishObject.value }
+                  : {}),
                 ...(terminalStatus === "failed"
                   ? {
                     terminalErrorCode: "LOCAL_EXECUTION_FAILED",
