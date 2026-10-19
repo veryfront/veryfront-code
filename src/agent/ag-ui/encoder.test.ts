@@ -1739,6 +1739,16 @@ describe("agent/ag-ui-encoder", () => {
     assertEquals(state.metadata.finishReason, "stop");
   });
 
+  it("rejects conflicting structured aliases at the shared finish boundary", () => {
+    assertThrows(() =>
+      mapRuntimeStreamEventToAgUiEvents(createAgUiEncoderState(), {
+        type: "message-finish",
+        data: { answer: 42 },
+        object: { answer: 41 },
+      })
+    );
+  });
+
   it("records oversized finishReason as partial metadata without failing", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     const events = mapRuntimeStreamEventToAgUiEvents(state, {

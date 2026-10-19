@@ -25,6 +25,7 @@ import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame, buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
+import { readStructuredAgentOutput } from "../output-schema.ts";
 
 // Project code can replace globals before runtime observations are stamped.
 // Keep the timing path on load-time captures.
@@ -1227,16 +1228,17 @@ function createMessageFinishMetadataEvent(
     value.totalUsage = usageMetadata;
   }
 
-  const hasObject = objectHasOwn(event, "object");
-  const object = hasObject ? event.object : undefined;
-  const encoding = hasObject && objectHasOwn(event, "objectEncoding") &&
+  const structured = readStructuredAgentOutput(event);
+  const hasStructuredOutput = structured !== undefined;
+  const object = structured?.data;
+  const encoding = hasStructuredOutput && objectHasOwn(event, "objectEncoding") &&
       event.objectEncoding === "snapshot"
     ? "snapshot"
     : "value";
-  const objectSnapshot = hasObject
+  const objectSnapshot = hasStructuredOutput
     ? createMessageFinishObjectObservation(object, undefined, encoding)
     : undefined;
-  if (hasObject) value.object = objectSnapshot;
+  if (hasStructuredOutput) value.object = objectSnapshot;
 
   fitMessageFinishMetadataWithinDurableBudget(value, object, encoding);
 

@@ -617,6 +617,35 @@ describe("connected local execution", () => {
       assertEquals(completedOutput, object);
     });
   }
+  it("finalizes canonical data-only structured output from the local wire", async () => {
+    let completedOutput: unknown = "not completed";
+    const f = fixture({
+      complete: (input) => {
+        completedOutput = (input as { output?: unknown }).output;
+        return Promise.resolve();
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"message-finish","data":{"answer":42}}\n\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    await new Response(run.wrapStream(body)).text();
+
+    assertEquals(completedOutput, { answer: 42 });
+  });
   it("completes object-only output without text", async () => {
     const f = fixture();
     const run = await f.runtime.admit({
