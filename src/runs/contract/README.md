@@ -1,6 +1,11 @@
 # Pinned Runs contract fixtures
 
-`pin.json` records the released 0.8.9 base and a maintained task-input event revision from companion API #6512. This revision is not a published contract release. The base operations and envelopes remain unchanged; the two event discriminants and four payload schemas come from the exact API commit and OpenAPI hash in `taskInputEvents`.
+`pin.json` records the released 0.8.9 base and maintained revisions. These are not published contract releases:
+
+- `taskInputEvents` records the two event discriminants and four payload schemas from API #6512.
+- `agentFinalization` records [API #6924](https://github.com/veryfront/veryfront-api/pull/6924), which lets text-only agent runtimes omit completed finalization output. Explicit null remains valid.
+
+Both revisions record their exact source commit and OpenAPI hash. The newer released base remains intact.
 
 `runs-api.generated.ts` is generated from the resulting OpenAPI document with the API's `renderRunsTargetArtifacts(document)` generator (openapi-typescript 7.13.0).
 
@@ -11,6 +16,8 @@ deno run --allow-read --allow-write scripts/generate-runs-task-input-contract.ts
 ```
 
 The generator verifies the source hash before applying the event definitions. Regenerate the TypeScript artifact with the API's `renderRunsTargetArtifacts(document)`, passing this checkout's updated `openapi.target.json` as `document`; retain its `runs-api.types.ts` output as `runs-api.generated.ts`. This preserves request input-shape generation and the newer base contract instead of replacing it with the companion branch's older base.
+
+For the finalization revision, copy only `FinalizeRunRequest`'s completed `output` description and optionality from the source recorded in `agentFinalization`. Regenerate the TypeScript artifact against this checkout's document with the same API generator. Do not replace the document with the API branch's older base.
 
 Regenerate the SDK fixtures and verify the pin:
 

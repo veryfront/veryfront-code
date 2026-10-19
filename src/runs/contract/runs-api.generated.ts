@@ -2021,8 +2021,8 @@ export interface components {
         };
         /** @description Finalizes a run with output or an error. */
         FinalizeRunRequest: {
-            /** @description Any JSON value. The HTTP boundary rejects non-JSON values. */
-            output: unknown;
+            /** @description Any JSON value. A text-only agent runtime may omit this to use its durable final text. */
+            output?: unknown;
             /** @enum {string} */
             status: "completed";
         } | {

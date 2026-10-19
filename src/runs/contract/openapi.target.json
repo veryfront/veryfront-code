@@ -16964,12 +16964,11 @@
                 ]
               },
               "output": {
-                "description": "Any JSON value. The HTTP boundary rejects non-JSON values."
+                "description": "Any JSON value. A text-only agent runtime may omit this to use its durable final text."
               }
             },
             "required": [
-              "status",
-              "output"
+              "status"
             ],
             "additionalProperties": false
           },
