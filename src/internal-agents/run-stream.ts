@@ -1429,6 +1429,8 @@ export async function createRuntimeAgentStreamResponse(
     servingIdentity: deps.servingIdentity,
   });
   let recoveryLifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  const withManagedOccurrences = <T>(operation: () => T): T =>
+    managedRecovery || projectWriter ? runWithToolCallOccurrences(operation) : operation();
   try {
     if (managedRecovery) {
       if (!managedRecovery.writer) {
@@ -1795,8 +1797,6 @@ export async function createRuntimeAgentStreamResponse(
       );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     if (managedRecovery) await managedRecovery.owner.assertCurrentOwnership();
-    const withManagedOccurrences = <T>(operation: () => T): T =>
-      managedRecovery || projectWriter ? runWithToolCallOccurrences(operation) : operation();
     const candidateRuntimeStream = await runWithExecutionOwnershipGuard(
       recoveryLifetime?.assertCurrent,
       () =>
@@ -2169,17 +2169,28 @@ export async function createRuntimeAgentStreamResponse(
               // A runtime that dispatches later model calls from its pull()
               // rather than from a continuation of stream() needs the sink in
               // scope on the read that triggers the pull.
-              const { done, value } = await runWithPlatformDependencyOwner(
-                input,
+              const { done, value } = await runWithExecutionOwnershipGuard(
+                recoveryLifetime?.assertCurrent,
                 () =>
-                  runWithMandatoryRunEventSink(
-                    modelCallContextRelay.sink,
-                    () => reader.read(),
+                  runWithRecoveryToolExecutionPolicy(
+                    managedRecovery?.writer?.executeTool ?? projectWriter?.executeTool,
+                    () =>
+                      withManagedOccurrences(() =>
+                        runWithPlatformDependencyOwner(
+                          input,
+                          () =>
+                            runWithMandatoryRunEventSink(
+                              modelCallContextRelay.sink,
+                              () => reader.read(),
+                            ),
+                        )
+                      ),
                   ),
               );
               throwIfAborted();
 
               if (done) {
+                await projectWriter?.flush();
                 readerReachedEof = true;
                 logger.info("Internal agent runtime stream reader completed", {
                   runId: input.runId,

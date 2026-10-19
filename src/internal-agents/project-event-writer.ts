@@ -1,3 +1,4 @@
+import { createConversationRunMirror } from "#veryfront/agent/conversation/run-mirror.ts";
 import { createConversationRunEventQueueController } from "#veryfront/agent/conversation/durable.ts";
 import {
   bindHostedToolCallAdmissionWriter,
@@ -21,16 +22,18 @@ import {
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
-import {
-  chainPrivatePromise,
-  createPrivateDeferred,
-  resolvePrivatePromise,
-} from "#veryfront/security/private-promise.ts";
+import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 
 const ObjectFreeze = Object.freeze;
+const Apply = Reflect.apply;
+const ThrowIfAborted = AbortSignal.prototype.throwIfAborted;
+const AddEventListener = EventTarget.prototype.addEventListener;
+const AbortReason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason")!.get!;
+const IsAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const checkSignal = (signal: AbortSignal) => Apply(ThrowIfAborted, signal, []);
 
 export const getProjectEventPersistenceSchema = defineSchema((v) =>
   v.object({
@@ -71,14 +74,21 @@ export function createProjectEventWriter(input: {
     latestExternalEventSequence: input.latestExternalEventSequence,
     fetch,
   });
+  const mirror = createConversationRunMirror({
+    queueController: queue,
+    immediateFlushEventCount: 24,
+    onStopped() {
+      throw new Error("Project event append stopped");
+    },
+  });
   const admissions = createPrivateMap<
     string,
     ReturnType<typeof createPrivateDeferred<AgentRunToolCallAdmissionReceipt>>
   >();
-  let active = true, signal: AbortSignal | undefined, tail = resolvePrivatePromise();
+  let active = true, signal: AbortSignal | undefined;
   const assertActive = () => {
     if (!active) throw new Error("Project event writer is closed");
-    signal?.throwIfAborted();
+    if (signal) checkSignal(signal);
   };
   const observationWriter = createRuntimeObservationWriterCapability({
     scope: {
@@ -99,10 +109,10 @@ export function createProjectEventWriter(input: {
   };
   const admit: AdmitExecutorToolCall = async (call, callSignal) => {
     assertActive();
-    callSignal.throwIfAborted();
+    checkSignal(callSignal);
     const r = await pending(call.occurrenceId).promise;
     assertActive();
-    callSignal.throwIfAborted();
+    checkSignal(callSignal);
     if (
       r.occurrenceId !== call.occurrenceId || r.toolCallId !== call.toolCallId ||
       r.runId !== input.canonicalRunId || r.projectId !== input.projectId
@@ -119,29 +129,37 @@ export function createProjectEventWriter(input: {
     canonicalRunId: input.canonicalRunId,
     projectId: input.projectId,
   });
-  const append = (event: ConversationRunEvent, occurrenceId?: string) => {
-    const operation = chainPrivatePromise(tail, async () => {
-      assertActive();
-      queue.enqueue(
-        [event],
-        occurrenceId ? { toolCallStarts: [{ occurrenceId, eventIndex: 0 }] } : undefined,
-      );
-      const result = await queue.flush({ abortSignal: signal });
-      if (result.outcome !== "flushed" && result.outcome !== "idle") {
-        throw new Error("Project event append failed");
-      }
+  const flush = async () => {
+    assertActive();
+    if (!signal) throw new Error("Project writer lifetime is unbound");
+    const snapshot = await mirror.flush({ abortSignal: signal, waitForRetries: true });
+    assertActive();
+    if (snapshot.disabled || snapshot.pendingEventCount !== 0) {
+      throw new Error("Project event append failed");
+    }
+  };
+  const append = async (
+    event: ConversationRunEvent,
+    occurrenceId?: string,
+    barrier = false,
+  ) => {
+    assertActive();
+    mirror.enqueue(
+      [event],
+      occurrenceId ? { toolCallStarts: [{ occurrenceId, eventIndex: 0 }] } : undefined,
+    );
+    if (!occurrenceId && !barrier) return;
+    try {
+      await flush();
       if (occurrenceId) {
         const receipt = queue.takeToolCallAdmissionReceipt?.(occurrenceId);
         if (!receipt) throw new Error("Missing project tool admission");
         pending(occurrenceId).resolve(receipt);
       }
-    });
-    tail = chainPrivatePromise(operation, () => {}, (error) => {
+    } catch (error) {
       for (const p of admissions.values()) p.reject(error);
       throw error;
-    });
-    void chainPrivatePromise(tail, () => {}, () => {});
-    return operation;
+    }
   };
   const executeTool: RecoveryToolExecutionPolicy = async (_execution, operation) => {
     const call = getCurrentToolCallOccurrenceIdentity();
@@ -161,14 +179,19 @@ export function createProjectEventWriter(input: {
     bindSignal(value: AbortSignal) {
       if (signal) throw new Error("Project writer lifetime already bound");
       signal = value;
-      value.addEventListener("abort", () => {
+      const abort = () => {
+        active = false;
         revokeRuntimeObservationWriterCapability(observationWriter);
-        for (const p of admissions.values()) p.reject(value.reason);
-      }, { once: true });
+        for (const p of admissions.values()) p.reject(Apply(AbortReason, value, []));
+        mirror.dispose();
+      };
+      Apply(AddEventListener, value, ["abort", abort, { once: true }]);
+      if (Apply(IsAborted, value, [])) abort();
     },
     executeTool,
+    flush,
     async persistRunEvent(event: AgentRunEvent) {
-      await append(event);
+      await append(event, undefined, true);
       const id = "modelCallId" in event ? event.modelCallId : undefined;
       return typeof id === "string" ? queue.takeModelCallCaptureReceipt?.(id) : undefined;
     },
@@ -182,7 +205,10 @@ export function createProjectEventWriter(input: {
         ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"].includes(
           String(event.type),
         )
-      ) return;
+      ) {
+        if (event.type !== "RUN_STARTED") await flush();
+        return;
+      }
       if (event.type === "TOOL_CALL_START" && !observed && !occurrenceId) {
         throw new Error("Project tool start lacks private occurrence");
       }
@@ -195,7 +221,7 @@ export function createProjectEventWriter(input: {
       revokeRuntimeObservationWriterCapability(observationWriter);
       active = false;
       for (const p of admissions.values()) p.reject(new Error("Project event writer closed"));
-      queue.dispose?.();
+      mirror.dispose();
     },
   });
 }
