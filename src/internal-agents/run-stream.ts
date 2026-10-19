@@ -1507,6 +1507,7 @@ export async function createRuntimeAgentStreamResponse(
   let childRunToolNames = new Set<string>();
   let controlPlaneInvokeAgentToolNames = new Set<ProviderReplayInvokeAgentToolName>();
   try {
+    projectWriter?.bindObservationSink(modelCallContextRelay.sink);
     const executionModel = getAgentExecutionConfig(agent.config).model ??
       resolveConfiguredAgentModel();
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
@@ -2444,6 +2445,7 @@ export async function createRuntimeAgentStreamResponse(
                 });
               });
             } else if (sandboxClosed) {
+              if (readerReachedEof || readerCancellationCompleted) projectWriter?.close();
               // Ordinary overrides can use the stream cancellation contract instead
               // of the optional producer callback. Release capacity only after that
               // cancellation joins; a managed replacement still requires its producer.

@@ -13,7 +13,12 @@ import type { RecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-o
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import type { ConversationRunEvent } from "#veryfront/agent/conversation/run-events.ts";
-import type { AgentRunEvent } from "#veryfront/runtime/model-call-context.ts";
+import type { AgentRunEvent, AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
@@ -75,6 +80,14 @@ export function createProjectEventWriter(input: {
     if (!active) throw new Error("Project event writer is closed");
     signal?.throwIfAborted();
   };
+  const observationWriter = createRuntimeObservationWriterCapability({
+    scope: {
+      runId: input.runId,
+      canonicalRunId: input.canonicalRunId,
+      projectId: input.projectId,
+    },
+    assertActive,
+  });
   const pending = (id: string) => {
     let p = admissions.get(id);
     if (!p) {
@@ -142,10 +155,14 @@ export function createProjectEventWriter(input: {
     );
   };
   return ObjectFreeze({
+    bindObservationSink(sink: AgentRunEventSink) {
+      bindRuntimeObservationWriterCapability(sink, observationWriter);
+    },
     bindSignal(value: AbortSignal) {
       if (signal) throw new Error("Project writer lifetime already bound");
       signal = value;
       value.addEventListener("abort", () => {
+        revokeRuntimeObservationWriterCapability(observationWriter);
         for (const p of admissions.values()) p.reject(value.reason);
       }, { once: true });
     },
@@ -175,6 +192,7 @@ export function createProjectEventWriter(input: {
       );
     },
     close() {
+      revokeRuntimeObservationWriterCapability(observationWriter);
       active = false;
       for (const p of admissions.values()) p.reject(new Error("Project event writer closed"));
       queue.dispose?.();
