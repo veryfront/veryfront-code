@@ -1,3 +1,4 @@
+import { parseExecutorDataEvent } from "./streaming/executor-data-schema.ts";
 import { readStructuredAgentOutput } from "./output-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -355,6 +356,13 @@ describe("agent output schema", () => {
       assertStringIncludes(body, '"type":"message-finish"');
       assertStringIncludes(body, '"object":{"city":"Berlin","tempC":12}');
       assertStringIncludes(body, '"data":{"city":"Berlin","tempC":12}');
+      const finishLine = body.split("\n").find((line) =>
+        line.startsWith("data: ") && line.includes('"type":"message-finish"')
+      );
+      assertEquals(Boolean(finishLine), true);
+      const finish = parseExecutorDataEvent(JSON.parse(finishLine!.slice(6)));
+      assertEquals(finish.data, { city: "Berlin", tempC: 12 });
+      assertEquals(finish.object, finish.data);
     });
 
     it("should emit an error event when streamed output is not parseable", async () => {

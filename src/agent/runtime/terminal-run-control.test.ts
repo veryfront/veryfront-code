@@ -248,7 +248,7 @@ it("a rejected MCP action is recoverable, but an uncertain committed result stop
 });
 
 it("terminal response preserves canonical output and recorded execution state", async () => {
-  for (const output of ["done", { count: 3 }, null]) {
+  for (const output of ["done", { count: 3 }, null, false, 0, [1, 2]]) {
     const control = createAdmittedControl({ runId: "run-current" });
     const error = await assertRejects(() =>
       executeTerminalRunTool(
@@ -277,6 +277,7 @@ it("terminal response preserves canonical output and recorded execution state", 
     };
     const response = terminalCompletionResponse(error, true)!;
     assertEquals(response.object, output);
+    assertEquals(response.data, output);
     assertEquals(response.text, JSON.stringify(output));
     assertEquals(response.usage, error.executionState.usage);
     assertEquals(response.messages, error.executionState.messages);

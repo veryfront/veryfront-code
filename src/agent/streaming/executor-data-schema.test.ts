@@ -100,6 +100,24 @@ describe("agent/streaming/executor-data-schema", () => {
     );
   });
 
+  it("accepts canonical structured aliases and normalizes data-only finish events", () => {
+    for (const data of [false, 0, null, "", [1, 2], { answer: 42 }]) {
+      assertEquals(parseExecutorDataEvent({ type: "message-finish", data }), {
+        type: "message-finish",
+        data,
+        object: data,
+      });
+      assertEquals(parseExecutorDataEvent({ type: "message-finish", data, object: data }), {
+        type: "message-finish",
+        data,
+        object: data,
+      });
+    }
+    assertThrows(() =>
+      parseExecutorDataEvent({ type: "message-finish", data: false, object: true })
+    );
+  });
+
   it("preserves explicit snapshot encoding and rejects unknown encodings", () => {
     const event = {
       type: "message-finish",
