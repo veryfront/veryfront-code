@@ -735,6 +735,22 @@ describe("local integration endpoint executor", () => {
       assertEquals(result, { success: true, status: 201, response_omitted: "too_large" });
       assertEquals(response.bodyUsed, true);
     }
+
+    // A read-only POST, such as a query, wrote nothing, so the limit still fails it.
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: endpoint({ method: "POST", url: "https://api.example.test/query" }),
+          requiresWrite: false,
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(fixtures[1]!()),
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-response-invalid");
   });
 
   it("keeps declared paging fields next to a transformed collection", async () => {
