@@ -11,7 +11,7 @@ import {
   runWithHostedPlatformDependencies,
 } from "../../../src/agent/hosted/platform-dependency-credential.ts";
 
-it("revokes real connected platform authority when setup fails after registration", async () => {
+async function verifyCleanup(outcome: "setup-failed" | "completed" | "failed" | "cancelled") {
   const projectId = "22222222-2222-4222-8222-222222222222";
   const canonicalRunId = "55555555-5555-4555-8555-555555555555";
   const conversationId = "33333333-3333-4333-8333-333333333333";
@@ -52,6 +52,7 @@ it("revokes real connected platform authority when setup fails after registratio
   };
   let owner: HostedPlatformDependencyOwner | undefined;
   let cancelled = 0;
+  let cleanupCredentialRead = false;
   let markClosing!: () => void;
   const closing = new Promise<void>((resolve) => markClosing = resolve);
   let releaseClose!: () => void;
@@ -92,7 +93,10 @@ it("revokes real connected platform authority when setup fails after registratio
     }
     if (path.endsWith("/cancel")) {
       cancelled++;
-      return Promise.resolve(Response.json({ id: canonicalRunId }));
+      return Promise.resolve(Response.json({ id: canonicalRunId, status: "cancelled" }));
+    }
+    if (path.endsWith("/finalize")) {
+      return Promise.resolve(Response.json({ id: canonicalRunId, status: outcome }));
     }
     return Promise.resolve(
       Response.json({ id: path === "/conversations" ? conversationId : canonicalRunId }),
@@ -104,7 +108,7 @@ it("revokes real connected platform authority when setup fails after registratio
       apiToken: "fixture-token",
       projectId,
       projectSlug: "fixture",
-      studioUrl: "invalid",
+      studioUrl: outcome === "setup-failed" ? "invalid" : "https://studio.veryfront.com",
     }, {
       fetch: transport,
       log: () => {},
@@ -117,6 +121,8 @@ it("revokes real connected platform authority when setup fails after registratio
               async closeSandbox() {
                 markClosing();
                 await closeGate;
+                input.getAuthToken!();
+                cleanupCredentialRead = true;
                 await sandbox.closeSandbox();
               },
             };
@@ -141,16 +147,30 @@ it("revokes real connected platform authority when setup fails after registratio
       messages: [],
       signal: new AbortController().signal,
     });
-    const rejected = assertRejects(() => admission);
+    const finished = outcome === "setup-failed"
+      ? assertRejects(() => admission)
+      : admission.then((run) => run.finish(outcome));
+    void finished.catch(() => {});
     try {
       await closing;
-      assertEquals(cancelled, 1);
+      assertEquals(cancelled, outcome === "setup-failed" ? 1 : 0);
     } finally {
       releaseClose();
     }
-    await rejected;
+    await finished;
+    assertEquals(
+      cleanupCredentialRead,
+      true,
+      "Cleanup must retain authority until compute is closed",
+    );
     assertEquals(owner !== undefined, true);
     assertThrows(() => runWithHostedPlatformDependencies(owner!, () => Promise.resolve("leaked")));
     await runtime.dispose();
   });
-});
+}
+
+for (const outcome of ["setup-failed", "completed", "failed", "cancelled"] as const) {
+  it(`revokes connected sandbox with live credentials before ${outcome} finalization`, async () => {
+    await verifyCleanup(outcome);
+  });
+}

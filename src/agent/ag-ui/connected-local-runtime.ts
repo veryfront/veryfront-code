@@ -594,6 +594,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             }
             const terminalStatus = appendError || leaseFailed ? "failed" : status;
             try {
+              // Sandbox cleanup still needs the credentials released by completeRun.
+              await platformTools?.revoke(platformOwner);
               await client.completeRun({
                 runId: claim!.run_id,
                 status: terminalStatus,
