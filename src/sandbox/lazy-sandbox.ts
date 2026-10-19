@@ -40,6 +40,7 @@ import {
   type CommandResult,
   type CommandStreamEvent,
   type SandboxOptions,
+  type SandboxWriteFilesOptions,
 } from "./types.ts";
 
 type CommandFetchAttempt<T> =
@@ -203,6 +204,7 @@ export class LazySandbox {
       sandboxId: string;
     }) => string)
     | undefined;
+  private readonly provisioningSignal: AbortSignal | undefined;
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
@@ -252,10 +254,12 @@ export class LazySandbox {
     this.execStartRetryDelayMs = options.execStartRetryDelayMs ??
       DEFAULT_EXEC_START_RETRY_DELAY_MS;
     this.resolveRuntimeEndpointOption = options.resolveRuntimeEndpoint;
+    this.provisioningSignal = options.signal;
   }
 
   async ensure(): Promise<void> {
     if (this.endpoint) return;
+    throwIfAborted(this.provisioningSignal);
     if (this.ensurePromise) {
       await this.ensurePromise.promise;
       return;
@@ -374,14 +378,18 @@ export class LazySandbox {
     return await readSandboxFileContent(res);
   }
 
-  async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
-    await this.touchSession();
+  async writeFiles(
+    files: Array<{ path: string; content: string }>,
+    options?: SandboxWriteFilesOptions,
+  ): Promise<void> {
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       `${route.baseUrl}/files`,
       {
         method: "POST",
+        signal: options?.signal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify({ files }),
       },
@@ -524,7 +532,7 @@ export class LazySandbox {
     return backgroundCommand;
   }
 
-  async heartbeat(force = false): Promise<void> {
+  async heartbeat(force = false, signal?: AbortSignal): Promise<void> {
     const currentSessionId = this.sessionId;
     if (!currentSessionId) return;
 
@@ -548,6 +556,7 @@ export class LazySandbox {
           }/heartbeat`,
           {
             method: "POST",
+            signal,
             headers: this.#authHeaders(),
           },
         );
@@ -697,6 +706,7 @@ export class LazySandbox {
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes`,
       {
         method: "POST",
+        signal: this.provisioningSignal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify(buildSandboxCreateInput(this.creationPolicy, projectId ?? undefined)),
       },
@@ -720,7 +730,7 @@ export class LazySandbox {
           this.sessionCanBeReplacedOnMissing;
       });
       this.endpoint = endpoint;
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.endpoint = null;
@@ -742,10 +752,10 @@ export class LazySandbox {
   ): Promise<string> {
     const readySession = session.status === "running"
       ? session
-      : await this.waitForReadySession(session.id, onSession);
+      : await this.waitForReadySession(session.id, onSession, this.provisioningSignal);
 
     if (this.#shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
-      await this.waitForRuntimeDataPlaneReady(readySession);
+      await this.waitForRuntimeDataPlaneReady(readySession, this.provisioningSignal);
     }
     return readySession.endpoint;
   }
@@ -758,10 +768,10 @@ export class LazySandbox {
     try {
       const session = this.sandboxEndpoint
         ? { id: sessionId, endpoint: this.sandboxEndpoint, status: "running" }
-        : await this.getSession(sessionId);
+        : await this.getSession(sessionId, this.provisioningSignal);
       this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
       this.endpoint = await this.resolveReadyEndpoint(session);
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.resetSessionState(sessionId);
@@ -769,10 +779,14 @@ export class LazySandbox {
     }
   }
 
-  private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
+  private async getSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SandboxSessionRecord> {
     const res = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
       {
+        signal,
         headers: this.#authHeaders(),
       },
     );
@@ -789,15 +803,17 @@ export class LazySandbox {
   private async waitForReadySession(
     sessionId: string,
     onSession?: (session: SandboxSessionRecord) => void,
+    signal?: AbortSignal,
   ): Promise<SandboxSessionRecord> {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
 
       const res = await this.#fetchControl(
         `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
         {
+          signal,
           headers: this.#authHeaders(),
         },
       );
@@ -821,7 +837,10 @@ export class LazySandbox {
     throw REQUEST_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
   }
 
-  private async waitForRuntimeDataPlaneReady(session: SandboxSessionRecord): Promise<void> {
+  private async waitForRuntimeDataPlaneReady(
+    session: SandboxSessionRecord,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (resolveDefaultSandboxRuntimeEndpoint({ endpoint: session.endpoint }) === session.endpoint) {
       return;
     }
@@ -833,7 +852,7 @@ export class LazySandbox {
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, routeKind);
+        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, { signal }, routeKind);
 
         if (res.ok) {
           return;
@@ -847,7 +866,7 @@ export class LazySandbox {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
 
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
     }
 
     throw REQUEST_ERROR.create({

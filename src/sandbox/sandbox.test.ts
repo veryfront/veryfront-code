@@ -2236,6 +2236,73 @@ describe("Sandbox", () => {
   });
 
   describe("writeFiles()", () => {
+    it("cancels a lazy write while shared bootstrap remains pending", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      let releaseCreate!: (response: Response) => void;
+      mockFetch([
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseCreate = resolve;
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const write = sandbox.writeFiles([{ path: "a.txt", content: "hello" }], {
+        signal: controller.signal,
+      });
+      await started;
+      controller.abort(new Error("write cancelled"));
+      await assertRejects(() => write, Error, "write cancelled");
+
+      releaseCreate(jsonResponse({
+        id: "write-bootstrap",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      }));
+      await sandbox.close();
+      assertEquals(fetchCalls.some((call) => call.url.endsWith("/files")), false);
+    });
+
+    it("cancels a stalled lazy file upload", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "write-upload",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const write = sandbox.writeFiles([{ path: "a.txt", content: "hello" }], {
+        signal: controller.signal,
+      });
+      await started;
+      controller.abort(new Error("upload cancelled"));
+      await assertRejects(() => write, Error, "upload cancelled");
+      await sandbox.close();
+    });
+
     it("reports a per-file failure even when HTTP succeeds", async () => {
       mockFetch([
         jsonResponse({ id: "write-test", endpoint: "https://sb.test", status: "running" }),
@@ -2471,6 +2538,86 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("does not provision when its creation signal is already aborted", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("creation cancelled"));
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        signal: controller.signal,
+      });
+
+      await assertRejects(() => sandbox.ensure(), Error, "creation cancelled");
+      assertEquals(fetchCalls.length, 0);
+    });
+
+    it("cancels readiness and deletes its partially provisioned sandbox", async () => {
+      const controller = new AbortController();
+      let reportPolling!: () => void;
+      const polling = new Promise<void>((resolve) => reportPolling = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "lazy-creation-cancelled",
+          endpoint: "https://sb.test",
+          status: "creating",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportPolling();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        deleteOnClose: true,
+        pollIntervalMs: 0,
+        signal: controller.signal,
+      });
+      const creation = sandbox.ensure();
+      await polling;
+      controller.abort(new Error("readiness cancelled"));
+      await assertRejects(() => creation, Error, "readiness cancelled");
+      assertEquals(
+        fetchCalls.some((call) =>
+          call.url.endsWith("/sandboxes/lazy-creation-cancelled") &&
+          call.init?.method === "DELETE"
+        ),
+        true,
+      );
+    });
+
+    it("does not reuse its provisioning signal after the sandbox is ready", async () => {
+      const controller = new AbortController();
+      mockFetch([
+        jsonResponse({
+          id: "lazy-ready-before-abort",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ results: [{ path: "a.txt", status: "written", error: null }] }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        deleteOnClose: false,
+        signal: controller.signal,
+      });
+      await sandbox.ensure();
+      controller.abort(new Error("provisioning window closed"));
+      await sandbox.writeFiles([{ path: "a.txt", content: "hello" }]);
+      assertEquals(fetchCalls.some((call) => call.url.endsWith("/files")), true);
+      await sandbox.close();
+    });
+
     it("rejects a custom API origin for a host token carried by request context", async () => {
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");

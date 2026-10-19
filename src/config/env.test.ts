@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import type { EnvironmentConfig } from "./environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+  refreshEnvironmentConfig,
+} from "./environment-config.ts";
 import {
   getAnthropicEnvConfig,
   getApiBaseUrlEnv,
@@ -193,6 +197,25 @@ describe("config/env", () => {
 
     it("should return token when set", () => {
       assertEquals(getApiTokenEnv(createMockEnv({ apiToken: "vf_test" })), "vf_test");
+    });
+
+    it("rereads a selected token file without replacing explicit snapshots", async () => {
+      const tokenFile = await Deno.makeTempFile();
+      try {
+        await Deno.writeTextFile(tokenFile, "file-token-a\n");
+        setEnv("VERYFRONT_API_TOKEN_FILE", tokenFile);
+        const snapshot = refreshEnvironmentConfig();
+        assertEquals(snapshot.apiToken, "file-token-a");
+
+        await Deno.writeTextFile(tokenFile, "file-token-b\n");
+        assertEquals(getApiTokenEnv(), "file-token-b");
+        assertEquals(getApiTokenEnv(snapshot), "file-token-a");
+        assertEquals(getEnvironmentConfig(), snapshot);
+      } finally {
+        deleteEnv("VERYFRONT_API_TOKEN_FILE");
+        await Deno.remove(tokenFile);
+        refreshEnvironmentConfig();
+      }
     });
   });
 
