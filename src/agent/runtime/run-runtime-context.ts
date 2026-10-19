@@ -1,4 +1,4 @@
-import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import { getRuntimeObservationWriterBinding } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getLocalEvalIdentity } from "#veryfront/runtime/local-eval-context.ts";
 import { concatPrivateArrays, flatMapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -23,7 +23,7 @@ export type AgentRunRuntimeContext = Readonly<{
 /** Capture the immutable UTC snapshot for one agent run. */
 export function captureAgentRunRuntimeContext(now = new Date()): AgentRunRuntimeContext {
   const runStartedAtUtc = now.toISOString();
-  const writer = getRuntimeObservationWriterBinding(getActiveRunEventSink());
+  const writer = getRuntimeObservationWriterBinding(getActiveRunEventSinks().mandatory);
   writer?.assertActive();
   const runId = writer?.scope.canonicalRunId ?? getLocalEvalIdentity();
   return Object.freeze({

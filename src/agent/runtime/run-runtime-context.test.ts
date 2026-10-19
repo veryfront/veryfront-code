@@ -4,7 +4,10 @@ import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
-import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  runWithMandatoryRunEventSink,
+  runWithRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -38,6 +41,52 @@ describe("agent run runtime context", () => {
       );
     });
     assertEquals(captureAgentRunRuntimeContext().runId, undefined);
+  });
+
+  it("keeps the mandatory canonical writer when a public observer is also active", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
+    const mandatory = async () => {};
+    const observer = async () => {};
+    bindRuntimeObservationWriterCapability(
+      mandatory,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "durable-run",
+          canonicalRunId,
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    // Even another bound sink in the public lane cannot replace mandatory authority.
+    const otherObserver = async () => {};
+    bindRuntimeObservationWriterCapability(
+      otherObserver,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "other-run",
+          canonicalRunId: "66666666-6666-4666-8666-666666666666",
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    runWithLocalEvalIdentity(() => {
+      for (const publicSink of [observer, otherObserver]) {
+        const rendered = runWithMandatoryRunEventSink(
+          mandatory,
+          () =>
+            runWithRunEventSink(
+              publicSink,
+              () => withAgentRunRuntimeContext("Read run", captureAgentRunRuntimeContext()),
+            ),
+        );
+        assertEquals(rendered.includes(`run_id: ${canonicalRunId}`), true);
+        assertEquals(rendered.includes("66666666-6666-4666-8666-666666666666"), false);
+      }
+    });
+    assertEquals(
+      runWithRunEventSink(otherObserver, () => captureAgentRunRuntimeContext().runId),
+      undefined,
+    );
   });
 
   it("removes authored runtime context blocks with whitespace or attributes", () => {
