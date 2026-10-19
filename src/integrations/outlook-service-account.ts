@@ -107,7 +107,9 @@ export interface OutlookServiceAccountToolSource extends RemoteToolSource {
    * larger attachment fails with `local-integration-response-invalid`; it is
    * never truncated. Each call holds the whole attachment in memory, so
    * concurrent calls add up. Requires `outlook__get_shared_mailbox_attachment` or
-   * `outlook__get_attachment` in `allowedTools`.
+   * `outlook__get_attachment` in `allowedTools`. Runs on Veryfront Cloud use the
+   * hosted `outlook__upload_attachment` tool instead, which saves the attachment
+   * to project uploads and returns an upload reference, not bytes.
    */
   readAttachment(
     args: OutlookAttachmentContentArgs,
