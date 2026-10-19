@@ -30,6 +30,7 @@ type SourceFactory = (
   scope: Scope,
   authToken: string,
   owner: HostedPlatformDependencyOwner,
+  parentOwner?: HostedPlatformDependencyOwner,
 ) => Promise<RemoteToolSource | undefined>;
 type Runner = ReturnType<typeof createVerifiedPlatformToolDependencyRunner>;
 type Authority = {
@@ -82,6 +83,7 @@ export function registerHostedPlatformDependencyRequest(
 export async function configureHostedPlatformDependencySource(
   owner: HostedPlatformDependencyOwner,
   factory: SourceFactory,
+  parentOwner?: HostedPlatformDependencyOwner,
 ): Promise<void> {
   const authority = owners.get(owner);
   if (!authority?.active) return;
@@ -91,6 +93,7 @@ export async function configureHostedPlatformDependencySource(
       { ...authority.scope, agentId: authority.scope.agentId },
       authority.authToken,
       owner,
+      parentOwner,
     );
     if (source) authority.runner.captureSource(source);
   }
@@ -117,7 +120,7 @@ export async function registerHostedChildPlatformDependencies(
   appendPrivateArray(authority.children, [childAuthority]);
   try {
     if (authority.sourceFactory) {
-      await configureHostedPlatformDependencySource(child, authority.sourceFactory);
+      await configureHostedPlatformDependencySource(child, authority.sourceFactory, parent);
     }
     if (!authority.active || !childAuthority.active) {
       throw new Error("Hosted child dependency authority is no longer active");

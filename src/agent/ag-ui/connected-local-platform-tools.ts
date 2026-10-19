@@ -59,7 +59,11 @@ const allSettled = Promise.allSettled;
 const throwIfAborted = AbortSignal.prototype.throwIfAborted;
 
 /** CLI-owned transport and signed grants; no project setting can install this boundary. */
-export function createConnectedLocalPlatformTools(apiUrl: string, transport: typeof fetch) {
+export function createConnectedLocalPlatformTools(
+  apiUrl: string,
+  transport: typeof fetch,
+  dependencies: { createSandboxTools?: typeof createAgentServiceSandboxTools } = {},
+) {
   const verify = createConnectedLocalWriterVerifier(apiUrl);
   const endpoint = `${apply(replace, apiUrl, [/\/$/, ""])}/mcp`;
   const createSource = createRemoteMCPToolSourceFactoryWithTransport({
@@ -68,15 +72,17 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
   });
   const sources = createPrivateWeakStore<object, RemoteToolSource>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
+  const revoke = async (owner: HostedPlatformDependencyOwner) => {
+    revokeHostedPlatformDependencies(owner);
+    const pending = cleanups.get(owner) ?? [];
+    cleanups.set(owner, []);
+    await apply(allSettled, nativePromise, [
+      mapPrivateArray(pending, async (close) => await close()),
+    ]);
+  };
   return {
     verify,
-    async revoke(owner: HostedPlatformDependencyOwner) {
-      revokeHostedPlatformDependencies(owner);
-      await apply(allSettled, nativePromise, [
-        mapPrivateArray(cleanups.get(owner) ?? [], (close) => close()),
-      ]);
-      cleanups.set(owner, []);
-    },
+    revoke,
     async register(
       owner: HostedPlatformDependencyOwner,
       scope: Scope,
@@ -89,74 +95,109 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
       registerHostedPlatformDependencyRequest(owner, verification, scope, verify, authToken);
       const cleanup: Array<() => Promise<void>> = [];
       cleanups.set(owner, cleanup);
-      await configureHostedPlatformDependencySource(
-        owner,
-        async (childScope, token, childOwner) => {
-          const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
-          let source = createLivePlatformMcpSource(factory({
-            id: VERYFRONT_API_MCP_SOURCE_ID,
-            endpoint,
-            headers: () => {
-              const current = childScope.runId === scope.runId ? currentAuthority?.() : undefined;
-              return {
-                Authorization: `Bearer ${current?.auth_token ?? token}`,
-                ...(childScope.runId === scope.runId
-                  ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
-                  : {}),
-              };
-            },
-          }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }));
-          // The API issues this scope only for this child's sealed sandbox selection.
-          let allowSandbox = false;
-          try {
-            const claims = privateJsonParse(
-              apply(
-                bufferToString,
-                apply(bufferFrom, nativeBuffer, [privateTextSplit(token, ".")[1]!, "base64url"]),
-                [],
-              ),
-            );
-            allowSandbox = isArray(claims.scope) &&
-              somePrivateArray(claims.scope, (scope) => scope === "sandboxes:write");
-          } catch { /* A session credential without sandbox scope exposes no native tools. */ }
-          if (allowSandbox) {
-            const { createBashSandboxShellToolsProvider } = await importFirstPartyExtensionModule<{
-              createBashSandboxShellToolsProvider: Parameters<
-                typeof createAgentServiceSandboxTools
-              >[0]["createBashTool"];
-            }>("ext-sandbox-shell-tools", "@veryfront/ext-sandbox-shell-tools");
-            const sandbox = await createAgentServiceSandboxTools({
-              apiUrl,
-              authToken: token,
-              getProjectId: () => childScope.projectId,
-              createBashTool: createBashSandboxShellToolsProvider,
-            });
-            pushPrivateArray(cleanup, sandbox.closeSandbox);
-            const native = canonicalPlatformHostTools(markTrustedHostToolSet(sandbox.tools));
-            const mcp = source;
-            source = markTrustedPlatformSource({
-              id: mcp.id,
-              listTools: async (context) => [
-                ...await mcp.listTools(context),
-                ...mapPrivateArray(entries(native), ([name, tool]) => ({
-                  name,
-                  description: tool.description ?? name,
-                  parameters: (tool.inputSchemaJson ?? tool.parameters ??
-                    { type: "object", properties: {} }) as Record<string, unknown>,
-                })),
-              ],
-              executeTool: async (name, input, context) => {
-                const tool = native[name];
-                if (!tool) return mcp.executeTool(name, input, context);
-                if (!tool.execute) throw new Error("Sandbox tool cannot execute");
-                return await tool.execute(input, context);
-              },
-            });
-          }
-          sources.set(childOwner, source);
-          return source;
-        },
-      );
+      try {
+        await configureHostedPlatformDependencySource(
+          owner,
+          async (childScope, token, childOwner, parentOwner) => {
+            let ownerCleanup = cleanups.get(childOwner);
+            if (!ownerCleanup) {
+              ownerCleanup = [];
+              cleanups.set(childOwner, ownerCleanup);
+              if (childOwner !== owner) {
+                const parentCleanup = cleanups.get(parentOwner ?? owner);
+                if (!parentCleanup) {
+                  throw new Error("Connected platform sandbox parent is unavailable");
+                }
+                pushPrivateArray(parentCleanup, () => revoke(childOwner));
+              }
+            }
+            try {
+              const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
+              let source = createLivePlatformMcpSource(factory({
+                id: VERYFRONT_API_MCP_SOURCE_ID,
+                endpoint,
+                headers: () => {
+                  const current = childScope.runId === scope.runId
+                    ? currentAuthority?.()
+                    : undefined;
+                  return {
+                    Authorization: `Bearer ${current?.auth_token ?? token}`,
+                    ...(childScope.runId === scope.runId
+                      ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
+                      : {}),
+                  };
+                },
+              }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }));
+              // The API issues this scope only for this child's sealed sandbox selection.
+              let allowSandbox = false;
+              try {
+                const claims = privateJsonParse(
+                  apply(
+                    bufferToString,
+                    apply(bufferFrom, nativeBuffer, [
+                      privateTextSplit(token, ".")[1]!,
+                      "base64url",
+                    ]),
+                    [],
+                  ),
+                );
+                allowSandbox = isArray(claims.scope) &&
+                  somePrivateArray(claims.scope, (scope) => scope === "sandboxes:write");
+              } catch { /* A session credential without sandbox scope exposes no native tools. */ }
+              if (allowSandbox) {
+                const { createBashSandboxShellToolsProvider } =
+                  await importFirstPartyExtensionModule<
+                    {
+                      createBashSandboxShellToolsProvider: Parameters<
+                        typeof createAgentServiceSandboxTools
+                      >[0]["createBashTool"];
+                    }
+                  >("ext-sandbox-shell-tools", "@veryfront/ext-sandbox-shell-tools");
+                const sandbox =
+                  await (dependencies.createSandboxTools ?? createAgentServiceSandboxTools)({
+                    apiUrl,
+                    authToken: token,
+                    getProjectId: () => childScope.projectId,
+                    createBashTool: createBashSandboxShellToolsProvider,
+                  });
+                if (cleanups.get(childOwner) !== ownerCleanup) {
+                  await sandbox.closeSandbox();
+                  throw new Error("Connected platform sandbox owner is no longer active");
+                }
+                pushPrivateArray(ownerCleanup, sandbox.closeSandbox);
+                const native = canonicalPlatformHostTools(markTrustedHostToolSet(sandbox.tools));
+                const mcp = source;
+                source = markTrustedPlatformSource({
+                  id: mcp.id,
+                  listTools: async (context) => [
+                    ...await mcp.listTools(context),
+                    ...mapPrivateArray(entries(native), ([name, tool]) => ({
+                      name,
+                      description: tool.description ?? name,
+                      parameters: (tool.inputSchemaJson ?? tool.parameters ??
+                        { type: "object", properties: {} }) as Record<string, unknown>,
+                    })),
+                  ],
+                  executeTool: async (name, input, context) => {
+                    const tool = native[name];
+                    if (!tool) return mcp.executeTool(name, input, context);
+                    if (!tool.execute) throw new Error("Sandbox tool cannot execute");
+                    return await tool.execute(input, context);
+                  },
+                });
+              }
+              sources.set(childOwner, source);
+              return source;
+            } catch (error) {
+              await revoke(childOwner);
+              throw error;
+            }
+          },
+        );
+      } catch (error) {
+        await revoke(owner);
+        throw error;
+      }
     },
     run<T>(input: {
       owner: HostedPlatformDependencyOwner;

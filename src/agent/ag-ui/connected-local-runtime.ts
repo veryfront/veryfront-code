@@ -4,7 +4,6 @@ import {
   createHostedRunEventWriterCapability,
   refreshHostedRunEventWriterCapability,
 } from "../hosted/child-run-event-writer-token.ts";
-import { hostedInheritedEventWriter } from "../hosted/terminal-credential.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type LocalChildInvocation,
@@ -387,6 +386,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         },
       }, { "Idempotency-Key": `${admissionKey}:run` });
       pendingAdmissions.delete(requestIdentity);
+      const platformOwner = { runId: accepted.id };
       try {
         input.signal.throwIfAborted();
         const claim = await client.claimRun({
@@ -404,7 +404,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             throw new Error("Veryfront returned a claim for a different local run.");
           }
         }
-        const platformOwner = { runId: claim.run_id };
+        platformOwner.runId = claim.run_id;
         const rootScope = {
           projectId: options.projectId,
           runId: claim.run_id,
@@ -908,13 +908,14 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         );
         return run;
       } catch (error) {
-        try {
-          await api(`/runs/${encodeURIComponent(accepted.id)}/cancel`, {}, {
+        await Promise.allSettled([
+          api(`/runs/${encodeURIComponent(accepted.id)}/cancel`, {}, {
             "Idempotency-Key": `local-cancel:${accepted.id}`,
-          });
-        } catch {
-          log(`Could not cancel local run ${accepted.id}. Check its status in Studio.`);
-        }
+          }).catch(() => {
+            log(`Could not cancel local run ${accepted.id}. Check its status in Studio.`);
+          }),
+          platformTools?.revoke(platformOwner),
+        ]);
         throw error;
       }
     });
