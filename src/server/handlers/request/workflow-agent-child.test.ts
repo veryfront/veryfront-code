@@ -183,8 +183,23 @@ describe("workflow agent child protocol", () => {
         ...(structured ? { object: { category: "billing" } } : {}),
       };
       let finalized: unknown;
+      const persistedText: string[] = [];
+      let cursor = 0;
       const send: typeof fetch = (url, init) => {
         if (String(url).endsWith("/runs")) return Promise.resolve(admission());
+        if (String(url).endsWith(`/runs/${childId}/events`)) {
+          const events = requestJsonBody(init).events;
+          for (const event of events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") persistedText.push(event.delta);
+          }
+          cursor += events.length;
+          return Promise.resolve(json({
+            run_id: childId,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: events.length,
+          }));
+        }
         if (String(url).endsWith("/finalize")) {
           finalized = requestJsonBody(init);
           return Promise.resolve(json({ id: childId, status: "completed" }));
@@ -196,6 +211,7 @@ describe("workflow agent child protocol", () => {
         execute: () => Promise.resolve({ success: true, output, executionTime: 1 }),
       });
       assertEquals(result.output, output);
+      assertEquals(persistedText, ["brief"]);
       assertEquals(finalized, {
         status: "completed",
         ...(structured ? { output: { category: "billing" } } : {}),
@@ -878,12 +894,13 @@ describe("workflow agent child protocol", () => {
       }
       assertEquals(
         order,
-        terminalReplay ? ["tool-evidence", "admit-research", "finish-coordinator"] : [
+        terminalReplay ? ["tool-evidence", "admit-research", "child-text", "finish-coordinator"] : [
           "tool-evidence",
           "admit-research",
           "local-research",
           "child-text",
           "finish-research",
+          "child-text",
           "finish-coordinator",
         ],
       );
