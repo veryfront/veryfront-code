@@ -232,13 +232,20 @@ truncated. Pass the bytes to `planFileParts`, which reports every file it
 leaves out:
 
 ```ts title="lib/read-attachment.ts"
+import { createOutlookServiceAccountToolSource } from "veryfront/integrations";
 import { planFileParts } from "veryfront/llm";
 
-const content = await outlookSource.readAttachment({ messageId, attachmentId });
-const plan = planFileParts({
-  files: [{ bytes: content.bytes, filename: "report.pdf", mediaType: content.contentType }],
-  maxFileBytes: 10 * 1024 * 1024,
+const outlookSource = createOutlookServiceAccountToolSource({
+  allowedTools: ["outlook__get_attachment"],
 });
+
+export async function attachmentParts(messageId: string, attachmentId: string, filename: string) {
+  const content = await outlookSource.readAttachment({ messageId, attachmentId });
+  return planFileParts({
+    files: [{ bytes: content.bytes, filename, mediaType: content.contentType }],
+    maxFileBytes: 10 * 1024 * 1024,
+  });
+}
 ```
 
 The source exchanges the client secret at

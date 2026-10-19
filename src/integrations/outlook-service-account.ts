@@ -105,7 +105,8 @@ export interface OutlookServiceAccountToolSource extends RemoteToolSource {
    * `/$value`. Unlike the attachment tools, this does not return base64 JSON,
    * so attachments up to {@link MAX_INTEGRATION_FILE_DOWNLOAD_BYTES} fit. A
    * larger attachment fails with `local-integration-response-invalid`; it is
-   * never truncated. Requires `outlook__get_shared_mailbox_attachment` or
+   * never truncated. Each call holds the whole attachment in memory, so
+   * concurrent calls add up. Requires `outlook__get_shared_mailbox_attachment` or
    * `outlook__get_attachment` in `allowedTools`.
    */
   readAttachment(
