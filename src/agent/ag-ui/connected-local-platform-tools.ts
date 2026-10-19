@@ -78,12 +78,17 @@ export function createConnectedLocalPlatformTools(
   const sources = createPrivateWeakStore<object, RemoteToolSource>();
   const credentials = createPrivateWeakStore<object, () => string>();
   const freezeCredentials = createPrivateWeakStore<object, () => void>();
+  const childOwners = createPrivateWeakStore<object, HostedPlatformDependencyOwner[]>();
   const credentialLifetimes = createPrivateWeakStore<object, { active: boolean }>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
+  const freezeCredentialTree = (owner: HostedPlatformDependencyOwner) => {
+    freezeCredentials.get(owner)?.();
+    forEachPrivateArray(childOwners.get(owner) ?? [], freezeCredentialTree);
+  };
   const revoke = async (owner: HostedPlatformDependencyOwner) => {
     // Snapshot the newest exact-owner credential before revoking execution
     // authority so retained cleanup never falls back to its admission token.
-    freezeCredentials.get(owner)?.();
+    freezeCredentialTree(owner);
     revokeHostedPlatformDependencies(owner);
     const pending = cleanups.get(owner) ?? [];
     cleanups.set(owner, []);
@@ -131,7 +136,11 @@ export function createConnectedLocalPlatformTools(
               ownerCleanup = [];
               cleanups.set(childOwner, ownerCleanup);
               if (childOwner !== owner) {
-                const parentCleanup = cleanups.get(parentOwner ?? owner);
+                const parent = parentOwner ?? owner;
+                const descendants = childOwners.get(parent) ?? [];
+                pushPrivateArray(descendants, childOwner);
+                childOwners.set(parent, descendants);
+                const parentCleanup = cleanups.get(parent);
                 if (!parentCleanup) {
                   throw new Error("Connected platform sandbox parent is unavailable");
                 }

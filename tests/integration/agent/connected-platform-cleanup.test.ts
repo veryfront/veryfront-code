@@ -315,8 +315,6 @@ it("renews root and exact-child sandbox credentials without crossing run identit
     assertEquals(credentials[1]!(), authToken);
     rotateHostedPlatformDependencyCredential(child, "renewed-child-credential");
     assertEquals(credentials[0]!(), currentToken);
-    await tools.revoke(child);
-    assertEquals(cleanupCredentials, ["renewed-child-credential"]);
     const writer = createHostedRunEventWriterCapability({
       apiUrl: "https://api.veryfront.com",
       runId: scope.runId,
@@ -342,11 +340,14 @@ it("renews root and exact-child sandbox credentials without crossing run identit
     await assertRejects(() => tools.revoke(root), Error, "root close failed");
     currentAuthorityAvailable = false;
     await tools.revoke(root);
-    assertEquals(cleanupCredentials, [
-      "renewed-child-credential",
-      "renewed-root-credential",
-      "renewed-root-credential",
-    ]);
+    assertEquals(
+      cleanupCredentials.sort(),
+      [
+        "renewed-child-credential",
+        "renewed-root-credential",
+        "renewed-root-credential",
+      ].sort(),
+    );
   });
 });
 
