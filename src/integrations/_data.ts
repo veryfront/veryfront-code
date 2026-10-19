@@ -37991,6 +37991,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum folders to return",
             "default": 100,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
         },
         "response": {
           "transform": "value",
@@ -39102,6 +39108,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum folders to return",
             "default": 100,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
         },
         "response": {
           "transform": "value",
@@ -39154,6 +39166,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {

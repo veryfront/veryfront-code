@@ -755,14 +755,24 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
+/** Returned instead of an over-limit body, so a completed write never reads as failed. */
+const RESPONSE_OMITTED: unique symbol = Symbol("response omitted");
+
+/**
+ * Reads a bounded JSON body. An over-limit body fails the call, except after a
+ * write: the provider already applied it, so reporting failure would invite a
+ * duplicate write. That body is dropped and `RESPONSE_OMITTED` returned instead.
+ */
 async function readResponseJson(
   response: Response,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  write: boolean,
 ): Promise<unknown> {
   if (!contentLengthWithinLimit(response)) {
     cancelResponseBody(response);
+    if (write) return RESPONSE_OMITTED;
     responseInvalid(identity, status);
   }
   let text: string;
@@ -781,6 +791,10 @@ async function readResponseJson(
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
+    if (write) {
+      cancelResponseBody(response);
+      return RESPONSE_OMITTED;
+    }
     responseInvalid(identity, status);
   }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
@@ -910,6 +924,7 @@ async function executeTransportRequest(
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   binary = false,
+  write = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -934,29 +949,50 @@ async function executeTransportRequest(
   if (status === 204) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status),
+    value: await readResponseJson(response, signal, identity, status, write),
   });
 }
 
+/**
+ * Selects `response.transform` from a parsed body.
+ *
+ * When the selection is a list and the catalog declares paging output fields
+ * (such as `@odata.nextLink`), those fields are kept beside the list under its
+ * own key, so a caller can still request the next page.
+ */
 function transformResponse(
   value: unknown,
-  transform: string | undefined,
+  response: IntegrationEndpoint["response"],
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
 ): unknown {
+  const transform = response?.transform;
   if (transform === undefined || transform === "") return value;
+  let parent: Record<string, unknown> | undefined;
+  let segment = "";
   let current = value;
   let start = 0;
   for (let index = 0; index <= transform.length; index++) {
     if (index < transform.length && charCodeAt(transform, index) !== 46) continue;
-    const segment = slice(transform, start, index);
+    segment = slice(transform, start, index);
     if (segment === "" || !isRecord(current)) responseInvalid(identity, status);
+    parent = current;
     const next = ownValue(current, segment);
     if (!next.present) responseInvalid(identity, status);
     current = next.value;
     start = index + 1;
   }
-  return current;
+  const outputFields = response?.historicalSummary?.outputFields ?? [];
+  if (!parent || !arrayIsArray(current) || outputFields.length === 0) return current;
+  const result: Record<string, unknown> = {};
+  objectDefineProperty(result, segment, { enumerable: true, value: current });
+  for (let index = 0; index < outputFields.length; index++) {
+    const name = outputFields[index]!.name;
+    if (name === segment) continue;
+    const field = ownValue(parent, name);
+    if (field.present) objectDefineProperty(result, name, { enumerable: true, value: field.value });
+  }
+  return freeze(result);
 }
 
 /** Execute one admitted catalog REST endpoint through a bounded guarded transport. */
@@ -990,15 +1026,14 @@ export async function executeLocalIntegrationEndpoint(
       signalLease.signal,
       options,
       binary,
+      options.endpoint.method !== "GET",
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
-    return transformResponse(
-      result.value,
-      options.endpoint.response?.transform,
-      options,
-      result.status,
-    );
+    if (result.value === RESPONSE_OMITTED) {
+      return freeze({ success: true, status: result.status, response_omitted: "too_large" });
+    }
+    return transformResponse(result.value, options.endpoint.response, options, result.status);
   } catch (cause) {
     throwIfCallerAborted(options.signal);
     throw cause;

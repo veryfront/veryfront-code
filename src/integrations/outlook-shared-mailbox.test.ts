@@ -220,6 +220,68 @@ describe("Outlook shared-mailbox catalog routes", () => {
     assertEquals(requests.length, 2);
   });
 
+  it("reports a completed move as succeeded when Graph returns an oversized message", async () => {
+    for (
+      const [toolId, args] of [
+        ["move_email", { messageId, destinationId: "archive" }],
+        ["move_shared_mailbox_email", { mailbox, messageId, destinationId: "archive" }],
+      ] as const
+    ) {
+      let attempts = 0;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args,
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: () => {
+          attempts += 1;
+          const body = { id: "moved", body: { content: "x".repeat(4 * 1024 * 1024) } };
+          return Promise.resolve(Response.json(body, { status: 201 }));
+        },
+      });
+
+      assertEquals(result, { success: true, status: 201, response_omitted: "too_large" }, toolId);
+      assertEquals(attempts, 1, toolId);
+    }
+  });
+
+  it("returns the next-page link from folder lists and accepts it as $skip", async () => {
+    for (
+      const [toolId, args] of [
+        ["list_folders", {}],
+        ["list_shared_mailbox_folders", { mailbox }],
+        ["list_shared_mailbox_child_folders", { mailbox, folderId: "inbox" }],
+      ] as const
+    ) {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      const nextLink = `${graph}/v1.0/me/mailFolders?%24skip=2`;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args: { ...args, $top: 2, $skip: 2 },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({
+            value: [{ id: "folder-1" }, { id: "folder-2" }],
+            "@odata.nextLink": nextLink,
+          }));
+        },
+      });
+
+      assertEquals(requests[0]?.url.searchParams.get("$skip"), "2", toolId);
+      assertEquals(
+        result,
+        { value: [{ id: "folder-1" }, { id: "folder-2" }], "@odata.nextLink": nextLink },
+        toolId,
+      );
+    }
+  });
+
   it("sends a failed shared-mailbox move exactly once", async () => {
     for (
       const respond of [

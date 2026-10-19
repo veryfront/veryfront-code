@@ -705,6 +705,78 @@ describe("local integration endpoint executor", () => {
     assertEquals(response.bodyUsed, true);
   });
 
+  it("reports an oversized response to a successful write as succeeded, not failed", async () => {
+    const oversized = 4 * 1024 * 1024 + 1;
+    const fixtures = [
+      // Declared too large: rejected before any body is read.
+      () =>
+        new Response("{}", {
+          status: 201,
+          headers: { "content-length": String(oversized) },
+        }),
+      // Undeclared length: discovered while streaming.
+      () => new Response(`{"body":"${"x".repeat(oversized)}"}`, { status: 201 }),
+    ];
+
+    for (const fixture of fixtures) {
+      const response = fixture();
+      const result = await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "POST",
+          url: "https://api.example.test/messages/message-1/move",
+          response: { transform: "id" },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(response),
+      });
+
+      assertEquals(result, { success: true, status: 201, response_omitted: "too_large" });
+      assertEquals(response.bodyUsed, true);
+    }
+  });
+
+  it("keeps declared paging fields next to a transformed collection", async () => {
+    const execute = (outputFields?: Array<{ name: string }>) =>
+      executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "GET",
+          url: "https://api.example.test/mailFolders",
+          response: {
+            transform: "value",
+            ...(outputFields
+              ? {
+                historicalSummary: {
+                  collectionKeys: ["value"],
+                  collectionName: "folders",
+                  itemFields: [{ name: "id" }],
+                  outputFields,
+                  omitted: "provider fields",
+                },
+              }
+              : {}),
+          },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () =>
+          Promise.resolve(Response.json({
+            "@odata.context": "https://api.example.test/$metadata#mailFolders",
+            "@odata.nextLink": "https://api.example.test/mailFolders?$skip=1",
+            value: [{ id: "folder-1" }],
+          })),
+      });
+
+    assertEquals(await execute([{ name: "@odata.nextLink" }, { name: "@odata.count" }]), {
+      value: [{ id: "folder-1" }],
+      "@odata.nextLink": "https://api.example.test/mailFolders?$skip=1",
+    });
+    // Without declared output fields the transform still selects only the collection.
+    assertEquals(await execute(), [{ id: "folder-1" }]);
+  });
+
   it("enforces its deadline and propagates caller cancellation", async () => {
     const abortController = new AbortController();
     const abortReason = new DOMException("caller stopped", "AbortError");

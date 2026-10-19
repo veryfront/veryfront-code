@@ -241,7 +241,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     assertEquals([...new Set(readNames)], [...OUTLOOK_SERVICE_ACCOUNT_ENV_VARS]);
 
     // The catalog response transform unwraps Graph's `value` collection.
-    assertEquals(result, [{ id: "message-1" }]);
+    assertEquals(result, { value: [{ id: "message-1" }] });
     assertEquals(requests.length, 2);
     const [token, graph] = requests;
     assertEquals(token!.method, "POST");
@@ -642,7 +642,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     assert(settled instanceof DOMException, String(settled));
     assertEquals(settled.message, "caller left");
 
-    assertEquals(await other, [{ id: "message-1" }]);
+    assertEquals(await other, { value: [{ id: "message-1" }] });
     assertEquals(requests.filter((request) => request.url === TOKEN_URL).length, 1);
     assertEquals(requests.length, 2);
   });
@@ -668,7 +668,9 @@ describe("createOutlookServiceAccountToolSource", () => {
     });
     const source = createSource({}, transport);
 
-    assertEquals(await source.executeTool("outlook__list_emails", {}), [{ id: "message-1" }]);
+    assertEquals(await source.executeTool("outlook__list_emails", {}), {
+      value: [{ id: "message-1" }],
+    });
     await source.executeTool("outlook__list_emails", {});
 
     assertEquals(
