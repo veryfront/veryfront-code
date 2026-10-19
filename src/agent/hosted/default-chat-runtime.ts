@@ -92,7 +92,10 @@ import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import {
@@ -540,9 +543,10 @@ function withoutHostedCredentials<TResult>(input: {
   );
 }
 
+/** Bound a tool result by its whole 4 MiB size; one string, such as base64 attachment content, may use all of it. */
 function snapshotHostedToolResult(result: unknown): unknown {
   if (result === undefined) return undefined;
-  const snapshot = snapshotBoundedJsonValue(result);
+  const snapshot = snapshotBoundedJsonValue(result, JSON_VALUE_MAX_SERIALIZED_BYTES);
   if (!snapshot.success) {
     throw new TypeError("Hosted project tool result must be a bounded JSON value");
   }
