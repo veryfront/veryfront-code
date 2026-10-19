@@ -199,8 +199,8 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
   }
   for (
     const url of [
-      "/home/user/photo.png",
-      "file:///home/user/photo.png",
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
       "ftp://example.test/photo.png",
     ]
   ) {
