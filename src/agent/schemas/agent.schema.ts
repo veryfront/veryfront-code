@@ -267,16 +267,17 @@ export type ToolCall = InferSchema<ReturnType<typeof getToolCallSchema>>;
 export type BaseAgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
 
 /**
- * Presence and type of `object` for a given structured-output type.
+ * Optional presence and type of structured aliases for a given output type.
  *
- * `never` is the no-`outputSchema` case and yields no value. `any` is the
- * erasure used by slots that hold agents of any output type, and has to stay
- * assignable from both of the other branches.
+ * `never` is the no-`outputSchema` case and yields no value. A configured
+ * schema may still omit both aliases when max-step parsing fails; the detail is
+ * recorded in `metadata.outputSchemaError`. `any` is the erasure used by slots
+ * that hold agents of any output type and remains assignable from every branch.
  */
 type AgentResponseObject<TOutput> = [TOutput] extends [never]
   ? { data?: undefined; object?: undefined }
   : 0 extends 1 & TOutput ? { data?: unknown; object?: unknown }
-  : { data: TOutput; object: TOutput };
+  : { data?: TOutput; object?: TOutput };
 
 /**
  * Response payload for agent.

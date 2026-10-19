@@ -349,7 +349,10 @@ export function hostedInheritedRunAdmitter(
         parent_run_id: parentId,
         tool_call_id: toolCallId,
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
-        input: { prompt, ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}) },
+        input: {
+          text: prompt,
+          ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}),
+        },
       }),
       signal: AbortSignal.timeout(15000),
     });

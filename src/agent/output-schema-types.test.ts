@@ -19,12 +19,21 @@ async function inferredFromConfiguredSchema(): Promise<void> {
   const response = await weather.generate({ input: "Berlin?" });
 
   // The schema type is inferred with no annotation anywhere.
+  // A max-step parse failure returns a successful response with outputSchemaError
+  // and no structured value, so callers must first prove presence.
+  // @ts-expect-error Parsed data may be absent when outputSchema parsing fails.
+  const unsafeDataCity: string = response.data.city;
+  // @ts-expect-error Parsed object may be absent when outputSchema parsing fails.
+  const unsafeCity: string = response.object.city;
+  if (response.data === undefined || response.object === undefined) return;
   const dataCity: string = response.data.city;
   const city: string = response.object.city;
   const tempC: number = response.object.tempC;
   // @ts-expect-error Fields outside the schema are not part of the parsed object.
   const outOfSchema = response.object.humidity;
 
+  void unsafeDataCity;
+  void unsafeCity;
   void dataCity;
   void city;
   void tempC;
@@ -49,6 +58,7 @@ async function perCallSchemaIsAccepted(): Promise<void> {
   const weather = agent({ system: "You report weather.", outputSchema: temperatureSchema });
   const response = await weather.generate({ input: "Berlin?", outputSchema: headlineSchema });
 
+  if (response.object === undefined) return;
   const headline: string = response.object.headline;
   // @ts-expect-error The configured schema does not leak into override results.
   const city: string = response.object.city;
@@ -65,6 +75,7 @@ async function rawJsonSchemaKeepsObjectUnknown(): Promise<void> {
   const response = await weather.generate({ input: "Berlin?" });
 
   const object: unknown = response.object;
+  if (response.object === undefined) return;
   // @ts-expect-error Raw JSON Schema preserves the object but cannot infer fields.
   const city: string = response.object.city;
 

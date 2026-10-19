@@ -3,6 +3,7 @@ import { readStructuredAgentOutput } from "./output-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -194,6 +195,7 @@ describe("agent output schema", () => {
       assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
       // Inference is checked here without an annotation on `response`.
       assertEquals(response.data, response.object);
+      assertExists(response.object);
       assertEquals(response.object.city, "Berlin");
       assertEquals(response.object.tempC, 12);
     });

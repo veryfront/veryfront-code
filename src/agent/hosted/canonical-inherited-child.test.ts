@@ -135,7 +135,9 @@ it("admits one inherited child with the parent's capability and binds exact-chil
   assertEquals(run.latestEventId, 7);
   assertEquals(run.latestExternalEventSequence, 3);
   assertEquals(calls[0]!.headers.get("X-Veryfront-Run-Execution-Mode"), "inherited");
-  assertEquals((await calls[0]!.json()).target, { type: "agent", id: "agent" });
+  const admission = await calls[0]!.json();
+  assertEquals(admission.target, { type: "agent", id: "agent" });
+  assertEquals(admission.input, { text: "raw prompt" });
   assertEquals(JSON.stringify(run).includes("child-invocation"), false);
   await hostedTerminalRunFinalizer(run)!({
     authToken: "ignored",

@@ -122,9 +122,9 @@ function restoreInheritedAgentResponse(
   const text = Object.getOwnPropertyDescriptor(value, "text");
   const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
   const status = Object.getOwnPropertyDescriptor(value, "status");
-  if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
-  const structured = readStructuredAgentOutput(value);
-  if (!text && !structured) {
+  // Historical agent responses always carried all three framework fields.
+  // Without that complete discriminator, reserved names belong to business data.
+  if (!text || !calls || !status) {
     return {
       text: privateJsonStringify(value),
       data: value,
@@ -132,29 +132,33 @@ function restoreInheritedAgentResponse(
       status: "completed",
     };
   }
+  if (!("value" in text) || typeof text.value !== "string") throw invalid();
   if (
-    calls && (!("value" in calls) ||
-      (typeof calls.value !== "number" && !Array.isArray(calls.value)))
+    !("value" in calls) ||
+    (typeof calls.value !== "number" && !Array.isArray(calls.value))
   ) throw invalid();
-  if (status && (!("value" in status) || typeof status.value !== "string")) throw invalid();
+  if (!("value" in status) || typeof status.value !== "string") throw invalid();
+  const structured = readStructuredAgentOutput(value);
   return {
-    text: text?.value ?? "",
-    // Canonical receipts do not contain the historical tool count. Keep it absent.
-    ...(calls ? { toolCalls: calls.value } : {}),
-    status: status?.value ?? "completed",
+    text: text.value,
+    toolCalls: calls.value,
+    status: status.value,
     ...structured,
   };
 }
 
-/** Restore the tool protocol while preserving known legacy call counts. */
-export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
-  const response = restoreInheritedAgentResponse(value);
+function restoredInheritedLocalChildResult(response: Record<string, unknown>): LocalChildResult {
   return {
     ...response,
     text: response.text as string,
     status: response.status as string,
     ...(Array.isArray(response.toolCalls) ? { toolCalls: response.toolCalls.length } : {}),
   } as LocalChildResult;
+}
+
+/** Restore the tool protocol while preserving known legacy call counts. */
+export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+  return restoredInheritedLocalChildResult(restoreInheritedAgentResponse(value));
 }
 
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
@@ -387,7 +391,9 @@ export async function runInheritedLocalAgent(
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
                     }
-                    const output = readInheritedLocalChildResult(delegatedResult.output);
+                    const output = restoredInheritedLocalChildResult(
+                      delegatedResult.output as Record<string, unknown>,
+                    );
                     if (!completedTools.has(toolCallId)) {
                       completedTools.add(toolCallId);
                       await mirror.handleChunk({

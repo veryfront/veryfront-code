@@ -183,6 +183,7 @@ import {
 } from "./provider-replay-protocol.ts";
 import {
   attachOutputSchemaParser,
+  readStructuredAgentOutput,
   resolveAgentOutputSchema,
   type ResolvedAgentOutputSchema,
 } from "../output-schema.ts";
@@ -1703,8 +1704,9 @@ function withOutputSchemaObservationObject<
 >(
   turn: TTurn,
 ): TTurn & { objectEncoding?: "snapshot" } {
-  if (!("object" in turn)) return turn;
-  return { ...turn, ...createOutputSchemaObservationFields(turn.object) };
+  const structured = readStructuredAgentOutput(turn);
+  if (!structured) return turn;
+  return { ...turn, ...createOutputSchemaObservationFields(structured.data) };
 }
 
 function buildGeneratedAssistantMessage(
@@ -4513,11 +4515,12 @@ export class AgentRuntime {
 
             const finishUsage = buildStreamFinishUsage(response.usage);
             const finishReason = getResponseFinishReason(response);
+            const structured = readStructuredAgentOutput(response);
             sendSSE(controller, encoder, {
               type: "message-finish",
               ...(finishReason ? { finishReason } : {}),
               ...(finishUsage ? { totalUsage: finishUsage } : {}),
-              ...("object" in response ? createOutputSchemaObservationFields(response.object) : {}),
+              ...(structured ? createOutputSchemaObservationFields(structured.data) : {}),
             });
             closeSSEStream(controller);
           } catch (streamError) {
@@ -5057,10 +5060,11 @@ export class AgentRuntime {
             );
             generatedTurnAdmissionObserved = true;
           } else {
+            const structured = readStructuredAgentOutput(turn);
             await observeGeneratedAgentTurnFinish({
               finishReason: turn.finishReason,
               usage: turn.usage,
-              ...("object" in turn ? createOutputSchemaObservationFields(turn.object) : {}),
+              ...(structured ? createOutputSchemaObservationFields(structured.data) : {}),
             });
           }
           generatedTurnFinishObserved = true;

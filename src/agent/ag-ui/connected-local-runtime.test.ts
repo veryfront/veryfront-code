@@ -1,5 +1,6 @@
 import {
   executeLocalChild,
+  type LocalChildResult,
   observeAdmittedAgentToolCalls,
 } from "../composition/local-child-execution.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -295,12 +296,20 @@ describe("connected local execution", () => {
     it(`replays canonical or legacy child output ${JSON.stringify(stored)} without reexecution`, async () => {
       let attempts = 0;
       let renewals = 0;
-      const output = {
-        text: "text" in stored ? stored.text ?? "" : "",
-        ...("toolCalls" in stored ? { toolCalls: stored.toolCalls } : {}),
-        status: "completed",
-        ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
-      };
+      const legacy = "text" in stored && "toolCalls" in stored && "status" in stored;
+      const output: LocalChildResult = legacy
+        ? {
+          text: stored.text as string,
+          toolCalls: stored.toolCalls as number,
+          status: stored.status as string,
+          ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
+        }
+        : {
+          text: JSON.stringify(stored),
+          data: stored,
+          object: stored,
+          status: "completed",
+        };
       const f = fixture({
         trustedClaim: true,
         renew: () => {
