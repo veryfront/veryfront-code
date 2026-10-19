@@ -776,7 +776,7 @@ function createRequestSignalScope(
 }
 
 function serializeJsonRpcRequest(body: Record<string, unknown>): string {
-  const snapshot = snapshotBoundedJsonValue(body);
+  const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     throw new TypeError("Remote MCP JSON-RPC request must be a bounded JSON object");
   }

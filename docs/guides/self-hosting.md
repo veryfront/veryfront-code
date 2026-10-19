@@ -216,10 +216,12 @@ you also pass `allowWrites: true`. `allowWrites` covers every listed write
 tool, including `outlook__send_email`, which sends mail as the mailbox. List
 only the write tools the project needs.
 
-Each string in a tool request or response is limited to 1 MiB. Base64
-attachment content over about 750 KB decoded fails with
-`local-integration-request-invalid` on upload, or
-`local-integration-response-invalid` from `outlook__get_attachment`.
+Each tool request and response is limited to 4 MiB in total, which fits base64
+attachment content up to the 3 MB Microsoft Graph inline limit. Larger content
+fails with `local-integration-request-invalid` on upload, or
+`local-integration-response-invalid` from `outlook__get_attachment`. Agent runs
+on the hosted executor still limit each string in a tool result to 1 MiB, so
+there `outlook__get_attachment` returns attachments up to about 750 KB.
 
 The source exchanges the client secret at
 `login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token

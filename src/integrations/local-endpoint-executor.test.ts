@@ -9,6 +9,8 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { connectors } from "./_data.ts";
+import { MAX_INTEGRATION_CALL_REQUEST_BYTES } from "./limits.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
 import {
   executeLocalIntegrationEndpoint as executeEndpoint,
@@ -777,5 +779,89 @@ describe("local integration endpoint executor", () => {
     assertInstanceOf(timeoutError, VeryfrontError);
     assertEquals(timeoutError.slug, "local-integration-request-failed");
     assertEquals(timeoutError.cause, undefined);
+  });
+});
+
+describe("Outlook attachment payloads", () => {
+  const graph = "https://graph.microsoft.com";
+  // Base64 of a synthetic attachment just under the 3 MB Graph inline limit.
+  // It exceeds 1 MiB as one string but fits the 4 MiB request and response bounds.
+  const contentBytes = "QUJD".repeat(1_000_000);
+
+  function outlookEndpoint(toolId: string): IntegrationEndpoint {
+    const tool = connectors.find((connector) => connector.name === "outlook")?.tools.find(
+      (item) => item.id === `outlook__${toolId}`,
+    );
+    assert(tool?.endpoint, `Expected outlook__${toolId} to have an endpoint`);
+    return tool.endpoint;
+  }
+
+  it("returns an attachment whose base64 content exceeds 1 MiB", async () => {
+    const result = await executeLocalIntegrationEndpoint({
+      connectorName: "outlook",
+      toolId: "outlook__get_attachment",
+      endpoint: outlookEndpoint("get_attachment"),
+      args: { messageId: "m1", attachmentId: "a1" },
+      authHeaders: {},
+      allowedOrigin: graph,
+      transport: () =>
+        Promise.resolve(Response.json({ name: "report.pdf", size: 3_000_000, contentBytes })),
+    }) as Record<string, unknown>;
+
+    assertStrictEquals(result.contentBytes, contentBytes);
+  });
+
+  for (
+    const [toolId, idName] of [
+      ["add_attachment_to_message", "messageId"],
+      ["add_event_attachment", "eventId"],
+    ] as const
+  ) {
+    it(`uploads base64 content over 1 MiB through ${toolId}`, async () => {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args: { [idName]: "id1", name: "report.pdf", contentBytes },
+        authHeaders: {},
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({ id: "att1" }, { status: 201 }));
+        },
+      });
+
+      assertEquals(requests.length, 1);
+      const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
+      assertStrictEquals(body.contentBytes, contentBytes);
+    });
+  }
+
+  it("still rejects an upload string over the request bound before any transport call", async () => {
+    let calls = 0;
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          connectorName: "outlook",
+          toolId: "outlook__add_attachment_to_message",
+          endpoint: outlookEndpoint("add_attachment_to_message"),
+          args: {
+            messageId: "id1",
+            name: "report.pdf",
+            contentBytes: "A".repeat(MAX_INTEGRATION_CALL_REQUEST_BYTES + 1),
+          },
+          authHeaders: {},
+          allowedOrigin: graph,
+          transport: () => {
+            calls++;
+            return Promise.resolve(Response.json({}));
+          },
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(calls, 0);
   });
 });

@@ -457,6 +457,31 @@ describe("tool/remote-mcp", () => {
     }]);
   });
 
+  it("sends one argument string over 1 MiB within the request bound", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+      headers: { Authorization: "Bearer remote-token" },
+    });
+    const content = "A".repeat(2 * 1024 * 1024);
+    let sent: unknown;
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      sent = await request.json();
+      return Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:upload",
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+    }, async () => await source.executeTool("upload", { content }));
+
+    assertEquals(
+      (sent as { params: { arguments: { content: string } } }).params.arguments.content,
+      content,
+    );
+  });
+
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
