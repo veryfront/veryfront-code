@@ -14,6 +14,7 @@ import {
 } from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
+  MAX_BINARY_CONTENT_TYPE_LENGTH,
   MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
   MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
@@ -935,6 +936,8 @@ async function readResponseBinary(
   ) as string;
   const content_type = contentType === "" ? "application/octet-stream" : contentType;
   if (rawMaxBytes !== undefined) return freeze({ bytes, size, content_type });
+  // A bounded media type keeps the whole result within the tool result bound.
+  if (content_type.length > MAX_BINARY_CONTENT_TYPE_LENGTH) responseInvalid(identity, status);
   return freeze({
     encoding: "base64",
     content_base64: encodeBase64(bytes, size),
