@@ -18,7 +18,7 @@ export const MAX_INTEGRATION_TOOL_LIST_ATTEMPTS = 3;
 /** Base delay before a tool-list retry; the wait grows linearly per attempt. */
 export const INTEGRATION_TOOL_LIST_RETRY_DELAY_MS = 100;
 
-/** Maximum serialized request accepted by the remote tool-call endpoint. */
+/** Maximum serialized tool-call request, remote or local; one string may use all of it. */
 export const MAX_INTEGRATION_CALL_REQUEST_BYTES = 4 * 1024 * 1024;
 
 /** Maximum decoded JSON response accepted from tool discovery. */
