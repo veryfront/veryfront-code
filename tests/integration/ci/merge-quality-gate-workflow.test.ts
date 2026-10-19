@@ -842,6 +842,10 @@ done
     const merge = steps[mergeIndex];
     assert(collector);
     assert(merge);
+    assertEquals(
+      asRecord(collector.env, "context ownership coverage environment").DENO_COVERAGE_DIR,
+      "coverage-profiles/coverage-context-ownership",
+    );
     const command = String(collector.run);
     assertStringIncludes(
       command,
@@ -879,6 +883,13 @@ done
         "tests/integration/cli/pull/project-bootstrap.test.ts",
         "tests/integration/cli/shared/cloud-project.test.ts",
         "tests/integration/agent/connected-local-inference.test.ts",
+        "tests/integration/agent/connected-local-tools.test.ts",
+        "tests/integration/agent/connected-local-platform-boundary.test.ts",
+        "tests/integration/agent/inherited-local-platform-scope.test.ts",
+        "tests/integration/agent/run-stream-project-observation.test.ts",
+        "tests/integration/agent/connected-writer-verifier.test.ts",
+        "tests/integration/agent/connected-local-setup-cleanup.test.ts",
+        "tests/integration/agent/connected-platform-cleanup.test.ts",
         "tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts",
         "tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts",
         "tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts",

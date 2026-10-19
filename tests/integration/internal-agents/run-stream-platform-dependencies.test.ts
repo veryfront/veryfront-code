@@ -64,12 +64,28 @@ for (const operation of ["veryfront__create_file", "outlook__get_email"]) {
       VERYFRONT_API_URL: "https://8.8.8.8",
       CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: signed.publicKeyPem,
     };
-    for (const key of ["HOME", "DENO_DIR"]) {
+    for (const key of ["HOME", "DENO_DIR", "DENO_COVERAGE_DIR"]) {
       const value = Deno.env.get(key);
       if (value) env[key] = value;
     }
+    // Eval does not emit Deno coverage. Run the identical production program
+    // as a test module when the collector requests subprocess coverage.
+    const coverageDir = Deno.env.get("DENO_COVERAGE_DIR");
+    const modulePath = coverageDir ? await Deno.makeTempFile({ suffix: ".test.ts" }) : undefined;
+    if (modulePath) await Deno.writeTextFile(modulePath, program);
     const child = new Deno.Command(Deno.execPath(), {
-      args: ["eval", "--config", "deno.json", program],
+      args: modulePath
+        ? [
+          "test",
+          "--no-check",
+          "--allow-all",
+          "--config",
+          "deno.json",
+          `--coverage=${coverageDir}`,
+          "--coverage-raw-data-only",
+          modulePath,
+        ]
+        : ["eval", "--config", "deno.json", program],
       clearEnv: true,
       env,
       stdin: "piped",
@@ -87,12 +103,21 @@ for (const operation of ["veryfront__create_file", "outlook__get_email"]) {
         : { messageId: "fixture-message" },
     })));
     await writer.close();
-    const output = await child.output();
-    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
-    assertEquals(JSON.parse(new TextDecoder().decode(output.stdout).trim().split("\n").at(-1)!), {
-      effects: 1,
-      revoked: true,
-      modelCalls: 0,
+    const output = await child.output().finally(async () => {
+      if (modulePath) await Deno.remove(modulePath);
     });
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    assertEquals(
+      JSON.parse(
+        new TextDecoder().decode(output.stdout).trim().split("\n").findLast((line) =>
+          line.startsWith('{"effects":')
+        )!,
+      ),
+      {
+        effects: 1,
+        revoked: true,
+        modelCalls: 0,
+      },
+    );
   });
 }
