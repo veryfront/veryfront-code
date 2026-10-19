@@ -164,7 +164,7 @@ export async function runInheritedLocalAgent(
       await onEvent({ type: "tool-input-start", toolCallId: id, toolName: name });
     }
   };
-  localToolAdmissions.set(child, async (call, name, args) => {
+  localToolAdmissions.set(child, async (call, name) => {
     const start = {
       type: "tool-input-start" as const,
       toolCallId: call.toolCallId,
@@ -173,12 +173,6 @@ export async function runInheritedLocalAgent(
     bindToolCallStartOccurrence(start, call.occurrenceId);
     await mirror.handleChunk(start);
     startedTools.set(call.toolCallId, name);
-    await mirror.handleChunk({
-      type: "tool-input-available",
-      toolCallId: call.toolCallId,
-      toolName: name,
-      input: args,
-    });
     await mirror.flush({ throwOnTimeoutRetry: true });
     const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
     if (!receipt) throw new Error("Inherited local tool admission missing");

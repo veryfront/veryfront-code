@@ -1,3 +1,8 @@
+import {
+  getCurrentToolCallOccurrenceIdentity,
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { generateKeyPairSync, sign } from "node:crypto";
 import {
@@ -15,7 +20,7 @@ import {
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
 import { createEphemeralAgent } from "../factory.ts";
-import { getAvailableTools } from "../runtime/tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools } from "../runtime/tool-helpers.ts";
 import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { tool } from "#veryfront/tool/index.ts";
@@ -597,6 +602,7 @@ describe("connected local execution", () => {
     const messageId = "44444444-4444-4444-8444-444444444444";
     const canonicalRunId = "55555555-5555-4555-8555-555555555555";
     const runId = "run-connected-tools";
+    const persisted: Array<{ type: string; toolCallId?: string; delta?: string }> = [];
     const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
     const signed = `${encode({ alg: "RS256", kid: "local-test" })}.${
@@ -705,7 +711,27 @@ describe("connected local execution", () => {
         projectId,
         projectSlug: "sample",
         studioUrl: "http://localhost:3440",
-      }, { fetch, log: () => {} });
+      }, {
+        fetch,
+        log: () => {},
+        append: async (events, sequence) => {
+          persisted.push(...events as typeof persisted);
+          const call = getCurrentToolCallOccurrenceIdentity();
+          return {
+            latestExternalEventSequence: sequence + events.length,
+            toolCallAdmissions: call
+              ? [{
+                ...call,
+                admissionEventId: "admitted",
+                startEventId: "started",
+                publicToolCallId: call.toolCallId,
+                projectId,
+                runId: canonicalRunId,
+              }]
+              : [],
+          };
+        },
+      });
 
       try {
         const run = await runtime.admit({
@@ -748,6 +774,41 @@ describe("connected local execution", () => {
         assertEquals(names.includes(registered[2]!), false);
         assertEquals(names.includes("connected_remote_tool"), true);
         assertEquals(prepared.config.delegates, undefined);
+        const call = { id: "call-test" };
+        await run.execute(async () => {
+          introduceToolCallOccurrence(call);
+          await runWithToolCallOccurrenceDispatch(
+            call,
+            () =>
+              executeConfiguredTool(registered[0]!, {}, {
+                [registered[0]!]: makeTool(registered[0]!),
+              }, { projectId, runId, agentId: "coder", toolCallId: call.id }),
+          );
+        });
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            for (
+              const event of [
+                { type: "tool-input-start", toolCallId: call.id, toolName: registered[0] },
+                {
+                  type: "tool-input-available",
+                  toolCallId: call.id,
+                  toolName: registered[0],
+                  input: {},
+                },
+                { type: "tool-output-available", toolCallId: call.id, output: { ok: true } },
+                { type: "message-finish" },
+              ]
+            ) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+            c.close();
+          },
+        });
+        await new Response(run.wrapStream(body)).text();
+        assertEquals(
+          persisted.filter((event) => event.type === "TOOL_CALL_ARGS").map((event) => event.delta)
+            .join(""),
+          "{}",
+        );
       } finally {
         await runtime.dispose().catch(() => {});
         for (const id of registered) toolRegistryInternal.delete(id);

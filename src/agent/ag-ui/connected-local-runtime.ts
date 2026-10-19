@@ -759,17 +759,13 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                     canonicalRunId: accepted.id,
                     writer: rootWriter,
                     signal: controller.signal,
-                    admit: async (call, name, args) => {
+                    admit: async (call, name) => {
                       await streamMirror.flush();
                       const result = await append(
                         [{
                           type: "TOOL_CALL_START",
                           toolCallId: call.toolCallId,
                           toolCallName: name,
-                        }, {
-                          type: "TOOL_CALL_ARGS",
-                          toolCallId: call.toolCallId,
-                          delta: JSON.stringify(args),
                         }],
                         false,
                         [{ occurrenceId: call.occurrenceId, eventIndex: 0 }],
