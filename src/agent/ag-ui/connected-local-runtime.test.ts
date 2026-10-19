@@ -342,6 +342,9 @@ describe("connected local execution", () => {
       });
       const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
       assertEquals(requests.length, 2);
+      assertEquals(requests.map((request) => request.body.input), [{ text: "task" }, {
+        text: "task",
+      }]);
       assert(requests[0] && requests[1]);
       assertEquals(
         requests[0].headers.get("Idempotency-Key"),

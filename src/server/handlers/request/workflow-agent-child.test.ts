@@ -171,7 +171,7 @@ describe("workflow agent child protocol", () => {
         assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
         assertEquals(body.parent_run_id, parentId);
         assertEquals(body.node_id, "research");
-        assertEquals(body.input, { prompt: JSON.stringify(invocation.input) });
+        assertEquals(body.input, { text: JSON.stringify(invocation.input) });
         return Promise.resolve(admission());
       }
       assertEquals(url, `https://api.example.test/runs/${childId}/finalize`);
@@ -298,10 +298,10 @@ describe("workflow agent child protocol", () => {
     assertEquals(model.callCount, 4);
     assertEquals(records.size, 4);
     assertEquals([...records.values()].map((record) => record.input), [
-      { prompt: "first-input" },
-      { prompt: "second-input" },
-      { prompt: "iteration-0" },
-      { prompt: "iteration-1" },
+      { text: "first-input" },
+      { text: "second-input" },
+      { text: "iteration-0" },
+      { text: "iteration-1" },
     ]);
     assertEquals((await run()).completed, true);
     assertEquals(model.callCount, 4);

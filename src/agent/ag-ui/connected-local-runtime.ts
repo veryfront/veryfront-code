@@ -667,7 +667,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 target: { type: "agent", id: invocation.agentId },
                 parent_run_id: accepted.id,
                 tool_call_id: toolCallId,
-                input: { prompt: invocation.input },
+                input: { text: invocation.input },
               }),
               signal: AbortSignal.any([controller.signal, timeoutSignal(15_000)]),
             });

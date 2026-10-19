@@ -71,7 +71,7 @@ export function createWorkflowAgentNodeRunner(binding: {
         target: { type: "agent", id: invocation.agentId },
         parent_run_id: parentId,
         node_id: nodeId,
-        input: { prompt },
+        input: { text: prompt },
       }),
       signal,
     });
