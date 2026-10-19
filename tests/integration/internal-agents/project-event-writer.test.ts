@@ -63,7 +63,94 @@ it("buffers ordinary deltas and drains them together at a terminal barrier", asy
   });
 });
 
-for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
+it("ignores a replaced array includes while recognizing terminal barriers", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result } = writer();
+    const includes = Array.prototype.includes;
+    try {
+      Array.prototype.includes = function (
+        searchElement: unknown,
+        fromIndex?: number,
+      ): boolean {
+        if (this[0] === "RUN_STARTED") return false;
+        return Reflect.apply(includes, this, [searchElement, fromIndex]);
+      };
+      await result.appendMappedEvent(delta("persisted"));
+      await result.appendMappedEvent({ event: "RunFinished", payload: { type: "RUN_FINISHED" } });
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("persisted"), true);
+    } finally {
+      Array.prototype.includes = includes;
+      result.close();
+    }
+  });
+});
+
+it("drains queued events after cancellation before closing", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result, controller } = writer();
+    try {
+      await result.appendMappedEvent(delta("before cancellation"));
+      controller.abort(new Error("cancelled"));
+      await result.flush();
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("before cancellation"), true);
+    } finally {
+      result.close();
+    }
+  });
+});
+
+it("waits through a transient retry while draining after cancellation", async () => {
+  const batches: unknown[][] = [];
+  let attempts = 0;
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    attempts++;
+    if (attempts === 1) return new Response("retry", { status: 503 });
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result, controller } = writer();
+    try {
+      await result.appendMappedEvent(delta("before cancellation"));
+      controller.abort(new Error("cancelled"));
+      await result.flush();
+      assertEquals(attempts, 2);
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("before cancellation"), true);
+    } finally {
+      result.close();
+    }
+  });
+});
+
+for (const producerOutcome of ["fulfilled", "rejected", "missing", "post-eof"] as const) {
   it(
     `flushes buffered events before a failed runtime closes after producer ${producerOutcome}`,
     async () => {
@@ -108,6 +195,16 @@ for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
                 let emitted = false;
                 return new ReadableStream<Uint8Array>({
                   pull(controller) {
+                    if (producerOutcome === "post-eof") {
+                      controller.enqueue(
+                        new TextEncoder().encode(
+                          'data: {"type":"text-delta","id":"text","delta":"before failure"}\n\n' +
+                            'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}',
+                        ),
+                      );
+                      controller.close();
+                      return;
+                    }
                     if (emitted) {
                       if (producerOutcome === "missing") {
                         controller.enqueue(

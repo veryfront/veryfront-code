@@ -12,6 +12,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
+import type { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
 
 function fixture(
   options: {
@@ -39,6 +40,7 @@ function fixture(
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
     workerDisplayName?: string;
+    platformRevoke?: () => Promise<void>;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -214,6 +216,16 @@ function fixture(
       return Promise.resolve(Response.json({ id: `run-${id}` }));
     }) as typeof fetch,
     log: (message) => logs.push(message),
+    ...(options.platformRevoke
+      ? {
+        createPlatformTools: () =>
+          ({
+            register: () => Promise.resolve(),
+            revoke: options.platformRevoke!,
+            run: (_input: unknown, operation: () => Promise<unknown>) => operation(),
+          }) as unknown as ReturnType<typeof createConnectedLocalPlatformTools>,
+      }
+      : {}),
   });
   return {
     runtime,
@@ -1202,6 +1214,35 @@ describe("connected local execution", () => {
     assertEquals(f.completed, ["completed"]);
     await f.runtime.dispose();
   });
+  it("keeps run authority active across deferred stream pulls", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let observedSink = false;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          observedSink = getActiveRunEventSink() !== undefined;
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"message-finish","object":{"completed":true}}\n\n',
+            ),
+          );
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const stream = await run.execute(() => run.wrapStream(body));
+    await new Response(stream).text();
+    assertEquals(observedSink, true);
+    assertEquals(f.completed, ["completed"]);
+    await f.runtime.dispose();
+  });
   it("fails persistence before completing output and releases active execution", async () => {
     const f = fixture({ appendFailure: true });
     const run = await f.runtime.admit({
@@ -1240,6 +1281,32 @@ describe("connected local execution", () => {
     await f.runtime.dispose();
     assertEquals(f.completed, ["completed"]);
     assertEquals(f.logs.some((line) => line.includes("run persistence failed")), true);
+  });
+  it("completes the run and allows a later retry after repeated platform cleanup failures", async () => {
+    let cleanupAttempts = 0;
+    const f = fixture({
+      trustedClaim: true,
+      platformRevoke: () => {
+        cleanupAttempts++;
+        return cleanupAttempts <= 2
+          ? Promise.reject(new Error("cleanup offline"))
+          : Promise.resolve();
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await assertRejects(() => run.finish("completed"), Error, "cleanup offline");
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(cleanupAttempts, 2);
+    await run.finish("completed");
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(cleanupAttempts, 3);
+    await f.runtime.dispose();
+    assertEquals(cleanupAttempts, 3);
   });
   it("waits for every active finalization before reporting a disposal failure", async () => {
     let releaseDelayed!: () => void;

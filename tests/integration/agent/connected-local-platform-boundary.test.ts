@@ -226,7 +226,11 @@ it("keeps its execution identity private from replaced async storage methods", a
     const original = AsyncLocalStorage.prototype.run;
     const originalGet = AsyncLocalStorage.prototype.getStore;
     let exposedIdentity = false;
-    AsyncLocalStorage.prototype.run = function (store, callback, ...args) {
+    AsyncLocalStorage.prototype.run = function <R, TArgs extends unknown[]>(
+      store: unknown,
+      callback: (...args: TArgs) => R,
+      ...args: TArgs
+    ): R {
       if (
         store && typeof store === "object" &&
         (Object.keys(store).length === 0 || "policy" in store ||
@@ -235,7 +239,7 @@ it("keeps its execution identity private from replaced async storage methods", a
       ) {
         exposedIdentity = true;
       }
-      return Reflect.apply(original, this, [store, callback, ...args]);
+      return Reflect.apply(original, this, [store, callback, ...args]) as R;
     };
     AsyncLocalStorage.prototype.getStore = function () {
       const value = Reflect.apply(originalGet, this, []);

@@ -6,20 +6,34 @@ versions are listed at
 
 ## Unreleased
 
+### Added: attachment budgets with explicit omissions
+
+`planFileParts` from `veryfront/llm` applies per-file, total, and count byte
+budgets to local files in input order without throwing for file data. It returns
+the file parts to send, each omitted file with a reason (`invalid_metadata`,
+`invalid_content`, `over_file_limit`, `over_count_limit`, or
+`over_total_budget`), and `complete`. A PDF (by `application/pdf` MIME type or
+`.pdf` filename) without a `%PDF-` header is omitted as `invalid_content`. A path or padded filename
+is omitted as `invalid_metadata`, and omitted entries report only a base name. Budgets count raw bytes and do
+not infer page or context limits.
+
 ### Breaking: unsupported file parts fail before inference
 
 File parts that a provider transport cannot send now throw a `TypeError` that
 names the file and MIME type, before any provider request. Before, they were
 dropped silently and the model answered without the file. This affects
 non-image files on Chat Completions transports, non-image and non-PDF files on
-Anthropic, remote non-image URLs on Google, and document URLs that are not
-`http` or `https` on OpenAI Responses and Anthropic. Audio and video files on
+Anthropic, remote non-image URLs on Google, document URLs that are not
+`http` or `https` on OpenAI Responses and Anthropic, and image URLs that are not
+`data:`, `http`, or `https` on every provider. Audio and video files on
 OpenAI Responses fail the same way. An inline `data:` part must be
 `data:<mime>[;<param>=<value>];base64,<payload>` with the part's MIME type, or
 it fails before inference on every provider. MIME types compare
 case-insensitively, and `image/jpg` matches `image/jpeg`. Errors show an invalid
-MIME type as `invalid media type`. Other formats that a transport accepts but a model cannot
-read still reach the provider, which rejects them.
+MIME type as `invalid media type`. Inline files on OpenAI Responses must be a
+PDF, text, code, JSON, XML, or office document, and inline files on Google must
+be an image, audio, video, PDF, text, code, JSON, or XML file. Other inline
+types, such as `application/zip`, fail before inference.
 
 OpenAI Responses requests carry only the base name of a file part's filename,
 so a stored or hand-built part with a local path does not send that path. A
@@ -35,8 +49,11 @@ annotated without their data URL. Uploaded `https` files are annotated as before
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
 send a request that carries a non-image file to the Responses API, as they
 already did for hosted tools, so those requests keep working. Mistral and
-custom OpenAI-compatible base URLs stay on Chat Completions and reject the file. OpenAI Responses sends inline `data:` files as
-`file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
+custom OpenAI-compatible base URLs do not move a request to Responses for a
+file, so Chat Completions rejects it. This includes an `OpenAIProvider` model
+created directly with a `baseURL` that is not on `api.openai.com`, such as a
+proxy or gateway. Reasoning models and hosted tools still use Responses there.
+OpenAI Responses sends inline `data:` files as `file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
 files as `inlineData`. Use `fileFromBytes` from `veryfront/llm` to build inline
 file parts from local bytes.
 

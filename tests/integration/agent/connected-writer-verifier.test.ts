@@ -250,7 +250,7 @@ for (
           };
         }
         if (attack === "filter") {
-          Array.prototype.filter = function (...args) {
+          Array.prototype.filter = function (...args: Parameters<typeof filter>) {
             if (this[0]?.kty === "RSA") leaked = true;
             return Reflect.apply(filter, this, args);
           };

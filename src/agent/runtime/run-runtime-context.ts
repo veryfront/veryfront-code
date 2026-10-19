@@ -1,5 +1,6 @@
 import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import { getRuntimeObservationWriterBinding } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { getLocalEvalIdentity } from "#veryfront/runtime/local-eval-context.ts";
 import { concatPrivateArrays, flatMapPrivateArray } from "#veryfront/security/private-array.ts";
 import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { execPrivateRegExp, replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
@@ -24,11 +25,12 @@ export function captureAgentRunRuntimeContext(now = new Date()): AgentRunRuntime
   const runStartedAtUtc = now.toISOString();
   const writer = getRuntimeObservationWriterBinding(getActiveRunEventSinks().mandatory);
   writer?.assertActive();
+  const runId = writer?.scope.canonicalRunId ?? getLocalEvalIdentity();
   return Object.freeze({
     currentTimeUtc: runStartedAtUtc,
     currentDateUtc: privateTextSlice(runStartedAtUtc, 0, 10),
     runStartedAtUtc,
-    ...(writer ? { runId: writer.scope.canonicalRunId } : {}),
+    ...(runId ? { runId } : {}),
   });
 }
 

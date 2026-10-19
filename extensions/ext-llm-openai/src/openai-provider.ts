@@ -1323,10 +1323,10 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
  */
 function requiresOpenAIResponses(
   options: OpenAICompatibleLanguageOptions,
-  providerName: string,
+  documentsOnResponses: boolean,
 ): boolean {
   return requestUsesOpenAIHostedTool(options) ||
-    (routesOpenAIDocumentInputToResponses(providerName) && promptHasDocumentInput(options.prompt));
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
 }
 
 function createOpenAIChatCompletionsOnlyRuntime(
@@ -1358,19 +1358,20 @@ function createOpenAIChatCompletionsOnlyRuntime(
 function createOpenAIAdaptiveModelRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   responsesRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
-  providerName: string,
+  documentsOnResponses: boolean,
 ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   return {
     ...chatRuntime,
     openAITransport: "auto",
+    openAIResponsesDocumentInput: documentsOnResponses,
     // Async, so a request the selected runtime rejects up front still rejects.
     async doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return await (requiresOpenAIResponses(optionsForRuntime, providerName)
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doGenerate(optionsForRuntime)
         : chatRuntime.doGenerate(optionsForRuntime));
     },
     async doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return await (requiresOpenAIResponses(optionsForRuntime, providerName)
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doStream(optionsForRuntime)
         : chatRuntime.doStream(optionsForRuntime));
     },
@@ -1470,7 +1471,7 @@ export class OpenAIProvider implements LLMProvider {
     return createOpenAIAdaptiveModelRuntime(
       chatRuntime,
       responsesRuntime,
-      providerName,
+      routesOpenAIDocumentInputToResponses(providerName, config.baseURL),
     );
   }
 

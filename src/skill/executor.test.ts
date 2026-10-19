@@ -184,6 +184,29 @@ describe("src/skill/executor", () => {
       assertEquals(result.exitCode, 0);
     });
 
+    it("binds script project and branch environment to trusted executor context", async () => {
+      for (
+        const { projectId, branch } of [
+          { projectId: "trusted-project", branch: "trusted-branch" },
+          { projectId: "trusted-project", branch: null },
+          { projectId: undefined, branch: undefined },
+        ]
+      ) {
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: 'printf "%s:%s" "$VERYFRONT_PROJECT_ID" "$VERYFRONT_BRANCH_REF"',
+          projectId,
+          branch,
+          env: {
+            VERYFRONT_PROJECT_ID: "untrusted-project",
+            VERYFRONT_BRANCH_REF: "untrusted-branch",
+          },
+        });
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stdout, `${projectId ?? ""}:${branch ?? "main"}`);
+      }
+    });
+
     it("should return timeout exit code when command exceeds timeout", async () => {
       const executor = new LocalScriptExecutor();
       const result = await executor.execute({
@@ -622,6 +645,87 @@ describe("src/skill/executor", () => {
       }
     });
 
+    for (const authSource of ["SANDBOX_AUTH_TOKEN", "VERYFRONT_API_TOKEN"] as const) {
+      it(`binds cloud script sandboxes to the trusted project with ${authSource}`, async () => {
+        setEnv(authSource, "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          (_input, init) => {
+            assertEquals(JSON.parse(String(init?.body)).project_reference, "trusted-project");
+            assertEquals(new Headers(init?.headers).get("authorization"), "Bearer sandbox-token");
+            return jsonResponse({
+              id: "project-script",
+              endpoint: "https://sandbox.example.com",
+              status: "running",
+            });
+          },
+          (_input, init) => {
+            const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            assertEquals(
+              body.files.every((file) =>
+                file.path.startsWith("/workspace/.veryfront-skill-script-")
+              ),
+              true,
+            );
+            return jsonResponse({
+              results: body.files.map((file) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            });
+          },
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          commandResponse([{ type: "stdout", data: "bound" }, { type: "exit", exitCode: 0 }]),
+          textResponse(""),
+        ]);
+        const result = await getSkillScriptExecutor().execute({
+          projectId: "trusted-project",
+          branch: "trusted-branch",
+          scriptPath: "scripts/run.sh",
+          scriptContent: "echo bound",
+          timeoutMs: 1000,
+          env: {
+            VERYFRONT_PROJECT_ID: "untrusted-project",
+            VERYFRONT_BRANCH_REF: "untrusted-branch",
+          },
+        });
+        const invocation = JSON.parse(String(fetchCalls[3]!.init?.body)) as {
+          command: string;
+          env: Record<string, string>;
+        };
+        assertEquals(invocation.env.VERYFRONT_PROJECT_ID, "trusted-project");
+        assertEquals(invocation.env.VERYFRONT_BRANCH_REF, "trusted-branch");
+        assertEquals(JSON.stringify(invocation).includes("untrusted-"), false);
+        assertEquals(result, { stdout: "bound", stderr: "", exitCode: 0 });
+        assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 1);
+      });
+    }
+
+    it("preserves sandbox rejection when trusted project binding is missing", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        (_input, init) => {
+          const body = JSON.parse(String(init?.body));
+          assertEquals(body.project_reference, undefined);
+          assertEquals(body.environment_id, undefined);
+          return textResponse("Sandbox requires a project binding", 400);
+        },
+      ]);
+      await assertRejects(
+        () =>
+          getSkillScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo unbound",
+            env: { VERYFRONT_PROJECT_ID: "untrusted-project" },
+          }),
+        Error,
+        "Failed to create sandbox",
+      );
+      assertEquals(fetchCalls.length, 1);
+    });
+
     for (const storage of ["ephemeral", "persistent"] as const) {
       it(`uploads and deletes its disposable ${storage} script workspace`, async () => {
         setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
@@ -635,6 +739,12 @@ describe("src/skill/executor", () => {
           }),
           (_input, init) => {
             const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            assertEquals(
+              body.files.every((file) =>
+                file.path.startsWith("/workspace/.veryfront-skill-script-")
+              ),
+              true,
+            );
             return jsonResponse({
               results: body.files.map((file) => ({
                 path: file.path,
@@ -671,7 +781,10 @@ describe("src/skill/executor", () => {
         assertEquals(body.files.length, 2);
         assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
         assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
-        assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+        assertStringIncludes(
+          fetchCalls[3]!.init?.body?.toString() ?? "",
+          "cd '/workspace/.veryfront-skill-script-",
+        );
       });
     }
 
@@ -1081,6 +1194,10 @@ describe("src/skill/executor", () => {
         }),
         (_input, init) => {
           const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+          assertEquals(
+            body.files.every((file) => file.path.startsWith("/workspace/.veryfront-skill-script-")),
+            true,
+          );
           return jsonResponse({
             results: body.files.map((file) => ({
               path: file.path,

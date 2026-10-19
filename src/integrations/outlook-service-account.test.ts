@@ -9,6 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { createLocalIntegrationToolSource } from "./index.ts";
 import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
@@ -240,7 +241,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     assertEquals([...new Set(readNames)], [...OUTLOOK_SERVICE_ACCOUNT_ENV_VARS]);
 
     // The catalog response transform unwraps Graph's `value` collection.
-    assertEquals(result, [{ id: "message-1" }]);
+    assertEquals(result, { value: [{ id: "message-1" }] });
     assertEquals(requests.length, 2);
     const [token, graph] = requests;
     assertEquals(token!.method, "POST");
@@ -641,7 +642,7 @@ describe("createOutlookServiceAccountToolSource", () => {
     assert(settled instanceof DOMException, String(settled));
     assertEquals(settled.message, "caller left");
 
-    assertEquals(await other, [{ id: "message-1" }]);
+    assertEquals(await other, { value: [{ id: "message-1" }] });
     assertEquals(requests.filter((request) => request.url === TOKEN_URL).length, 1);
     assertEquals(requests.length, 2);
   });
@@ -667,7 +668,9 @@ describe("createOutlookServiceAccountToolSource", () => {
     });
     const source = createSource({}, transport);
 
-    assertEquals(await source.executeTool("outlook__list_emails", {}), [{ id: "message-1" }]);
+    assertEquals(await source.executeTool("outlook__list_emails", {}), {
+      value: [{ id: "message-1" }],
+    });
     await source.executeTool("outlook__list_emails", {});
 
     assertEquals(
@@ -907,5 +910,43 @@ describe("createOutlookServiceAccountToolSource", () => {
       VeryfrontError,
     );
     assertStringIncludes(error.message, "unsupported authorization-code credentials");
+  });
+});
+
+describe("Outlook service-account attachments", () => {
+  it("moves base64 attachment content over 1 MiB through materialized tools", async () => {
+    // Base64 of a synthetic attachment just under the 3 MB Graph inline limit.
+    const contentBytes = "QUJD".repeat(1_000_000);
+    const recorded = recordingTransport();
+    const transport: LocalIntegrationEndpointTransport = (request) =>
+      request.url.origin === "https://graph.microsoft.com" && request.init.method === "GET"
+        ? Promise.resolve(Response.json({ name: "report.pdf", contentBytes }))
+        : recorded.transport(request);
+    const source = createSource(
+      {
+        allowedTools: ["outlook__add_attachment_to_message", "outlook__get_attachment"],
+        allowWrites: true,
+      },
+      transport,
+    );
+    const tools = await loadRemoteToolsFromSource(source);
+    const context = { agentId: "agent", toolCallId: "call", messages: [] } as never;
+
+    await tools.outlook__add_attachment_to_message!.execute!(
+      { messageId: "m1", name: "report.pdf", contentBytes },
+      context,
+    );
+    const downloaded = await tools.outlook__get_attachment!.execute!(
+      { messageId: "m1", attachmentId: "a1" },
+      context,
+    ) as Record<string, unknown>;
+
+    const upload = recorded.requests.find((request) =>
+      request.method === "POST" &&
+      request.url.startsWith(MAILBOX_PATH)
+    );
+    assert(upload?.body);
+    assertEquals((JSON.parse(upload.body) as Record<string, unknown>).contentBytes, contentBytes);
+    assertEquals(downloaded.contentBytes, contentBytes);
   });
 });

@@ -14,7 +14,10 @@ export interface IntegrationEndpointParam {
   exposeDefault?: boolean;
   pattern?: string;
   queryName?: string;
-  queryValueFormat?: "microsoft-graph-search" | "microsoft-graph-conversation-id";
+  queryValueFormat?:
+    | "microsoft-graph-search"
+    | "microsoft-graph-conversation-id"
+    | "microsoft-graph-skiptoken";
   headerName?: string;
 }
 

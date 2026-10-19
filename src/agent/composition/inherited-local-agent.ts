@@ -63,6 +63,13 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
+const apply = Reflect.apply;
+const AbortSignalTimeout = AbortSignal.timeout;
+const retryDrainSignal = (signal?: AbortSignal) =>
+  signal && !signal.aborted
+    ? signal
+    : apply(AbortSignalTimeout, AbortSignal, [30_000]) as AbortSignal;
+
 /** @internal Validate the result returned by durable local child execution. */
 export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
   if (
@@ -180,7 +187,11 @@ export async function runInheritedLocalAgent(
     bindToolCallStartOccurrence(start, call.occurrenceId);
     await mirror.handleChunk(start);
     startedTools.set(call.toolCallId, name);
-    await mirror.flush({ throwOnTimeoutRetry: true });
+    await mirror.flush({
+      abortSignal: retryDrainSignal(parentSignal),
+      throwOnTimeoutRetry: true,
+      waitForRetries: true,
+    });
     await mirror.appendEvents(toolStream?.admit(call.toolCallId) ?? []);
     const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
     if (!receipt) throw new Error("Inherited local tool admission missing");
@@ -190,14 +201,18 @@ export async function runInheritedLocalAgent(
   let platformRevoked = false;
   const revokePlatformTools = async () => {
     if (!platform || platformRevoked) return;
-    platformRevoked = true;
     await platform.tools.revoke(child);
+    platformRevoked = true;
   };
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     let drainFailure: { error: unknown } | undefined;
     try {
       await mirror.appendEvents(toolStream?.finish() ?? []);
-      await mirror.flush({ throwOnTimeoutRetry: true });
+      await mirror.flush({
+        abortSignal: retryDrainSignal(parentSignal),
+        throwOnTimeoutRetry: true,
+        waitForRetries: true,
+      });
     } catch (error) {
       drainFailure = { error };
     }
@@ -209,7 +224,11 @@ export async function runInheritedLocalAgent(
           terminalErrorMessage: "Child run events could not be persisted",
         }
         : state;
-    await revokePlatformTools();
+    // Finalization must not be skipped by a transient sandbox close failure.
+    // The outer finally retries the retained cleanup before releasing the owner.
+    try {
+      await revokePlatformTools();
+    } catch { /* Retained cleanup is retried by the owner-lifetime finally. */ }
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,

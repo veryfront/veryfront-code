@@ -315,6 +315,14 @@ function buildShellCommand(parts: string[]): string {
   return parts.map(shellEscapeArg).join(" ");
 }
 
+function scriptEnvironment(input: SkillScriptExecutorInput): Record<string, string> {
+  return {
+    ...input.env,
+    VERYFRONT_PROJECT_ID: input.projectId ?? "",
+    VERYFRONT_BRANCH_REF: input.branch ?? "main",
+  };
+}
+
 function isVerifiedCredentialEnvironmentKey(key: string): boolean {
   return key === "SANDBOX_AUTH_TOKEN" || isReservedTaskEnvKey(key);
 }
@@ -404,12 +412,12 @@ function setVerifiedCredentialEnvironment(
 function createSandboxScriptPath(scriptPath: string): string {
   const ext = extname(scriptPath) || ".sh";
   const suffix = crypto.randomUUID().slice(0, 8);
-  return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
+  return `/workspace/.veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
 }
 
 function createSandboxScriptRoot(): string {
   const suffix = crypto.randomUUID().slice(0, 8);
-  return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}`;
+  return `/workspace/.veryfront-skill-script-${Date.now()}-${suffix}`;
 }
 
 function getSandboxAuthOverride(): string | undefined {
@@ -491,7 +499,7 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
       const result = await runCommand(command, {
         args: finalArgs,
         cwd: input.cwd ?? materializationRoot,
-        env: input.env,
+        env: scriptEnvironment(input),
         capture: true,
         timeoutMs,
         signal: input.abortSignal,
@@ -539,9 +547,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           authToken: credential.authToken,
           projectReference: credential.projectId,
         }
-        : authToken
-        ? { authToken }
-        : undefined,
+        : {
+          projectReference: input.projectId,
+          ...(authToken ? { authToken } : {}),
+        },
     );
     try {
       const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
@@ -568,7 +577,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
-      const commandEnvironment = buildCommandEnvironment(input.env, credential !== undefined);
+      const commandEnvironment = buildCommandEnvironment(
+        scriptEnvironment(input),
+        credential !== undefined,
+      );
       if (credential) setVerifiedCredentialEnvironment(commandEnvironment, credential);
       const commandParts = credential
         ? [

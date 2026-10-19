@@ -1,5 +1,8 @@
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
@@ -7,10 +10,13 @@ import {
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
+  localIntegrationResponseTooLarge,
 } from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
+  MAX_BINARY_CONTENT_TYPE_LENGTH,
   MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
+  MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
 } from "#veryfront/integrations/limits.ts";
 import type { IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -39,6 +45,7 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const clearTimeoutIntrinsic = clearTimeout;
 const DOMExceptionConstructor = DOMException;
+const decodeUriComponent = decodeURIComponent;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
@@ -49,6 +56,7 @@ const jsonParse = JSON.parse;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsSafeInteger = Number.isSafeInteger;
+const numberMaxSafeInteger = Number.MAX_SAFE_INTEGER;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
@@ -72,6 +80,7 @@ const stringSlice = String.prototype.slice;
 const textEncoder = new TextEncoder();
 const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
+const URLSearchParamsConstructor = URLSearchParams;
 const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlSearchParams = Object.getOwnPropertyDescriptor(URL.prototype, "searchParams")?.get;
 const urlSearchParamsAppend = URLSearchParams.prototype.append;
@@ -124,6 +133,19 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
    * would not be the body that was checked.
    */
   readonly body?: string | undefined;
+  /**
+   * The catalog tool's `requiresWrite`; when absent, any non-GET call is a
+   * write. An over-limit response to a write is reported as succeeded rather
+   * than failed, so the caller does not repeat it.
+   */
+  readonly requiresWrite?: boolean | undefined;
+  /**
+   * For a binary (`response.encoding`) endpoint: return the body as raw
+   * `{ bytes, size, content_type }` up to this many bytes, instead of base64
+   * within {@link MAX_INTEGRATION_BINARY_RESPONSE_BYTES}. Only for direct
+   * callers; the result is not a JSON tool result.
+   */
+  readonly rawBinaryMaxBytes?: number;
   /** Internal test seam. Production callers use the standard integration deadline. */
   readonly timeoutMs?: number;
   /** Internal test seam. Production callers use the guarded egress transport. */
@@ -348,6 +370,21 @@ function pathSegment(value: unknown): string {
   return encoded;
 }
 
+/**
+ * Decodes a `$skiptoken` copied from `@odata.nextLink`. The link carries it
+ * URL-encoded, and URLSearchParams encodes it again, so an undecoded token would
+ * reach Graph as a different token and the next page would be lost.
+ */
+function graphSkipToken(value: string, name: string): string {
+  try {
+    return decodeUriComponent(value);
+  } catch {
+    requestInvalid(
+      `Local integration argument "${name}" must be the $skiptoken value from @odata.nextLink`,
+    );
+  }
+}
+
 function appendQueryValue(
   searchParams: URLSearchParams,
   name: string,
@@ -359,6 +396,8 @@ function appendQueryValue(
       ? `"${replaceAll(item, '"', '\\"')}"`
       : field.queryValueFormat === "microsoft-graph-conversation-id"
       ? `conversationId eq '${replaceAll(item, "'", "''")}'`
+      : field.queryValueFormat === "microsoft-graph-skiptoken"
+      ? graphSkipToken(item, name)
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
@@ -377,8 +416,20 @@ function setHeader(headers: Headers, name: string, value: string): void {
   }
 }
 
+/**
+ * Bounds a request value by the whole-request limit only, so one string such as
+ * base64 attachment content may use all of it rather than the 1 MiB default.
+ */
+function snapshotRequestJson(value: unknown) {
+  return snapshotBoundedJsonValue(
+    value,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+  );
+}
+
 function snapshotArguments(args: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotRequestJson(args);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     requestInvalid("Local integration arguments must be a bounded JSON object");
   }
@@ -479,12 +530,14 @@ function snapshotAndValidateArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
-    // Path and header arguments are fully validated here, not only where the
-    // request is built: `executeTool` mints credentials between this snapshot
-    // and `buildRequest`, so a rejection that waits for build time would
-    // already have sent the client credentials to the token endpoint.
+    // Path, query and header arguments are fully validated here, not only where
+    // the request is built: `executeTool` mints credentials between this
+    // snapshot and `buildRequest`, so a rejection that waits for build time
+    // would already have sent the client credentials to the token endpoint.
     if (field.in === "path") pathSegment(resolved.value);
-    else if (field.in === "header") {
+    else if (field.in === "query") {
+      appendQueryValue(new URLSearchParamsConstructor(), name, resolved.value, field);
+    } else if (field.in === "header") {
       setHeader(
         new HeadersConstructor(),
         field.headerName ?? name,
@@ -513,7 +566,7 @@ function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
 }
 
 function serializeJson(value: unknown): string {
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = snapshotRequestJson(value);
   if (!snapshot.success) requestInvalid("Local integration request body must be bounded JSON");
   try {
     return jsonStringify(snapshot.value);
@@ -739,16 +792,34 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
+/**
+ * Why a 2xx write response body was dropped. The provider already applied the
+ * write, so failing the call would invite the caller to repeat it.
+ */
+type OmittedResponse = "too_large" | "unreadable";
+
+class ResponseOmitted {
+  constructor(readonly reason: OmittedResponse) {}
+}
+
+/**
+ * Reads a bounded JSON body. A body that is over the limits, unreadable, or not
+ * JSON fails the call, except after a write, where it is dropped and returned
+ * as a `ResponseOmitted` instead.
+ */
 async function readResponseJson(
   response: Response,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  write: boolean,
 ): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) {
+  const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
-    responseInvalid(identity, status);
-  }
+    if (!write) responseInvalid(identity, status);
+    return new ResponseOmitted(reason);
+  };
+  if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
   try {
@@ -759,13 +830,13 @@ async function readResponseJson(
       { fatalUtf8: true },
     ));
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   if (
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
-    responseInvalid(identity, status);
+    return unusable("too_large");
   }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
@@ -773,10 +844,12 @@ async function readResponseJson(
   try {
     parsed = jsonParse(text);
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
-  const snapshot = snapshotBoundedJsonValue(parsed);
-  if (!snapshot.success) responseInvalid(identity, status);
+  // The source text is already bounded, so one string may use the whole response.
+  const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
+  // Over a structural bound (node count, depth): too large as well.
+  if (!snapshot.success) return unusable("too_large");
   return snapshot.value;
 }
 
@@ -841,35 +914,38 @@ async function readResponseBinary(
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  rawMaxBytes: number | undefined,
 ): Promise<unknown> {
+  const limit = rawMaxBytes ?? MAX_INTEGRATION_BINARY_RESPONSE_BYTES;
   const coding = responseContentCoding(response);
   // fetch decodes gzip/br bodies but keeps the encoded Content-Length, which
   // says nothing about the decoded size, so only an unencoded body is checked
   // against it. A truncated encoded stream fails in the decoder instead.
   const declared = coding === "decoded"
     ? null
-    : declaredContentLength(response, MAX_INTEGRATION_BINARY_RESPONSE_BYTES);
+    : declaredContentLength(response, numberMaxSafeInteger);
   if (coding === null || declared === false) {
     cancelResponseBody(response);
     responseInvalid(identity, status);
   }
+  if (declared !== null && declared > limit) {
+    cancelResponseBody(response);
+    localIntegrationResponseTooLarge(identity, status, limit);
+  }
   let bytes: Uint8Array;
   let truncated: boolean;
   try {
-    ({ bytes, truncated } = await readResponseBytesPrefix(
-      response,
-      MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
-      signal,
-    ));
+    ({ bytes, truncated } = await readResponseBytesPrefix(response, limit, signal));
   } catch {
     responseInvalid(identity, status);
   }
+  if (truncated) localIntegrationResponseTooLarge(identity, status, limit);
   if (!typedArrayByteLength) responseInvalid(identity, status);
   const size = apply(typedArrayByteLength, bytes, []) as number;
   // An empty body is no download at all, so it fails like a 204 instead of
   // passing as empty content.
   const lengthMismatch = declared !== null && size !== declared;
-  if (truncated || size === 0 || lengthMismatch) {
+  if (size === 0 || lengthMismatch) {
     responseInvalid(identity, status);
   }
   const rawContentType = responseHeaderValue(response, "content-type") ?? "";
@@ -879,11 +955,15 @@ async function readResponseBinary(
     parameterStart < 0 ? rawContentType : slice(rawContentType, 0, parameterStart),
     [],
   ) as string;
+  const content_type = contentType === "" ? "application/octet-stream" : contentType;
+  if (rawMaxBytes !== undefined) return freeze({ bytes, size, content_type });
+  // A bounded media type keeps the whole result within the tool result bound.
+  if (content_type.length > MAX_BINARY_CONTENT_TYPE_LENGTH) responseInvalid(identity, status);
   return freeze({
     encoding: "base64",
     content_base64: encodeBase64(bytes, size),
     size,
-    content_type: contentType === "" ? "application/octet-stream" : contentType,
+    content_type,
   });
 }
 
@@ -893,6 +973,8 @@ async function executeTransportRequest(
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   binary = false,
+  write = false,
+  rawBinaryMaxBytes?: number,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -912,34 +994,58 @@ async function executeTransportRequest(
       cancelResponseBody(response);
       responseInvalid(identity, status);
     }
-    return freeze({ status, value: await readResponseBinary(response, signal, identity, status) });
+    return freeze({
+      status,
+      value: await readResponseBinary(response, signal, identity, status, rawBinaryMaxBytes),
+    });
   }
   if (status === 204) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status),
+    value: await readResponseJson(response, signal, identity, status, write),
   });
 }
 
+/**
+ * Selects `response.transform` from a parsed body.
+ *
+ * When the selection is a list and the catalog declares paging output fields
+ * (such as `@odata.nextLink`), those fields are kept beside the list under its
+ * own key, so a caller can still request the next page.
+ */
 function transformResponse(
   value: unknown,
-  transform: string | undefined,
+  response: IntegrationEndpoint["response"],
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
 ): unknown {
+  const transform = response?.transform;
   if (transform === undefined || transform === "") return value;
+  let parent: Record<string, unknown> | undefined;
+  let segment = "";
   let current = value;
   let start = 0;
   for (let index = 0; index <= transform.length; index++) {
     if (index < transform.length && charCodeAt(transform, index) !== 46) continue;
-    const segment = slice(transform, start, index);
+    segment = slice(transform, start, index);
     if (segment === "" || !isRecord(current)) responseInvalid(identity, status);
+    parent = current;
     const next = ownValue(current, segment);
     if (!next.present) responseInvalid(identity, status);
     current = next.value;
     start = index + 1;
   }
-  return current;
+  const outputFields = response?.historicalSummary?.outputFields ?? [];
+  if (!parent || !arrayIsArray(current) || outputFields.length === 0) return current;
+  const result: Record<string, unknown> = {};
+  objectDefineProperty(result, segment, { enumerable: true, value: current });
+  for (let index = 0; index < outputFields.length; index++) {
+    const name = outputFields[index]!.name;
+    if (name === segment) continue;
+    const field = ownValue(parent, name);
+    if (field.present) objectDefineProperty(result, name, { enumerable: true, value: field.value });
+  }
+  return freeze(result);
 }
 
 /** Execute one admitted catalog REST endpoint through a bounded guarded transport. */
@@ -967,21 +1073,30 @@ export async function executeLocalIntegrationEndpoint(
       body,
     );
     const binary = isBinaryResponse(options.endpoint);
+    const write = options.requiresWrite ?? options.endpoint.method !== "GET";
     const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
       options,
       binary,
+      write,
+      options.rawBinaryMaxBytes,
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
-    return transformResponse(
-      result.value,
-      options.endpoint.response?.transform,
-      options,
-      result.status,
-    );
+    let omitted: OmittedResponse;
+    if (result.value instanceof ResponseOmitted) omitted = result.value.reason;
+    else {
+      try {
+        return transformResponse(result.value, options.endpoint.response, options, result.status);
+      } catch (cause) {
+        // A completed write must not fail on its response shape either.
+        if (!write) throw cause;
+        omitted = "unreadable";
+      }
+    }
+    return freeze({ success: true, status: result.status, response_omitted: omitted });
   } catch (cause) {
     throwIfCallerAborted(options.signal);
     throw cause;

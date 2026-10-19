@@ -37819,6 +37819,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -37933,6 +37939,13 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -37990,6 +38003,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -38375,6 +38394,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum drafts to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Drafts to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38742,6 +38767,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38800,6 +38831,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum recent messages to inspect as thread representatives",
             "default": 25,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -38910,6 +38947,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38991,6 +39034,13 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25,
+          },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
           },
           "$select": {
             "type": "string",
@@ -39102,6 +39152,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum folders to return",
             "default": 100,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
         },
         "response": {
           "transform": "value",
@@ -39154,6 +39210,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -39360,6 +39422,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum calendars to return",
             "default": 100,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Calendars to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
         },
         "response": {
           "transform": "value",
@@ -39466,6 +39534,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum events to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -39531,6 +39605,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum events to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -39780,6 +39860,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum instances to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Occurrences to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",

@@ -63,6 +63,8 @@ for (const fail of [false, true]) {
     const entered: string[] = [], revoked: string[] = [];
     const lifecycle: string[] = [];
     const admissions: string[] = [];
+    let transientAdmissionFailures = 0;
+    let transientRootCleanupFailures = 0;
     let admitGrandchild:
       | Parameters<ReturnType<typeof createConnectedLocalPlatformTools>["run"]>[0]["admit"]
       | undefined;
@@ -73,6 +75,10 @@ for (const fail of [false, true]) {
       if (path === "/runs") return admission(grandchildId, childId, "grandchild");
       const id = path.split("/")[2]!;
       if (path.endsWith("/events")) {
+        if (
+          id === grandchildId && body.tool_call_starts?.length > 0 &&
+          transientAdmissionFailures++ === 0
+        ) return new Response("retry", { status: 503 });
         return Response.json({
           run_id: id,
           latest_event_id: body.events.length,
@@ -127,6 +133,9 @@ for (const fail of [false, true]) {
         const runId = "runId" in owner ? owner.runId : "unexpected";
         revoked.push(runId);
         lifecycle.push(`revoke:${runId}`);
+        if (!fail && runId === "run-child" && transientRootCleanupFailures++ === 0) {
+          throw new Error("transient cleanup failure");
+        }
       },
     };
     const result = await runWithExactRuntimeRemoteToolSources([{
@@ -182,8 +191,12 @@ for (const fail of [false, true]) {
     });
     assertEquals(result.success, !fail, result.error);
     assertEquals(entered, [`child:${childId}`, `grandchild:${grandchildId}`]);
-    assertEquals(revoked, ["run-grandchild", "run-child"]);
+    assertEquals(
+      revoked,
+      fail ? ["run-grandchild", "run-child"] : ["run-grandchild", "run-child", "run-child"],
+    );
     assertEquals(admissions, [grandchildId]);
+    assertEquals(transientAdmissionFailures, 2);
     await assertRejects(
       async () =>
         await admitGrandchild!(
@@ -198,12 +211,23 @@ for (const fail of [false, true]) {
       "Inherited local tool writer is unavailable",
     );
     assertEquals(finalizations.map(({ id }) => id), [grandchildId, childId]);
-    assertEquals(lifecycle, [
-      `revoke:run-grandchild`,
-      `finalize:${grandchildId}`,
-      `revoke:run-child`,
-      `finalize:${childId}`,
-    ]);
+    assertEquals(
+      lifecycle,
+      fail
+        ? [
+          `revoke:run-grandchild`,
+          `finalize:${grandchildId}`,
+          `revoke:run-child`,
+          `finalize:${childId}`,
+        ]
+        : [
+          `revoke:run-grandchild`,
+          `finalize:${grandchildId}`,
+          `revoke:run-child`,
+          `finalize:${childId}`,
+          `revoke:run-child`,
+        ],
+    );
   });
 }
 

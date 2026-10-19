@@ -283,6 +283,32 @@ describe("Salesforce service-account integration source", () => {
     assertEquals(JSON.stringify(result).includes(clientSecret), false);
   });
 
+  it("returns one provider result string over 1 MiB within the response bound", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://example.my.salesforce.com",
+    });
+    const description = "A".repeat(2 * 1024 * 1024);
+    const transport = createTransport(({ request }) =>
+      request.url.endsWith("/services/oauth2/token")
+        ? Response.json({
+          access_token: "access-token",
+          instance_url: "https://na1.salesforce.com",
+          token_type: "Bearer",
+        })
+        : Response.json({ Id: "500000000000001", Description: description })
+    );
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    const result = await source.executeTool("salesforce__get_case", { caseId: "500000000000001" });
+
+    assertEquals(result, { Id: "500000000000001", Description: description });
+  });
+
   it("uses the active project credential scope without host fallback", async () => {
     setCredentials({
       [CLIENT_ID_ENV]: "host-client-id",

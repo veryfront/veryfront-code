@@ -325,8 +325,13 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // For query params only: provider-specific formatting applied to the value
     // before sending. Search encloses the AQS query in double quotes. Conversation
     // ID formatting escapes the value and builds a fixed conversationId predicate.
+    // Skiptoken formatting decodes a token copied from @odata.nextLink.
     queryValueFormat: v
-      .enum(["microsoft-graph-search", "microsoft-graph-conversation-id"])
+      .enum([
+        "microsoft-graph-search",
+        "microsoft-graph-conversation-id",
+        "microsoft-graph-skiptoken",
+      ])
       .optional(),
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).

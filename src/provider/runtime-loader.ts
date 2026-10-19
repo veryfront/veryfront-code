@@ -28,6 +28,7 @@ import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
 import {
   isImageFileInput,
   readInlineFileData,
+  readRemoteFileUrl,
   unsupportedFileInputError,
 } from "./runtime-loader/inline-file.ts";
 
@@ -243,8 +244,11 @@ function toOpenAICompatibleUserContent(
       }
       continue;
     }
-    readInlineFileData(part); // Validates inline image data before inference.
-    content.push({ type: "image_url", image_url: { url: part.url } });
+    // Inline data is validated; any other image URL must be remote.
+    const url = readInlineFileData(part) === undefined
+      ? readRemoteFileUrl("Chat Completions", part)
+      : part.url;
+    content.push({ type: "image_url", image_url: { url } });
   }
 
   return content.length > 0 ? content : readTextParts(parts);

@@ -8,7 +8,10 @@
  */
 
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -1086,7 +1089,11 @@ async function executeSalesforceEndpoint(
     let result: unknown = text;
     if (contentType.includes("application/json")) {
       try {
-        const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
+        // The text is already bounded, so one string may use the whole response.
+        const snapshot = snapshotBoundedParsedJsonValue(
+          JSON.parse(text),
+          MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+        );
         if (!snapshot.success) throw new TypeError("Salesforce response is not bounded JSON");
         result = snapshot.value;
       } catch (cause) {

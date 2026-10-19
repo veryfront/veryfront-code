@@ -684,6 +684,8 @@ export function createExecuteSkillScriptTool(
       const executor = options.executor ?? getSkillScriptExecutor();
       const result = await budget.run(async (abortSignal) =>
         await executor.execute({
+          projectId: context?.projectId,
+          branch: context?.branch,
           scriptPath: validatedPath,
           scriptContent,
           scriptSnapshot,

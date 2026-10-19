@@ -45,7 +45,7 @@ import type {
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
-  "modelId" | "provider" | "modelProvider" | "openAITransport"
+  "modelId" | "provider" | "modelProvider" | "openAITransport" | "openAIResponsesDocumentInput"
 >;
 type ModelCallRequestSource =
   & Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools" | "responseFormat">
@@ -453,10 +453,10 @@ function requestUsesOpenAIHostedTool(options: ModelCallRequestSource): boolean {
 /** Whether a request moves to Responses on an unpinned `auto` transport. */
 function requestRequiresOpenAIResponses(
   options: ModelCallRequestSource,
-  providerName: string | undefined,
+  documentsOnResponses: boolean,
 ): boolean {
   return requestUsesOpenAIHostedTool(options) ||
-    (routesOpenAIDocumentInputToResponses(providerName) && promptHasDocumentInput(options.prompt));
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
 }
 
 function managedOpenAITransport(
@@ -471,7 +471,10 @@ function managedOpenAITransport(
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
   // The unpinned plan builds the adaptive runtime as "veryfront-cloud".
-  const requiresResponses = requestRequiresOpenAIResponses(options, "veryfront-cloud");
+  const requiresResponses = requestRequiresOpenAIResponses(
+    options,
+    routesOpenAIDocumentInputToResponses("veryfront-cloud"),
+  );
   const built = readVeryfrontCloudModelFacts(model);
   if (built) {
     if (built.transportPlan.pinned) return built.transportPlan.transport;
@@ -490,8 +493,12 @@ function directOpenAITransport(
   }
   if (model.openAITransport !== "auto" || !usesOpenAIBuilder(model)) return undefined;
   const providerName = openAIProviderName(model);
+  // The runtime records its base URL decision; a model without it uses the default URL.
+  const documentsOnResponses = typeof model.openAIResponsesDocumentInput === "boolean"
+    ? model.openAIResponsesDocumentInput
+    : routesOpenAIDocumentInputToResponses(providerName);
   return isOpenAIReasoningModel(model.modelId, providerName) ||
-      requestRequiresOpenAIResponses(options, providerName)
+      requestRequiresOpenAIResponses(options, documentsOnResponses)
     ? "responses"
     : "chat-completions";
 }
