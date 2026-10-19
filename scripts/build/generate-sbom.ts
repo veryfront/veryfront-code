@@ -103,9 +103,28 @@ function hashFromIntegrity(
   integrity: string | undefined,
 ): { alg: string; content: string } | undefined {
   if (!integrity) return undefined;
-  const m = integrity.match(/^sha(256|384|512)-(.+)$/);
+  const m = integrity.match(/^sha(256|384|512)-(.*)$/);
   if (!m) return undefined;
-  return { alg: `SHA-${m[1]}`, content: m[2] };
+  let bytes: string;
+  try {
+    bytes = atob(m[2]);
+  } catch {
+    throw new Error(`Invalid SHA-${m[1]} integrity checksum`);
+  }
+  const canonical = btoa(bytes);
+  if (
+    bytes.length !== Number(m[1]) / 8 ||
+    (m[2] !== canonical && m[2] !== canonical.replace(/=+$/, ""))
+  ) {
+    throw new Error(`Invalid SHA-${m[1]} integrity checksum`);
+  }
+  return {
+    alg: `SHA-${m[1]}`,
+    content: Array.from(
+      bytes,
+      (byte) => byte.charCodeAt(0).toString(16).padStart(2, "0"),
+    ).join(""),
+  };
 }
 
 export function componentsFromLock(lockText: string): CycloneDXComponent[] {
@@ -292,7 +311,10 @@ function sortComponents(
 }
 
 function normalizeWorkspaceMemberPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/(?<!\/)\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(
+    /(?<!\/)\/+$/,
+    "",
+  );
 }
 
 export function workspaceMembersFromDenoConfig(
