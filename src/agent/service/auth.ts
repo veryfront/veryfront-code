@@ -1,3 +1,7 @@
+import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { Buffer as NativeBuffer } from "node:buffer";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { RuntimeRunAgentInput } from "#veryfront/internal-agents/schema.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -19,6 +23,11 @@ import {
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 
+const PublicKey = createPublicKey;
+const VerifySignature = verifySignature;
+const BufferFrom = NativeBuffer.from;
+const BufferToString = NativeBuffer.prototype.toString;
+const ResponseJson = Response.prototype.json;
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const DateNow = Date.now;
@@ -1219,3 +1228,96 @@ export function createHostedServiceAuth(
 
 export const createAgentServiceAuth = createHostedServiceAuth;
 export const isAgentServiceAuthError = isHostedServiceAuthError;
+
+/** Verify a connected worker's writer using the configured API's public signing keys. */
+export function createConnectedLocalWriterVerifier(
+  apiUrl: string,
+): (
+  input: HostedServiceRunEventAppendTokenInput,
+) => Promise<HostedServiceRunEventAppendTokenResult> {
+  const origin = new URL(apiUrl).origin;
+  const configured = [
+    "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
+    "VERYFRONT_PUBLIC_API_BASE_URL",
+  ] as const;
+  const trustedOrigin = configured.some((key) => {
+    const value = getHostBootEnv(key);
+    try {
+      return value !== undefined && new URL(value).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+  const transport = createVeryfrontApiOriginBoundOutboundFetch(origin);
+  const endpoint = new URL("/.well-known/jwks.json", origin);
+  let keys: Promise<Array<Record<string, unknown>>> | undefined;
+  return async (input) => {
+    if (!trustedOrigin || !isSafeHostedJwtVerificationEnvironment()) return { verified: false };
+    try {
+      const [headerText, payloadText, signature, extra] = input.token.split(".");
+      if (!headerText || !payloadText || !signature || extra !== undefined) {
+        return { verified: false };
+      }
+      const header = privateJsonParse(
+        ReflectApply(
+          BufferToString,
+          ReflectApply(BufferFrom, NativeBuffer, [headerText, "base64url"]),
+          [],
+        ),
+      );
+      if (header.alg !== "RS256") return { verified: false };
+      keys ??= transport(endpoint, { redirect: "error" }).then(async (response) => {
+        if (!response.ok) throw new Error("API signing keys are unavailable");
+        const document = await ReflectApply(ResponseJson, response, []);
+        if (!Array.isArray(document.keys)) throw new Error("Invalid API signing keys");
+        return document.keys;
+      }).catch((error) => {
+        keys = undefined;
+        throw error;
+      });
+      const candidates = (await keys).filter((key) =>
+        key.kty === "RSA" &&
+        (header.kid === undefined || key.kid === header.kid) &&
+        (key.alg === undefined || key.alg === "RS256") &&
+        (key.use === undefined || key.use === "sig")
+      );
+      if (candidates.length !== 1) return { verified: false };
+      const key = PublicKey({ key: candidates[0]!, format: "jwk" });
+      if (
+        !VerifySignature(
+          "RSA-SHA256",
+          ReflectApply(BufferFrom, NativeBuffer, [`${headerText}.${payloadText}`]),
+          key,
+          ReflectApply(BufferFrom, NativeBuffer, [signature, "base64url"]),
+        )
+      ) return { verified: false };
+      const payload = privateJsonParse(
+        ReflectApply(
+          BufferToString,
+          ReflectApply(BufferFrom, NativeBuffer, [payloadText, "base64url"]),
+          [],
+        ),
+      );
+      const now = DateNow() / 1000;
+      if (
+        typeof payload.exp !== "number" || !NumberIsFinite(payload.exp) || payload.exp <= now ||
+        payload.agentId !== input.agentId ||
+        (payload.nbf !== undefined && payload.nbf > now) ||
+        !hasValidRunEventWriterIdentity(payload, {
+          VERYFRONT_API_URL: apiUrl,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
+        }, input)
+      ) return { verified: false };
+      const dependencies = payload.platformToolDependencies === undefined
+        ? undefined
+        : readPlatformToolDependencies(payload.platformToolDependencies);
+      if (!hasValidWriterDependencyScope(dependencies, input, payload)) return { verified: false };
+      const result = { verified: true };
+      recordVerifiedWriterGrants(result, input, { agentId: payload.agentId, dependencies });
+      return result;
+    } catch {
+      return { verified: false };
+    }
+  };
+}

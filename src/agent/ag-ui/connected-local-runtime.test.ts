@@ -1,3 +1,5 @@
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { generateKeyPairSync, sign } from "node:crypto";
 import {
   executeLocalChild,
   observeAdmittedAgentToolCalls,
@@ -589,6 +591,25 @@ describe("connected local execution", () => {
     const messageId = "44444444-4444-4444-8444-444444444444";
     const canonicalRunId = "55555555-5555-4555-8555-555555555555";
     const runId = "run-connected-tools";
+    const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const signed = `${encode({ alg: "RS256", kid: "local-test" })}.${
+      encode({
+        projectId,
+        runId,
+        agentId: "coder",
+        userId: "server",
+        serviceAccountId: "server",
+        actorType: "service_account",
+        tokenUse: "run_event_writer",
+        scopes: ["agent-runs:events:append"],
+        exp: Math.floor(Date.now() / 1000) + 60,
+        platformToolDependencies: [],
+      })
+    }`;
+    const writerToken = `${signed}.${
+      sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")
+    }`;
     const terminalToken = `header.${
       btoa(JSON.stringify({
         runId,
@@ -607,6 +628,11 @@ describe("connected local execution", () => {
     };
     const fetch = ((input: string | URL | Request) => {
       const path = new URL(String(input)).pathname;
+      if (path === "/.well-known/jwks.json") {
+        return Promise.resolve(
+          Response.json({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "local-test" }] }),
+        );
+      }
       if (path.endsWith("/workers")) {
         return Promise.resolve(Response.json({ worker, token: "worker-token" }));
       }
@@ -637,7 +663,7 @@ describe("connected local execution", () => {
           },
           credentials: {
             auth_token: "run-auth-token",
-            run_event_token: "run-event-token",
+            run_event_token: writerToken,
             run_terminal_token: terminalToken,
             inference_token: "run-inference-token",
           },
@@ -665,59 +691,62 @@ describe("connected local execution", () => {
     toolRegistryInternal.register(registered[0]!, makeTool(registered[0]!));
     toolRegistryInternal.register(registered[1]!, makeTool(registered[1]!, "coder"));
     toolRegistryInternal.register(registered[2]!, makeTool(registered[2]!, "writer"));
-    const runtime = createConnectedLocalRuntime({
-      apiBaseUrl: "http://localhost:4400",
-      apiToken: "private",
-      projectId,
-      projectSlug: "sample",
-      studioUrl: "http://localhost:3440",
-    }, { fetch, log: () => {} });
+    Deno.env.set("VERYFRONT_API_URL", "http://localhost:4400");
+    await withMockFetch(fetch, async () => {
+      const runtime = createConnectedLocalRuntime({
+        apiBaseUrl: "http://localhost:4400",
+        apiToken: "private",
+        projectId,
+        projectSlug: "sample",
+        studioUrl: "http://localhost:3440",
+      }, { fetch, log: () => {} });
 
-    try {
-      const run = await runtime.admit({
-        agentId: "coder",
-        threadId: "thread",
-        messages: [],
-        signal: new AbortController().signal,
-      });
-      const source = createEphemeralAgent({
-        id: "coder",
-        system: "Use the project tools.",
-        tools: true,
-        knowledge: true,
-        skills: false,
-      });
-      assertEquals(source.config.tools, true);
-      assertEquals(resolveRuntimeToolLoading(source.config).mode, "deferred");
+      try {
+        const run = await runtime.admit({
+          agentId: "coder",
+          threadId: "thread",
+          messages: [],
+          signal: new AbortController().signal,
+        });
+        const source = createEphemeralAgent({
+          id: "coder",
+          system: "Use the project tools.",
+          tools: true,
+          knowledge: true,
+          skills: false,
+        });
+        assertEquals(source.config.tools, true);
+        assertEquals(resolveRuntimeToolLoading(source.config).mode, "deferred");
 
-      const prepared = await run.prepareAgent(source);
-      const preparedTools = prepared.config.tools;
-      assertEquals(preparedTools, true);
-      assertEquals(resolveRuntimeToolLoading(prepared.config).mode, "deferred");
-      const definitions = await getAvailableTools(preparedTools, {
-        callerAgentId: "coder",
-        includeIntegrationTools: false,
-        remoteToolSources: [{
-          id: "connected-remote",
-          listTools: () =>
-            Promise.resolve([{
-              name: "connected_remote_tool",
-              description: "Authorized connected remote tool",
-              parameters: { type: "object", properties: {} },
-            }]),
-          executeTool: () => Promise.resolve({ ok: true }),
-        }],
-      });
-      const names = definitions.map((definition) => definition.name);
-      assertEquals(names.includes(registered[0]!), true);
-      assertEquals(names.includes(registered[1]!), true);
-      assertEquals(names.includes(registered[2]!), false);
-      assertEquals(names.includes("connected_remote_tool"), true);
-      assertEquals(prepared.config.delegates, undefined);
-    } finally {
-      await runtime.dispose().catch(() => {});
-      for (const id of registered) toolRegistryInternal.delete(id);
-    }
+        const prepared = await run.prepareAgent(source);
+        const preparedTools = prepared.config.tools;
+        assertEquals(preparedTools, true);
+        assertEquals(resolveRuntimeToolLoading(prepared.config).mode, "deferred");
+        const definitions = await getAvailableTools(preparedTools, {
+          callerAgentId: "coder",
+          includeIntegrationTools: false,
+          remoteToolSources: [{
+            id: "connected-remote",
+            listTools: () =>
+              Promise.resolve([{
+                name: "connected_remote_tool",
+                description: "Authorized connected remote tool",
+                parameters: { type: "object", properties: {} },
+              }]),
+            executeTool: () => Promise.resolve({ ok: true }),
+          }],
+        });
+        const names = definitions.map((definition) => definition.name);
+        assertEquals(names.includes(registered[0]!), true);
+        assertEquals(names.includes(registered[1]!), true);
+        assertEquals(names.includes(registered[2]!), false);
+        assertEquals(names.includes("connected_remote_tool"), true);
+        assertEquals(prepared.config.delegates, undefined);
+      } finally {
+        await runtime.dispose().catch(() => {});
+        for (const id of registered) toolRegistryInternal.delete(id);
+      }
+    });
   });
 
   it("reuses run admission authority without appending a duplicate user message after a lost response", async () => {

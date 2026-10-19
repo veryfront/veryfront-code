@@ -1,3 +1,7 @@
+import { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
+import { createHostedRunEventWriterCapability } from "../hosted/child-run-event-writer-token.ts";
+import { hostedInheritedEventWriter } from "../hosted/terminal-credential.ts";
+import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type LocalChildInvocation,
   withLocalChildExecution,
@@ -74,6 +78,7 @@ type TerminalStatus = "completed" | "failed" | "cancelled";
 export interface ConnectedLocalRun {
   runId: string;
   conversationId: string;
+  context?: Record<string, unknown>;
   signal: AbortSignal;
   prepareAgent(agent: Agent): Promise<Agent>;
   execute<T>(operation: () => T | Promise<T>): Promise<T>;
@@ -221,6 +226,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       authToken: options.apiToken,
       fetch: transport,
     });
+  const platformTools = dependencies.client
+    ? undefined
+    : createConnectedLocalPlatformTools(options.apiBaseUrl, transport);
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
   const conversations = new Map<string, string>();
@@ -388,6 +396,33 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             throw new Error("Veryfront returned a claim for a different local run.");
           }
         }
+        const platformOwner = { runId: claim.run_id };
+        const rootScope = {
+          projectId: options.projectId,
+          runId: claim.run_id,
+          agentId: input.agentId,
+        };
+        const rootAuthority = platformTools
+          ? readExternalAgentWorkerRunAuthority(client, claim.run_id)
+          : undefined;
+        if (platformTools && rootAuthority) {
+          await platformTools.register(
+            platformOwner,
+            rootScope,
+            rootAuthority.run_event_token,
+            rootAuthority.auth_token,
+            () => readExternalAgentWorkerRunAuthority(client, claim!.run_id),
+          );
+        }
+        const rootWriter = rootAuthority
+          ? createHostedRunEventWriterCapability({
+            apiUrl: options.apiBaseUrl,
+            runId: claim.run_id,
+            canonicalRunId: accepted.id,
+            runEventAppendToken: rootAuthority.run_event_token,
+            fetch: transport,
+          })
+          : undefined;
         const url = new URL(
           `/projects/${encodeURIComponent(options.projectSlug)}`,
           options.studioUrl,
@@ -405,7 +440,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         let sequence = claim.latest_external_event_sequence;
         let latestEventId = claim.latest_event_id;
         let appendTail: Promise<unknown> = Promise.resolve();
-        const append = (events: unknown[], draining = false) => {
+        const append = (
+          events: unknown[],
+          draining = false,
+          toolCallStarts?: { occurrenceId: string; eventIndex: number }[],
+        ) => {
           if (finishing && !draining) {
             return Promise.reject(new Error("Local run event writer has ended."));
           }
@@ -423,6 +462,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               runId: claim!.run_id,
               canonicalRunId: accepted.id,
               events,
+              toolCallStarts,
               fetch: transport,
               expectedPreviousExternalEventSequence: sequence,
               expectedPreviousEventId: latestEventId,
@@ -558,6 +598,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               );
               throw error;
             } finally {
+              platformTools?.revoke(platformOwner);
               active.delete(run);
             }
           })();
@@ -609,7 +650,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               agentId: invocation.agentId,
               apiUrl: options.apiBaseUrl,
               fetch: transport,
-            });
+              verifyRunEventAppendToken: platformTools?.verify,
+            }, platformTools ? platformOwner : undefined);
             admissionAccepted = true;
             const result = await runInheritedLocalAgent(
               delegated,
@@ -618,9 +660,35 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 apiUrl: options.apiBaseUrl,
                 fetch: transport,
               },
-              createInheritedLocalInvocationExecutor(invocation, delegated),
+              async (signal, onEvent) => {
+                const invoke = createInheritedLocalInvocationExecutor(invocation, delegated);
+                if (!platformTools || "terminalReceipt" in delegated) {
+                  return invoke(signal, onEvent);
+                }
+                const writer = hostedInheritedEventWriter(delegated);
+                if (!writer) throw new Error("Connected child writer unavailable");
+                return platformTools.run({
+                  owner: delegated,
+                  scope: {
+                    projectId: options.projectId,
+                    runId: delegated.runId,
+                    agentId: invocation.agentId,
+                  },
+                  canonicalRunId: delegated.canonicalRunId ?? delegated.runId,
+                  writer,
+                  signal: signal ?? controller.signal,
+                  admit: async (call, name, args) => {
+                    // The inherited mirror shares its own cursor and owns this append.
+                    const { admitInheritedLocalTool } = await import(
+                      "../composition/inherited-local-agent.ts"
+                    );
+                    return admitInheritedLocalTool(delegated, call, name, args);
+                  },
+                }, () => invoke(signal, onEvent));
+              },
               controller.signal,
               true,
+              Boolean(platformTools),
             );
             if (!result.success) throw new Error(result.error ?? "Local child failed.");
             return readInheritedLocalChildResult(result.output);
@@ -641,7 +709,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             async (id, name, input) => {
               const agentId = admittedChildAgentId(name, input);
               admittedTools.set(id, { name, agentId });
-              if (!persistedToolStarts.has(id)) {
+              if (!platformTools && !persistedToolStarts.has(id)) {
                 persistedToolStarts.add(id);
                 streamMirror.enqueue(
                   encoder.encode({ type: "tool-input-start", toolCallId: id, toolName: name }),
@@ -653,12 +721,54 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             childScope.signal,
           );
         const run: ConnectedLocalRun = {
-          runId: accepted.id,
+          runId: claim.run_id,
           conversationId,
+          context: {
+            projectId: options.projectId,
+            projectSlug: options.projectSlug,
+            agentId: input.agentId,
+          },
           signal: controller.signal,
           finish,
           execute: (operation) =>
-            runWithMandatoryRunEventSink(sink, () => executeWithLocalChildScope(operation)),
+            runWithMandatoryRunEventSink(
+              sink,
+              () =>
+                platformTools && rootWriter
+                  ? platformTools.run({
+                    owner: platformOwner,
+                    scope: rootScope,
+                    canonicalRunId: accepted.id,
+                    writer: rootWriter,
+                    signal: controller.signal,
+                    admit: async (call, name, args) => {
+                      await streamMirror.flush();
+                      const result = await append(
+                        [{
+                          type: "TOOL_CALL_START",
+                          toolCallId: call.toolCallId,
+                          toolCallName: name,
+                        }, {
+                          type: "TOOL_CALL_ARGS",
+                          toolCallId: call.toolCallId,
+                          delta: JSON.stringify(args),
+                        }],
+                        false,
+                        [{ occurrenceId: call.occurrenceId, eventIndex: 0 }],
+                      );
+                      persistedToolStarts.add(call.toolCallId);
+                      const receipts = "toolCallAdmissions" in result
+                        ? result.toolCallAdmissions as AgentRunToolCallAdmissionReceipt[]
+                        : [];
+                      const receipt = receipts?.find((row) =>
+                        row.occurrenceId === call.occurrenceId
+                      );
+                      if (!receipt) throw new Error("Connected tool admission receipt missing");
+                      return receipt;
+                    },
+                  }, () => executeWithLocalChildScope(operation))
+                  : executeWithLocalChildScope(operation),
+            ),
 
           async prepareAgent(agent) {
             const assertActive = () => {

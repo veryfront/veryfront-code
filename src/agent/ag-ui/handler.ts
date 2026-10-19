@@ -229,6 +229,7 @@ function prepareAgUiStreamInput(options: {
     context: {
       // beforeStream may return a fresh context, dropping the generated-run marker.
       ...(options.beforeStreamResult?.context ?? options.context),
+      ...options.localRun?.context,
       runId: effectiveRunId,
       runIdBindsToolAuthorization,
     },

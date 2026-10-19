@@ -1,3 +1,24 @@
+import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
+import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+const localToolAdmissions = new WeakMap<
+  object,
+  (
+    call: { occurrenceId: string; toolCallId: string },
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<AgentRunToolCallAdmissionReceipt>
+>();
+/** Exact-child bridge retained only while its host-owned mirror is alive. */
+export function admitInheritedLocalTool(
+  child: object,
+  call: { occurrenceId: string; toolCallId: string },
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const admit = localToolAdmissions.get(child);
+  if (!admit) throw new Error("Inherited local tool writer is unavailable");
+  return admit(call, name, args);
+}
 import { createDurableRunEventSink } from "../hosted/durable-run-event-sink.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import {
@@ -65,6 +86,7 @@ export async function runInheritedLocalAgent(
   ) => Promise<StepResult>,
   parentSignal?: AbortSignal,
   resolveProjectModels = false,
+  toolCallAdmissions = false,
 ): Promise<StepResult> {
   const receipt = "terminalReceipt" in child
     ? child.terminalReceipt
@@ -88,6 +110,7 @@ export async function runInheritedLocalAgent(
     latestEventId: child.latestEventId,
     latestExternalEventSequence: child.latestExternalEventSequence,
     runtimeObservations: true,
+    ...(toolCallAdmissions ? { toolCallAdmissions: true as const } : {}),
   });
   if (!writer || !finalize || !admit || !mirror) {
     throw ORCHESTRATION_ERROR.create({ detail: "Inherited local agent authority is unavailable" });
@@ -141,6 +164,26 @@ export async function runInheritedLocalAgent(
       await onEvent({ type: "tool-input-start", toolCallId: id, toolName: name });
     }
   };
+  localToolAdmissions.set(child, async (call, name, args) => {
+    const start = {
+      type: "tool-input-start" as const,
+      toolCallId: call.toolCallId,
+      toolName: name,
+    };
+    bindToolCallStartOccurrence(start, call.occurrenceId);
+    await mirror.handleChunk(start);
+    startedTools.set(call.toolCallId, name);
+    await mirror.handleChunk({
+      type: "tool-input-available",
+      toolCallId: call.toolCallId,
+      toolName: name,
+      input: args,
+    });
+    await mirror.flush({ throwOnTimeoutRetry: true });
+    const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
+    if (!receipt) throw new Error("Inherited local tool admission missing");
+    return receipt;
+  });
   let pending: Promise<StepResult> | undefined;
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     await finalize({
@@ -290,6 +333,7 @@ export async function runInheritedLocalAgent(
       executionTime: 0,
     };
   } finally {
+    localToolAdmissions.delete(child);
     revokeRuntimeObservationWriterCapability(observationWriter);
     mirror.dispose();
   }
