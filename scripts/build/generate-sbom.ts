@@ -114,7 +114,7 @@ function hashFromIntegrity(
   const canonical = btoa(bytes);
   if (
     bytes.length !== Number(m[1]) / 8 ||
-    (m[2] !== canonical && m[2] !== canonical.replace(/=+$/, ""))
+    (m[2] !== canonical && m[2] !== canonical.replaceAll("=", ""))
   ) {
     throw new Error(`Invalid SHA-${m[1]} integrity checksum`);
   }
@@ -122,7 +122,7 @@ function hashFromIntegrity(
     alg: `SHA-${m[1]}`,
     content: Array.from(
       bytes,
-      (byte) => byte.charCodeAt(0).toString(16).padStart(2, "0"),
+      (byte) => byte.codePointAt(0)!.toString(16).padStart(2, "0"),
     ).join(""),
   };
 }
