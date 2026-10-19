@@ -129,9 +129,9 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
    */
   readonly body?: string | undefined;
   /**
-   * The catalog tool's `requiresWrite`. A non-GET call is treated as a write
-   * unless this is `false`, so an over-limit response to it is reported as
-   * succeeded rather than failed.
+   * The catalog tool's `requiresWrite`; when absent, any non-GET call is a
+   * write. An over-limit response to a write is reported as succeeded rather
+   * than failed, so the caller does not repeat it.
    */
   readonly requiresWrite?: boolean | undefined;
   /** Internal test seam. Production callers use the standard integration deadline. */
@@ -1036,7 +1036,7 @@ export async function executeLocalIntegrationEndpoint(
       signalLease.signal,
       options,
       binary,
-      options.endpoint.method !== "GET" && options.requiresWrite !== false,
+      options.requiresWrite ?? options.endpoint.method !== "GET",
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;

@@ -738,6 +738,19 @@ describe("local integration endpoint executor", () => {
       assertEquals(response.bodyUsed, true);
     }
 
+    // A GET the catalog marks as a write, such as a credit-consuming lookup, is one too.
+    assertEquals(
+      await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({ method: "GET", url: "https://api.example.test/enrich" }),
+        requiresWrite: true,
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(fixtures[1]!()),
+      }),
+      { success: true, status: 201, response_omitted: "too_large" },
+    );
+
     // A read-only POST, such as a query, wrote nothing, so the limit still fails it.
     const error = await assertRejects(
       () =>
