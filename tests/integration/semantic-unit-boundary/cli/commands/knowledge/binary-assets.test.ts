@@ -553,7 +553,7 @@ it("reconciles root-level assets only with exact scoped binary bytes", async () 
       const hash = await hashAssetBytes(remote);
       const controller = new AbortController();
       const client = createApiClient(
-        { apiUrl: "https://api.example.test", apiToken: "test" },
+        { apiUrl: "https://api.example.test", apiToken: "test", projectSlug: "project" },
         (url, init) => {
           const request = new URL(String(url));
           if (init?.method === "PUT") {
@@ -613,7 +613,7 @@ it("does not treat metadata authority failures as an absent companion", async ()
     for (const status of [403, 409, 503]) {
       let calls = 0;
       const client = createApiClient(
-        { apiUrl: "https://api.example.test", apiToken: "test" },
+        { apiUrl: "https://api.example.test", apiToken: "test", projectSlug: "project" },
         (_url, init) => {
           calls++;
           assertEquals(init?.method, "GET");
@@ -648,7 +648,7 @@ it("requests exact paths for extensionless and literal UUID companion names", as
     for (const path of ["asset", ID]) {
       let writes = 0;
       const client = createApiClient(
-        { apiUrl: "https://api.example.test", apiToken: "test" },
+        { apiUrl: "https://api.example.test", apiToken: "test", projectSlug: "project" },
         (url, init) => {
           const request = new URL(String(url));
           if (init?.method === "GET") {
@@ -684,4 +684,75 @@ it("requests exact paths for extensionless and literal UUID companion names", as
   } finally {
     await Deno.remove(localPath);
   }
+});
+
+it("accepts only explicitly true branch history links while preserving immutable bindings", async () => {
+  const raw = new Uint8Array([0, 255, 128]);
+  const hash = await hashAssetBytes(raw);
+  let contentPath = "";
+  let release = false;
+  let reads = 0;
+  const prefix = `/projects/${ID}/knowledge/assets/${
+    encodeURIComponent("knowledge/history/raw.bin")
+  }`;
+  const baseQuery = `branch_id=${ID}&file_version_id=${ID}&content_hash=${hash}`;
+  const client = createApiClient({
+    apiUrl: "https://api.example.test",
+    apiToken: "test",
+    projectSlug: "project",
+  }, (url) => {
+    if (!String(url).includes("bundles/export")) {
+      reads++;
+      assertEquals(String(url), `https://api.example.test${contentPath}`);
+      return Promise.resolve(
+        new Response(raw, { headers: { "content-type": "application/octet-stream" } }),
+      );
+    }
+    return Promise.resolve(Response.json({
+      project_id: ID,
+      root_path: "knowledge/history",
+      selector: { type: release ? "release" : "preview_branch", id: ID },
+      file_count: 1,
+      total_bytes: raw.length,
+      files: [{
+        kind: "binary",
+        path: "knowledge/history/raw.bin",
+        file_id: ID,
+        file_version_id: ID,
+        byte_size: raw.length,
+        content_hash: hash,
+        content_type: "application/octet-stream",
+        content_path: contentPath,
+      }],
+    }));
+  });
+  const read = () =>
+    readKnowledgeBundle({
+      client,
+      project: ID,
+      rootPath: "knowledge/history",
+      scope: release ? { kind: "release", releaseId: ID } : { kind: "branch", branchId: ID },
+    });
+  for (const suffix of ["", "&historical=true"]) {
+    contentPath = `${prefix}?${baseQuery}${suffix}`;
+    assertEquals((await read())[0]?.bytes, raw);
+  }
+  const acceptedReads = reads;
+  for (
+    const suffix of [
+      "&historical=false",
+      "&historical=1",
+      "&historical=true&historical=true",
+      "&historical=true&unknown=true",
+      `&historical=true&branch_id=${ID}`,
+      "&historical=true&release_id=" + ID,
+    ]
+  ) {
+    contentPath = `${prefix}?${baseQuery}${suffix}`;
+    await assertRejects(read, Error, "bound to its owner");
+  }
+  release = true;
+  contentPath = `${prefix}?${baseQuery.replace("branch_id", "release_id")}&historical=true`;
+  await assertRejects(read, Error, "bound to its owner");
+  assertEquals(reads, acceptedReads);
 });

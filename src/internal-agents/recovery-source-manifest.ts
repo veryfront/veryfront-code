@@ -18,10 +18,9 @@ const bufferFrom = Buffer.from;
 const bufferToString = Buffer.prototype.toString;
 const MAX_RELEASE_FILES = 10_000;
 const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
-// JSON can encode one decoded text/path byte as six ASCII escape bytes. Base64
-// expansion is smaller. Reserve fixed identity/field overhead per file and envelope.
-export const MAX_RECOVERY_SOURCE_RESPONSE_BYTES = 6 * MAX_RELEASE_BYTES +
-  MAX_RELEASE_FILES * (6 * 1_024 + 512) + 65_536;
+// The API admits at most 96 MiB of encoded manifest JSON. validatedJson/Hono
+// serializes that manifest directly, without an additional response envelope.
+export const MAX_RECOVERY_SOURCE_RESPONSE_BYTES = 96 * 1024 * 1024;
 const getReleaseFileSchema = defineSchema((v) =>
   v.object({
     path: v.string().min(1).max(1_024),

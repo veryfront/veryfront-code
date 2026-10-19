@@ -525,7 +525,7 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (++emitted <= 449) controller.enqueue(chunk);
+            if (++emitted <= 98) controller.enqueue(chunk);
             else controller.close();
           },
           cancel() {
@@ -803,7 +803,7 @@ it("empty and all-text release transport stays v1 and rejects internally consist
   }
 });
 
-it("native transport accepts maximum decoded bytes with maximum path metadata above 96 MiB", async () => {
+it("transport preserves the producer-admitted 96 MiB JSON boundary for v1 and native v2", async () => {
   const { createHash } = await import("node:crypto");
   const { Buffer } = await import("node:buffer");
   const { createRecoverySourceManifest } = await import(
@@ -812,55 +812,63 @@ it("native transport accepts maximum decoded bytes with maximum path metadata ab
   const { bindManagedRecoveryCredentials, createManagedRecoveryHttpTransport } = await import(
     "#veryfront/internal-agents/managed-recovery-http.ts"
   );
-  const bytes = Buffer.alloc(8 * 1024 * 1024, 0xff);
-  const contentBase64 = bytes.toString("base64");
-  const contentHash = createHash("sha256").update(bytes).digest("hex");
-  for (const escapedText of [false, true]) {
-    const files = Array.from({ length: 10_000 }, (_, index) => {
-      const path = `${String(index).padStart(5, "0")}${"p".repeat(1019)}`;
-      if (escapedText && index < 2) {
-        return {
-          kind: "text" as const,
-          path,
-          entityType: "virtual_file" as const,
-          content: "\u0000".repeat(8 * 1024 * 1024),
-        };
-      }
-      return index < (escapedText ? 3 : 8)
-        ? {
-          kind: "binary" as const,
-          path,
-          entityType: "virtual_file" as const,
-          contentBase64,
-          contentHash,
-          byteSize: bytes.length,
-        }
-        : { kind: "text" as const, path, entityType: "virtual_file" as const, content: "" };
-    });
-    const digest = createRecoverySourceManifest(files);
+  // Same admitted recipe exercised through the API producer and registered Hono route:
+  // two valid UTF-8 control-character text files, plus seven raw bytes for v2.
+  // Encoded JSON, rather than raw text/base64 capacity, is limited to 96 MiB.
+  for (const native of [false, true]) {
     const value = admission();
-    value.identity = { ...identity, sourceHash: digest.hash };
-    const payload = {
-      project_id: value.sourceBinding.projectId,
-      release_id: value.sourceBinding.releaseId,
-      manifest_version: 2,
-      manifest_hash: digest.hash,
-      file_count: digest.fileCount,
-      total_bytes: digest.totalBytes,
-      files: files.map((file) => ({
-        version_id: "55555555-5555-4555-8555-555555555555",
-        path: file.path,
-        entity_type: file.entityType,
-        kind: file.kind,
-        content_hash: file.kind === "binary"
-          ? file.contentHash
-          : createHash("sha256").update(file.content).digest("hex"),
-        byte_size: file.kind === "binary" ? file.byteSize : Buffer.byteLength(file.content),
-        ...(file.kind === "binary"
-          ? { content_base64: file.contentBase64 }
-          : { content: file.content }),
-      })),
+    const texts = ["\u0001".repeat(8 * 1024 * 1024), "x"];
+    const bytes = Buffer.from([239, 187, 191, 0, 255, 128, 10]);
+    const build = () => {
+      const files = texts.map((content, index) => ({
+        path: `knowledge/text-${index}.md`,
+        entityType: "virtual_file" as const,
+        ...(native ? { kind: "text" as const } : {}),
+        content,
+      }));
+      const all = native
+        ? [...files, {
+          kind: "binary" as const,
+          path: "knowledge/raw.bin",
+          entityType: "virtual_file" as const,
+          contentBase64: bytes.toString("base64"),
+          contentHash: createHash("sha256").update(bytes).digest("hex"),
+          byteSize: bytes.length,
+        }]
+        : files;
+      const digest = createRecoverySourceManifest(all);
+      const payload = {
+        project_id: value.sourceBinding.projectId,
+        release_id: value.sourceBinding.releaseId,
+        manifest_version: native ? 2 : 1,
+        manifest_hash: digest.hash,
+        file_count: digest.fileCount,
+        total_bytes: digest.totalBytes,
+        files: all.map((file, index) => ({
+          version_id: `30000000-3000-4000-8000-00000000000${index}`,
+          path: file.path,
+          entity_type: file.entityType,
+          ...(native ? { kind: file.kind } : {}),
+          content_hash: "content" in file
+            ? createHash("sha256").update(file.content).digest("hex")
+            : file.contentHash,
+          byte_size: "content" in file ? Buffer.byteLength(file.content) : file.byteSize,
+          ...("content" in file
+            ? { content: file.content }
+            : { content_base64: file.contentBase64 }),
+        })),
+      };
+      return { digest, payload };
     };
+    const cap = 96 * 1024 * 1024;
+    const seed = Buffer.byteLength(JSON.stringify(build().payload));
+    // Leave room for total_bytes digit growth, then fill the exact encoded remainder.
+    const available = cap - seed - 64;
+    texts[1] = "\u0001".repeat(Math.floor(available / 6)) + "x".repeat(available % 6);
+    texts[1] += "x".repeat(cap - Buffer.byteLength(JSON.stringify(build().payload)));
+    const { digest, payload } = build();
+    assertEquals(Buffer.byteLength(JSON.stringify(payload)), cap);
+    value.identity = { ...identity, sourceHash: digest.hash };
     const previous = Deno.env.get(envKey);
     try {
       const claims = await signed(value);
@@ -874,7 +882,6 @@ it("native transport accepts maximum decoded bytes with maximum path metadata ab
         async () => Response.json(payload),
       );
       const actual = await transport.listImmutableReleaseFiles(claims);
-      assertEquals(actual.files.length, 10_000);
       assertEquals(createRecoverySourceManifest(actual.files), digest);
     } finally {
       if (previous === undefined) Deno.env.delete(envKey);
