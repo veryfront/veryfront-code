@@ -471,8 +471,10 @@ describe("connected local execution", () => {
     }
   });
 
-  for (const structured of [false, true]) {
-    it(`finalizes ${structured ? "structured" : "text-only"} child output without a wrapper`, async () => {
+  for (
+    const [structured, observed] of [[false, false], [false, true], [true, false], [true, true]]
+  ) {
+    it(`finalizes ${structured ? "structured" : "text-only"} ${observed ? "observed" : "middleware-cached"} child output without a wrapper`, async () => {
       const childId = "22222222-2222-4222-8222-222222222222";
       const childToken = `test.${
         btoa(JSON.stringify({
@@ -562,7 +564,9 @@ describe("connected local execution", () => {
                 assertEquals(runId, "run_child");
                 assertEquals(signal?.aborted, false);
                 assert(onEvent);
-                await onEvent({ type: "text-delta", id: "child-text", delta: output.text });
+                if (observed) {
+                  await onEvent({ type: "text-delta", id: "child-text", delta: output.text });
+                }
                 return output;
               },
             });

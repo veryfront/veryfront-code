@@ -5,9 +5,9 @@ import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-/** @internal Resolve the durable output stored for an inherited child run. */
-export function terminalAgentOutput(output: unknown): unknown {
-  if (typeof output !== "object" || output === null) return output;
+/** Read only a completed framework response, not arbitrary workflow business data. */
+function terminalAgentText(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
   const text = Object.getOwnPropertyDescriptor(output, "text");
   const status = Object.getOwnPropertyDescriptor(output, "status");
   const calls = Object.getOwnPropertyDescriptor(output, "toolCalls");
@@ -17,7 +17,13 @@ export function terminalAgentOutput(output: unknown): unknown {
     !status || !("value" in status) || status.value !== "completed" ||
     !calls || !("value" in calls) ||
     (typeof calls.value !== "number" && !Array.isArray(calls.value))
-  ) return output;
+  ) return undefined;
+  return text.value;
+}
+
+/** @internal Resolve the durable output stored for an inherited child run. */
+export function terminalAgentOutput(output: unknown): unknown {
+  if (terminalAgentText(output) === undefined) return output;
   const structured = readStructuredAgentOutput(output);
   return structured ? createMessageFinishObjectObservation(structured.data) : undefined;
 }
@@ -203,8 +209,10 @@ export async function runInheritedLocalAgent(
   const startedTools = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
   const completedTools = new Set<string>();
+  let observedText = false;
   const toolStream = toolCallAdmissions ? createLocalToolStream() : undefined;
   const onEvent = async (event: AgUiRuntimeStreamEvent) => {
+    if (event.type === "text-delta" && event.delta) observedText = true;
     if (
       event.type === "tool-input-start" && typeof event.toolCallId === "string" &&
       startedTools.has(event.toolCallId) && !toolStream
@@ -270,6 +278,11 @@ export async function runInheritedLocalAgent(
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     let drainFailure: { error: unknown } | undefined;
     try {
+      const text = state.status === "completed" ? terminalAgentText(state.output) : undefined;
+      // A generate middleware can return a cached response without observing a provider turn.
+      if (!observedText && text) {
+        await onEvent({ type: "text-delta", id: `${child.messageId}:returned-text`, delta: text });
+      }
       await mirror.appendEvents(toolStream?.finish() ?? []);
       await mirror.flush({
         abortSignal: retryDrainSignal(parentSignal),
