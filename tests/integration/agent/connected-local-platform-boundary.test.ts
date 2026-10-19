@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { applyRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
 import {
   introduceToolCallOccurrence,

@@ -12,9 +12,12 @@ import {
 } from "#veryfront/runtime/run-event-sink-context.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
-import { bindProjectEventWriter, createProjectEventWriter } from "./project-event-writer.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
-import { AgentRunSessionManager } from "./session-manager.ts";
+import {
+  bindProjectEventWriter,
+  createProjectEventWriter,
+} from "../../../src/internal-agents/project-event-writer.ts";
+import { createRuntimeAgentStreamResponse } from "../../../src/internal-agents/run-stream.ts";
+import { AgentRunSessionManager } from "../../../src/internal-agents/session-manager.ts";
 
 it("binds project runtime prompt context to its writer and revokes it on completion", async () => {
   const canonicalRunId = "55555555-5555-4555-8555-555555555555";
