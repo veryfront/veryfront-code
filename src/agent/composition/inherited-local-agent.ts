@@ -122,8 +122,6 @@ function restoreInheritedAgentResponse(
   const text = Object.getOwnPropertyDescriptor(value, "text");
   const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
   const status = Object.getOwnPropertyDescriptor(value, "status");
-  // The API atomically marks every post-cutover canonical output as text-data-v1.
-  // An absent marker therefore means this is a pre-cutover legacy agent response.
   if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
   const structured = readStructuredAgentOutput(value);
   if (!text && !structured) {
@@ -147,18 +145,15 @@ function restoreInheritedAgentResponse(
   };
 }
 
-function restoredInheritedLocalChildResult(response: Record<string, unknown>): LocalChildResult {
+/** Restore the tool protocol while preserving known legacy call counts. */
+export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+  const response = restoreInheritedAgentResponse(value);
   return {
     ...response,
     text: response.text as string,
     status: response.status as string,
     ...(Array.isArray(response.toolCalls) ? { toolCalls: response.toolCalls.length } : {}),
   } as LocalChildResult;
-}
-
-/** Restore the tool protocol while preserving known legacy call counts. */
-export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
-  return restoredInheritedLocalChildResult(restoreInheritedAgentResponse(value));
 }
 
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
@@ -189,7 +184,9 @@ export async function runInheritedLocalAgent(
     return receipt.status === "completed"
       ? {
         success: true,
-        output: restoreInheritedAgentResponse(receipt.output, receipt.outputFormat),
+        output: receipt.outputFormat === "text-data-v1"
+          ? restoreInheritedAgentResponse(receipt.output, receipt.outputFormat)
+          : receipt.output,
         executionTime: 0,
       }
       : {
@@ -391,9 +388,7 @@ export async function runInheritedLocalAgent(
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
                     }
-                    const output = restoredInheritedLocalChildResult(
-                      delegatedResult.output as Record<string, unknown>,
-                    );
+                    const output = readInheritedLocalChildResult(delegatedResult.output);
                     if (!completedTools.has(toolCallId)) {
                       completedTools.add(toolCallId);
                       await mirror.handleChunk({

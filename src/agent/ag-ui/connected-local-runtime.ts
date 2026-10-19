@@ -7,10 +7,12 @@ import {
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type LocalChildInvocation,
-  type LocalChildResult,
   withLocalChildExecution,
 } from "../composition/local-child-execution.ts";
-import { runInheritedLocalAgent } from "../composition/inherited-local-agent.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+} from "../composition/inherited-local-agent.ts";
 import {
   acceptWorkflowInheritedRunAdmission,
   hostedInheritedInferenceModelResolver,
@@ -692,7 +694,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               platformTools ? { tools: platformTools, agentId: invocation.agentId } : undefined,
             );
             if (!result.success) throw new Error(result.error ?? "Local child failed.");
-            return result.output as LocalChildResult;
+            return readInheritedLocalChildResult(result.output);
           })().finally(() => {
             if (!admissionAccepted && childExecutions.get(toolCallId) === execute) {
               childExecutions.delete(toolCallId);

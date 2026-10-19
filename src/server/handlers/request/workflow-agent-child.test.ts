@@ -65,9 +65,23 @@ function admission(
   id = childId,
   publicId = "run_child",
   parent = parentId,
+  outputFormat?: "text-data-v1",
 ) {
-  return json(
-    {
+  const responseBody = outputFormat
+    ? {
+      version: 1,
+      canonicalRunId: id,
+      parentRunId: parent,
+      projectId: "11111111-1111-4111-8111-111111111111",
+      agentId: "coordinator",
+      dispatchNonce: id === childId ? "nonce" : "nonce-child",
+      conversationId,
+      outputMessageId: "44444444-4444-4444-8444-444444444444",
+      status,
+      output,
+      outputFormat,
+    }
+    : {
       id,
       status,
       output,
@@ -76,10 +90,13 @@ function admission(
       target: { type: "agent", id: "coordinator" },
       conversation_id: conversationId,
       output_message_id: "44444444-4444-4444-8444-444444444444",
-    },
+    };
+  return json(
+    responseBody,
     202,
     {
       "Cache-Control": "no-store",
+      ...(outputFormat ? { "Content-Type": "application/vnd.veryfront.inherited-run+json" } : {}),
       "X-Veryfront-Run-Terminal-Token": id === childId ? terminalToken : encode({
         tokenUse: "run_event_writer",
         writerPurpose: "current_run_terminal",
@@ -146,12 +163,7 @@ describe("workflow agent child protocol", () => {
         }),
         {
           success: true,
-          output: {
-            text: '{"result":42}',
-            data: { result: 42 },
-            object: { result: 42 },
-            status: "completed",
-          },
+          output: { result: 42 },
           executionTime: 0,
         },
       );
@@ -269,7 +281,18 @@ describe("workflow agent child protocol", () => {
         },
       ];
       const send: typeof fetch = (url) =>
-        Promise.resolve(String(url).endsWith("/runs") ? admission("completed", stored) : json({}));
+        Promise.resolve(
+          String(url).endsWith("/runs")
+            ? admission(
+              "completed",
+              stored,
+              childId,
+              "run_child",
+              parentId,
+              "data" in stored && !("object" in stored) ? "text-data-v1" : undefined,
+            )
+            : json({}),
+        );
       const run: WorkflowRun = {
         id: "run_parent",
         workflowId: "workflow",
@@ -1193,7 +1216,7 @@ describe("workflow agent child protocol", () => {
     });
     assertEquals(result, {
       success: true,
-      output: { ...output, status: "completed" },
+      output,
       executionTime: 0,
     });
     assertEquals(calls, 2);
@@ -1212,7 +1235,7 @@ describe("workflow agent child protocol", () => {
     });
     assertEquals(result, {
       success: true,
-      output: { ...output, data: output.object, status: "completed" },
+      output,
       executionTime: 0,
     });
     assertEquals(calls, 2);
@@ -1243,12 +1266,7 @@ describe("workflow agent child protocol", () => {
           throw new Error("Must replay");
         },
       });
-      assertEquals(result.output, {
-        text: '"stored"',
-        data: "stored",
-        object: "stored",
-        status: "completed",
-      });
+      assertEquals(result.output, "stored");
       assertEquals(requests, 2);
     });
   }
