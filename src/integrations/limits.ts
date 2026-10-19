@@ -36,6 +36,13 @@ export const MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const MAX_INTEGRATION_BINARY_RESPONSE_BYTES = Math.floor(JSON_VALUE_MAX_STRING_BYTES / 4) *
   3;
 
+/**
+ * Maximum raw bytes a direct file download returns, such as an Outlook
+ * attachment read with `readAttachment`. The bytes are returned as-is, never as
+ * a tool result, so no JSON bound applies. A larger body is rejected, never truncated.
+ */
+export const MAX_INTEGRATION_FILE_DOWNLOAD_BYTES = 32 * 1024 * 1024;
+
 /** Maximum diagnostic prefix retained from a failed integration API response. */
 export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;
 

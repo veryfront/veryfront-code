@@ -223,6 +223,24 @@ fails with `local-integration-request-invalid` on upload, or
 on the managed hosted executor still limit each whole tool result to just under
 1 MiB, so there `outlook__get_attachment` returns attachments up to about 750 KB.
 
+To read a larger attachment in project code, call `readAttachment` on the
+source. It requires `outlook__get_attachment` or
+`outlook__get_shared_mailbox_attachment` in `allowedTools`, and returns the raw
+bytes from Graph `/$value` instead of base64 JSON, up to 32 MiB. A larger
+attachment fails with `local-integration-response-invalid`; it is never
+truncated. Pass the bytes to `planFileParts`, which reports every file it
+leaves out:
+
+```ts title="lib/read-attachment.ts"
+import { planFileParts } from "veryfront/llm";
+
+const content = await outlookSource.readAttachment({ messageId, attachmentId });
+const plan = planFileParts({
+  files: [{ bytes: content.bytes, filename: "report.pdf", mediaType: content.contentType }],
+  maxFileBytes: 10 * 1024 * 1024,
+});
+```
+
 The source exchanges the client secret at
 `login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token
 in process memory until shortly before it expires. It stores no refresh token
