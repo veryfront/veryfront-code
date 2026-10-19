@@ -228,6 +228,35 @@ describe("OutputFilter", () => {
 });
 
 describe("securityMiddleware", () => {
+  it("filters data-only structured output and emits compatible aliases", async () => {
+    const result = await securityMiddleware({
+      output: { filterPII: true, blockedPatterns: [/secret/gi] },
+    })(
+      createContext(),
+      () =>
+        Promise.resolve({
+          ...createResponse("ok"),
+          data: { email: "john@example.com", note: "secret" },
+        }),
+    );
+    assertEquals(result.data, { email: "[EMAIL]", note: "[REDACTED]" });
+    assertEquals(result.object, result.data);
+  });
+
+  it("rejects conflicting structured aliases before either can bypass filtering", async () => {
+    await assertRejects(
+      () =>
+        securityMiddleware({ output: { filterPII: true } })(createContext(), () =>
+          Promise.resolve({
+            ...createResponse("ok"),
+            data: { email: "john@example.com" },
+            object: { email: "safe" },
+          })),
+      Error,
+      "aliases conflict",
+    );
+  });
+
   it("rejects structured input that cannot be inspected without hiding readable blocked fields", async () => {
     let reads = 0;
     const accessorInput = { query: "synthetic-blocked-input" };
