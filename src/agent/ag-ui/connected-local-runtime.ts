@@ -1,3 +1,4 @@
+import { createLocalToolStream } from "./local-tool-stream.ts";
 import { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
 import {
   createHostedRunEventWriterCapability,
@@ -525,6 +526,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         };
         const admittedTools = new Map<string, { name: string; agentId?: string }>();
         const persistedToolStarts = new Set<string>();
+        const toolStream = platformTools ? createLocalToolStream() : undefined;
         const childExecutions = new Map<
           string,
           Promise<import("../composition/local-child-execution.ts").LocalChildResult>
@@ -578,6 +580,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             await Promise.allSettled(childExecutions.values());
             let appendError: unknown;
             try {
+              streamMirror.enqueue(toolStream?.finish() ?? []);
               await streamMirror.flush();
               await appendTail;
             } catch (error) {
@@ -771,6 +774,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                         [{ occurrenceId: call.occurrenceId, eventIndex: 0 }],
                       );
                       persistedToolStarts.add(call.toolCallId);
+                      streamMirror.enqueue(toolStream?.admit(call.toolCallId) ?? []);
                       const receipts = "toolCallAdmissions" in result
                         ? result.toolCallAdmissions as AgentRunToolCallAdmissionReceipt[]
                         : [];
@@ -778,6 +782,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                         row.occurrenceId === call.occurrenceId
                       );
                       if (!receipt) throw new Error("Connected tool admission receipt missing");
+                      await streamMirror.flush();
                       return receipt;
                     },
                   }, () => executeWithLocalChildScope(operation))
@@ -880,7 +885,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                   }
                   mapRuntimeStreamEventToAgUiEvents(streamState, event);
                   if (event.type === "message-finish") finished = true;
-                  const events = encodeMirroredStreamEvents(event, encoder, persistedToolStarts);
+                  const encoded = encodeMirroredStreamEvents(event, encoder, persistedToolStarts);
+                  const events = toolStream ? toolStream.encode(encoded) : encoded;
                   if (events.length) {
                     streamMirror.enqueue(events);
                     // Bound backlog while allowing ordinary deltas to reach the browser

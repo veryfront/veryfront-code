@@ -1,3 +1,4 @@
+import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 const localToolAdmissions = new WeakMap<
@@ -126,31 +127,31 @@ export async function runInheritedLocalAgent(
   const startedTools = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
   const completedTools = new Set<string>();
+  const toolStream = toolCallAdmissions ? createLocalToolStream() : undefined;
   const onEvent = async (event: AgUiRuntimeStreamEvent) => {
     if (
       event.type === "tool-input-start" && typeof event.toolCallId === "string" &&
-      startedTools.has(event.toolCallId)
+      startedTools.has(event.toolCallId) && !toolStream
     ) return;
     const events = mapRuntimeStreamEventToAgUiEvents(encoder, event).map((
       { event: type, payload },
     ) => coerceWireEvent(type, payload));
-    await mirror.appendEvents(
-      events.filter((event): event is Record<string, unknown> & { type: string } => {
-        if (typeof event.type !== "string") throw new Error("Invalid encoded stream event");
-        const id = "toolCallId" in event ? event.toolCallId : undefined;
-        if (typeof id !== "string") return true;
-        if (event.type === "TOOL_CALL_START") {
-          if (startedTools.has(id)) return false;
-          startedTools.set(id, typeof event.toolCallName === "string" ? event.toolCallName : "");
-        }
+    const filtered = events.filter((event): event is Record<string, unknown> & { type: string } => {
+      if (typeof event.type !== "string") throw new Error("Invalid encoded stream event");
+      const id = "toolCallId" in event ? event.toolCallId : undefined;
+      if (typeof id !== "string") return true;
+      if (event.type === "TOOL_CALL_START") {
+        if (startedTools.has(id) && !toolStream) return false;
+        startedTools.set(id, typeof event.toolCallName === "string" ? event.toolCallName : "");
+      }
 
-        if (event.type === "TOOL_CALL_RESULT") {
-          if (completedTools.has(id)) return false;
-          completedTools.add(id);
-        }
-        return true;
-      }),
-    );
+      if (event.type === "TOOL_CALL_RESULT") {
+        if (completedTools.has(id)) return false;
+        completedTools.add(id);
+      }
+      return true;
+    });
+    await mirror.appendEvents(toolStream ? toolStream.encode(filtered) : filtered);
   };
   const admitTool = async (id: string, name: string, input: unknown) => {
     toolInputs.set(
@@ -174,12 +175,15 @@ export async function runInheritedLocalAgent(
     await mirror.handleChunk(start);
     startedTools.set(call.toolCallId, name);
     await mirror.flush({ throwOnTimeoutRetry: true });
+    await mirror.appendEvents(toolStream?.admit(call.toolCallId) ?? []);
     const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
     if (!receipt) throw new Error("Inherited local tool admission missing");
     return receipt;
   });
   let pending: Promise<StepResult> | undefined;
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
+    await mirror.appendEvents(toolStream?.finish() ?? []);
+    await mirror.flush({ throwOnTimeoutRetry: true });
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,
