@@ -716,6 +716,8 @@ jobs:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/cli/mcp-startup-output.test.ts \
+            tests/integration/cli/mcp/notification-transport.test.ts \
             tests/integration/cli/dev/proxy-mode.test.ts \
             tests/integration/cli/dev/display-options.test.ts \
             tests/integration/cli/pull/project-bootstrap.test.ts \
