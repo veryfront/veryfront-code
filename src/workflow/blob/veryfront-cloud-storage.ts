@@ -548,7 +548,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       // Reads return the data object, and stat() trusts the metadata sidecar. An overwrite writes the
       // sidecar first and the data last, so a put that fails at either step leaves the blob readable as
       // it was, and restores the previous sidecar (or removes the new one). A new blob writes the data
-      // first, so it is not reported before its data exists, and a failed put removes both.
+      // first, so it is not reported before its data exists, and a failed put removes both. Two
+      // uploads cannot commit together: when a data upload commits but its response is lost, the
+      // data is new and the restored sidecar is old until the next successful put.
       const previousMetadata = await this.#downloadUploadText(
         metadataPath,
         resolved,
