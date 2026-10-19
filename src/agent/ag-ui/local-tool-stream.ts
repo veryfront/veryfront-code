@@ -1,34 +1,47 @@
 type ToolEvent = { type: string; toolCallId?: unknown };
 
-/** Keep streamed tool input behind its execution-owned durable start. */
+/** Keep streamed events ordered behind execution-owned durable tool starts. */
 export function createLocalToolStream() {
   const admitted = new Set<string>();
-  const pending = new Map<string, ToolEvent[]>();
+  const started = new Set<string>();
+  const pending: ToolEvent[] = [];
+  const toolId = (event: ToolEvent) =>
+    event.type.startsWith("TOOL_CALL_") && typeof event.toolCallId === "string"
+      ? event.toolCallId
+      : undefined;
+  const drain = (finishing = false): ToolEvent[] => {
+    const events: ToolEvent[] = [];
+    let consumed = 0;
+    while (consumed < pending.length) {
+      const event = pending[consumed]!;
+      const id = toolId(event);
+      if (!finishing && id !== undefined && !admitted.has(id)) break;
+      consumed++;
+      if (event.type !== "TOOL_CALL_START" || id === undefined || !admitted.has(id)) {
+        events.push(event);
+      }
+    }
+    pending.splice(0, consumed);
+    return events;
+  };
   return {
-    encode<T extends ToolEvent>(events: T[]): T[] {
-      return events.filter((event) => {
-        const id = event.toolCallId;
-        if (typeof id !== "string" || !event.type.startsWith("TOOL_CALL_")) return true;
-        if (admitted.has(id)) return event.type !== "TOOL_CALL_START";
-        const buffered = pending.get(id) ?? [];
-        if (
-          event.type !== "TOOL_CALL_START" ||
-          !buffered.some((pending) => pending.type === "TOOL_CALL_START")
-        ) buffered.push(event);
-        pending.set(id, buffered);
-        return false;
-      });
+    encode(events: ToolEvent[]): ToolEvent[] {
+      for (const event of events) {
+        const id = toolId(event);
+        if (event.type === "TOOL_CALL_START" && id !== undefined) {
+          if (started.has(id) || admitted.has(id)) continue;
+          started.add(id);
+        }
+        pending.push(event);
+      }
+      return drain();
     },
     admit(id: string): ToolEvent[] {
       admitted.add(id);
-      const events = pending.get(id) ?? [];
-      pending.delete(id);
-      return events.filter((event) => event.type !== "TOOL_CALL_START");
+      return drain();
     },
     finish(): ToolEvent[] {
-      const events = Array.from(pending.values()).flat();
-      pending.clear();
-      return events;
+      return drain(true);
     },
   };
 }

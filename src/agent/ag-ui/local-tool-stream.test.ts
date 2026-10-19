@@ -70,3 +70,35 @@ for (const path of ["root", "inherited"]) {
     });
   }
 }
+
+for (const execution of [true, false]) {
+  it(`preserves interleaved stream order for ${execution ? "admitted" : "stream-only"} tools`, () => {
+    const stream = createLocalToolStream();
+    const before = { type: "TEXT_MESSAGE_START" };
+    const following = [
+      { type: "CUSTOM", name: "usage" },
+      { type: "TEXT_MESSAGE_START" },
+      { type: "TEXT_MESSAGE_CONTENT", delta: "done" },
+      { type: "TEXT_MESSAGE_END" },
+      { type: "STEP_FINISHED" },
+    ];
+    const persisted = [...stream.encode([before, start, args])];
+    persisted.push(...stream.encode([end, ...following]));
+    assertEquals(persisted, [before]);
+    if (execution) persisted.push(start, ...stream.admit("call"));
+    persisted.push(...stream.finish());
+    assertEquals(persisted, [before, start, args, end, ...following]);
+  });
+}
+
+it("holds later admitted tool input behind an earlier pending stream call", () => {
+  const stream = createLocalToolStream();
+  const otherStart = { ...start, toolCallId: "other" };
+  const otherArgs = { ...args, toolCallId: "other" };
+  const custom = { type: "CUSTOM" };
+  assertEquals(stream.encode([start, args, otherStart, otherArgs, custom, end]), []);
+  assertEquals(stream.admit("other"), []);
+  // The later call's receipt already persisted its own start; queued stream data
+  // still retains its order behind the earlier call.
+  assertEquals(stream.finish(), [start, args, otherArgs, custom, end]);
+});
