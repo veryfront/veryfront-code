@@ -33,6 +33,7 @@ import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { terminalAgentOutput } from "./inherited-local-agent.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -473,6 +474,23 @@ describe("agentAsTool", () => {
     );
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
+  it("snapshots an explicit undefined structured result for inherited persistence", () => {
+    assertEquals(
+      terminalAgentOutput({
+        text: '{"city":"Berlin"}',
+        data: undefined,
+        object: undefined,
+        toolCalls: 0,
+        status: "completed",
+      }),
+      {
+        captureStatus: "unsupported",
+        reasons: ["unsupported_undefined"],
+        value: "[unsupported undefined]",
+      },
+    );
   });
 
   it("ignores an object value the child response only inherits", async () => {

@@ -604,8 +604,8 @@ it will never open.
 
 Set `outputSchema` to constrain every response to a schema. Veryfront maps it to
 the selected provider's native structured-output field, then parses and
-validates the model's text back into `response.object`, typed from the schema
-with no annotation of your own.
+validates the model's text back into `response.data`, typed from the schema
+with no annotation of your own. `response.object` remains a compatibility alias.
 
 ```ts
 // agents/weather.ts
@@ -640,13 +640,13 @@ const result = await weather.generate({
   outputSchema: getForecastSchema(),
 });
 
-console.log(result.object.city); // string
-console.log(result.object.tempC); // number
+console.log(result.data.city); // string
+console.log(result.data.tempC); // number
 ```
 
 Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
-instead; a per-call schema replaces the configured one. `generate()` returns an
-`object` typed from the per-call schema when you pass one. A raw JSON Schema
+instead; a per-call schema replaces the configured one. `generate()` returns
+`data` typed from the per-call schema when you pass one. A raw JSON Schema
 object is accepted in both places and is sent to the provider unchanged.
 
 A requested schema is never dropped silently. A model runtime that does not
@@ -655,7 +655,8 @@ does not validate raises rather than returning a partial object.
 
 A run that stops at the step limit still returns its partial result instead of
 raising. On that path the final assistant text is parsed best effort: a
-successful parse sets `response.object`, and a parse or validation failure sets
+successful parse sets `response.data` and its `response.object` compatibility alias,
+while a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
@@ -666,7 +667,8 @@ agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
 
-`response.object` in your own code is always the parsed value. The snapshot
+`response.data` in your own code is always the parsed value; `response.object`
+contains the same value for compatibility. The snapshot
 equals it when the value is plain JSON (strings, finite numbers, booleans,
 `null`, arrays and plain objects) and stays within the size limits below.
 Otherwise, for example when an `outputSchema` transform returns a `Date`, a
@@ -811,7 +813,7 @@ export default agent({
 | `bootstrapTools`         | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                                   |
 | `optionalBootstrapTools` | `string[]`                                                                                             | Up to 16 exact tool names exposed initially only when already authorized and provider capacity permits; missing or denied tools are skipped |
 | `bootstrapSkill`         | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                                           |
-| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                                            |
+| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.data` (`response.object` remains an alias)                         |
 | `temperature`            | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                                    |
 | `maxSteps`               | `number`                                                                                               | Max tool-call iterations per request                                                                                                        |
 | `parallelToolCalls`      | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                                       |

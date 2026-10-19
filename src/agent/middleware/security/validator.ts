@@ -2004,8 +2004,11 @@ export function securityMiddleware(
     reportViolations(outputFiltering.violations, config.onViolation);
 
     const structured = readStructuredAgentOutput(result);
-    if (!structured || structured.data === undefined) {
+    if (!structured) {
       return { ...result, text: outputFiltering.filtered };
+    }
+    if (structured.data === undefined) {
+      return { ...result, text: outputFiltering.filtered, ...structured };
     }
 
     const objectFiltering = await filterStructuredOutputValue(structured.data, outputFilter);

@@ -1080,7 +1080,8 @@ function readMessageFinishObjectObservation(input: unknown): MessageFinishObject
   }
 }
 
-function createMessageFinishObjectObservation(
+/** @internal Snapshot a structured agent result for durable run output. */
+export function createMessageFinishObjectObservation(
   object: unknown,
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
   encoding: "value" | "snapshot" = "value",
@@ -2073,10 +2074,11 @@ function finalizeAgUiEventsUnstamped(
   appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
   let finishObject = state.finishObject;
-  if (finishObject === undefined && response && objectHasOwn(response, "object")) {
-    let value = createMessageFinishObjectObservation(response.object);
+  const structured = response ? readStructuredAgentOutput(response) : undefined;
+  if (finishObject === undefined && structured) {
+    let value = createMessageFinishObjectObservation(structured.data);
     if (!isMessageFinishMetadataValueWithinDurableBudget({ object: value })) {
-      value = createMessageFinishObjectObservationWithinDurableBudget({}, response.object);
+      value = createMessageFinishObjectObservationWithinDurableBudget({}, structured.data);
     }
     finishObject = { value };
   }

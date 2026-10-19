@@ -537,8 +537,9 @@ export interface AgentStreamInput {
   onToolCall?: (toolCall: ToolCall) => void;
   onChunk?: (chunk: string) => void;
   /**
-   * Receives the completed response, including the parsed `object` when an
-   * `outputSchema` applies. The payload is the erased response type; use
+   * Receives the completed response, including parsed `data` when an
+   * `outputSchema` applies (`object` is its compatibility alias). The payload is
+   * the erased response type; use
    * `generate()` when the parsed value needs to arrive typed.
    */
   onFinish?: (response: AgentResponse) => void;

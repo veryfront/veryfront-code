@@ -1380,6 +1380,20 @@ describe("agent/ag-ui-encoder", () => {
     }
   });
 
+  it("uses a data-only final response as the RunFinished result", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "done" });
+    const finished = finalizeAgUiEvents(state, {
+      text: "done",
+      data: { answer: 42 },
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    }).find((event) => event.event === "RunFinished");
+
+    assertEquals(finished?.payload.result, { answer: 42 });
+  });
+
   it("preserves authored envelope fields when their value requires a snapshot", () => {
     for (
       const fixture of [

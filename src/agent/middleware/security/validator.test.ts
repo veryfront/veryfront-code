@@ -243,6 +243,18 @@ describe("securityMiddleware", () => {
     assertEquals(result.object, result.data);
   });
 
+  it("restores aliases for an explicit undefined data-only result", async () => {
+    const result = await securityMiddleware({})(
+      createContext(),
+      () => Promise.resolve({ ...createResponse("ok"), data: undefined }),
+    );
+
+    assertEquals(Object.hasOwn(result, "data"), true);
+    assertEquals(Object.hasOwn(result, "object"), true);
+    assertEquals(result.data, undefined);
+    assertEquals(result.object, undefined);
+  });
+
   it("rejects conflicting structured aliases before either can bypass filtering", async () => {
     await assertRejects(
       () =>

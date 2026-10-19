@@ -4,7 +4,8 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
-function terminalAgentOutput(output: unknown): unknown {
+/** @internal Resolve the durable output stored for an inherited child run. */
+export function terminalAgentOutput(output: unknown): unknown {
   if (typeof output !== "object" || output === null) return output;
   const text = Object.getOwnPropertyDescriptor(output, "text");
   const status = Object.getOwnPropertyDescriptor(output, "status");
@@ -17,7 +18,7 @@ function terminalAgentOutput(output: unknown): unknown {
     (typeof calls.value !== "number" && !Array.isArray(calls.value))
   ) return output;
   const structured = readStructuredAgentOutput(output);
-  return structured ? structured.data : undefined;
+  return structured ? createMessageFinishObjectObservation(structured.data) : undefined;
 }
 
 const localToolAdmissions = createPrivateWeakStore<
@@ -69,6 +70,7 @@ import {
 import {
   type AgUiRuntimeStreamEvent,
   createAgUiEncoderState,
+  createMessageFinishObjectObservation,
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
