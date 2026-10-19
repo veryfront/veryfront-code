@@ -50,6 +50,7 @@ import {
 
 const hasOwn = Object.hasOwn;
 const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const isArray = Array.isArray;
 const ceil = Math.ceil;
 const byteLength = Buffer.byteLength;
@@ -407,16 +408,30 @@ export function createManagedRecoveryHttpTransport(
         },
       );
       const rawManifest = await readBoundedJson(response, MAX_RECOVERY_SOURCE_RESPONSE_BYTES);
-      let rawContentTypes: (string | undefined)[] = [];
-      if (
-        typeof rawManifest === "object" && rawManifest !== null &&
-        hasOwn(rawManifest, "files") && "files" in rawManifest && isArray(rawManifest.files)
-      ) {
-        rawContentTypes = mapPrivateArray(rawManifest.files, (file) => {
-          return assertOwnRecoveryBinaryContentType(file, "content_type");
-        });
+      if (typeof rawManifest !== "object" || rawManifest === null) {
+        throw new Error("Managed recovery release manifest must be an object");
       }
+      const versionDescriptor = getOwnPropertyDescriptor(rawManifest, "manifest_version");
+      const filesDescriptor = getOwnPropertyDescriptor(rawManifest, "files");
+      if (
+        !versionDescriptor || !hasOwn(versionDescriptor, "value") ||
+        !filesDescriptor || !hasOwn(filesDescriptor, "value")
+      ) throw new Error("Managed recovery manifest requires its own version and files");
+      const rawVersion: unknown = versionDescriptor.value;
+      const rawFiles: unknown = filesDescriptor.value;
+      if (!isArray(rawFiles)) throw new Error("Managed recovery release files must be an array");
+      const rawContentTypes = mapPrivateArray(rawFiles, (file) => {
+        if (
+          rawVersion === 2 &&
+          (typeof file !== "object" || file === null || !hasOwn(file, "kind"))
+        ) throw new Error("Native recovery source requires its own discriminator");
+        return assertOwnRecoveryBinaryContentType(file, "content_type");
+      });
       const manifest = getManifestSchema().parse(rawManifest);
+      defineProperty(manifest, "manifest_version", { value: rawVersion, enumerable: true });
+      // These are strict, transform-free schemas over privately parsed JSON data.
+      // Preserve the validated own collection if a prototype getter swallowed Zod's assignment.
+      defineProperty(manifest, "files", { value: rawFiles, enumerable: true });
       if (manifest.manifest_version === 2) {
         mapPrivateArray(manifest.files, (file, index) => {
           if (file.kind === "binary") {

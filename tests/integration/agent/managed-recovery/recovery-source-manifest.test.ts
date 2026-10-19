@@ -216,6 +216,9 @@ it("missing native MIME cannot expose source through an inherited contentType ge
       },
     });
     assertThrows(() => createRecoverySourceManifest([missing, nativeText]));
+    const { kind: _kind, ...withoutKind } = missing;
+    Object.setPrototypeOf(withoutKind, { kind: "binary" });
+    assertThrows(() => createRecoverySourceManifest([withoutKind, nativeText]));
     const accessor = { ...nativeBinary };
     Object.defineProperty(accessor, "contentType", {
       configurable: true,
@@ -225,6 +228,15 @@ it("missing native MIME cannot expose source through an inherited contentType ge
       },
     });
     assertThrows(() => createRecoverySourceManifest([accessor, nativeText]));
+    const kindAccessor = { ...nativeBinary };
+    Object.defineProperty(kindAccessor, "kind", {
+      configurable: true,
+      get() {
+        exposed++;
+        return "binary";
+      },
+    });
+    assertThrows(() => createRecoverySourceManifest([kindAccessor, nativeText]));
     createRecoverySourceManifest([nativeBinary, nativeText]);
   } finally {
     if (descriptor) Object.defineProperty(Object.prototype, "contentType", descriptor);

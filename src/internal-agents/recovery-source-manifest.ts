@@ -66,11 +66,16 @@ export function assertOwnRecoveryBinaryContentType(
   property: "contentType" | "content_type",
 ): string | undefined {
   if (
-    typeof file !== "object" || file === null || !hasOwn(file, "kind") ||
-    !("kind" in file) || file.kind !== "binary"
+    typeof file !== "object" || file === null
   ) return undefined;
+  const kindDescriptor = getOwnPropertyDescriptor(file, "kind");
+  if (!kindDescriptor) return undefined;
+  if (!hasOwn(kindDescriptor, "value")) {
+    throw new Error("Native recovery source requires its own data discriminator");
+  }
+  if (kindDescriptor.value !== "binary") return undefined;
   const descriptor = getOwnPropertyDescriptor(file, property);
-  const value: unknown = descriptor?.value;
+  const value: unknown = descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
   if (
     typeof value !== "string" || value.length < 1 || value.length > 200 ||
     !testPrivateRegExp(/^[\x20-\x7e]+$/, value)
@@ -98,7 +103,9 @@ export function createRecoverySourceManifest(value: unknown): {
   let totalBytes = 0;
   const parsed = mapPrivateArray(value, (entry) => {
     const contentType = assertOwnRecoveryBinaryContentType(entry, "contentType");
-    const file = getAnyReleaseFileSchema().parse(entry);
+    const file = typeof entry === "object" && entry !== null && hasOwn(entry, "kind")
+      ? getAnyReleaseFileSchema().parse(entry)
+      : getReleaseFileSchema().parse(entry);
     if (
       isNativeReleaseFile(file) && file.kind === "binary" &&
       contentType !== undefined

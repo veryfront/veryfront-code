@@ -565,6 +565,9 @@ it("native release transport preserves exact binary bytes and refuses incomplete
     assertEquals(exposedListings, 0);
     const mimeDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "content_type");
     const { content_type: _omitted, ...missingMime } = binary;
+    const kindDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "kind");
+    const versionDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "manifest_version");
+    const filesDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "files");
     let mimeExposures = 0;
     try {
       Object.defineProperty(Object.prototype, "content_type", {
@@ -576,9 +579,42 @@ it("native release transport preserves exact binary bytes and refuses incomplete
       });
       response = { ...valid, files: [text, missingMime] };
       await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { kind: _kind, ...withoutKind } = missingMime;
+      Object.defineProperty(Object.prototype, "kind", { configurable: true, value: "binary" });
+      response = { ...valid, files: [text, withoutKind] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
+      const { manifest_version: _version, ...withoutVersion } = valid;
+      Object.defineProperty(Object.prototype, "manifest_version", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return 2;
+        },
+      });
+      response = withoutVersion;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { files: _files, ...withoutFiles } = valid;
+      Object.defineProperty(Object.prototype, "files", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return valid.files;
+        },
+      });
+      response = withoutFiles;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
       response = valid;
       await transport.listImmutableReleaseFiles(claims);
     } finally {
+      if (filesDescriptor) Object.defineProperty(Object.prototype, "files", filesDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "files");
+      if (versionDescriptor) {
+        Object.defineProperty(Object.prototype, "manifest_version", versionDescriptor);
+      } else Reflect.deleteProperty(Object.prototype, "manifest_version");
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
       if (mimeDescriptor) Object.defineProperty(Object.prototype, "content_type", mimeDescriptor);
       else Reflect.deleteProperty(Object.prototype, "content_type");
     }
