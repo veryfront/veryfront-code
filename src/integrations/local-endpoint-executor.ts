@@ -761,13 +761,20 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
-/** Returned instead of an over-limit body, so a completed write never reads as failed. */
-const RESPONSE_OMITTED: unique symbol = Symbol("response omitted");
+/**
+ * Why a 2xx write response body was dropped. The provider already applied the
+ * write, so failing the call would invite the caller to repeat it.
+ */
+type OmittedResponse = "too_large" | "unreadable";
+
+class ResponseOmitted {
+  constructor(readonly reason: OmittedResponse) {}
+}
 
 /**
- * Reads a bounded JSON body. An over-limit body fails the call, except after a
- * write: the provider already applied it, so reporting failure would invite a
- * duplicate write. That body is dropped and `RESPONSE_OMITTED` returned instead.
+ * Reads a bounded JSON body. A body that is over the limits, unreadable, or not
+ * JSON fails the call, except after a write, where it is dropped and returned
+ * as a `ResponseOmitted` instead.
  */
 async function readResponseJson(
   response: Response,
@@ -776,11 +783,12 @@ async function readResponseJson(
   status: number,
   write: boolean,
 ): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) {
+  const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
-    if (write) return RESPONSE_OMITTED;
-    responseInvalid(identity, status);
-  }
+    if (!write) responseInvalid(identity, status);
+    return new ResponseOmitted(reason);
+  };
+  if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
   try {
@@ -791,17 +799,13 @@ async function readResponseJson(
       { fatalUtf8: true },
     ));
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   if (
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
-    if (write) {
-      cancelResponseBody(response);
-      return RESPONSE_OMITTED;
-    }
-    responseInvalid(identity, status);
+    return unusable("too_large");
   }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
@@ -809,15 +813,12 @@ async function readResponseJson(
   try {
     parsed = jsonParse(text);
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   // The source text is already bounded, so one string may use the whole response.
   const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
-  if (!snapshot.success) {
-    // Over a structural bound (node count, depth): too large as well.
-    if (write) return RESPONSE_OMITTED;
-    responseInvalid(identity, status);
-  }
+  // Over a structural bound (node count, depth): too large as well.
+  if (!snapshot.success) return unusable("too_large");
   return snapshot.value;
 }
 
@@ -1040,8 +1041,12 @@ export async function executeLocalIntegrationEndpoint(
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
-    if (result.value === RESPONSE_OMITTED) {
-      return freeze({ success: true, status: result.status, response_omitted: "too_large" });
+    if (result.value instanceof ResponseOmitted) {
+      return freeze({
+        success: true,
+        status: result.status,
+        response_omitted: result.value.reason,
+      });
     }
     return transformResponse(result.value, options.endpoint.response, options, result.status);
   } catch (cause) {

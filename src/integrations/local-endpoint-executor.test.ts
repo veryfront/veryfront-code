@@ -161,12 +161,13 @@ describe("local integration endpoint executor", () => {
   );
 
   it("returns null for a successful response with no representation", async () => {
-    const execute = (status: number) =>
+    const execute = (status: number, requiresWrite?: boolean) =>
       executeLocalIntegrationEndpoint({
         endpoint: endpoint({
           method: "POST",
           url: "https://api.example.test/items/item-1/pause",
         }),
+        requiresWrite,
         args: {},
         authHeaders: {},
         allowedOrigin: "https://api.example.test",
@@ -176,8 +177,14 @@ describe("local integration endpoint executor", () => {
     assertEquals(await execute(204), null);
     // An accepted action, such as Microsoft Graph sendMail, has no body.
     assertEquals(await execute(202), null);
-    // A 200 must still carry JSON.
-    await assertRejects(() => execute(200));
+    // A 200 must still carry JSON. After a write the call still succeeded, so
+    // the missing body is reported as omitted rather than as a failure.
+    await assertRejects(() => execute(200, false));
+    assertEquals(await execute(200), {
+      success: true,
+      status: 200,
+      response_omitted: "unreadable",
+    });
   });
 
   it("supports passthrough JSON bodies and Microsoft Graph query formatting", async () => {
@@ -736,6 +743,33 @@ describe("local integration endpoint executor", () => {
 
       assertEquals(result, { success: true, status: 201, response_omitted: "too_large" });
       assertEquals(response.bodyUsed, true);
+    }
+
+    // A body that cannot be read or parsed after a 2xx write is omitted the same way.
+    const unreadable = [
+      () => new Response("{not json", { status: 201 }),
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"id":'));
+              controller.error(new TypeError("connection reset"));
+            },
+          }),
+          { status: 201 },
+        ),
+    ];
+    for (const fixture of unreadable) {
+      assertEquals(
+        await executeLocalIntegrationEndpoint({
+          endpoint: endpoint({ method: "POST", url: "https://api.example.test/messages" }),
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(fixture()),
+        }),
+        { success: true, status: 201, response_omitted: "unreadable" },
+      );
     }
 
     // A GET the catalog marks as a write, such as a credit-consuming lookup, is one too.
