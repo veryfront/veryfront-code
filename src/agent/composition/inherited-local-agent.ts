@@ -187,6 +187,12 @@ export async function runInheritedLocalAgent(
     return receipt;
   });
   let pending: Promise<StepResult> | undefined;
+  let platformRevoked = false;
+  const revokePlatformTools = async () => {
+    if (!platform || platformRevoked) return;
+    platformRevoked = true;
+    await platform.tools.revoke(child);
+  };
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     let drainFailure: { error: unknown } | undefined;
     try {
@@ -203,6 +209,7 @@ export async function runInheritedLocalAgent(
           terminalErrorMessage: "Child run events could not be persisted",
         }
         : state;
+    await revokePlatformTools();
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,
@@ -368,7 +375,7 @@ export async function runInheritedLocalAgent(
     };
   } finally {
     try {
-      await platform?.tools.revoke(child);
+      await revokePlatformTools();
     } finally {
       localToolAdmissions.set(child, undefined);
       revokeRuntimeObservationWriterCapability(observationWriter);

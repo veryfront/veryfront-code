@@ -7,7 +7,7 @@ import {
   runWithToolCallOccurrenceDispatch,
   runWithToolCallOccurrences,
 } from "#veryfront/runtime/tool-call-occurrence.ts";
-import { createProjectEventWriter } from "./project-event-writer.ts";
+import { createProjectEventWriter } from "#veryfront/internal-agents/project-event-writer.ts";
 
 const id = "11111111-1111-4111-8111-111111111111";
 function writer(bind = true) {

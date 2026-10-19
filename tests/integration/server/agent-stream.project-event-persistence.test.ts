@@ -131,14 +131,13 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
           return Promise.resolve(
             new ReadableStream<Uint8Array>({
               start(controller) {
-                for (
-                  const event of [
-                    { type: "text-start", id: "answer" },
-                    { type: "text-delta", id: "answer", delta: "Done" },
-                    { type: "text-end", id: "answer" },
-                    { type: "message-finish", finishReason: "stop" },
-                  ]
-                ) controller.enqueue(encodeDataStreamEvent(event));
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "answer" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-delta", id: "answer", delta: "Done" }),
+                );
+                controller.enqueue(new TextEncoder().encode(
+                  `data: ${JSON.stringify({ type: "text-end", id: "answer" })}`,
+                ));
                 controller.close();
               },
             }),
@@ -207,6 +206,12 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
       );
       assertEquals(writes.every((write) => write.url.includes(canonicalRunId)), true);
       assertEquals(writes[0]!.body.expected_previous_external_event_sequence, 3);
+      assertEquals(
+        writes.flatMap((write) => write.body.events as Array<{ type?: string }>).some((event) =>
+          event.type === "TEXT_MESSAGE_END"
+        ),
+        true,
+      );
     } else assertEquals(writes, []);
   });
 }

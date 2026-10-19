@@ -2190,7 +2190,6 @@ export async function createRuntimeAgentStreamResponse(
               throwIfAborted();
 
               if (done) {
-                await projectWriter?.flush();
                 readerReachedEof = true;
                 logger.info("Internal agent runtime stream reader completed", {
                   runId: input.runId,
@@ -2234,6 +2233,7 @@ export async function createRuntimeAgentStreamResponse(
                 );
               }
             }
+            await projectWriter?.flush();
 
             providerReplayCheckpointRelay.endInput();
             await presentationTail;

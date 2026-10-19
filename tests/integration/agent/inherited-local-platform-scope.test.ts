@@ -61,6 +61,7 @@ function admission(id: string, parent: string, agentId: string) {
 for (const fail of [false, true]) {
   it(`enters each recursive child's platform scope and revokes it (${fail ? "failure" : "success"})`, async () => {
     const entered: string[] = [], revoked: string[] = [];
+    const lifecycle: string[] = [];
     const admissions: string[] = [];
     let admitGrandchild:
       | Parameters<ReturnType<typeof createConnectedLocalPlatformTools>["run"]>[0]["admit"]
@@ -96,6 +97,7 @@ for (const fail of [false, true]) {
       }
       if (path.endsWith("/finalize")) {
         finalizations.push({ id, status: body.status });
+        lifecycle.push(`finalize:${id}`);
         return Response.json({ id, status: body.status });
       }
       throw new Error(`Unexpected fixture request ${path}`);
@@ -122,7 +124,9 @@ for (const fail of [false, true]) {
         }], operation);
       },
       async revoke(owner) {
-        revoked.push("runId" in owner ? owner.runId : "unexpected");
+        const runId = "runId" in owner ? owner.runId : "unexpected";
+        revoked.push(runId);
+        lifecycle.push(`revoke:${runId}`);
       },
     };
     const result = await runWithExactRuntimeRemoteToolSources([{
@@ -194,6 +198,12 @@ for (const fail of [false, true]) {
       "Inherited local tool writer is unavailable",
     );
     assertEquals(finalizations.map(({ id }) => id), [grandchildId, childId]);
+    assertEquals(lifecycle, [
+      `revoke:run-grandchild`,
+      `finalize:${grandchildId}`,
+      `revoke:run-child`,
+      `finalize:${childId}`,
+    ]);
   });
 }
 
