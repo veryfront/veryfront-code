@@ -122,6 +122,8 @@ function restoreInheritedAgentResponse(
   const text = Object.getOwnPropertyDescriptor(value, "text");
   const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
   const status = Object.getOwnPropertyDescriptor(value, "status");
+  // The API atomically marks every post-cutover canonical output as text-data-v1.
+  // An absent marker therefore means this is a pre-cutover legacy agent response.
   if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
   const structured = readStructuredAgentOutput(value);
   if (!text && !structured) {
