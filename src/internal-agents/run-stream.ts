@@ -1,3 +1,4 @@
+import { getProjectEventWriter } from "./project-event-writer.ts";
 import {
   chainPrivatePromise,
   observePrivatePromise,
@@ -1412,6 +1413,7 @@ export async function createRuntimeAgentStreamResponse(
     toolCount: input.tools.length,
     contextCount: input.context.length,
   });
+  const projectWriter = getProjectEventWriter(input);
   const managedClaims = getManagedRecoveryInputClaims(input);
   const managedRecovery = managedClaims
     ? takeManagedRecoveryRunSession(input) ?? await deps.sessionManager.startManagedRecoveryRun({
@@ -1442,8 +1444,10 @@ export async function createRuntimeAgentStreamResponse(
   } catch (error) {
     deps.sessionManager.failRun(input.runId, abortSignal);
     managedRecovery?.settle();
+    projectWriter?.close();
     throw error;
   }
+  projectWriter?.bindSignal(abortSignal);
   const manualPause = runtimeManualPauseCapabilities.get(input);
   let settledStop: (outcome?: RunStopSettlement) => void;
   try {
@@ -1462,6 +1466,7 @@ export async function createRuntimeAgentStreamResponse(
     deps.sessionManager.failRun(input.runId, abortSignal);
     recoveryLifetime?.stop();
     managedRecovery?.settle();
+    projectWriter?.close();
     throw error;
   }
   let producerCompletion: Promise<void> | undefined;
@@ -1495,7 +1500,7 @@ export async function createRuntimeAgentStreamResponse(
   const timing = createAgentRunEventTimingAnchor();
   const modelCallContextRelay = createModelCallContextRelay(
     timing,
-    managedRecovery?.writer?.persistRunEvent,
+    managedRecovery?.writer?.persistRunEvent ?? projectWriter?.persistRunEvent,
   );
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
@@ -1790,12 +1795,12 @@ export async function createRuntimeAgentStreamResponse(
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     if (managedRecovery) await managedRecovery.owner.assertCurrentOwnership();
     const withManagedOccurrences = <T>(operation: () => T): T =>
-      managedRecovery ? runWithToolCallOccurrences(operation) : operation();
+      managedRecovery || projectWriter ? runWithToolCallOccurrences(operation) : operation();
     const candidateRuntimeStream = await runWithExecutionOwnershipGuard(
       recoveryLifetime?.assertCurrent,
       () =>
         runWithRecoveryToolExecutionPolicy(
-          managedRecovery?.writer?.executeTool,
+          managedRecovery?.writer?.executeTool ?? projectWriter?.executeTool,
           () =>
             withManagedOccurrences(() =>
               runWithPlatformDependencyOwner(
@@ -1853,16 +1858,19 @@ export async function createRuntimeAgentStreamResponse(
           recoveryLifetime?.stop();
           settledStop();
           managedRecovery?.settle();
+          projectWriter?.close();
         }, () => {
           recoveryLifetime?.stop();
           settledStop();
           managedRecovery?.settle();
+          projectWriter?.close();
         });
       } else {
         settledStop();
         // Before runtime invocation there can be no hidden producer. Once invoked,
         // a missing completion callback is ambiguous and cannot authorize replacement.
         if (!runtimeInvocationStarted) managedRecovery?.settle();
+        projectWriter?.close();
       }
     }).catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
@@ -2109,7 +2117,7 @@ export async function createRuntimeAgentStreamResponse(
               if (mappedEvent.event === "RunError") {
                 await providerReplayCheckpointRelay.fail();
               }
-              await managedRecovery?.writer?.appendMappedEvent(
+              await (managedRecovery?.writer ?? projectWriter)?.appendMappedEvent(
                 mappedEvent,
                 occurrenceId,
                 observedToolResult,
@@ -2415,6 +2423,7 @@ export async function createRuntimeAgentStreamResponse(
                 }
                 settledStop();
                 managedRecovery?.settle();
+                projectWriter?.close();
                 if (manualPause) {
                   recordHostedAgentPauseFlush(manualPause, readerReachedEof);
                   await settleHostedAgentPause(manualPause);
@@ -2426,6 +2435,7 @@ export async function createRuntimeAgentStreamResponse(
                 }
                 settledStop();
                 managedRecovery?.settle();
+                projectWriter?.close();
                 if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
               }).catch((error) => {
                 logger.warn("Internal agent pause settlement failed", {
@@ -2503,7 +2513,7 @@ export async function createRuntimeAgentStreamResponse(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      ...(managedRecovery?.writer
+      ...((managedRecovery?.writer || projectWriter)
         ? { "X-Veryfront-Run-Event-Persistence": "runtime-owned-v1" }
         : {}),
       ...(shouldEmitProviderReplayCheckpoints ? { [PROVIDER_REPLAY_PROTOCOL_HEADER]: "1" } : {}),
