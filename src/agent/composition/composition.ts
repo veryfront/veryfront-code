@@ -1,3 +1,4 @@
+import { readStructuredAgentOutput } from "../output-schema.ts";
 /**
  * Agent Composition and Registry
  *
@@ -185,7 +186,6 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
-const objectHasOwn = Object.hasOwn;
 
 export function agentAsTool(
   agent: Agent,
@@ -223,12 +223,12 @@ export function agentAsTool(
               });
 
               // The child's accepted value: its parsed object when it declares an
-              // outputSchema and parsing succeeded, next to the text. Any own `object`
+              // outputSchema and parsing succeeded, next to the text. Own `data` or `object`
               // (including null or a transform's undefined) is passed through; an
-              // inherited `object` is never forwarded.
+              // inherited aliases are never forwarded. Conflicting aliases are rejected.
               return {
                 text: response.text,
-                ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
+                ...readStructuredAgentOutput(response),
                 toolCalls: response.toolCalls.length,
                 status: response.status,
               };

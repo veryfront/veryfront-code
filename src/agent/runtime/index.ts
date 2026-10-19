@@ -1672,7 +1672,7 @@ function snapshotOutputSchemaObservationValue(
 
 function createOutputSchemaObservationFields(
   object: unknown,
-): { object: unknown; objectEncoding: "snapshot" | undefined } {
+): { data: unknown; object: unknown; objectEncoding: "snapshot" | undefined } {
   let snapshot: OutputSchemaObservationSnapshot;
   try {
     snapshot = snapshotOutputSchemaObservationValue(object);
@@ -1683,9 +1683,17 @@ function createOutputSchemaObservationFields(
       reasons: ["unsupported_object"],
     };
   }
-  if (snapshot.status === "complete") return { object: snapshot.value, objectEncoding: undefined };
+  if (snapshot.status === "complete") {
+    return { data: snapshot.value, object: snapshot.value, objectEncoding: undefined };
+  }
+  const value = {
+    captureStatus: snapshot.status,
+    reasons: snapshot.reasons,
+    value: snapshot.value,
+  };
   return {
-    object: { captureStatus: snapshot.status, reasons: snapshot.reasons, value: snapshot.value },
+    data: value,
+    object: value,
     objectEncoding: "snapshot",
   };
 }
@@ -5180,13 +5188,13 @@ export class AgentRuntime {
           }
           await observeGeneratedProviderTurnFinishOnce({
             ...response,
-            ...(outputSchema ? { object: parsedObject } : {}),
+            ...(outputSchema ? { data: parsedObject, object: parsedObject } : {}),
           });
           await persistGeneratedProviderReplayCheckpoint();
           throwIfAborted(abortSignal);
           return attachOutputSchemaParser({
             text: response.text,
-            ...(outputSchema ? { object: parsedObject } : {}),
+            ...(outputSchema ? { data: parsedObject, object: parsedObject } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
@@ -5642,7 +5650,9 @@ export class AgentRuntime {
           maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
           await observeGeneratedProviderTurnFinishOnce({
             ...response,
-            ...(maxStepsParsedOutput.parsed ? { object: maxStepsParsedOutput.object } : {}),
+            ...(maxStepsParsedOutput.parsed
+              ? { data: maxStepsParsedOutput.object, object: maxStepsParsedOutput.object }
+              : {}),
           });
         }
       }
@@ -5659,7 +5669,7 @@ export class AgentRuntime {
         await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
-        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+        ...(parsedOutput.parsed ? { data: parsedOutput.object, object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -7594,7 +7604,7 @@ export class AgentRuntime {
       );
       return attachOutputSchemaParser({
         text: latestAssistantText,
-        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+        ...(parsedOutput.parsed ? { data: parsedOutput.object, object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: "completed",
@@ -7611,7 +7621,7 @@ export class AgentRuntime {
 
     return attachOutputSchemaParser({
       text: latestAssistantText,
-      ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
+      ...(outputSchema ? await parseStructuredOutput(outputSchema, latestAssistantText) : {}),
       messages: currentMessages,
       toolCalls,
       status: "completed",
@@ -7880,6 +7890,14 @@ type MaxStepsOutputParse =
     parsed: false;
     outputSchemaError?: string;
   };
+
+async function parseStructuredOutput(
+  outputSchema: ResolvedAgentOutputSchema,
+  text: string,
+): Promise<{ data: unknown; object: unknown }> {
+  const data = await outputSchema.parseOutput(text);
+  return { data, object: data };
+}
 
 async function tryParseMaxStepsOutput(
   finalText: string,

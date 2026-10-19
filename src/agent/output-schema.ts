@@ -1,10 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 /**
  * Agent structured-output resolution.
  *
  * Turns the public `outputSchema` (a materialized `Schema<T>` or a raw JSON
  * Schema document) into the provider-neutral `RuntimeResponseFormat` the model
  * runtimes map to their native fields, plus the parser that turns the model's
- * text back into the typed `object` on the response.
+ * text back into the typed `data` and compatibility `object` on the response.
  *
  * `responseFormat` stays internal vocabulary: callers only ever say
  * `outputSchema`.
@@ -187,4 +189,25 @@ export function resolveAgentOutputSchema(
  */
 function buildResponseFormat(schema: JsonSchema): RuntimeResponseFormat {
   return { type: "json_schema", name: RESPONSE_FORMAT_NAME, schema };
+}
+
+/** Read own structured result fields without invoking accessors. */
+export function readStructuredAgentOutput(
+  response: object,
+): { data: unknown; object: unknown } | undefined {
+  const data = Object.getOwnPropertyDescriptor(response, "data");
+  const object = Object.getOwnPropertyDescriptor(response, "object");
+  if ((data && !("value" in data)) || (object && !("value" in object))) {
+    throw AGENT_ERROR.create({ detail: "Agent result aliases must be own data properties." });
+  }
+  if (!data && !object) return undefined;
+  if (data && object && !Object.is(data.value, object.value)) {
+    const left = snapshotBoundedJsonValue(data.value);
+    const right = snapshotBoundedJsonValue(object.value);
+    if (!left.success || !right.success || !isDeepStrictEqual(left.value, right.value)) {
+      throw AGENT_ERROR.create({ detail: "Agent result data and object aliases conflict." });
+    }
+  }
+  const value = data ? data.value : object!.value;
+  return { data: value, object: value };
 }

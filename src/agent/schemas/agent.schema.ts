@@ -195,6 +195,7 @@ export const getAgentResponseSchema = defineSchema((v) =>
     thinking: v.string().optional(),
     // Parsed `outputSchema` value. Typed precisely by `AgentResponse<TOutput>`;
     // the runtime schema only has to accept it.
+    data: v.unknown().optional(),
     object: v.unknown().optional(),
     usage: v
       .object({
@@ -272,9 +273,10 @@ export type BaseAgentResponse = InferSchema<ReturnType<typeof getAgentResponseSc
  * erasure used by slots that hold agents of any output type, and has to stay
  * assignable from both of the other branches.
  */
-type AgentResponseObject<TOutput> = [TOutput] extends [never] ? { object?: undefined }
-  : 0 extends 1 & TOutput ? { object?: unknown }
-  : { object: TOutput };
+type AgentResponseObject<TOutput> = [TOutput] extends [never]
+  ? { data?: undefined; object?: undefined }
+  : 0 extends 1 & TOutput ? { data?: unknown; object?: unknown }
+  : { data?: TOutput; object: TOutput };
 
 /**
  * Response payload for agent.

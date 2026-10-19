@@ -394,6 +394,7 @@ describe("agentAsTool", () => {
 
     assertEquals(result, {
       text: JSON.stringify(object),
+      data: object,
       object,
       toolCalls: 0,
       status: "completed",
@@ -423,7 +424,13 @@ describe("agentAsTool", () => {
       {} as ToolExecutionContext,
     );
 
-    assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
+    assertEquals(result, {
+      text: "null",
+      data: null,
+      object: null,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("keeps a parsed undefined object from a schema transform", async () => {
@@ -452,6 +459,7 @@ describe("agentAsTool", () => {
     assertEquals(Object.hasOwn(result, "object"), true);
     assertEquals(result, {
       text: '{"city":"Berlin"}',
+      data: undefined,
       object: undefined,
       toolCalls: 0,
       status: "completed",
@@ -488,6 +496,51 @@ describe("agentAsTool", () => {
     );
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
+  for (const data of [false, 0, "", null, { selected_count: 1 }]) {
+    it(`preserves structured child output ${JSON.stringify(data)}`, async () => {
+      const child = createMinimalAgent("structured-child");
+      child.stream = (input) => {
+        input.onFinish?.({
+          text: JSON.stringify(data),
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          object: data,
+        });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+      };
+      const result = await agentAsTool(child, "Read structured output").execute({ input: "Read" });
+      assertEquals(result, {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        status: "completed",
+        toolCalls: 0,
+      });
+    });
+  }
+
+  it("preserves a data-only child response", async () => {
+    const child = createMinimalAgent("data-only");
+    child.stream = (input) => {
+      input.onFinish?.({
+        text: "false",
+        data: false,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+    };
+    assertEquals(await agentAsTool(child, "Read").execute({ input: "Read" }), {
+      text: "false",
+      data: false,
+      object: false,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("preserves the child stream error when no final response is produced", async () => {

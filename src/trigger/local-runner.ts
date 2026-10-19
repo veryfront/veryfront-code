@@ -1,3 +1,4 @@
+import { readStructuredAgentOutput } from "#veryfront/agent/output-schema.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { runWithProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import {
@@ -265,7 +266,13 @@ async function cancelAndSettleActiveWorkflow(handle: WorkflowHandle): Promise<vo
 
 function summarizeAgentResponse(
   response: unknown,
-): { text: string; status: "completed" | "error"; toolCalls: number } | null {
+): {
+  text: string;
+  status: "completed" | "error";
+  toolCalls: number;
+  data?: unknown;
+  object?: unknown;
+} | null {
   if (typeof response !== "object" || response === null) return null;
   try {
     const textDescriptor = Reflect.getOwnPropertyDescriptor(response, "text");
@@ -295,7 +302,9 @@ function summarizeAgentResponse(
     ) {
       return null;
     }
+    const structured = readStructuredAgentOutput(response);
     return {
+      ...structured,
       text: textDescriptor.value,
       status: statusDescriptor.value,
       toolCalls: toolCallCount,
@@ -350,6 +359,7 @@ async function runAgentTarget(
       kind: "agent",
       id: options.target.id,
       output: {
+        ...(summary.data !== undefined ? { data: summary.data, object: summary.data } : {}),
         text: summary.text,
         status: summary.status,
         toolCalls: summary.toolCalls,

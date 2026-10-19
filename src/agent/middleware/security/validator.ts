@@ -2009,9 +2009,14 @@ export function securityMiddleware(
     const parseOutput = getOutputSchemaParser(result);
     if (parseOutput) {
       const object = await parseOutput(outputFiltering.filtered);
-      return { ...result, text: outputFiltering.filtered, object };
+      return { ...result, text: outputFiltering.filtered, data: object, object };
     }
 
-    return { ...result, text: outputFiltering.filtered, object: objectFiltering.value };
+    return {
+      ...result,
+      text: outputFiltering.filtered,
+      data: objectFiltering.value,
+      object: objectFiltering.value,
+    };
   };
 }
