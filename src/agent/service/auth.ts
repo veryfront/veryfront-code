@@ -1241,7 +1241,8 @@ export function createConnectedLocalWriterVerifier(
     "VERYFRONT_API_BASE_URL",
     "VERYFRONT_PUBLIC_API_BASE_URL",
   ] as const;
-  const trustedOrigin = configured.some((key) => {
+  // Stored CLI logins use the official API without an environment override.
+  const trustedOrigin = origin === "https://api.veryfront.com" || configured.some((key) => {
     const value = getHostBootEnv(key);
     try {
       return value !== undefined && new URL(value).origin === origin;
