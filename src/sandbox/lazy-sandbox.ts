@@ -44,6 +44,7 @@ import {
 type CommandFetchAttempt<T> =
   | { kind: "result"; result: T }
   | { kind: "fetch-failure"; error: unknown };
+const anyAbortSignal = AbortSignal.any.bind(AbortSignal);
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -346,7 +347,7 @@ export class LazySandbox {
       throw new Error("Exec response has no body");
     }
 
-    yield* readCommandStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body, options?.signal);
   }
 
   async readFile(path: string): Promise<string> {
@@ -1049,10 +1050,11 @@ export class LazySandbox {
   ): Promise<CommandFetchAttempt<Response>> {
     const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) });
+    const signal = options?.signal;
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
       const outcome = await this.#fetchExecStart(
         commandStreamUrl(route),
-        { method: "POST", headers: this.#jsonHeaders(), body },
+        { method: "POST", headers: this.#jsonHeaders(), body, signal },
         route.kind,
       );
       if (outcome.kind === "result") return outcome;
@@ -1074,7 +1076,13 @@ export class LazySandbox {
       this.execStartTimeoutMs,
       async (signal) => {
         try {
-          const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+          const requestSignal = init.signal && signal
+            ? anyAbortSignal([init.signal, signal])
+            : init.signal ?? signal;
+          const response = await fetchUrl(
+            url,
+            requestSignal ? { ...init, signal: requestSignal } : init,
+          );
           return { kind: "result", result: response };
         } catch (error) {
           return { kind: "fetch-failure", error };

@@ -1347,6 +1347,8 @@ export async function flushConversationRunEventQueue(input: {
 /** Create conversation run event queue controller. */
 export function createConversationRunEventQueueController(input: {
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1452,7 +1454,7 @@ export function createConversationRunEventQueueController(input: {
     let flushed;
     try {
       flushed = await flushConversationRunEventQueue({
-        authToken: input.authToken,
+        authToken: input.getAuthToken?.() ?? input.authToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,

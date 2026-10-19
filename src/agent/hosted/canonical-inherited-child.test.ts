@@ -8,16 +8,19 @@ import {
 import { startHostedChildForkRuntimeWithHostTools } from "./child-fork-runtime-start.ts";
 import { FakeTime } from "#std/testing/time";
 import {
+  hostedBoundRunStatus,
+  hostedInheritedEventWriter,
   hostedInheritedInferenceModelResolver,
   hostedInheritedRunAdmitter,
   hostedTerminalRunFinalizer,
   registerHostedTerminalCredential,
   transferHostedTerminalAuthority,
 } from "./terminal-credential.ts";
+import { createHostedConversationRunChunkMirrorFromCapability } from "./child-run-event-writer-token.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 const parentId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
-const token = (runId: string, canonicalRunId: string) =>
+const token = (runId: string, canonicalRunId: string, signature = "signature") =>
   `header.${
     btoa(
       JSON.stringify({
@@ -28,7 +31,15 @@ const token = (runId: string, canonicalRunId: string) =>
         dispatchNonce: "generation",
       }),
     )
-  }.signature`;
+  }.${signature}`;
+const renewedAuthorityHeaders = (generation: string) => ({
+  "Cache-Control": "no-store",
+  "X-Veryfront-Inference-Token": `child-inference-${generation}`,
+  "X-Veryfront-Run-Invocation-Token": `child-invocation-${generation}`,
+  "X-Veryfront-Run-Terminal-Token": token("child", childId, generation),
+  "X-Veryfront-Run-Renewal-Token": `child-renewal-${generation}`,
+  "X-Veryfront-Run-Event-Token": `child-event-${generation}`,
+});
 it("admits one inherited child with the parent's capability and binds exact-child terminal authority privately", async () => {
   const request = {
     projectId: parentId,
@@ -286,7 +297,7 @@ for (const failure of ["network", 503, 429] as const) {
             Response.json({
               run_id: childId,
               expires_at: new Date(Date.now() + 1000).toISOString(),
-            }),
+            }, { headers: renewedAuthorityHeaders("retry") }),
           );
         }
         return Promise.resolve(
@@ -388,7 +399,7 @@ it("keeps local work running across transient renewal failures while the lease i
         Response.json({
           run_id: childId,
           expires_at: new Date(Date.now() + 60_000).toISOString(),
-        }),
+        }, { headers: renewedAuthorityHeaders("transient") }),
       );
     },
   })!;
@@ -414,4 +425,93 @@ it("keeps local work running across transient renewal failures while the lease i
   assertEquals(await result, "completed");
   assertEquals(heartbeatOutcomes, ["network", "503", "renewed"]);
   assertEquals(abortedBeforeRenewal, false);
+});
+
+it("rotates the full exact-child authority before work crosses its initial lease", async () => {
+  using time = new FakeTime();
+  const request = {
+    projectId: parentId,
+    authToken: "parent-invocation",
+    durableRootRun: { runId: "parent" },
+  } as ParsedHostedChatRequest;
+  registerHostedTerminalCredential(request, token("parent", parentId));
+  const heartbeatAuthorization: string[] = [];
+  const eventAuthorization: string[] = [];
+  let heartbeatCount = 0;
+  const twiceRenewed = Promise.withResolvers<void>();
+  const admit = hostedInheritedRunAdmitter(request, {
+    apiUrl: "https://api.example.test",
+    fetch: (input, init) => {
+      const url = String(input);
+      const authorization = new Headers(init?.headers).get("Authorization") ?? "";
+      if (url.endsWith("/heartbeats")) {
+        heartbeatAuthorization.push(authorization);
+        heartbeatCount++;
+        if (heartbeatCount === 2) twiceRenewed.resolve();
+        return Promise.resolve(Response.json({
+          run_id: childId,
+          expires_at: new Date(Date.now() + 120).toISOString(),
+        }, { headers: renewedAuthorityHeaders(String(heartbeatCount)) }));
+      }
+      if (url.endsWith("/events")) {
+        eventAuthorization.push(authorization);
+        return Promise.resolve(Response.json({
+          run_id: childId,
+          latest_event_id: 1,
+          latest_external_event_sequence: 1,
+          appended_count: 1,
+        }));
+      }
+      if (url.endsWith(`/runs/${childId}`)) {
+        eventAuthorization.push(authorization);
+        return Promise.resolve(Response.json({ id: childId, status: "running" }));
+      }
+      return Promise.resolve(Response.json({
+        id: childId,
+        conversation_id: parentId,
+        output_message_id: childId,
+        status: "running",
+      }, {
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Veryfront-Inference-Token": "child-inference",
+          "X-Veryfront-Run-Invocation-Token": "child-invocation",
+          "X-Veryfront-Run-Terminal-Token": token("child", childId),
+          "X-Veryfront-Run-Event-Token": "child-event",
+          "X-Veryfront-Run-Renewal-Token": "child-renewal",
+          "X-Veryfront-Run-Event-Sequence": "0",
+          "X-Veryfront-Run-External-Event-Sequence": "0",
+          "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 80).toISOString(),
+        },
+      }));
+    },
+  })!;
+  const run = await admit("tool-rotate", "prompt")({
+    authToken: "ignored",
+    apiUrl: "ignored",
+    conversationId: parentId,
+    parentRunId: "parent",
+    agentId: "agent",
+    projectId: parentId,
+  });
+  const writer = hostedInheritedEventWriter(run)!;
+  const mirror = createHostedConversationRunChunkMirrorFromCapability(writer, {
+    expectedRunId: run.runId,
+    conversationId: run.conversationId,
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+  })!;
+  const result = withHostedInheritedLease(run, async () => {
+    await twiceRenewed.promise;
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "late" }]);
+    await mirror.flush();
+    await hostedBoundRunStatus(run, run.runId)!();
+    return "completed";
+  });
+
+  await time.tickAsync(40);
+  await time.tickAsync(60);
+  assertEquals(await result, "completed");
+  assertEquals(heartbeatAuthorization, ["Bearer child-renewal", "Bearer child-renewal-1"]);
+  assertEquals(eventAuthorization, ["Bearer child-event-2", "Bearer child-invocation-2"]);
 });

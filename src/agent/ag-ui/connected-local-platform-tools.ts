@@ -17,6 +17,7 @@ import {
 import { privateTextSplit } from "#veryfront/security/private-text.ts";
 import {
   configureHostedPlatformDependencySource,
+  hostedPlatformDependencyCredential,
   type HostedPlatformDependencyOwner,
   registerHostedPlatformDependencyRequest,
   revokeHostedPlatformDependencies,
@@ -136,7 +137,9 @@ export function createConnectedLocalPlatformTools(
             try {
               credentialLifetimes.set(childOwner, { active: true });
               const credential = () =>
-                childScope.runId === scope.runId ? currentAuthority?.().auth_token ?? token : token;
+                childScope.runId === scope.runId
+                  ? currentAuthority?.().auth_token ?? token
+                  : hostedPlatformDependencyCredential(childOwner) ?? token;
               credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
               let source = createLivePlatformMcpSource(factory({

@@ -10,6 +10,7 @@ import {
 } from "../../../src/agent/hosted/child-run-event-writer-token.ts";
 import {
   registerHostedChildPlatformDependencies,
+  rotateHostedPlatformDependencyCredential,
   runWithHostedPlatformDependencies,
 } from "../../../src/agent/hosted/platform-dependency-credential.ts";
 import { getVerifiedSkillScriptExecutionCredential } from "../../../src/skill/execution-credential.ts";
@@ -260,7 +261,7 @@ it("attempts all descendant closes and retries a failed close", async () => {
   });
 });
 
-it("renews only the root sandbox credential and keeps child credentials isolated", async () => {
+it("renews root and exact-child sandbox credentials without crossing run identity", async () => {
   await fixture(async ({ transport, scope, eventToken, authToken }) => {
     const credentials: Array<() => string> = [];
     let currentToken = authToken;
@@ -288,6 +289,9 @@ it("renews only the root sandbox credential and keeps child credentials isolated
     currentToken = "renewed-root-credential";
     assertEquals(credentials[0]!(), currentToken);
     assertEquals(credentials[1]!(), authToken);
+    rotateHostedPlatformDependencyCredential(child, "renewed-child-credential");
+    assertEquals(credentials[0]!(), currentToken);
+    assertEquals(credentials[1]!(), "renewed-child-credential");
     const writer = createHostedRunEventWriterCapability({
       apiUrl: "https://api.veryfront.com",
       runId: scope.runId,

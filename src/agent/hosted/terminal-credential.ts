@@ -1,6 +1,10 @@
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
-import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  appendPrivateArray,
+  forEachPrivateArray,
+  mapPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { authorizeHostedTaskInput } from "./task-input.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -22,6 +26,7 @@ import {
 import {
   type HostedPlatformDependencyOwner,
   registerHostedChildPlatformDependencies,
+  rotateHostedPlatformDependencyCredential,
   transferHostedPlatformDependencies,
 } from "./platform-dependency-credential.ts";
 import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
@@ -31,6 +36,8 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+  refreshHostedRunEventWriterCapability,
   waitForHostedParentToolStart,
 } from "./child-run-event-writer-token.ts";
 import type {
@@ -100,6 +107,7 @@ const credentials = createPrivateWeakStore<
     authToken?: string;
     apiUrl?: string;
     fetch?: typeof globalThis.fetch;
+    eventWriters?: HostedRunEventWriterCapability[];
   }
 >();
 
@@ -650,7 +658,13 @@ export function hostedInheritedInferenceModelResolver(
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  const resolver = createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+  const resolver = createVeryfrontCloudInferenceModelResolver(() => {
+    const current = credentials.get(descriptor);
+    if (!current?.inferenceToken) {
+      throw new Error("Inherited child inference authority is required");
+    }
+    return current.inferenceToken;
+  }, {
     apiBaseUrl: authority.apiUrl,
     assertParentActive: () => options.signal?.throwIfAborted(),
   });
@@ -658,6 +672,68 @@ export function hostedInheritedInferenceModelResolver(
     ? (model: string) =>
       resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)
     : resolver;
+}
+
+type RenewedInheritedAuthority = Readonly<{
+  invocation: string;
+  inference: string;
+  terminal: string;
+  renewal: string;
+  events: string;
+}>;
+
+function readRenewedInheritedAuthority(
+  response: Response,
+  runId: string,
+  canonicalRunId: string,
+): RenewedInheritedAuthority {
+  if (!response.headers.get("Cache-Control")?.includes("no-store")) {
+    throw new Error("Inherited child lease credentials require no-store");
+  }
+  const authority = {
+    invocation: response.headers.get("X-Veryfront-Run-Invocation-Token"),
+    inference: response.headers.get("X-Veryfront-Inference-Token"),
+    terminal: response.headers.get(RUN_TERMINAL_TOKEN_HEADER),
+    renewal: response.headers.get("X-Veryfront-Run-Renewal-Token"),
+    events: response.headers.get("X-Veryfront-Run-Event-Token"),
+  };
+  if (
+    !authority.invocation || authority.invocation.length > 16384 ||
+    !authority.inference || authority.inference.length > 16384 ||
+    !authority.terminal || authority.terminal.length > 16384 ||
+    !authority.renewal || authority.renewal.length > 16384 ||
+    !authority.events || authority.events.length > 16384 ||
+    terminalRoutingRunId(authority.terminal) !== runId ||
+    terminalRoute(authority.terminal, runId).id !== canonicalRunId
+  ) {
+    throw new Error("Inherited child lease authority binding mismatch");
+  }
+  return authority as RenewedInheritedAuthority;
+}
+
+function rotateInheritedChildAuthority(
+  descriptor: HostedTerminalDescriptor,
+  response: Response,
+): void {
+  const authority = credentials.get(descriptor);
+  if (!authority) throw new Error("Inherited child authority is required");
+  const renewed = readRenewedInheritedAuthority(
+    response,
+    authority.runId,
+    terminalRoute(authority.token, authority.runId).id,
+  );
+  rotateHostedPlatformDependencyCredential(descriptor, renewed.invocation);
+  forEachPrivateArray(authority.eventWriters ?? [], (writer) => {
+    refreshHostedRunEventWriterCapability(writer, {
+      runId: authority.runId,
+      runEventAppendToken: renewed.events,
+    });
+  });
+  authority.authToken = renewed.invocation;
+  authority.inferenceToken = renewed.inference;
+  authority.token = renewed.terminal;
+  authority.renewalToken = renewed.renewal;
+  authority.eventToken = renewed.events;
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */
@@ -763,6 +839,7 @@ export async function withHostedInheritedLease<T>(
       ) {
         throw new Error("Inherited child lease response binding mismatch");
       }
+      rotateInheritedChildAuthority(descriptor, response);
       armExpiry();
     }
     return await new Promise<never>(() => {});
@@ -792,23 +869,27 @@ export function hostedBoundRunStatus(descriptor: HostedTerminalDescriptor, expec
     return undefined;
   }
   const apiUrl = authority.apiUrl;
-  const authToken = authority.authToken;
-  return (abortSignal?: AbortSignal) =>
-    getCanonicalRunStatus({
+  return (abortSignal?: AbortSignal) => {
+    const current = credentials.get(descriptor);
+    if (!current?.authToken || current.runId !== expectedRunId) {
+      throw new Error("Inherited child authority is required");
+    }
+    return getCanonicalRunStatus({
       apiUrl,
-      authToken,
-      runId: authority.runId,
-      canonicalRunId: terminalRoute(authority.token, authority.runId).id,
+      authToken: current.authToken,
+      runId: current.runId,
+      canonicalRunId: terminalRoute(current.token, current.runId).id,
       abortSignal,
-      fetch: authority.fetch,
+      fetch: current.fetch,
     });
+  };
 }
 
 /** Reconstitute only the exact child writer issued by inherited admission. */
 export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor) {
   const authority = credentials.get(descriptor);
   if (!authority?.eventToken || !authority.apiUrl) return undefined;
-  return createHostedRunEventWriterCapability({
+  const writer = createHostedRunEventWriterCapability({
     inheritedExecution: true,
     projectId: authority.projectId,
     apiUrl: authority.apiUrl,
@@ -823,6 +904,8 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
       fetch: authority.fetch,
     }),
   });
+  appendPrivateArray(authority.eventWriters ??= [], [writer]);
+  return writer;
 }
 
 /** Restore child input only from verified private native admission, never caller context. */
@@ -920,14 +1003,15 @@ export function hostedAcceptedChildEvidence(
     return canonical;
   }
   const send = transport?.fetch ?? authority.fetch ?? hostFetch,
-    token = authority.authToken,
     resolveApiUrl = createVeryfrontApiRequestUrlResolver(transport?.apiUrl ?? authority.apiUrl!);
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
     : AbortSignal.timeout(15000);
   async function read(path: string): Promise<unknown> {
+    const currentToken = credentials.get(descriptor)?.authToken;
+    if (!currentToken) throw new Error("Accepted receipt reader authority is required");
     const response = await send(resolveApiUrl(path), {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${currentToken}`, Accept: "application/json" },
       redirect: "error",
       signal: requestSignal,
     });

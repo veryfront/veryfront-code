@@ -2046,6 +2046,32 @@ describe("Sandbox", () => {
       );
     });
 
+    it("aborts a stalled command stream through CommandOptions.signal", async () => {
+      let cancelCalled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {});
+        },
+        cancel() {
+          cancelCalled = true;
+        },
+      });
+      mockFetch([
+        jsonResponse({ id: "stream-abort", endpoint: "https://sb.test", status: "running" }),
+        new Response(stream, { status: 200 }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const controller = new AbortController();
+      const events = Array.fromAsync(sandbox.streamCommand("cmd", { signal: controller.signal }));
+
+      for (let attempt = 0; attempt < 10 && !fetchCalls[1]; attempt++) await Promise.resolve();
+      assertEquals(fetchCalls[1]!.init?.signal, controller.signal);
+      controller.abort(new Error("command cancelled"));
+
+      await assertRejects(() => events, Error, "command cancelled");
+      assertEquals(cancelCalled, true);
+    });
+
     it("flushes the decoder after the static command stream completes", async () => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({

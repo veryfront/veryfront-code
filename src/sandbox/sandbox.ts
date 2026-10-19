@@ -402,6 +402,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
+        signal: options?.signal,
         headers: {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
@@ -417,7 +418,7 @@ export class Sandbox {
     if (!res.body) {
       throw new Error("Exec response has no body");
     }
-    yield* readCommandStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body, options?.signal);
   }
 
   /** Read a file from the sandbox workspace. */

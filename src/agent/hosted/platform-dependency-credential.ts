@@ -131,6 +131,27 @@ export async function registerHostedChildPlatformDependencies(
   }
 }
 
+/** Rotate only the exact admitted owner's private invocation credential after lease renewal. */
+export function rotateHostedPlatformDependencyCredential(
+  owner: HostedPlatformDependencyOwner,
+  authToken: string,
+): void {
+  const authority = owners.get(owner);
+  if (!authority) return;
+  if (!authority.active) {
+    throw new Error("Hosted platform dependency authority is no longer active");
+  }
+  authority.authToken = authToken;
+}
+
+/** Read the current exact-owner credential only for host-owned transport closures. */
+export function hostedPlatformDependencyCredential(
+  owner: HostedPlatformDependencyOwner,
+): string | undefined {
+  const authority = owners.get(owner);
+  return authority?.active ? authority.authToken : undefined;
+}
+
 /** Transfer only the private admission descriptor association. */
 export function transferHostedPlatformDependencies(
   source: HostedPlatformDependencyOwner,
