@@ -149,6 +149,7 @@ interface ProjectFile {
   created_at: string;
   updated_at: string;
   version_id?: string;
+  binary?: unknown;
 }
 
 interface ListFilesResponse {
@@ -348,8 +349,13 @@ export async function getFileContent(
   source: PullSource,
 ): Promise<string> {
   const url = buildFileContentUrl(projectSlug, path, source);
-  const response = await client.get<{ path: string; content: string; size: number }>(url);
+  const response = await client.get<
+    { path: string; content: string; size: number; binary?: unknown }
+  >(url);
 
+  if (response.binary !== undefined && response.binary !== null) {
+    throw INVALID_ARGUMENT.create({ detail: `Cannot read binary file "${path}" as text.` });
+  }
   return response.content;
 }
 
@@ -826,6 +832,12 @@ async function pullSingleProject(
       !isPullSupportedFile(op.relativePath, ignoreChecker, referencedOkfCompanions)
     ) {
       continue;
+    }
+    if (file.binary !== undefined && file.binary !== null) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Cannot pull binary file "${file.path}" as text. No files in this project were changed.`,
+      });
     }
     if (typeof file.content !== "string") {
       throw INVALID_ARGUMENT.create({

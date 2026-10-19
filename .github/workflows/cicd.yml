@@ -690,6 +690,7 @@ jobs:
       - name: Collect context ownership coverage from checked-out source
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
