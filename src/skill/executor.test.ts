@@ -18,11 +18,14 @@ import {
   restoreMockFetch as restoreHostMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
 import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
+import { runWithVerifiedSkillScriptExecutionCredential } from "./execution-credential.ts";
 
 const SKILL_ENV_KEYS = [
   "SANDBOX_AUTH_TOKEN",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_URL",
+  "VERYFRONT_API_USER",
+  "TENANT_PROJECT_ID",
 ] as const;
 
 let fetchCalls: FetchCall[] = [];
@@ -66,6 +69,35 @@ function backgroundCommandResponse(
     stdout_truncated: false,
     stderr_truncated: false,
   });
+}
+
+async function executeSandboxCommandBody(
+  init?: RequestInit,
+  sandboxPathMap: ReadonlyMap<string, string> = new Map(),
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}> {
+  const body = JSON.parse(String(init?.body)) as {
+    command: string;
+    env?: Record<string, string>;
+  };
+  let command = body.command;
+  for (const [sandboxPath, localPath] of sandboxPathMap) {
+    command = command.replaceAll(sandboxPath, localPath);
+  }
+  const output = await new Deno.Command("sh", {
+    args: ["-c", command],
+    env: body.env,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return {
+    stdout: new TextDecoder().decode(output.stdout),
+    stderr: new TextDecoder().decode(output.stderr),
+    exitCode: output.code,
+  };
 }
 
 function pendingErrorCommandResponse(error: Error): {
@@ -367,6 +399,204 @@ describe("src/skill/executor", () => {
 
       const executor = getSkillScriptExecutor();
       assertEquals(executor.constructor.name, "CloudScriptExecutor");
+    });
+
+    it("uses the verified run credential for sandbox creation and the script command", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "operator-user-token");
+      setEnv("VERYFRONT_API_URL", "https://operator-api.test.com");
+      setEnv("VERYFRONT_API_USER", "ambient-user");
+      setEnv("TENANT_PROJECT_ID", "ambient-tenant-project");
+      const materializedRoot = await Deno.makeTempDir({ prefix: "vf-sandbox-command-" });
+      const sandboxPathMap = new Map<string, string>();
+      let executed: Awaited<ReturnType<typeof executeSandboxCommandBody>> | undefined;
+      mockFetch([
+        jsonResponse({
+          id: "run-credential-sandbox",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+          workspace_storage: "ephemeral",
+        }),
+        async (_input, init) => {
+          const files = JSON.parse(String(init?.body)).files as Array<{
+            path: string;
+            content: string;
+          }>;
+          for (let index = 0; index < files.length; index += 1) {
+            const file = files[index]!;
+            const localPath = `${materializedRoot}/${index}`;
+            sandboxPathMap.set(file.path, localPath);
+            await Deno.writeTextFile(localPath, file.content);
+          }
+          return jsonResponse({
+            results: files.map((file) => ({ path: file.path, status: "written", error: null })),
+          });
+        },
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        async (_input, init) => {
+          executed = await executeSandboxCommandBody(init, sandboxPathMap);
+          return backgroundCommandResponse("running", "", null);
+        },
+        () => backgroundCommandResponse("completed", executed?.stdout, executed?.exitCode),
+        textResponse(""),
+      ]);
+
+      const result = await runWithVerifiedSkillScriptExecutionCredential({
+        assertActive() {},
+        read: () => ({
+          apiUrl: "https://api.test.com",
+          authToken: "run-credential",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          projectSlug: "connected-project",
+          branch: "main",
+          runId: "run-1",
+          agentId: "ingestion-agent",
+        }),
+      }, () =>
+        getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent:
+            `printf '%s|%s|%s|%s|%s|%s|%s\n' "$VERYFRONT_API_TOKEN" "$VERYFRONT_API_URL" "$VERYFRONT_PROJECT_ID" "$SAFE_INPUT" "$VERYFRONT_DEFAULT_MODEL" "\${VERYFRONT_API_USER-unset}" "\${TENANT_PROJECT_ID-unset}"`,
+          timeoutMs: 60_000,
+          env: {
+            SAFE_INPUT: "preserved",
+            VERYFRONT_DEFAULT_MODEL: "caller-selected-model",
+            SANDBOX_AUTH_TOKEN: "caller-sandbox-token",
+            VERYFRONT_API_TOKEN: "caller-token",
+            VERYFRONT_API_BASE_URL: "https://attacker.example.com",
+            VERYFRONT_PUBLIC_API_BASE_URL: "https://public-attacker.example.com",
+            VERYFRONT_PROJECT_API_URL: "https://project-attacker.example.com",
+            VERYFRONT_PROJECT_ID: "caller-project",
+            VERYFRONT_API_USER: "caller-user",
+            VERYFRONT_API_PASS: "caller-pass",
+            VERYFRONT_RUN_RESULT_PATH: "/tmp/caller-result",
+            VERYFRONT_TASK_ENV_JSON: '{"VERYFRONT_API_TOKEN":"nested-caller-token"}',
+            TENANT_PROJECT_ID: "caller-tenant-project",
+            TENANT_BRANCH: "caller-tenant-branch",
+          },
+        }));
+
+      await Deno.remove(materializedRoot, { recursive: true });
+      assertEquals(result, {
+        stdout:
+          "run-credential|https://api.test.com|22222222-2222-4222-8222-222222222222|preserved|caller-selected-model|unset|unset\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      assertEquals(
+        new Headers(fetchCalls[0]!.init?.headers).get("authorization"),
+        "Bearer run-credential",
+      );
+      assertEquals(
+        JSON.parse(String(fetchCalls[0]!.init?.body)).project_reference,
+        "22222222-2222-4222-8222-222222222222",
+      );
+      const scriptCommandCall = fetchCalls.find((call) => call.url.endsWith("/commands"));
+      const scriptCommandBody = JSON.parse(String(scriptCommandCall?.init?.body)) as {
+        command: string;
+        env: Record<string, string>;
+      };
+      const command = scriptCommandBody.command;
+      assertEquals(scriptCommandBody.env, {
+        SAFE_INPUT: "preserved",
+        VERYFRONT_DEFAULT_MODEL: "caller-selected-model",
+        VERYFRONT_API_TOKEN: "run-credential",
+        VERYFRONT_API_URL: "https://api.test.com",
+        VERYFRONT_API_BASE_URL: "https://api.test.com",
+        VERYFRONT_PROJECT_API_URL: "https://api.test.com",
+        VERYFRONT_PUBLIC_API_BASE_URL: "https://api.test.com",
+        VERYFRONT_PROJECT_ID: "22222222-2222-4222-8222-222222222222",
+        VERYFRONT_PROJECT_SLUG: "connected-project",
+        VERYFRONT_BRANCH_REF: "main",
+      });
+      assertEquals(command.includes("run-credential"), false);
+      assertEquals(command.includes("SAFE_INPUT=preserved"), false);
+      assertEquals(command.includes("operator-user-token"), false);
+      assertEquals(command.includes("caller-sandbox-token"), false);
+      assertEquals(command.includes("caller-token"), false);
+      assertEquals(command.includes("caller-project"), false);
+      assertEquals(command.includes("attacker.example.com"), false);
+      assertEquals(command.includes("caller-user"), false);
+      assertEquals(command.includes("caller-pass"), false);
+      assertEquals(command.includes("caller-result"), false);
+      assertEquals(command.includes("nested-caller-token"), false);
+      assertEquals(command.includes("caller-tenant"), false);
+      assertStringIncludes(command, "'-u' 'VERYFRONT_API_USER'");
+      assertStringIncludes(command, "'-u' 'VERYFRONT_TASK_ENV_JSON'");
+      assertStringIncludes(command, "'-u' 'TENANT_PROJECT_ID'");
+      assertEquals(command.includes("'-u' 'VERYFRONT_API_TOKEN'"), false);
+      assertEquals(command.includes("'-u' 'VERYFRONT_API_URL'"), false);
+      assertEquals(command.includes("'-u' 'VERYFRONT_PROJECT_ID'"), false);
+    });
+
+    it("keeps a verified run credential out of synchronous command history", async () => {
+      const materializedRoot = await Deno.makeTempDir({ prefix: "vf-sandbox-command-" });
+      const sandboxPathMap = new Map<string, string>();
+      mockFetch([
+        jsonResponse({
+          id: "sync-run-credential-sandbox",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+          workspace_storage: "ephemeral",
+        }),
+        async (_input, init) => {
+          const files = JSON.parse(String(init?.body)).files as Array<{
+            path: string;
+            content: string;
+          }>;
+          for (let index = 0; index < files.length; index += 1) {
+            const file = files[index]!;
+            const localPath = `${materializedRoot}/${index}`;
+            sandboxPathMap.set(file.path, localPath);
+            await Deno.writeTextFile(localPath, file.content);
+          }
+          return jsonResponse({
+            results: files.map((file) => ({ path: file.path, status: "written", error: null })),
+          });
+        },
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        async (_input, init) => {
+          const output = await executeSandboxCommandBody(init, sandboxPathMap);
+          return commandResponse([
+            { type: "stdout", data: output.stdout },
+            { type: "stderr", data: output.stderr },
+            { type: "exit", exitCode: output.exitCode },
+          ]);
+        },
+        textResponse(""),
+      ]);
+
+      const result = await runWithVerifiedSkillScriptExecutionCredential({
+        assertActive() {},
+        read: () => ({
+          apiUrl: "https://api.test.com",
+          authToken: "sync-run-credential",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          runId: "run-sync",
+          agentId: "ingestion-agent",
+        }),
+      }, () =>
+        getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: `printf '%s|%s\n' "$VERYFRONT_API_TOKEN" "$VERYFRONT_PROJECT_ID"`,
+          timeoutMs: 50_000,
+        }));
+
+      await Deno.remove(materializedRoot, { recursive: true });
+      assertEquals(result, {
+        stdout: "sync-run-credential|22222222-2222-4222-8222-222222222222\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      const scriptCommandCall = fetchCalls.find((call, index) =>
+        index > 2 && call.url.endsWith("/commands/run")
+      );
+      const body = JSON.parse(String(scriptCommandCall?.init?.body)) as {
+        command: string;
+        env: Record<string, string>;
+      };
+      assertEquals(body.command.includes("sync-run-credential"), false);
+      assertEquals(body.env.VERYFRONT_API_TOKEN, "sync-run-credential");
+      assertEquals(body.env.VERYFRONT_API_BASE_URL, "https://api.test.com");
     });
 
     it("rejects changed native content before creating a cloud sandbox", async () => {

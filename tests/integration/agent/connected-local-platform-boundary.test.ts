@@ -12,6 +12,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { getActiveRuntimeRemoteToolSources } from "../../../src/agent/runtime/remote-tool-source-context.ts";
 import { createConnectedLocalPlatformTools } from "../../../src/agent/ag-ui/connected-local-platform-tools.ts";
 import { createHostedRunEventWriterCapability } from "../../../src/agent/hosted/child-run-event-writer-token.ts";
+import {
+  getRuntimeRequestContext,
+  runWithRuntimeRequestContext,
+} from "../../../src/platform/runtime-request-context.ts";
+import { getVerifiedSkillScriptExecutionCredential } from "../../../src/skill/execution-credential.ts";
 
 const scope = {
   projectId: "22222222-2222-4222-8222-222222222222",
@@ -27,6 +32,7 @@ async function fixture(
     owner: typeof scope,
     token: string,
     platformRequests: Array<{ authorization: string | null; eventToken: string | null }>,
+    runCredential: string,
   ) => Promise<void>,
 ) {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -45,6 +51,12 @@ async function fixture(
   }`;
   const token = `${signed}.${
     sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")
+  }`;
+  const credentialPayload = `${encode({ alg: "RS256", kid: "boundary" })}.${
+    encode({ ...scope, tokenUse: "agent_run_execution", exp: Math.floor(Date.now() / 1000) + 60 })
+  }`;
+  const runCredential = `${credentialPayload}.${
+    sign("RSA-SHA256", Buffer.from(credentialPayload), privateKey).toString("base64url")
   }`;
   const platformRequests: Array<{ authorization: string | null; eventToken: string | null }> = [];
   const transport = (async (input, init) => {
@@ -79,8 +91,64 @@ async function fixture(
       { ...scope },
       token,
       platformRequests,
+      runCredential,
     ));
 }
+
+it("binds the admitted run credential while local skill scripts resolve sandbox auth", async () => {
+  await fixture(false, async (tools, owner, token, _platformRequests, runCredential) => {
+    await tools.register(owner, scope, token, runCredential);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      ...scope,
+      canonicalRunId,
+      runEventAppendToken: token,
+    });
+    await runWithRuntimeRequestContext({
+      projectId: scope.projectId,
+      projectSlug: "connected-project",
+      token: "operator-user-token",
+      productionMode: false,
+      branch: "main",
+    }, async () => {
+      await tools.run({
+        owner,
+        scope,
+        writer,
+        canonicalRunId,
+        signal: new AbortController().signal,
+        admit: () => {
+          throw new Error("No tools execute");
+        },
+      }, () => {
+        const context = getRuntimeRequestContext();
+        assertEquals(context?.token, "operator-user-token");
+        assertEquals(context?.projectId, scope.projectId);
+        assertEquals(context?.projectSlug, "connected-project");
+        assertEquals(context?.branch, "main");
+        const credential = getVerifiedSkillScriptExecutionCredential();
+        assertEquals(credential, {
+          apiUrl: "https://api.veryfront.com",
+          authToken: runCredential,
+          projectId: scope.projectId,
+          projectSlug: "connected-project",
+          branch: "main",
+          runId: scope.runId,
+          agentId: scope.agentId,
+        });
+        const claims = JSON.parse(
+          Buffer.from(runCredential.split(".")[1]!, "base64url").toString(),
+        );
+        assertEquals(
+          { projectId: claims.projectId, runId: claims.runId, agentId: claims.agentId },
+          scope,
+        );
+        return Promise.resolve();
+      });
+    });
+    await tools.revoke(owner);
+  });
+});
 
 it("executes a legacy writer without a platform dependency claim", async () => {
   await fixture(false, async (tools, owner, token, platformRequests) => {

@@ -1,16 +1,20 @@
 import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("run-runtime-env");
+const reflectApply = Reflect.apply;
+const setHas = Set.prototype.has;
+const stringStartsWith = String.prototype.startsWith;
 
 export const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
 
 const UNSAFE_INJECTED_ENV_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
-const RESERVED_TASK_ENV_KEYS = new Set([
+export const RESERVED_TASK_ENV_KEYS = Object.freeze([
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_URL",
   "VERYFRONT_PROJECT_API_URL",
   "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_PROJECT_ID",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_BRANCH_REF",
@@ -19,9 +23,11 @@ const RESERVED_TASK_ENV_KEYS = new Set([
   "VERYFRONT_RUN_RESULT_PATH",
   INJECTED_TASK_ENV_JSON,
 ]);
+const reservedTaskEnvKeys = new Set(RESERVED_TASK_ENV_KEYS);
 
-function isReservedTaskEnvKey(key: string): boolean {
-  return key.startsWith("TENANT_") || RESERVED_TASK_ENV_KEYS.has(key);
+export function isReservedTaskEnvKey(key: string): boolean {
+  return reflectApply(stringStartsWith, key, ["TENANT_"]) ||
+    reflectApply(setHas, reservedTaskEnvKeys, [key]);
 }
 
 function filterSafeWorkflowEnv(
@@ -30,7 +36,7 @@ function filterSafeWorkflowEnv(
   const filtered: Record<string, string> = {};
   for (const [key, value] of Object.entries(env ?? {})) {
     if (
-      UNSAFE_INJECTED_ENV_KEYS.has(key) ||
+      reflectApply(setHas, UNSAFE_INJECTED_ENV_KEYS, [key]) ||
       isReservedTaskEnvKey(key) ||
       typeof value !== "string"
     ) {

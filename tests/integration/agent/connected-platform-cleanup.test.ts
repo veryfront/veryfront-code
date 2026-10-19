@@ -6,15 +6,19 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { createConnectedLocalPlatformTools } from "../../../src/agent/ag-ui/connected-local-platform-tools.ts";
 import {
+  createHostedRunEventWriterCapability,
+} from "../../../src/agent/hosted/child-run-event-writer-token.ts";
+import {
   registerHostedChildPlatformDependencies,
   runWithHostedPlatformDependencies,
 } from "../../../src/agent/hosted/platform-dependency-credential.ts";
+import { getVerifiedSkillScriptExecutionCredential } from "../../../src/skill/execution-credential.ts";
 
 async function fixture(
   operation: (input: {
     transport: typeof fetch;
     scope: { projectId: string; runId: string; agentId: string };
-    eventToken: (runId: string) => string;
+    eventToken: (runId: string, agentId?: string) => string;
     authToken: string;
   }) => Promise<void>,
 ) {
@@ -31,10 +35,11 @@ async function fixture(
       sign("RSA-SHA256", Buffer.from(unsigned), privateKey).toString("base64url")
     }`;
   };
-  const eventToken = (runId: string) =>
+  const eventToken = (runId: string, agentId = scope.agentId) =>
     signed({
       ...scope,
       runId,
+      agentId,
       userId: "server",
       serviceAccountId: "server",
       actorType: "service_account",
@@ -277,6 +282,72 @@ it("renews only the root sandbox credential and keeps child credentials isolated
     currentToken = "renewed-root-credential";
     assertEquals(credentials[0]!(), currentToken);
     assertEquals(credentials[1]!(), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    await tools.run({
+      owner: root,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: new AbortController().signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      assertEquals(
+        getVerifiedSkillScriptExecutionCredential()?.authToken,
+        "renewed-root-credential",
+      );
+      return Promise.resolve();
+    });
+    await tools.revoke(root);
+  });
+});
+
+it("binds each delegated child script to its own run and role credential", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const root = { runId: scope.runId };
+    const child = { childRunId: "credential-child" };
+    const childScope = { ...scope, runId: child.childRunId, agentId: "ingestion-agent" };
+    const childCredential = "child-run-role-credential";
+    await tools.register(root, scope, eventToken(scope.runId), authToken);
+    await registerHostedChildPlatformDependencies(
+      root,
+      child,
+      childScope,
+      eventToken(child.childRunId, childScope.agentId),
+      childCredential,
+    );
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: child.childRunId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(child.childRunId, childScope.agentId),
+    });
+    await tools.run({
+      owner: child,
+      scope: childScope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: new AbortController().signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      assertEquals(getVerifiedSkillScriptExecutionCredential(), {
+        apiUrl: "https://api.veryfront.com",
+        authToken: childCredential,
+        projectId: scope.projectId,
+        runId: child.childRunId,
+        agentId: childScope.agentId,
+      });
+      return Promise.resolve();
+    });
     await tools.revoke(root);
   });
 });

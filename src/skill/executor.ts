@@ -23,6 +23,11 @@ import type {
   SkillScriptSnapshotFile,
 } from "./types.ts";
 import { isCanonicalAdapterRelativeSkillRoot } from "./types.ts";
+import { isReservedTaskEnvKey, RESERVED_TASK_ENV_KEYS } from "#veryfront/runs/runtime-env.ts";
+import {
+  getVerifiedSkillScriptExecutionCredential,
+  type VerifiedSkillScriptExecutionCredential,
+} from "./execution-credential.ts";
 import {
   SKILL_PATH_SEGMENT_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
@@ -54,6 +59,8 @@ const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringSplit = String.prototype.split;
 const stringStartsWith = String.prototype.startsWith;
+const objectEntries = Object.entries;
+const objectKeys = Object.keys;
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -308,9 +315,17 @@ function buildShellCommand(parts: string[]): string {
   return parts.map(shellEscapeArg).join(" ");
 }
 
-function formatEnvAssignments(env?: Record<string, string>): string[] {
-  if (!env) return [];
-  return Object.entries(env).map(([key, value]) => {
+function isVerifiedCredentialEnvironmentKey(key: string): boolean {
+  return key === "SANDBOX_AUTH_TOKEN" || isReservedTaskEnvKey(key);
+}
+
+function buildCommandEnvironment(
+  env?: Record<string, string>,
+  omitVerifiedCredentialKeys = false,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  if (!env) return environment;
+  for (const [key, value] of objectEntries(env)) {
     if (!ENV_KEY_REGEX.test(key)) {
       throw toError(
         createError({
@@ -319,8 +334,71 @@ function formatEnvAssignments(env?: Record<string, string>): string[] {
         }),
       );
     }
-    return `${key}=${value}`;
+    if (!omitVerifiedCredentialKeys || !isVerifiedCredentialEnvironmentKey(key)) {
+      defineOwnProperty(environment, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+  return environment;
+}
+
+function hasOwnEnvironmentValue(environment: Record<string, string>, key: string): boolean {
+  return reflectApply(hasOwnProperty, environment, [key]) as boolean;
+}
+
+function formatVerifiedCredentialEnvironmentUnsets(
+  env: Record<string, string> | undefined,
+  authoritativeEnvironment: Record<string, string>,
+): string[] {
+  const unsetArguments: string[] = ["-u", "SANDBOX_AUTH_TOKEN"];
+  for (let index = 0; index < RESERVED_TASK_ENV_KEYS.length; index += 1) {
+    const key = RESERVED_TASK_ENV_KEYS[index]!;
+    if (hasOwnEnvironmentValue(authoritativeEnvironment, key)) continue;
+    appendOwnArrayElement(unsetArguments, "-u");
+    appendOwnArrayElement(unsetArguments, key);
+  }
+  for (const key of objectKeys(env ?? {})) {
+    if (isReservedTaskEnvKey(key) && !hasOwnEnvironmentValue(authoritativeEnvironment, key)) {
+      appendOwnArrayElement(unsetArguments, "-u");
+      appendOwnArrayElement(unsetArguments, key);
+    }
+  }
+  return unsetArguments;
+}
+
+function setEnvironmentValue(
+  environment: Record<string, string>,
+  key: string,
+  value: string,
+): void {
+  defineOwnProperty(environment, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
   });
+}
+
+function setVerifiedCredentialEnvironment(
+  environment: Record<string, string>,
+  credential: VerifiedSkillScriptExecutionCredential,
+): void {
+  setEnvironmentValue(environment, "VERYFRONT_API_TOKEN", credential.authToken);
+  setEnvironmentValue(environment, "VERYFRONT_API_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_API_BASE_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PROJECT_API_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PUBLIC_API_BASE_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PROJECT_ID", credential.projectId);
+  if (credential.projectSlug) {
+    setEnvironmentValue(environment, "VERYFRONT_PROJECT_SLUG", credential.projectSlug);
+  }
+  if (credential.branch) {
+    setEnvironmentValue(environment, "VERYFRONT_BRANCH_REF", credential.branch);
+  }
 }
 
 function createSandboxScriptPath(scriptPath: string): string {
@@ -339,7 +417,10 @@ function getSandboxAuthOverride(): string | undefined {
 }
 
 function hasCloudScriptExecutionAuth(): boolean {
-  return Boolean(getSandboxAuthOverride() || getVeryfrontCloudAuthToken());
+  return Boolean(
+    getVerifiedSkillScriptExecutionCredential() || getSandboxAuthOverride() ||
+      getVeryfrontCloudAuthToken(),
+  );
 }
 
 /**
@@ -449,8 +530,19 @@ class CloudScriptExecutor implements SkillScriptExecutor {
 
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
-    const authToken = getSandboxAuthOverride();
-    const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
+    const credential = getVerifiedSkillScriptExecutionCredential();
+    const authToken = credential?.authToken ?? getSandboxAuthOverride();
+    const sandbox = await Sandbox.create(
+      credential
+        ? {
+          apiUrl: credential.apiUrl,
+          authToken: credential.authToken,
+          projectReference: credential.projectId,
+        }
+        : authToken
+        ? { authToken }
+        : undefined,
+    );
     try {
       const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
       const sandboxScriptPath = scriptSnapshot === undefined
@@ -476,9 +568,15 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
-      const envAssignments = formatEnvAssignments(input.env);
-      const commandParts = envAssignments.length > 0
-        ? ["env", ...envAssignments, command, ...finalArgs]
+      const commandEnvironment = buildCommandEnvironment(input.env, credential !== undefined);
+      if (credential) setVerifiedCredentialEnvironment(commandEnvironment, credential);
+      const commandParts = credential
+        ? [
+          "env",
+          ...formatVerifiedCredentialEnvironmentUnsets(input.env, commandEnvironment),
+          command,
+          ...finalArgs,
+        ]
         : [command, ...finalArgs];
 
       const invocation = buildShellCommand(commandParts);
@@ -490,10 +588,14 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       let backgroundCommandId: string | undefined;
       let outputLimitCleanupRequired = false;
       const commandDeadline = performance.now() + timeoutMs;
+      const commandOptions = {
+        timeoutSeconds,
+        ...(objectKeys(commandEnvironment).length > 0 ? { env: commandEnvironment } : {}),
+      };
       const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
-        ? sandbox.runCommand(cmdString, { timeoutSeconds })
+        ? sandbox.runCommand(cmdString, commandOptions)
         : (async () => {
-          const command = await sandbox.startBackgroundCommand(cmdString, { timeoutSeconds });
+          const command = await sandbox.startBackgroundCommand(cmdString, commandOptions);
           backgroundCommandId = command.id;
           while (!polling.signal.aborted) {
             const output = await sandbox.getBackgroundCommandOutput(command.id);
