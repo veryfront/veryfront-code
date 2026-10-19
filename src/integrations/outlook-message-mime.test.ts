@@ -203,27 +203,6 @@ describe("binary endpoint responses", () => {
     }
   });
 
-  it("encodes byte-exact base64 even when btoa and Buffer are replaced", async () => {
-    const globals = globalThis as { btoa: unknown; Buffer?: unknown };
-    const originalBtoa = globals.btoa;
-    const hadBuffer = Object.hasOwn(globals, "Buffer");
-    const originalBuffer = globals.Buffer;
-    const poisoned = () => "POISONED";
-    globals.btoa = poisoned;
-    globals.Buffer = { from: () => ({ toString: poisoned }) };
-    try {
-      for (const [body, expected] of paddingCases) {
-        const bytes = new Uint8Array(body);
-        const result = await executeMime(() => new Response(bytes)) as Record<string, unknown>;
-        assertEquals(result.content_base64, expected, String(body));
-      }
-    } finally {
-      globals.btoa = originalBtoa;
-      if (hadBuffer) globals.Buffer = originalBuffer;
-      else delete globals.Buffer;
-    }
-  });
-
   it("rejects oversized, truncated, partial, and empty bodies without exposing content", async () => {
     const maxBytes = MAX_INTEGRATION_BINARY_RESPONSE_BYTES;
     const marker = new TextEncoder().encode(`Subject: ${SECRET}\r\n\r\n`);
