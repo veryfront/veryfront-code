@@ -640,6 +640,9 @@ const result = await weather.generate({
   outputSchema: getForecastSchema(),
 });
 
+if (result.data === undefined) {
+  throw new Error(result.metadata?.outputSchemaError ?? "Forecast output is missing");
+}
 console.log(result.data.city); // string
 console.log(result.data.tempC); // number
 ```

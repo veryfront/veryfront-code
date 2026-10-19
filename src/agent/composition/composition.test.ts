@@ -628,34 +628,6 @@ describe("agentAsTool", () => {
     });
   });
 
-  for (const data of [{ text: "business" }, { data: { id: 1 } }, { object: 42 }]) {
-    it(`preserves unmarked business output with reserved keys ${JSON.stringify(data)}`, async () => {
-      const result = await runInheritedLocalAgent(
-        {
-          terminalReceipt: {
-            status: "completed",
-            output: data,
-          },
-        },
-        { projectId: "project", apiUrl: "https://api.example.test", fetch },
-        () => {
-          throw new Error("must not execute");
-        },
-      );
-
-      assertEquals(result, {
-        success: true,
-        output: {
-          text: JSON.stringify(data),
-          data,
-          object: data,
-          status: "completed",
-        },
-        executionTime: 0,
-      });
-    });
-  }
-
   it("ignores an object value the child response only inherits", async () => {
     const childAgent = createMinimalAgent("writer");
     childAgent.stream = (input): Promise<AgentStreamResult> => {

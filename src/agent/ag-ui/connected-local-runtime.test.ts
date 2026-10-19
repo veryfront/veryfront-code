@@ -296,20 +296,12 @@ describe("connected local execution", () => {
     it(`replays canonical or legacy child output ${JSON.stringify(stored)} without reexecution`, async () => {
       let attempts = 0;
       let renewals = 0;
-      const legacy = "text" in stored && "toolCalls" in stored && "status" in stored;
-      const output: LocalChildResult = legacy
-        ? {
-          text: stored.text as string,
-          toolCalls: stored.toolCalls as number,
-          status: stored.status as string,
-          ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
-        }
-        : {
-          text: JSON.stringify(stored),
-          data: stored,
-          object: stored,
-          status: "completed",
-        };
+      const output: LocalChildResult = {
+        text: "text" in stored ? stored.text ?? "" : "",
+        ...(typeof stored.toolCalls === "number" ? { toolCalls: stored.toolCalls } : {}),
+        status: "completed",
+        ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
+      };
       const f = fixture({
         trustedClaim: true,
         renew: () => {

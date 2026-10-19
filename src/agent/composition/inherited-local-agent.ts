@@ -122,9 +122,9 @@ function restoreInheritedAgentResponse(
   const text = Object.getOwnPropertyDescriptor(value, "text");
   const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
   const status = Object.getOwnPropertyDescriptor(value, "status");
-  // Historical agent responses always carried all three framework fields.
-  // Without that complete discriminator, reserved names belong to business data.
-  if (!text || !calls || !status) {
+  if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
+  const structured = readStructuredAgentOutput(value);
+  if (!text && !structured) {
     return {
       text: privateJsonStringify(value),
       data: value,
@@ -132,17 +132,15 @@ function restoreInheritedAgentResponse(
       status: "completed",
     };
   }
-  if (!("value" in text) || typeof text.value !== "string") throw invalid();
   if (
-    !("value" in calls) ||
-    (typeof calls.value !== "number" && !Array.isArray(calls.value))
+    calls && (!("value" in calls) ||
+      (typeof calls.value !== "number" && !Array.isArray(calls.value)))
   ) throw invalid();
-  if (!("value" in status) || typeof status.value !== "string") throw invalid();
-  const structured = readStructuredAgentOutput(value);
+  if (status && (!("value" in status) || typeof status.value !== "string")) throw invalid();
   return {
-    text: text.value,
-    toolCalls: calls.value,
-    status: status.value,
+    text: text?.value ?? "",
+    ...(calls ? { toolCalls: calls.value } : {}),
+    status: status?.value ?? "completed",
     ...structured,
   };
 }
