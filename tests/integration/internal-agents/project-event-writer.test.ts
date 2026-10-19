@@ -150,7 +150,7 @@ it("waits through a transient retry while draining after cancellation", async ()
   });
 });
 
-for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
+for (const producerOutcome of ["fulfilled", "rejected", "missing", "post-eof"] as const) {
   it(
     `flushes buffered events before a failed runtime closes after producer ${producerOutcome}`,
     async () => {
@@ -195,6 +195,16 @@ for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
                 let emitted = false;
                 return new ReadableStream<Uint8Array>({
                   pull(controller) {
+                    if (producerOutcome === "post-eof") {
+                      controller.enqueue(
+                        new TextEncoder().encode(
+                          'data: {"type":"text-delta","id":"text","delta":"before failure"}\n\n' +
+                            'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}',
+                        ),
+                      );
+                      controller.close();
+                      return;
+                    }
                     if (emitted) {
                       if (producerOutcome === "missing") {
                         controller.enqueue(

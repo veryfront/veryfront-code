@@ -2470,9 +2470,7 @@ export async function createRuntimeAgentStreamResponse(
                 });
               });
             } else if (sandboxClosed) {
-              if (readerReachedEof) {
-                projectWriter?.close();
-              } else if (readerCancellationCompleted) {
+              if (readerReachedEof || readerCancellationCompleted) {
                 await drainAndCloseProjectWriter();
               }
               // Ordinary overrides can use the stream cancellation contract instead

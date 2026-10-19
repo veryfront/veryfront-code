@@ -201,8 +201,8 @@ export async function runInheritedLocalAgent(
   let platformRevoked = false;
   const revokePlatformTools = async () => {
     if (!platform || platformRevoked) return;
-    platformRevoked = true;
     await platform.tools.revoke(child);
+    platformRevoked = true;
   };
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     let drainFailure: { error: unknown } | undefined;
@@ -224,7 +224,11 @@ export async function runInheritedLocalAgent(
           terminalErrorMessage: "Child run events could not be persisted",
         }
         : state;
-    await revokePlatformTools();
+    // Finalization must not be skipped by a transient sandbox close failure.
+    // The outer finally retries the retained cleanup before releasing the owner.
+    try {
+      await revokePlatformTools();
+    } catch { /* Retained cleanup is retried by the owner-lifetime finally. */ }
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,

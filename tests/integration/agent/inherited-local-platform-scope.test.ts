@@ -64,6 +64,7 @@ for (const fail of [false, true]) {
     const lifecycle: string[] = [];
     const admissions: string[] = [];
     let transientAdmissionFailures = 0;
+    let transientRootCleanupFailures = 0;
     let admitGrandchild:
       | Parameters<ReturnType<typeof createConnectedLocalPlatformTools>["run"]>[0]["admit"]
       | undefined;
@@ -132,6 +133,9 @@ for (const fail of [false, true]) {
         const runId = "runId" in owner ? owner.runId : "unexpected";
         revoked.push(runId);
         lifecycle.push(`revoke:${runId}`);
+        if (!fail && runId === "run-child" && transientRootCleanupFailures++ === 0) {
+          throw new Error("transient cleanup failure");
+        }
       },
     };
     const result = await runWithExactRuntimeRemoteToolSources([{
@@ -187,7 +191,10 @@ for (const fail of [false, true]) {
     });
     assertEquals(result.success, !fail, result.error);
     assertEquals(entered, [`child:${childId}`, `grandchild:${grandchildId}`]);
-    assertEquals(revoked, ["run-grandchild", "run-child"]);
+    assertEquals(
+      revoked,
+      fail ? ["run-grandchild", "run-child"] : ["run-grandchild", "run-child", "run-child"],
+    );
     assertEquals(admissions, [grandchildId]);
     assertEquals(transientAdmissionFailures, 2);
     await assertRejects(
@@ -204,12 +211,23 @@ for (const fail of [false, true]) {
       "Inherited local tool writer is unavailable",
     );
     assertEquals(finalizations.map(({ id }) => id), [grandchildId, childId]);
-    assertEquals(lifecycle, [
-      `revoke:run-grandchild`,
-      `finalize:${grandchildId}`,
-      `revoke:run-child`,
-      `finalize:${childId}`,
-    ]);
+    assertEquals(
+      lifecycle,
+      fail
+        ? [
+          `revoke:run-grandchild`,
+          `finalize:${grandchildId}`,
+          `revoke:run-child`,
+          `finalize:${childId}`,
+        ]
+        : [
+          `revoke:run-grandchild`,
+          `finalize:${grandchildId}`,
+          `revoke:run-child`,
+          `finalize:${childId}`,
+          `revoke:run-child`,
+        ],
+    );
   });
 }
 

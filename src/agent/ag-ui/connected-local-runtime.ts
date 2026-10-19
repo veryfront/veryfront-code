@@ -230,7 +230,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
       authToken: options.apiToken,
       fetch: transport,
     });
-  const platformTools = dependencies.client
+  const platformTools = dependencies.client && !dependencies.createPlatformTools
     ? undefined
     : (dependencies.createPlatformTools ?? createConnectedLocalPlatformTools)(
       options.apiBaseUrl,
@@ -443,6 +443,8 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
         const controller = new AbortController();
         const childScope = new AbortController();
         let finalization: Promise<void> | undefined;
+        let terminalCompleted = false;
+        let platformCleanupComplete = false;
         let finishing = false;
         let output = "";
         let sequence = claim.latest_external_event_sequence;
@@ -572,11 +574,21 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           controller.abort(input.signal.reason);
           void finish("cancelled").catch(() => {});
         };
+        const cleanupPlatform = async () => {
+          if (platformCleanupComplete) return;
+          await platformTools?.revoke(platformOwner);
+          platformCleanupComplete = true;
+        };
         const finish = async (status: TerminalStatus) => {
           if (finalization !== undefined) return await finalization;
           finishing = true;
           childScope.abort();
           finalization ??= (async () => {
+            if (terminalCompleted) {
+              await cleanupPlatform();
+              active.delete(run);
+              return;
+            }
             clearInterval(renew);
             input.signal.removeEventListener("abort", abort);
             if (status !== "completed") controller.abort();
@@ -595,7 +607,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             const terminalStatus = appendError || leaseFailed ? "failed" : status;
             try {
               // Sandbox cleanup still needs the credentials released by completeRun.
-              await platformTools?.revoke(platformOwner);
+              // A transient close failure is retried in finally and must not skip
+              // the durable terminal update.
+              try {
+                await cleanupPlatform();
+              } catch { /* Retained cleanup is retried after terminal persistence. */ }
               await client.completeRun({
                 runId: claim!.run_id,
                 status: terminalStatus,
@@ -610,6 +626,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                   }
                   : {}),
               });
+              terminalCompleted = true;
               log(
                 `${timestamp()} ${agentLabel} ${terminalStatus} ${accepted.id} (${
                   ((Date.now() - startedAt) / 1000).toFixed(1)
@@ -622,11 +639,16 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               );
               throw error;
             } finally {
-              await platformTools?.revoke(platformOwner);
-              active.delete(run);
+              await cleanupPlatform();
+              if (platformCleanupComplete) active.delete(run);
             }
           })();
-          return await finalization;
+          try {
+            return await finalization;
+          } catch (error) {
+            if (terminalCompleted && !platformCleanupComplete) finalization = undefined;
+            throw error;
+          }
         };
         const executeAdmittedLocalChild: Parameters<typeof withLocalChildExecution>[0] = async (
           invocation,
