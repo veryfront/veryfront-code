@@ -460,6 +460,49 @@ describe("cli/mcp/remote-file-tools", () => {
       });
     }
 
+    for (const failure of ["inaccessible", "missing", "nontext"]) {
+      it(`does not create a clone after a later source read is ${failure}`, async () => {
+        resetEnv();
+        const writes: string[] = [];
+        const result = await withMockFetch((input, init) => {
+          const request = new Request(input, init);
+          const path = new URL(request.url).pathname;
+          if (request.method !== "GET") {
+            writes.push(request.method + " " + path);
+            return Promise.resolve(Response.json({ id: "unexpected", slug: "copy" }));
+          }
+          if (path.endsWith("/files")) {
+            return Promise.resolve(Response.json({
+              data: [
+                { path: "app/first.tsx", content: "first" },
+                { path: "app/second.tsx", content: "" },
+              ],
+            }));
+          }
+          if (path.endsWith("first.tsx")) {
+            return Promise.resolve(Response.json({ path: "app/first.tsx", content: "first" }));
+          }
+          if (failure === "inaccessible") {
+            return Promise.resolve(Response.json({ message: "Access denied" }, { status: 403 }));
+          }
+          return Promise.resolve(Response.json(
+            failure === "missing" ? null : {
+              path: "app/second.tsx",
+              content: null,
+            },
+          ));
+        }, () => vfRemoteCloneProject.execute({ source_project: "source", target_slug: "copy" }));
+        assertEquals(result.success, false);
+        assertEquals(
+          result.error,
+          failure === "nontext"
+            ? "Invalid text content for app/second.tsx. No destination project was created."
+            : "Failed to read app/second.tsx. No destination project was created.",
+        );
+        assertEquals(writes, []);
+      });
+    }
+
     it("clones selected text files after source preflight", async () => {
       resetEnv();
       const events: string[] = [];

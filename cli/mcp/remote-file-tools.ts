@@ -876,6 +876,46 @@ interface RemoteCloneProjectOutput {
   error?: string;
 }
 
+async function prepareCloneSourceFiles({
+  project,
+  files,
+}: {
+  project: string;
+  files: readonly RemoteFile[];
+}): Promise<{ files: RemoteFile[]; error?: never } | { error: string; files?: never }> {
+  const prepared: RemoteFile[] = [];
+  for (const file of files) {
+    if (file.binary !== undefined && file.binary !== null) {
+      return {
+        error:
+          `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
+      };
+    }
+    const getResult = await apiRequest<RemoteFile>(
+      "GET",
+      buildProjectFilePath(project, file.path),
+    );
+    if (!getResult.ok || !getResult.data) {
+      return {
+        error: `Failed to read ${file.path}. No destination project was created.`,
+      };
+    }
+    if (getResult.data.binary !== undefined && getResult.data.binary !== null) {
+      return {
+        error:
+          `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
+      };
+    }
+    if (typeof getResult.data.content !== "string") {
+      return {
+        error: `Invalid text content for ${file.path}. No destination project was created.`,
+      };
+    }
+    prepared.push(getResult.data);
+  }
+  return { files: prepared };
+}
+
 export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneProjectOutput> = {
   name: "vf_remote_clone_project",
   title: "Clone Remote Project",
@@ -904,40 +944,11 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
         }
 
         const sourceFiles = listResult.data?.data ?? [];
-        const prepared: RemoteFile[] = [];
-        for (const file of sourceFiles) {
-          if (file.binary !== undefined && file.binary !== null) {
-            return {
-              success: false,
-              error:
-                `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
-            };
-          }
-          const getResult = await apiRequest<RemoteFile>(
-            "GET",
-            buildProjectFilePath(input.source_project, file.path),
-          );
-          if (!getResult.ok || !getResult.data) {
-            return {
-              success: false,
-              error: `Failed to read ${file.path}. No destination project was created.`,
-            };
-          }
-          if (getResult.data.binary !== undefined && getResult.data.binary !== null) {
-            return {
-              success: false,
-              error:
-                `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
-            };
-          }
-          if (typeof getResult.data.content !== "string") {
-            return {
-              success: false,
-              error: `Invalid text content for ${file.path}. No destination project was created.`,
-            };
-          }
-          prepared.push(getResult.data);
-        }
+        const prepared = await prepareCloneSourceFiles({
+          project: input.source_project,
+          files: sourceFiles,
+        });
+        if (prepared.error !== undefined) return { success: false, error: prepared.error };
 
         const createResult = await createProjectWithRetry(input.target_slug, {});
 
@@ -950,7 +961,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
 
         let filesCopied = 0;
         const errors: string[] = [];
-        for (const file of prepared) {
+        for (const file of prepared.files) {
           const createFileResult = await apiRequest<{ id: string; path: string }>(
             "PUT",
             buildProjectFilePath(createResult.slug, file.path),
