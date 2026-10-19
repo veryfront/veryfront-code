@@ -284,6 +284,12 @@
             "description": "Maximum messages to return",
             "default": 25
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "pattern": "^[^%]+$",
+            "description": "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink"
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -1798,6 +1804,12 @@
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25
+          },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "pattern": "^[^%]+$",
+            "description": "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",

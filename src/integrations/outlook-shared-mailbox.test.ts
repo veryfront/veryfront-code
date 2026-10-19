@@ -292,6 +292,58 @@ describe("Outlook shared-mailbox catalog routes", () => {
     }
   });
 
+  it("returns the next-page link from searches and accepts it as $skiptoken", async () => {
+    for (
+      const [toolId, args] of [
+        ["search_emails", { query: "invoice" }],
+        ["search_shared_mailbox_emails", { mailbox, query: "invoice" }],
+      ] as const
+    ) {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      const nextLink =
+        `${graph}/v1.0/me/messages?%24search=%22invoice%22&%24top=2&%24skiptoken=page-2`;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args: { ...args, $top: 2, $skiptoken: "page-2" },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({
+            value: [{ id: "item-1" }, { id: "item-2" }],
+            "@odata.nextLink": nextLink,
+          }));
+        },
+      });
+
+      assertEquals(requests[0]?.url.searchParams.get("$skiptoken"), "page-2", toolId);
+      assertEquals(requests[0]?.url.searchParams.get("$search"), '"invoice"', toolId);
+      assertEquals(
+        result,
+        { value: [{ id: "item-1" }, { id: "item-2" }], "@odata.nextLink": nextLink },
+        toolId,
+      );
+
+      // A still-encoded token would be encoded twice and silently miss the next page.
+      await assertRejects(
+        () =>
+          executeLocalIntegrationEndpoint({
+            connectorName: "outlook",
+            toolId: `outlook__${toolId}`,
+            endpoint: outlookEndpoint(toolId),
+            args: { ...args, $skiptoken: "page%3D2" },
+            authHeaders: { Authorization: `Bearer ${SECRET}` },
+            allowedOrigin: graph,
+            transport: () => Promise.reject(new Error("must not send")),
+          }),
+        VeryfrontError,
+        "does not match its allowed pattern",
+      );
+    }
+  });
+
   it("sends a failed shared-mailbox move exactly once", async () => {
     for (
       const respond of [
