@@ -759,6 +759,46 @@ describe("integrations/remote-tools hardening", () => {
     assertStrictEquals((sent as { arguments: { content: string } }).arguments.content, content);
   });
 
+  for (
+    const [shape, body] of [
+      ["json", (content: string) => ({ content })],
+      [
+        "text",
+        (content: string) => ({ content: [{ type: "text", text: JSON.stringify({ content }) }] }),
+      ],
+    ] as const
+  ) {
+    it(`returns one ${shape} result string over 1 MiB within the response bound`, async () => {
+      configureRemoteTools();
+      const content = "A".repeat(2 * 1024 * 1024);
+
+      const result = await withMockFetch(
+        async () => Response.json(body(content)),
+        () => runRemoteIntegrationTool("outlook__get_attachment", {}),
+      );
+
+      assertEquals(result, { content });
+    });
+  }
+
+  it("rejects a decoded failure result that grows past the response bound", async () => {
+    configureRemoteTools();
+    const half = "A".repeat(1536 * 1024);
+    const text = JSON.stringify({ detail: half, more: half });
+
+    const error = await withMockFetch(
+      async () =>
+        Response.json({
+          isError: true,
+          content: [{ type: "text", text }],
+          _meta: { condition: { slug: "upstream-error", status: 502, retryable: false } },
+        }),
+      () => captureRejection(() => runRemoteIntegrationTool("outlook__get_attachment", {})),
+    );
+
+    assertEquals(error instanceof TypeError, true);
+  });
+
   it("rejects a serialized call body above the aggregate byte ceiling", async () => {
     configureRemoteTools();
     const emptyArguments = { a: "", b: "", c: "", d: "" };

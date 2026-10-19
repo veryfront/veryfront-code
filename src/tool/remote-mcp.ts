@@ -3,7 +3,10 @@ import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
@@ -354,10 +357,13 @@ function parseJsonValue(text: string): unknown | undefined {
   }
 }
 
-function parseJsonText(text: string): unknown | undefined {
+/** A byte-bounded source may pass `maxSourceBytes` so one string can use all of it. */
+function parseJsonText(text: string, maxSourceBytes?: number): unknown | undefined {
   const value = parseJsonValue(text);
   if (value === undefined) return undefined;
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = maxSourceBytes === undefined
+    ? snapshotBoundedJsonValue(value)
+    : snapshotBoundedParsedJsonValue(value, maxSourceBytes);
   return snapshot.success ? snapshot.value : undefined;
 }
 
@@ -369,7 +375,7 @@ function parseCallToolErrorText(
   context?: ToolExecutionContext,
   fallbackCode?: string,
 ): unknown {
-  const parsed = parseJsonText(text);
+  const parsed = parseJsonText(text, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
   if (parsed !== undefined) return parsed;
 
   const code = fallbackCode && MCP_ERROR_CODE.test(fallbackCode)
@@ -388,7 +394,13 @@ function parseCallToolErrorText(
 }
 
 function isOauthExpiredMessage(value: unknown): boolean {
-  const snapshot = snapshotBoundedJsonValue(value);
+  // Error values come from a byte-bounded call response, so one string may use all of it.
+  // Detection only reads the value, so leave room for the error wrapper added around the text.
+  const snapshot = snapshotBoundedJsonValue(
+    value,
+    MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+    2 * MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+  );
   const safeValue = snapshot.success ? snapshot.value : undefined;
 
   // Check structured OAuth error field first (RFC 6749 / RFC 6750 error codes).
@@ -535,7 +547,7 @@ function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
 
 function extractJsonRpcToolError(payload: Record<string, unknown>): Record<string, unknown> {
   const rawError = isRecord(payload.error) ? payload.error as JsonRpcErrorObject : {};
-  const dataSnapshot = snapshotBoundedJsonValue(rawError.data);
+  const dataSnapshot = snapshotBoundedJsonValue(rawError.data, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
   const data = dataSnapshot.success ? dataSnapshot.value : undefined;
   const dataRecord = isRecord(data) ? data : undefined;
   const dataCode = typeof dataRecord?.code === "string" && MCP_ERROR_CODE.test(dataRecord.code)
@@ -975,7 +987,7 @@ function normalizeCallToolResult(input: {
       return result.structuredContent;
     }
 
-    return parseJsonText(text) ?? text;
+    return parseJsonText(text, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES) ?? text;
   }
 
   if (isError) {
@@ -1153,7 +1165,11 @@ function createRemoteMCPToolSourceWithFetch(
             normalizeKnownToolError(result.result, toolName, endpoint, context),
           );
         }
-        const resultSnapshot = snapshotBoundedJsonValue(result);
+        // The response text is already bounded, so one string may use the whole response.
+        const resultSnapshot = snapshotBoundedParsedJsonValue(
+          result,
+          MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+        );
         if (!resultSnapshot.success) {
           throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
         }

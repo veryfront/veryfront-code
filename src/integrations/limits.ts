@@ -30,9 +30,8 @@ export const MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES = 4 * 1024 * 1024;
 /**
  * Maximum raw bytes accepted from a binary (base64-encoded) tool response.
  *
- * Sized so the base64 string fits one bounded JSON string
- * ({@link JSON_VALUE_MAX_STRING_BYTES}), which hosted runtimes enforce on every
- * tool result. A larger body is rejected, never truncated.
+ * Sized so the base64 string fits the default bounded JSON string
+ * ({@link JSON_VALUE_MAX_STRING_BYTES}). A larger body is rejected, never truncated.
  */
 export const MAX_INTEGRATION_BINARY_RESPONSE_BYTES = Math.floor(JSON_VALUE_MAX_STRING_BYTES / 4) *
   3;
