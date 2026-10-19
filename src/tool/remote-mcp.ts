@@ -542,7 +542,7 @@ function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
 
 function extractJsonRpcToolError(payload: Record<string, unknown>): Record<string, unknown> {
   const rawError = isRecord(payload.error) ? payload.error as JsonRpcErrorObject : {};
-  const dataSnapshot = snapshotBoundedJsonValue(rawError.data);
+  const dataSnapshot = snapshotBoundedJsonValue(rawError.data, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
   const data = dataSnapshot.success ? dataSnapshot.value : undefined;
   const dataRecord = isRecord(data) ? data : undefined;
   const dataCode = typeof dataRecord?.code === "string" && MCP_ERROR_CODE.test(dataRecord.code)

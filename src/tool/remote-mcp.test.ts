@@ -1023,6 +1023,29 @@ describe("tool/remote-mcp", () => {
     assertEquals(result.error, "reconnect_required");
   });
 
+  it("normalizes invalid_grant JSON-RPC error data with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          error: {
+            code: -32000,
+            message: "Tool failed",
+            data: { code: "invalid_grant", detail: "A".repeat(2 * 1024 * 1024) },
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals(result.error, "reconnect_required");
+  });
+
   it("keeps the scope on reconnect links built without a project", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
