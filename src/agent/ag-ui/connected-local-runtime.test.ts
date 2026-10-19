@@ -416,7 +416,13 @@ describe("connected local execution", () => {
       messages: [],
       signal: new AbortController().signal,
     });
-    const output = { text: "child output", toolCalls: 0, status: "completed" };
+    const output = {
+      text: "child output",
+      data: { selected_count: 1 },
+      object: { selected_count: 1 },
+      toolCalls: 0,
+      status: "completed",
+    };
     let executions = 0;
     try {
       await run.execute(async () => {
@@ -461,7 +467,7 @@ describe("connected local execution", () => {
       assertEquals(finalized.length, 1);
       assertEquals(finalized[0]!.headers.get("Authorization"), "Bearer child-invocation");
       assertEquals(finalized[0]!.headers.get("X-Veryfront-Run-Terminal-Token"), childToken);
-      assertEquals(finalized[0]!.body, { status: "completed", output });
+      assertEquals(finalized[0]!.body, { status: "completed", output: output.data });
       assertEquals(f.completed, []);
     } finally {
       await run.finish("completed");

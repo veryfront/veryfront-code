@@ -1,8 +1,24 @@
+import { readStructuredAgentOutput } from "../output-schema.ts";
 import type { createConnectedLocalPlatformTools } from "../ag-ui/connected-local-platform-tools.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+function terminalAgentOutput(output: unknown): unknown {
+  if (typeof output !== "object" || output === null) return output;
+  const text = Object.getOwnPropertyDescriptor(output, "text");
+  const status = Object.getOwnPropertyDescriptor(output, "status");
+  const calls = Object.getOwnPropertyDescriptor(output, "toolCalls");
+  // Only unwrap the framework-produced agent response, not arbitrary workflow data.
+  if (
+    !text || !("value" in text) || typeof text.value !== "string" ||
+    !status || !("value" in status) || status.value !== "completed" ||
+    !calls || !("value" in calls) || typeof calls.value !== "number"
+  ) return output;
+  const structured = readStructuredAgentOutput(output);
+  return structured ? structured.data : text.value;
+}
+
 const localToolAdmissions = createPrivateWeakStore<
   object,
   ((
@@ -75,7 +91,7 @@ export function readInheritedLocalChildResult(value: unknown): LocalChildResult 
     text: value.text,
     toolCalls: value.toolCalls,
     status: value.status,
-    ...(Object.hasOwn(value, "object") && "object" in value ? { object: value.object } : {}),
+    ...readStructuredAgentOutput(value),
   };
 }
 
@@ -216,7 +232,7 @@ export async function runInheritedLocalAgent(
       conversationId: child.conversationId,
       runId: child.runId,
       status: terminalState.status,
-      output: terminalState.output ?? null,
+      output: terminalAgentOutput(terminalState.output) ?? null,
       model: "",
       provider: "",
       terminalErrorCode: terminalState.terminalErrorCode ?? undefined,
