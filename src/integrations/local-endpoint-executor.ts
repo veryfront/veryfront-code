@@ -1031,24 +1031,29 @@ export async function executeLocalIntegrationEndpoint(
       body,
     );
     const binary = isBinaryResponse(options.endpoint);
+    const write = options.requiresWrite ?? options.endpoint.method !== "GET";
     const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
       options,
       binary,
-      options.requiresWrite ?? options.endpoint.method !== "GET",
+      write,
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
-    if (result.value instanceof ResponseOmitted) {
-      return freeze({
-        success: true,
-        status: result.status,
-        response_omitted: result.value.reason,
-      });
+    let omitted: OmittedResponse;
+    if (result.value instanceof ResponseOmitted) omitted = result.value.reason;
+    else {
+      try {
+        return transformResponse(result.value, options.endpoint.response, options, result.status);
+      } catch (cause) {
+        // A completed write must not fail on its response shape either.
+        if (!write) throw cause;
+        omitted = "unreadable";
+      }
     }
-    return transformResponse(result.value, options.endpoint.response, options, result.status);
+    return freeze({ success: true, status: result.status, response_omitted: omitted });
   } catch (cause) {
     throwIfCallerAborted(options.signal);
     throw cause;

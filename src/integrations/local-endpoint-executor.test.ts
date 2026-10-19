@@ -772,6 +772,22 @@ describe("local integration endpoint executor", () => {
       );
     }
 
+    // A write body without the declared transform path is omitted too.
+    assertEquals(
+      await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "POST",
+          url: "https://api.example.test/tasks",
+          response: { transform: "data" },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(Response.json({ id: "task-1" }, { status: 201 })),
+      }),
+      { success: true, status: 201, response_omitted: "unreadable" },
+    );
+
     // A GET the catalog marks as a write, such as a credit-consuming lookup, is one too.
     assertEquals(
       await executeLocalIntegrationEndpoint({
