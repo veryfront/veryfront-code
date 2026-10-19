@@ -90,11 +90,12 @@ describe("structured output snapshot intrinsics", () => {
         .filter((line) => line.startsWith("data: {"))
         .map((line) => JSON.parse(line.slice(6)))
         .find((event) => event.type === "message-finish");
-      assertEquals(finish?.object, {
+      assertEquals(finish?.data, {
         captureStatus: "unsupported",
         reasons: ["unsupported_number"],
         value: "[unsupported number]",
       });
+      assertEquals(Object.hasOwn(finish, "object"), false);
     } finally {
       Number.isFinite = originalIsFinite;
     }
