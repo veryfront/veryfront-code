@@ -10,7 +10,10 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { connectors } from "./_data.ts";
-import { guardLocalCredentialSource } from "./local-credential-host-policy.ts";
+import {
+  assertLocalCredentialHostGrant,
+  guardLocalCredentialSource,
+} from "./local-credential-host-policy.ts";
 import {
   executeLocalIntegrationEndpoint,
   executeLocalIntegrationJsonRequest,
@@ -28,7 +31,11 @@ import {
   safeLocalIntegrationIdentifier,
 } from "./local-integration-errors.ts";
 import { type LocalIntegrationCredentialProvider, toolDefinition } from "./local-tool-source.ts";
-import { MAX_LOCAL_INTEGRATION_TOOLS, MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH } from "./limits.ts";
+import {
+  MAX_INTEGRATION_FILE_DOWNLOAD_BYTES,
+  MAX_LOCAL_INTEGRATION_TOOLS,
+  MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
+} from "./limits.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
 
 /** Project environment variables required by the local Outlook service-account source. */
@@ -66,7 +73,47 @@ const OTHER_MAILBOX_TOOLS: ReadonlySet<string> = new Set([
   "outlook__get_schedule",
 ]);
 
+/** Granting either attachment getter also grants reading its raw content. */
+const ATTACHMENT_TOOLS = ["outlook__get_shared_mailbox_attachment", "outlook__get_attachment"];
+
 type OutlookEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
+
+/** Arguments for {@link OutlookServiceAccountToolSource.readAttachment}. */
+export interface OutlookAttachmentContentArgs {
+  /** Microsoft Graph message ID. */
+  messageId: string;
+  /** Microsoft Graph attachment ID, as listed by `outlook__list_shared_mailbox_attachments`. */
+  attachmentId: string;
+  /** Set to `IdType="ImmutableId"` when the IDs are immutable IDs. */
+  prefer?: string;
+}
+
+/** Raw attachment content, ready for `planFileParts` or `fileFromBytes`. */
+export interface OutlookAttachmentContent {
+  /** The attachment bytes, unchanged. */
+  readonly bytes: Uint8Array;
+  /** Byte length of `bytes`. */
+  readonly size: number;
+  /** Graph's content type without parameters, or `application/octet-stream`. */
+  readonly contentType: string;
+}
+
+/** The local Outlook service-account source, plus a raw attachment reader. */
+export interface OutlookServiceAccountToolSource extends RemoteToolSource {
+  /**
+   * Read one attachment's bytes from the configured mailbox through Graph
+   * `/$value`. Unlike the attachment tools, this does not return base64 JSON,
+   * so attachments up to {@link MAX_INTEGRATION_FILE_DOWNLOAD_BYTES} fit. A
+   * larger attachment fails with `local-integration-response-invalid`; it is
+   * never truncated. Each call holds the whole attachment in memory, so
+   * concurrent calls add up. Requires `outlook__get_shared_mailbox_attachment` or
+   * `outlook__get_attachment` in `allowedTools`.
+   */
+  readAttachment(
+    args: OutlookAttachmentContentArgs,
+    options?: { signal?: AbortSignal },
+  ): Promise<OutlookAttachmentContent>;
+}
 
 /** Options for the local Outlook service-account source. */
 export interface OutlookServiceAccountToolSourceOptions {
@@ -193,6 +240,22 @@ function admitTool(
       endpoint,
       OUTLOOK_SERVICE_ACCOUNT_ENV_VARS,
     ),
+  });
+}
+
+/** The shared-mailbox attachment getter, in `/me/` form, pointed at the raw `/$value` content. */
+function attachmentContentEndpoint(
+  catalog: readonly IntegrationToolMeta[],
+): OutlookEndpoint | undefined {
+  const tool = catalog.find((entry) => entry.id === "outlook__get_shared_mailbox_attachment");
+  const endpoint = tool?.endpoint && configuredMailboxEndpoint(structuredClone(tool.endpoint));
+  if (!endpoint || endpoint.method !== "GET") return undefined;
+  const { $expand: _expand, ...params } = endpoint.params ?? {};
+  return Object.freeze({
+    method: "GET",
+    url: `${endpoint.url}/$value`,
+    params,
+    response: { encoding: "base64" as const },
   });
 }
 
@@ -397,7 +460,7 @@ function createOutlookServiceAccountToolSourceInternal(
   transport?: LocalIntegrationEndpointTransport,
   now: () => number = Date.now,
   catalog: readonly IntegrationToolMeta[] = outlookCatalog(),
-): RemoteToolSource {
+): OutlookServiceAccountToolSource {
   const admitted = resolveAllowedTools(options, catalog);
   const credentialProvider = options.credentialProvider ?? getEnv;
   if (typeof credentialProvider !== "function") {
@@ -445,6 +508,55 @@ function createOutlookServiceAccountToolSourceInternal(
     return await untilAborted(pending.promise, signal);
   }
 
+  async function execute(
+    toolName: string,
+    tool: Pick<AdmittedOutlookTool, "endpoint" | "requiresWrite">,
+    args: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    rawBinaryMaxBytes?: number,
+  ): Promise<unknown> {
+    signal?.throwIfAborted();
+    const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
+    assertNoPathTraversal(tool.endpoint, validated.args);
+    const config = await readConfig(credentialProvider);
+    const endpoint = Object.freeze({
+      ...tool.endpoint,
+      url: `${GRAPH_ORIGIN}/v1.0/users/${encodeURIComponent(config.mailbox)}/` +
+        tool.endpoint.url.slice(GRAPH_ME_PREFIX.length),
+    });
+    const call = async (authorizationHeader: string, retryable: boolean) => {
+      const observed = observeStatus(baseTransport);
+      try {
+        return await executeLocalIntegrationEndpoint({
+          connectorName: OUTLOOK_INTEGRATION,
+          toolId: toolName,
+          endpoint,
+          args: validated.args,
+          body: validated.body,
+          requiresWrite: tool.requiresWrite,
+          authHeaders: { Authorization: authorizationHeader },
+          allowedOrigin: GRAPH_ORIGIN,
+          signal,
+          transport: observed.transport,
+          rawBinaryMaxBytes,
+        });
+      } catch (cause) {
+        if (observed.status() !== 401) throw cause;
+        // Graph rejected the token, for example after revocation or a
+        // consent change. Drop it so no later call reuses it.
+        if (cachedToken?.authorization === authorizationHeader) cachedToken = undefined;
+        if (!retryable) throw cause;
+        return REJECTED_TOKEN;
+      }
+    };
+    const result = await call(await authorization(config, toolName, signal), true);
+    if (result !== REJECTED_TOKEN) return result;
+    return await call(await authorization(config, toolName, signal), false);
+  }
+
+  const attachmentGrant = ATTACHMENT_TOOLS.find((name) => admitted.has(name));
+  const attachmentContent = attachmentGrant ? attachmentContentEndpoint(catalog) : undefined;
+
   return Object.freeze({
     id: "outlook-service-account",
     async listTools(): Promise<ToolDefinition[]> {
@@ -465,44 +577,31 @@ function createOutlookServiceAccountToolSourceInternal(
           }" is not granted by this source`,
         );
       }
-      const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
-      assertNoPathTraversal(tool.endpoint, validated.args);
-      const config = await readConfig(credentialProvider);
-      const endpoint = Object.freeze({
-        ...tool.endpoint,
-        url: `${GRAPH_ORIGIN}/v1.0/users/${encodeURIComponent(config.mailbox)}/` +
-          tool.endpoint.url.slice(GRAPH_ME_PREFIX.length),
+      return await execute(toolName, tool, args, context?.abortSignal);
+    },
+    async readAttachment(
+      args: OutlookAttachmentContentArgs,
+      options?: { signal?: AbortSignal },
+    ): Promise<OutlookAttachmentContent> {
+      options?.signal?.throwIfAborted();
+      if (!attachmentGrant || !attachmentContent) {
+        configurationError(
+          `Outlook service-account readAttachment requires ${ATTACHMENT_TOOLS.join(" or ")} ` +
+            "in allowedTools",
+        );
+      }
+      const result = await execute(
+        attachmentGrant,
+        { endpoint: attachmentContent, requiresWrite: false },
+        { ...args },
+        options?.signal,
+        MAX_INTEGRATION_FILE_DOWNLOAD_BYTES,
+      ) as { bytes: Uint8Array; size: number; content_type: string };
+      return Object.freeze({
+        bytes: result.bytes,
+        size: result.size,
+        contentType: result.content_type,
       });
-      const call = async (authorizationHeader: string, retryable: boolean) => {
-        const observed = observeStatus(baseTransport);
-        try {
-          return await executeLocalIntegrationEndpoint({
-            connectorName: OUTLOOK_INTEGRATION,
-            toolId: toolName,
-            endpoint,
-            args: validated.args,
-            body: validated.body,
-            requiresWrite: tool.requiresWrite,
-            authHeaders: { Authorization: authorizationHeader },
-            allowedOrigin: GRAPH_ORIGIN,
-            signal: context?.abortSignal,
-            transport: observed.transport,
-          });
-        } catch (cause) {
-          if (observed.status() !== 401) throw cause;
-          // Graph rejected the token, for example after revocation or a
-          // consent change. Drop it so no later call reuses it.
-          if (cachedToken?.authorization === authorizationHeader) cachedToken = undefined;
-          if (!retryable) throw cause;
-          return REJECTED_TOKEN;
-        }
-      };
-      const result = await call(
-        await authorization(config, toolName, context?.abortSignal),
-        true,
-      );
-      if (result !== REJECTED_TOKEN) return result;
-      return await call(await authorization(config, toolName, context?.abortSignal), false);
     },
   });
 }
@@ -513,8 +612,18 @@ function createOutlookServiceAccountToolSourceInternal(
  */
 export function createOutlookServiceAccountToolSource(
   options: OutlookServiceAccountToolSourceOptions,
-): RemoteToolSource {
-  return guardLocalCredentialSource(createOutlookServiceAccountToolSourceInternal(options));
+): OutlookServiceAccountToolSource {
+  const source = createOutlookServiceAccountToolSourceInternal(options);
+  return Object.freeze({
+    ...guardLocalCredentialSource(source),
+    async readAttachment(
+      args: OutlookAttachmentContentArgs,
+      options?: { signal?: AbortSignal },
+    ): Promise<OutlookAttachmentContent> {
+      assertLocalCredentialHostGrant();
+      return await source.readAttachment(args, options);
+    },
+  });
 }
 
 /**
@@ -526,6 +635,6 @@ export function _createOutlookServiceAccountToolSourceForTesting(
   transport: LocalIntegrationEndpointTransport,
   now?: () => number,
   catalog?: readonly IntegrationToolMeta[],
-): RemoteToolSource {
+): OutlookServiceAccountToolSource {
   return createOutlookServiceAccountToolSourceInternal(options, transport, now, catalog);
 }

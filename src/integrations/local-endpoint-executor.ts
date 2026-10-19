@@ -10,6 +10,7 @@ import {
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
+  localIntegrationResponseTooLarge,
 } from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -53,6 +54,7 @@ const jsonParse = JSON.parse;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsSafeInteger = Number.isSafeInteger;
+const numberMaxSafeInteger = Number.MAX_SAFE_INTEGER;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
@@ -134,6 +136,13 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
    * than failed, so the caller does not repeat it.
    */
   readonly requiresWrite?: boolean | undefined;
+  /**
+   * For a binary (`response.encoding`) endpoint: return the body as raw
+   * `{ bytes, size, content_type }` up to this many bytes, instead of base64
+   * within {@link MAX_INTEGRATION_BINARY_RESPONSE_BYTES}. Only for direct
+   * callers; the result is not a JSON tool result.
+   */
+  readonly rawBinaryMaxBytes?: number;
   /** Internal test seam. Production callers use the standard integration deadline. */
   readonly timeoutMs?: number;
   /** Internal test seam. Production callers use the guarded egress transport. */
@@ -883,35 +892,38 @@ async function readResponseBinary(
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  rawMaxBytes: number | undefined,
 ): Promise<unknown> {
+  const limit = rawMaxBytes ?? MAX_INTEGRATION_BINARY_RESPONSE_BYTES;
   const coding = responseContentCoding(response);
   // fetch decodes gzip/br bodies but keeps the encoded Content-Length, which
   // says nothing about the decoded size, so only an unencoded body is checked
   // against it. A truncated encoded stream fails in the decoder instead.
   const declared = coding === "decoded"
     ? null
-    : declaredContentLength(response, MAX_INTEGRATION_BINARY_RESPONSE_BYTES);
+    : declaredContentLength(response, numberMaxSafeInteger);
   if (coding === null || declared === false) {
     cancelResponseBody(response);
     responseInvalid(identity, status);
   }
+  if (declared !== null && declared > limit) {
+    cancelResponseBody(response);
+    localIntegrationResponseTooLarge(identity, status, limit);
+  }
   let bytes: Uint8Array;
   let truncated: boolean;
   try {
-    ({ bytes, truncated } = await readResponseBytesPrefix(
-      response,
-      MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
-      signal,
-    ));
+    ({ bytes, truncated } = await readResponseBytesPrefix(response, limit, signal));
   } catch {
     responseInvalid(identity, status);
   }
+  if (truncated) localIntegrationResponseTooLarge(identity, status, limit);
   if (!typedArrayByteLength) responseInvalid(identity, status);
   const size = apply(typedArrayByteLength, bytes, []) as number;
   // An empty body is no download at all, so it fails like a 204 instead of
   // passing as empty content.
   const lengthMismatch = declared !== null && size !== declared;
-  if (truncated || size === 0 || lengthMismatch) {
+  if (size === 0 || lengthMismatch) {
     responseInvalid(identity, status);
   }
   const rawContentType = responseHeaderValue(response, "content-type") ?? "";
@@ -921,11 +933,13 @@ async function readResponseBinary(
     parameterStart < 0 ? rawContentType : slice(rawContentType, 0, parameterStart),
     [],
   ) as string;
+  const content_type = contentType === "" ? "application/octet-stream" : contentType;
+  if (rawMaxBytes !== undefined) return freeze({ bytes, size, content_type });
   return freeze({
     encoding: "base64",
     content_base64: encodeBase64(bytes, size),
     size,
-    content_type: contentType === "" ? "application/octet-stream" : contentType,
+    content_type,
   });
 }
 
@@ -936,6 +950,7 @@ async function executeTransportRequest(
   identity: LocalIntegrationDiagnosticIdentity,
   binary = false,
   write = false,
+  rawBinaryMaxBytes?: number,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -955,7 +970,10 @@ async function executeTransportRequest(
       cancelResponseBody(response);
       responseInvalid(identity, status);
     }
-    return freeze({ status, value: await readResponseBinary(response, signal, identity, status) });
+    return freeze({
+      status,
+      value: await readResponseBinary(response, signal, identity, status, rawBinaryMaxBytes),
+    });
   }
   if (status === 204) return freeze({ status, value: null });
   return freeze({
@@ -1039,6 +1057,7 @@ export async function executeLocalIntegrationEndpoint(
       options,
       binary,
       write,
+      options.rawBinaryMaxBytes,
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;
