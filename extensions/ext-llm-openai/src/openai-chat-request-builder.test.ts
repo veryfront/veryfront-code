@@ -38,6 +38,46 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-chat-request-builder", () => {
+  it("sends remote and inline image URLs as image_url", () => {
+    for (const url of ["https://example.test/photo.png", "data:image/png;base64,iVBORw=="]) {
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.messages, [{
+        role: "user",
+        content: [{ type: "image_url", image_url: { url } }],
+      }]);
+    }
+  });
+
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      const error = captureThrownError(() =>
+        buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+          false,
+          createWarningCollector(),
+        )
+      );
+      assertEquals(
+        error.message,
+        "Chat Completions does not support file input (image/png). Send an https URL or inline data, for example with fileFromBytes.",
+      );
+    });
+  }
+
   it("rejects accessor provider buckets before reading OpenAI Chat options", () => {
     let getterCalls = 0;
     const providerOptions = Object.defineProperty({}, "openai", {

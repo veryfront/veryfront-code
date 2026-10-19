@@ -743,6 +743,22 @@ describe("integrations/remote-tools hardening", () => {
     assertEquals(fetchCalls, 0);
   });
 
+  it("sends one argument string over 1 MiB within the request bound", async () => {
+    configureRemoteTools();
+    const content = "A".repeat(2 * 1024 * 1024);
+    let sent: unknown;
+
+    await withMockFetch(
+      async (_input, init) => {
+        sent = JSON.parse(String(init?.body));
+        return Response.json({ structuredContent: { ok: true } });
+      },
+      () => runRemoteIntegrationTool("github__list_repos", { content }),
+    );
+
+    assertStrictEquals((sent as { arguments: { content: string } }).arguments.content, content);
+  });
+
   it("rejects a serialized call body above the aggregate byte ceiling", async () => {
     configureRemoteTools();
     const emptyArguments = { a: "", b: "", c: "", d: "" };

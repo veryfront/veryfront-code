@@ -435,7 +435,7 @@ function parseToolListResponse(value: unknown): RemoteToolDefinition[] | undefin
 function snapshotRemoteToolArguments(
   args: Record<string, unknown>,
 ): Record<string, BoundedJsonValue> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotBoundedJsonValue(args, MAX_INTEGRATION_CALL_REQUEST_BYTES);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     throw new TypeError(
       "Remote integration tool arguments must be a bounded JSON object without accessors or cycles",

@@ -2,7 +2,15 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerModelProvider } from "veryfront/provider";
 import { generate } from "veryfront/llm";
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { createOpenAIModelRuntime, OpenAIProvider } from "./openai-provider.ts";
+
+const pdfPart = {
+  type: "file" as const,
+  url: "data:application/pdf;base64,JVBERi0xLjQK",
+  mediaType: "application/pdf",
+  filename: "request.pdf",
+};
 
 describe("OpenAI-compatible Chat Completions document input", () => {
   it("rejects a PDF before inference and sends no provider request", async () => {
@@ -121,7 +129,6 @@ describe("OpenAI-compatible Chat Completions document input", () => {
       const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
       const runtime = new OpenAIProvider().createModel("gpt-4.1", {
         credential: "test-local-key",
-        baseURL: "https://example.openai.test/v1",
         fetch: (input, init) => {
           requests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
           return Promise.resolve(Response.json({}, { status: 400 }));
@@ -130,7 +137,7 @@ describe("OpenAI-compatible Chat Completions document input", () => {
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Classify" }, file] }],
       }).catch(() => undefined);
-      assertEquals(requests.map(({ url }) => url), [`https://example.openai.test/v1${endpoint}`]);
+      assertEquals(requests.map(({ url }) => url), [`https://api.openai.com/v1${endpoint}`]);
       if (endpoint === "/responses") {
         assertEquals((requests[0]!.body.input as Array<{ content: unknown[] }>)[0]!.content[1], {
           type: "input_file",
@@ -140,4 +147,58 @@ describe("OpenAI-compatible Chat Completions document input", () => {
       }
     });
   }
+
+  for (const providerName of [undefined, "openai"]) {
+    it(`auto transport keeps a PDF off Responses on a custom base URL, providerName ${providerName}`, async () => {
+      const requests: string[] = [];
+      const runtime = new OpenAIProvider().createModel("gpt-4.1", {
+        credential: "test-local-key",
+        baseURL: "https://example.compatible.test/v1",
+        ...(providerName ? { providerName } : {}),
+        fetch: (input) => {
+          requests.push(String(input));
+          return Promise.resolve(Response.json({}, { status: 400 }));
+        },
+      });
+      const options = { prompt: [{ role: "user" as const, content: [pdfPart] }] };
+      await assertRejects(
+        () => runtime.doGenerate(options),
+        TypeError,
+        'Chat Completions does not support file input "request.pdf" (application/pdf)',
+      );
+      assertEquals(requests, []);
+      // The durable model-call context projects the same Chat Completions route.
+      assertEquals(
+        buildModelCallContextRequest(runtime, {
+          ...options,
+          maxOutputTokens: 100,
+          providerOptions: { openai: { max_output_tokens: 666, max_tokens: 777 } },
+        })?.maxOutputTokens,
+        777,
+      );
+    });
+  }
+
+  it("auto transport sends a PDF to Responses on an OpenAI host base URL", async () => {
+    const requests: string[] = [];
+    const runtime = new OpenAIProvider().createModel("gpt-4.1", {
+      credential: "test-local-key",
+      baseURL: "https://eu.api.openai.com/v1",
+      fetch: (input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}, { status: 400 }));
+      },
+    });
+    const options = { prompt: [{ role: "user" as const, content: [pdfPart] }] };
+    await runtime.doGenerate(options).catch(() => undefined);
+    assertEquals(requests, ["https://eu.api.openai.com/v1/responses"]);
+    assertEquals(
+      buildModelCallContextRequest(runtime, {
+        ...options,
+        maxOutputTokens: 100,
+        providerOptions: { openai: { max_output_tokens: 666, max_tokens: 777 } },
+      })?.maxOutputTokens,
+      666,
+    );
+  });
 });

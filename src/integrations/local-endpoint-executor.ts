@@ -1,5 +1,8 @@
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
@@ -11,6 +14,7 @@ import {
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
+  MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
 } from "#veryfront/integrations/limits.ts";
 import type { IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -377,8 +381,20 @@ function setHeader(headers: Headers, name: string, value: string): void {
   }
 }
 
+/**
+ * Bounds a request value by the whole-request limit only, so one string such as
+ * base64 attachment content may use all of it rather than the 1 MiB default.
+ */
+function snapshotRequestJson(value: unknown) {
+  return snapshotBoundedJsonValue(
+    value,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+  );
+}
+
 function snapshotArguments(args: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotRequestJson(args);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     requestInvalid("Local integration arguments must be a bounded JSON object");
   }
@@ -513,7 +529,7 @@ function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
 }
 
 function serializeJson(value: unknown): string {
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = snapshotRequestJson(value);
   if (!snapshot.success) requestInvalid("Local integration request body must be bounded JSON");
   try {
     return jsonStringify(snapshot.value);
@@ -775,7 +791,8 @@ async function readResponseJson(
   } catch {
     responseInvalid(identity, status);
   }
-  const snapshot = snapshotBoundedJsonValue(parsed);
+  // The source text is already bounded, so one string may use the whole response.
+  const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
   if (!snapshot.success) responseInvalid(identity, status);
   return snapshot.value;
 }
