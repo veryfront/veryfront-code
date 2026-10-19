@@ -1450,6 +1450,20 @@ export async function createRuntimeAgentStreamResponse(
     throw error;
   }
   projectWriter?.bindSignal(abortSignal);
+  const drainAndCloseProjectWriter = async () => {
+    if (!projectWriter) return;
+    try {
+      await projectWriter.flush();
+    } catch (error) {
+      logger.warn("Project event writer flush failed before close", {
+        runId: input.runId,
+        agentId: agent.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      projectWriter.close();
+    }
+  };
   const manualPause = runtimeManualPauseCapabilities.get(input);
   let settledStop: (outcome?: RunStopSettlement) => void;
   try {
@@ -2435,19 +2449,19 @@ export async function createRuntimeAgentStreamResponse(
                 }
                 settledStop();
                 managedRecovery?.settle();
-                projectWriter?.close();
+                await drainAndCloseProjectWriter();
                 if (manualPause) {
                   recordHostedAgentPauseFlush(manualPause, readerReachedEof);
                   await settleHostedAgentPause(manualPause);
                 }
-              }, (error) => {
+              }, async (error) => {
                 recoveryLifetime?.stop();
                 if (abortSignal.aborted) {
                   deps.sessionManager.settleCancelledRun(input.runId, abortSignal);
                 }
                 settledStop();
                 managedRecovery?.settle();
-                projectWriter?.close();
+                await drainAndCloseProjectWriter();
                 if (manualPause) invalidateHostedAgentPauseSettlement(manualPause, error);
               }).catch((error) => {
                 logger.warn("Internal agent pause settlement failed", {
@@ -2456,7 +2470,11 @@ export async function createRuntimeAgentStreamResponse(
                 });
               });
             } else if (sandboxClosed) {
-              if (readerReachedEof || readerCancellationCompleted) projectWriter?.close();
+              if (readerReachedEof) {
+                projectWriter?.close();
+              } else if (readerCancellationCompleted) {
+                await drainAndCloseProjectWriter();
+              }
               // Ordinary overrides can use the stream cancellation contract instead
               // of the optional producer callback. Release capacity only after that
               // cancellation joins; a managed replacement still requires its producer.
