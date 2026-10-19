@@ -977,6 +977,52 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("keeps tool error details with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const detail = "A".repeat(2 * 1024 * 1024);
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:outlook__get_attachment",
+          result: {
+            isError: true,
+            content: [{ text: JSON.stringify({ error: "attachment_failed", detail }) }],
+          },
+        }),
+      async () => await source.executeTool("outlook__get_attachment", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals([result.error, result.detail === detail], ["attachment_failed", true]);
+  });
+
+  it("normalizes invalid_grant structured errors with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          result: {
+            isError: true,
+            content: [],
+            structuredContent: { error: "invalid_grant", detail: "A".repeat(2 * 1024 * 1024) },
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals(result.error, "reconnect_required");
+  });
+
   it("keeps the scope on reconnect links built without a project", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
