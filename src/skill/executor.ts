@@ -308,6 +308,14 @@ function buildShellCommand(parts: string[]): string {
   return parts.map(shellEscapeArg).join(" ");
 }
 
+function scriptEnvironment(input: SkillScriptExecutorInput): Record<string, string> {
+  return {
+    ...input.env,
+    VERYFRONT_PROJECT_ID: input.projectId ?? "",
+    VERYFRONT_BRANCH_REF: input.branch ?? "main",
+  };
+}
+
 function formatEnvAssignments(env?: Record<string, string>): string[] {
   if (!env) return [];
   return Object.entries(env).map(([key, value]) => {
@@ -410,7 +418,7 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
       const result = await runCommand(command, {
         args: finalArgs,
         cwd: input.cwd ?? materializationRoot,
-        env: input.env,
+        env: scriptEnvironment(input),
         capture: true,
         timeoutMs,
         signal: input.abortSignal,
@@ -450,7 +458,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
     const authToken = getSandboxAuthOverride();
-    const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
+    const sandbox = await Sandbox.create({
+      projectReference: input.projectId,
+      ...(authToken ? { authToken } : {}),
+    });
     try {
       const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
       const sandboxScriptPath = scriptSnapshot === undefined
@@ -476,7 +487,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
-      const envAssignments = formatEnvAssignments(input.env);
+      const envAssignments = formatEnvAssignments(scriptEnvironment(input));
       const commandParts = envAssignments.length > 0
         ? ["env", ...envAssignments, command, ...finalArgs]
         : [command, ...finalArgs];

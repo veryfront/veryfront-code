@@ -260,6 +260,10 @@ export interface SkillScriptSnapshot {
 
 /** Input for the script executor */
 export interface SkillScriptExecutorInput {
+  /** Trusted project identity supplied by the runtime for cloud sandbox billing. */
+  projectId?: string;
+  /** Trusted branch supplied by the runtime, never selected by script arguments. */
+  branch?: string | null;
   scriptPath: string;
   /**
    * Already-validated script content. When omitted with
@@ -276,7 +280,7 @@ export interface SkillScriptExecutorInput {
    */
   scriptSnapshot?: SkillScriptSnapshot;
   args?: string[];
-  /** Passed as structured environment data, never embedded in a shell command. */
+  /** Script environment data. Trusted project and branch bindings take precedence. */
   env?: Record<string, string>;
   /**
    * Local execution working directory. Supplied content without an explicit
