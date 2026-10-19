@@ -224,6 +224,65 @@ describe("workflow agent child protocol", () => {
     assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
   });
 
+  for (
+    const stored of [
+      { text: "classified", data: { category: "billing" } },
+      { text: "classified", object: { category: "billing" }, toolCalls: [], status: "completed" },
+    ]
+  ) {
+    it(`restores structured workflow replay for downstream context ${JSON.stringify(stored)}`, async () => {
+      const model = scriptedModel([{ text: "must not execute" }], { only: "generate" });
+      const actualAgent = agent({
+        id: "coordinator",
+        model: "test/workflow",
+        system: "Classify",
+        skills: false,
+        resolveModelTransport: () => ({ model }),
+      });
+      const consumed: unknown[] = [];
+      const consumer = tool({
+        id: "consume",
+        description: "Consume classification",
+        inputSchema: defineSchema((v) => v.object({ category: v.string() }))(),
+        execute: (input) => {
+          consumed.push(input);
+          return input;
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        step("research", { agent: actualAgent, input: "Classify" }),
+        {
+          ...step("consume", {
+            tool: consumer,
+            input: (context) => (context.research as { object: unknown }).object,
+          }),
+          dependsOn: ["research"],
+        },
+      ];
+      const send: typeof fetch = (url) =>
+        Promise.resolve(String(url).endsWith("/runs") ? admission("completed", stored) : json({}));
+      const run: WorkflowRun = {
+        id: "run_parent",
+        workflowId: "workflow",
+        status: "running",
+        input: {},
+        context: { input: {} },
+        nodeStates: {},
+        currentNodes: [],
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      };
+      const outcome = await new DAGExecutor({
+        stepExecutor: new StepExecutor({ runAgentNode: runner(send) }),
+      }).execute(nodes, run);
+      assertEquals(outcome.completed, true, JSON.stringify(outcome));
+      assertEquals(consumed, [{ category: "billing" }]);
+      assertEquals(model.callCount, 0);
+    });
+  }
+
   it("keeps repeated local agent nodes distinct across composite owners and loop iterations with stable replay", async () => {
     const model = scriptedModel([
       { text: "first" },
@@ -1138,7 +1197,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output: { ...output, data: output.object },
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 

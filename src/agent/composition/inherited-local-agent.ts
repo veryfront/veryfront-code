@@ -81,7 +81,7 @@ import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
 /** @internal Validate the result returned by durable local child execution. */
-export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+function restoreInheritedAgentResponse(value: unknown): Record<string, unknown> {
   const invalid = () =>
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (!value || typeof value !== "object") throw invalid();
@@ -93,7 +93,8 @@ export function readInheritedLocalChildResult(value: unknown): LocalChildResult 
   if (!text && !structured) throw invalid();
   if (calls || status) {
     if (
-      !calls || !("value" in calls) || typeof calls.value !== "number" ||
+      !calls || !("value" in calls) ||
+      (typeof calls.value !== "number" && !Array.isArray(calls.value)) ||
       !status || !("value" in status) || typeof status.value !== "string"
     ) throw invalid();
   }
@@ -106,10 +107,34 @@ export function readInheritedLocalChildResult(value: unknown): LocalChildResult 
   };
 }
 
+function restoreWorkflowAgentResponse(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const structured = readStructuredAgentOutput(value);
+  // Historical workflow outputs already contain their full response metadata.
+  // Canonical output carries text/data; restore the legacy object alias only.
+  return structured ? { ...value, ...structured } : value;
+}
+
+/** Restore the tool protocol while preserving known legacy call counts. */
+export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+  const response = restoreInheritedAgentResponse(value);
+  return {
+    ...response,
+    text: response.text as string,
+    status: response.status as string,
+    ...(Array.isArray(response.toolCalls) ? { toolCalls: response.toolCalls.length } : {}),
+  } as LocalChildResult;
+}
+
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
 export async function runInheritedLocalAgent(
   child: ConversationRunProjection | InheritedRunResult,
-  transport: { projectId: string; apiUrl: string; fetch: typeof globalThis.fetch },
+  transport: {
+    projectId: string;
+    apiUrl: string;
+    fetch: typeof globalThis.fetch;
+    restoreAgentResponse?: boolean;
+  },
   execute: (
     signal?: AbortSignal,
     onEvent?: (event: AgUiRuntimeStreamEvent) => Promise<void>,
@@ -127,7 +152,13 @@ export async function runInheritedLocalAgent(
     : hostedInheritedTerminalReceipt(child);
   if (receipt) {
     return receipt.status === "completed"
-      ? { success: true, output: receipt.output, executionTime: 0 }
+      ? {
+        success: true,
+        output: transport.restoreAgentResponse
+          ? restoreWorkflowAgentResponse(receipt.output)
+          : receipt.output,
+        executionTime: 0,
+      }
       : {
         success: false,
         error: receipt.error?.message ?? `Child ${receipt.status}`,
