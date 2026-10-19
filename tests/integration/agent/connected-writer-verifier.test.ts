@@ -155,3 +155,90 @@ for (const apiUrl of ["http://localhost:4000", "https://api.veryfront.com"]) {
     );
   });
 }
+
+for (const attack of ["split", "filter", "iterator", "rotation", "same-key-rotation"] as const) {
+  it(`verifies connected writer credentials across ${attack}`, async () => {
+    const first = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const second = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const scope = {
+      projectId: "22222222-2222-4222-8222-222222222222",
+      runId: "run",
+      agentId: "agent",
+    };
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const mint = (key: typeof first.privateKey, kid: string) => {
+      const unsigned = `${encode({ alg: "RS256", kid })}.${
+        encode({
+          ...scope,
+          userId: "server",
+          serviceAccountId: "server",
+          actorType: "service_account",
+          tokenUse: "run_event_writer",
+          scopes: ["agent-runs:events:append"],
+          exp: Math.floor(Date.now() / 1000) + 60,
+          platformToolDependencies: [],
+        })
+      }`;
+      return `${unsigned}.${sign("RSA-SHA256", Buffer.from(unsigned), key).toString("base64url")}`;
+    };
+    const token = mint(first.privateKey, "first");
+    const rotated = mint(second.privateKey, attack === "same-key-rotation" ? "first" : "second");
+    let requests = 0;
+    let useSecond = false;
+    let leaked = false;
+    await withMockFetch(async () => {
+      requests++;
+      const key = useSecond ? second : first;
+      return Response.json({
+        keys: [{
+          ...key.publicKey.export({ format: "jwk" }),
+          kid: useSecond && attack !== "same-key-rotation" ? "second" : "first",
+          alg: "RS256",
+        }],
+      });
+    }, async () => {
+      const verify = createConnectedLocalWriterVerifier("https://api.veryfront.com");
+      assertEquals((await verify({ ...scope, token })).verified, true);
+      if (attack === "rotation" || attack === "same-key-rotation") {
+        useSecond = true;
+        assertEquals((await verify({ ...scope, token: rotated })).verified, true);
+        assertEquals(requests, 2);
+        assertEquals((await verify({ ...scope, token: rotated })).verified, true);
+        assertEquals(requests, 2);
+        assertEquals((await verify({ ...scope, token })).verified, false);
+        assertEquals(requests, 3);
+        return;
+      }
+      const split = String.prototype.split;
+      const filter = Array.prototype.filter;
+      const iterator = Array.prototype[Symbol.iterator];
+      try {
+        if (attack === "split") {
+          String.prototype.split = function (...args) {
+            if (String(this) === token) leaked = true;
+            return Reflect.apply(split, this, args);
+          };
+        }
+        if (attack === "filter") {
+          Array.prototype.filter = function (...args) {
+            if (this[0]?.kty === "RSA") leaked = true;
+            return Reflect.apply(filter, this, args);
+          };
+        }
+        if (attack === "iterator") {
+          Array.prototype[Symbol.iterator] = function () {
+            if (this[0] === token.split(".")[0]) leaked = true;
+            return Reflect.apply(iterator, this, []);
+          };
+        }
+        const result = await verify({ ...scope, token });
+        assertEquals(result.verified, true);
+      } finally {
+        String.prototype.split = split;
+        Array.prototype.filter = filter;
+        Array.prototype[Symbol.iterator] = iterator;
+      }
+      assertEquals(leaked, false);
+    });
+  });
+}

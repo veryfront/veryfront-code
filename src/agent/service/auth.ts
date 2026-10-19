@@ -1,5 +1,7 @@
 import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { Buffer as NativeBuffer } from "node:buffer";
+import { filterPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
@@ -38,6 +40,11 @@ const RegExpExec = RegExp.prototype.exec;
 const StringStartsWith = String.prototype.startsWith;
 const StringSlice = String.prototype.slice;
 const ObjectFreeze = Object.freeze;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const StringIndexOf = String.prototype.indexOf;
+const NativeURL = URL;
+const URLOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const ResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 
 type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
 type HostedWriterScope = Readonly<{ projectId: string; runId: string; agentId?: string }>;
@@ -1235,29 +1242,62 @@ export function createConnectedLocalWriterVerifier(
 ): (
   input: HostedServiceRunEventAppendTokenInput,
 ) => Promise<HostedServiceRunEventAppendTokenResult> {
-  const origin = new URL(apiUrl).origin;
+  const origin = ReflectApply(URLOrigin, new NativeURL(apiUrl), []) as string;
   const configured = [
     "VERYFRONT_API_URL",
     "VERYFRONT_API_BASE_URL",
     "VERYFRONT_PUBLIC_API_BASE_URL",
   ] as const;
   // Stored CLI logins use the official API without an environment override.
-  const trustedOrigin = origin === "https://api.veryfront.com" || configured.some((key) => {
-    const value = getHostBootEnv(key);
-    try {
-      return value !== undefined && new URL(value).origin === origin;
-    } catch {
-      return false;
-    }
-  });
+  const trustedOrigin = origin === "https://api.veryfront.com" ||
+    somePrivateArray(configured, (key) => {
+      const value = getHostBootEnv(key);
+      try {
+        return value !== undefined && ReflectApply(URLOrigin, new NativeURL(value), []) === origin;
+      } catch {
+        return false;
+      }
+    });
   const transport = createVeryfrontApiOriginBoundOutboundFetch(origin);
-  const endpoint = new URL("/.well-known/jwks.json", origin);
+  const endpoint = new NativeURL("/.well-known/jwks.json", origin);
   let keys: Promise<Array<Record<string, unknown>>> | undefined;
+  const loadKeys = () => {
+    keys ??= chainPrivatePromise(
+      chainPrivatePromise(transport(endpoint, { redirect: "error" }), async (response) => {
+        if (!ReflectApply(ResponseOk, response, [])) {
+          throw new Error("API signing keys are unavailable");
+        }
+        const document = await ReflectApply(ResponseJson, response, []);
+        const keys = readOwnDataProperty(document, "keys", "API signing keys");
+        if (!ArrayIsArray(keys)) throw new Error("Invalid API signing keys");
+        return keys;
+      }),
+      (value) => value,
+      (error) => {
+        keys = undefined;
+        throw error;
+      },
+    );
+    return keys;
+  };
   return async (input) => {
     if (!trustedOrigin || !isSafeHostedJwtVerificationEnvironment()) return { verified: false };
     try {
-      const [headerText, payloadText, signature, extra] = input.token.split(".");
-      if (!headerText || !payloadText || !signature || extra !== undefined) {
+      const firstDot = ReflectApply(StringIndexOf, input.token, ["."]) as number;
+      const secondDot = ReflectApply(StringIndexOf, input.token, [".", firstDot + 1]) as number;
+      if (
+        firstDot <= 0 || secondDot <= firstDot + 1 || secondDot === input.token.length - 1 ||
+        ReflectApply(StringIndexOf, input.token, [".", secondDot + 1]) !== -1
+      ) {
+        return { verified: false };
+      }
+      const headerText = ReflectApply(StringSlice, input.token, [0, firstDot]) as string;
+      const payloadText = ReflectApply(StringSlice, input.token, [
+        firstDot + 1,
+        secondDot,
+      ]) as string;
+      const signature = ReflectApply(StringSlice, input.token, [secondDot + 1]) as string;
+      if (!headerText || !payloadText || !signature) {
         return { verified: false };
       }
       const header = privateJsonParse(
@@ -1267,32 +1307,35 @@ export function createConnectedLocalWriterVerifier(
           [],
         ),
       );
+      if (!header || typeof header !== "object" || ArrayIsArray(header)) return { verified: false };
+      ObjectSetPrototypeOf(header, null);
       if (header.alg !== "RS256") return { verified: false };
-      keys ??= transport(endpoint, { redirect: "error" }).then(async (response) => {
-        if (!response.ok) throw new Error("API signing keys are unavailable");
-        const document = await ReflectApply(ResponseJson, response, []);
-        if (!Array.isArray(document.keys)) throw new Error("Invalid API signing keys");
-        return document.keys;
-      }).catch((error) => {
-        keys = undefined;
-        throw error;
-      });
-      const candidates = (await keys).filter((key) =>
-        key.kty === "RSA" &&
-        (header.kid === undefined || key.kid === header.kid) &&
-        (key.alg === undefined || key.alg === "RS256") &&
-        (key.use === undefined || key.use === "sig")
-      );
-      if (candidates.length !== 1) return { verified: false };
-      const key = PublicKey({ key: candidates[0]!, format: "jwk" });
-      if (
-        !VerifySignature(
-          "RSA-SHA256",
-          ReflectApply(BufferFrom, NativeBuffer, [`${headerText}.${payloadText}`]),
-          key,
-          ReflectApply(BufferFrom, NativeBuffer, [signature, "base64url"]),
-        )
-      ) return { verified: false };
+      let signatureVerified = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const candidates = filterPrivateArray(
+          await loadKeys(),
+          (key) =>
+            readOwnDataProperty(key, "kty", "API signing key", false) === "RSA" &&
+            (header.kid === undefined ||
+              readOwnDataProperty(key, "kid", "API signing key", false) === header.kid) &&
+            (readOwnDataProperty(key, "alg", "API signing key", false) === undefined ||
+              readOwnDataProperty(key, "alg", "API signing key", false) === "RS256") &&
+            (readOwnDataProperty(key, "use", "API signing key", false) === undefined ||
+              readOwnDataProperty(key, "use", "API signing key", false) === "sig"),
+        );
+        if (candidates.length === 1) {
+          const key = PublicKey({ key: candidates[0]!, format: "jwk" });
+          signatureVerified = VerifySignature(
+            "RSA-SHA256",
+            ReflectApply(BufferFrom, NativeBuffer, [`${headerText}.${payloadText}`]),
+            key,
+            ReflectApply(BufferFrom, NativeBuffer, [signature, "base64url"]),
+          );
+          if (signatureVerified) break;
+        }
+        if (attempt === 0) keys = undefined;
+      }
+      if (!signatureVerified) return { verified: false };
       const payload = privateJsonParse(
         ReflectApply(
           BufferToString,
@@ -1300,6 +1343,10 @@ export function createConnectedLocalWriterVerifier(
           [],
         ),
       );
+      if (!payload || typeof payload !== "object" || ArrayIsArray(payload)) {
+        return { verified: false };
+      }
+      ObjectSetPrototypeOf(payload, null);
       const now = DateNow() / 1000;
       if (
         typeof payload.exp !== "number" || !NumberIsFinite(payload.exp) || payload.exp <= now ||
