@@ -10,7 +10,7 @@ const localToolAdmissions = new WeakMap<
 >();
 /** Exact-child bridge retained only while its host-owned mirror is alive. */
 export function admitInheritedLocalTool(
-  child: object,
+  child: ConversationRunProjection | InheritedRunResult,
   call: { occurrenceId: string; toolCallId: string },
   name: string,
   args: Record<string, unknown>,

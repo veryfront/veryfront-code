@@ -151,7 +151,7 @@ export function createProjectEventWriter(input: {
     },
     executeTool,
     async persistRunEvent(event: AgentRunEvent) {
-      await append(event as unknown as ConversationRunEvent);
+      await append(event);
       const id = "modelCallId" in event ? event.modelCallId : undefined;
       return typeof id === "string" ? queue.takeModelCallCaptureReceipt?.(id) : undefined;
     },
