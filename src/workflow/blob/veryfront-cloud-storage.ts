@@ -545,17 +545,17 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         });
       }
 
-      // Metadata first, data last: reads return the data object, so a put that fails at either step
-      // leaves an existing blob readable as it was. A failed data upload restores the previous metadata
-      // sidecar, or removes the new one when the blob did not exist.
+      // Reads return the data object, and stat() trusts the metadata sidecar. An overwrite writes the
+      // sidecar first and the data last, so a put that fails at either step leaves the blob readable as
+      // it was, and restores the previous sidecar. A new blob writes the data first, so it is not
+      // reported before its data exists, and a failed put removes both.
       const previousMetadata = await this.#downloadUploadText(
         metadataPath,
         resolved,
         scope.signal,
       );
-      try {
-        // Inside the rollback too: a metadata upload can commit and still fail to report it.
-        await this.#uploadFile(
+      const uploadMetadata = () =>
+        this.#uploadFile(
           metadataPath,
           "application/json",
           metadataBytes.byteLength,
@@ -563,9 +563,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
           resolved,
           scope.signal,
         );
-        await this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
+      const uploadData = () =>
+        this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
+      try {
+        // Inside the rollback too: an upload can commit and still fail to report it.
+        if (previousMetadata === null) {
+          await uploadData();
+          await uploadMetadata();
+        } else {
+          await uploadMetadata();
+          await uploadData();
+        }
       } catch (error) {
-        logger.warn("Failed to upload blob, restoring the metadata sidecar", {
+        logger.warn("Failed to upload blob, rolling back", {
           id,
           dataPath,
           error: error instanceof Error ? error.message : String(error),
@@ -573,7 +583,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
 
         try {
           if (previousMetadata === null) {
-            await this.#deleteUpload(metadataPath, resolved, { ignoreNotFound: true });
+            await Promise.all([
+              this.#deleteUpload(metadataPath, resolved, { ignoreNotFound: true }),
+              this.#deleteUpload(dataPath, resolved, { ignoreNotFound: true }),
+            ]);
           } else {
             const previousBytes = textEncoder.encode(previousMetadata);
             await this.#uploadFile(
@@ -585,7 +598,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
             );
           }
         } catch (cleanupError) {
-          logger.warn("Failed to restore the metadata sidecar after a data upload failure", {
+          logger.warn("Failed to roll back a blob upload", {
             id,
             metadataPath,
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),

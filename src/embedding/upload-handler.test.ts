@@ -443,7 +443,7 @@ describe("createUploadHandler", () => {
       );
 
       assertEquals(response.status, 200);
-      // The metadata sidecar is written before the data, so a failed put never replaces readable data.
+      // A new blob: the data is written before its metadata sidecar.
       assertEquals(calls.length, 5);
       assertEquals(calls[0]?.method, "GET");
       assertEquals(calls[1]?.method, "POST");
@@ -451,10 +451,11 @@ describe("createUploadHandler", () => {
         calls[1]?.url,
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
-      const metadataCreateBody = calls[1]?.body as Record<string, unknown>;
-      assertEquals(metadataCreateBody.path, ".veryfront/rag/uploads/doc-123.meta.json");
-      assertEquals(metadataCreateBody.content_type, "application/json");
-      assertEquals(typeof metadataCreateBody.size_bytes, "number");
+      assertEquals(calls[1]?.body, {
+        path: ".veryfront/rag/uploads/doc-123.blob",
+        content_type: "text/plain",
+        size_bytes: 11,
+      });
       assertEquals(calls[2]?.method, "PUT");
       assertEquals(calls[2]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
       assertEquals(calls[3]?.method, "POST");
@@ -462,11 +463,10 @@ describe("createUploadHandler", () => {
         calls[3]?.url,
         `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
       );
-      assertEquals(calls[3]?.body, {
-        path: ".veryfront/rag/uploads/doc-123.blob",
-        content_type: "text/plain",
-        size_bytes: 11,
-      });
+      const metadataCreateBody = calls[3]?.body as Record<string, unknown>;
+      assertEquals(metadataCreateBody.path, ".veryfront/rag/uploads/doc-123.meta.json");
+      assertEquals(metadataCreateBody.content_type, "application/json");
+      assertEquals(typeof metadataCreateBody.size_bytes, "number");
       assertEquals(calls[4]?.method, "PUT");
       assertEquals(calls[4]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
     });

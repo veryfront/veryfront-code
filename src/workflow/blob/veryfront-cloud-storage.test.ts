@@ -64,6 +64,8 @@ function createMockUploadService(
     failDataUpload?: boolean;
     /** Delay each request that reads a `.meta.json` sidecar, unless the request is aborted first. */
     metadataReadDelayMs?: number;
+    /** Hold each data object's PUT until this promise settles. */
+    dataUploadGate?: Promise<void>;
     /** Store a `.meta.json` sidecar, then answer its PUT with an error, as when the response is lost. */
     commitMetadataThenFail?: boolean;
     /** Answer every list page with this same `page_info.next` cursor. */
@@ -254,6 +256,7 @@ function createMockUploadService(
         if (options.failDataUpload && !path.endsWith(".meta.json")) {
           return new Response("Data storage unavailable", { status: 500 });
         }
+        if (options.dataUploadGate && !path.endsWith(".meta.json")) await options.dataUploadGate;
 
         const bytes = new Uint8Array(await request.arrayBuffer());
         assertEquals(bytes.byteLength, pending.size);
@@ -684,6 +687,36 @@ describe("VeryfrontCloudBlobStorage", () => {
       await assertRejects(() => storage.put("new", { id: "other", mimeType: "text/plain" }));
       options.commitMetadataThenFail = false;
       assertEquals(await storage.stat("other"), null);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("does not report a new blob before its data is stored", async () => {
+    let release!: () => void;
+    const service = createMockUploadService({
+      dataUploadGate: new Promise<void>((resolve) => (release = resolve)),
+    });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const putting = storage.put("new", { id: "doc", mimeType: "text/plain" });
+      // Wait until the data PUT is held.
+      while (
+        !service.fetchCalls.some((call) => call.method === "PUT" && call.url.includes("doc.blob"))
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assertEquals(await storage.exists("doc"), false);
+      release();
+      await putting;
+      assertEquals(await storage.exists("doc"), true);
     } finally {
       service.restore();
     }
