@@ -4,6 +4,7 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 /** @internal Resolve the durable output stored for an inherited child run. */
 export function terminalAgentOutput(output: unknown): unknown {
   if (typeof output !== "object" || output === null) return output;
@@ -86,20 +87,33 @@ import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-poli
 function restoreInheritedAgentResponse(value: unknown): Record<string, unknown> {
   const invalid = () =>
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
-  if (!value || typeof value !== "object") throw invalid();
+  if (value === undefined) throw invalid();
+  if (typeof value !== "object" || value === null) {
+    return {
+      text: privateJsonStringify(value),
+      data: value,
+      object: value,
+      status: "completed",
+    };
+  }
   const text = Object.getOwnPropertyDescriptor(value, "text");
   const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
   const status = Object.getOwnPropertyDescriptor(value, "status");
   if (text && (!("value" in text) || typeof text.value !== "string")) throw invalid();
   const structured = readStructuredAgentOutput(value);
-  if (!text && !structured) throw invalid();
-  if (calls || status) {
-    if (
-      !calls || !("value" in calls) ||
-      (typeof calls.value !== "number" && !Array.isArray(calls.value)) ||
-      !status || !("value" in status) || typeof status.value !== "string"
-    ) throw invalid();
+  if (!text && !structured) {
+    return {
+      text: privateJsonStringify(value),
+      data: value,
+      object: value,
+      status: "completed",
+    };
   }
+  if (
+    calls && (!("value" in calls) ||
+      (typeof calls.value !== "number" && !Array.isArray(calls.value)))
+  ) throw invalid();
+  if (status && (!("value" in status) || typeof status.value !== "string")) throw invalid();
   return {
     text: text?.value ?? "",
     // Canonical receipts do not contain the historical tool count. Keep it absent.
@@ -107,14 +121,6 @@ function restoreInheritedAgentResponse(value: unknown): Record<string, unknown> 
     status: status?.value ?? "completed",
     ...structured,
   };
-}
-
-function restoreWorkflowAgentResponse(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const structured = readStructuredAgentOutput(value);
-  // Historical workflow outputs already contain their full response metadata.
-  // Canonical output carries text/data; restore the legacy object alias only.
-  return structured ? { ...value, ...structured } : value;
 }
 
 /** Restore the tool protocol while preserving known legacy call counts. */
@@ -156,9 +162,7 @@ export async function runInheritedLocalAgent(
     return receipt.status === "completed"
       ? {
         success: true,
-        output: transport.restoreAgentResponse
-          ? restoreWorkflowAgentResponse(receipt.output)
-          : receipt.output,
+        output: restoreInheritedAgentResponse(receipt.output),
         executionTime: 0,
       }
       : {

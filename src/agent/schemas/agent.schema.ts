@@ -276,7 +276,7 @@ export type BaseAgentResponse = InferSchema<ReturnType<typeof getAgentResponseSc
 type AgentResponseObject<TOutput> = [TOutput] extends [never]
   ? { data?: undefined; object?: undefined }
   : 0 extends 1 & TOutput ? { data?: unknown; object?: unknown }
-  : { data?: TOutput; object: TOutput };
+  : { data: TOutput; object: TOutput };
 
 /**
  * Response payload for agent.

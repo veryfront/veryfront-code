@@ -19,11 +19,13 @@ async function inferredFromConfiguredSchema(): Promise<void> {
   const response = await weather.generate({ input: "Berlin?" });
 
   // The schema type is inferred with no annotation anywhere.
+  const dataCity: string = response.data.city;
   const city: string = response.object.city;
   const tempC: number = response.object.tempC;
   // @ts-expect-error Fields outside the schema are not part of the parsed object.
   const outOfSchema = response.object.humidity;
 
+  void dataCity;
   void city;
   void tempC;
   void outOfSchema;

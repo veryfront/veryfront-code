@@ -144,7 +144,16 @@ describe("workflow agent child protocol", () => {
             throw new Error("Completed child must not execute again");
           },
         }),
-        { success: true, output: { result: 42 }, executionTime: 0 },
+        {
+          success: true,
+          output: {
+            text: '{"result":42}',
+            data: { result: 42 },
+            object: { result: 42 },
+            status: "completed",
+          },
+          executionTime: 0,
+        },
       );
     }
     assertEquals(starts[0], starts[1]);
@@ -1182,7 +1191,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output: { ...output, status: "completed" },
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 
@@ -1199,7 +1212,7 @@ describe("workflow agent child protocol", () => {
     });
     assertEquals(result, {
       success: true,
-      output: { ...output, data: output.object },
+      output: { ...output, data: output.object, status: "completed" },
       executionTime: 0,
     });
     assertEquals(calls, 2);
@@ -1230,7 +1243,12 @@ describe("workflow agent child protocol", () => {
           throw new Error("Must replay");
         },
       });
-      assertEquals(result.output, "stored");
+      assertEquals(result.output, {
+        text: '"stored"',
+        data: "stored",
+        object: "stored",
+        status: "completed",
+      });
       assertEquals(requests, 2);
     });
   }

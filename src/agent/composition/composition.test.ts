@@ -33,7 +33,7 @@ import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { terminalAgentOutput } from "./inherited-local-agent.ts";
+import { runInheritedLocalAgent, terminalAgentOutput } from "./inherited-local-agent.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -492,6 +492,29 @@ describe("agentAsTool", () => {
       },
     );
   });
+
+  for (const data of [false, { category: "billing" }]) {
+    it(`restores canonical structured replay ${JSON.stringify(data)}`, async () => {
+      const result = await runInheritedLocalAgent(
+        { terminalReceipt: { status: "completed", output: data } },
+        { projectId: "project", apiUrl: "https://api.example.test", fetch },
+        () => {
+          throw new Error("must not execute");
+        },
+      );
+
+      assertEquals(result, {
+        success: true,
+        output: {
+          text: JSON.stringify(data),
+          data,
+          object: data,
+          status: "completed",
+        },
+        executionTime: 0,
+      });
+    });
+  }
 
   it("ignores an object value the child response only inherits", async () => {
     const childAgent = createMinimalAgent("writer");
