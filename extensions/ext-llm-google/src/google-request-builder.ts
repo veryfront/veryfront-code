@@ -648,7 +648,8 @@ function isGeminiFileUri(url: string): boolean {
 }
 
 /**
- * Inline types Gemini reads, besides images, audio, video, and `text/*`.
+ * Inline types Gemini reads, besides images, audio, video, `text/*`, and
+ * `+json`/`+xml` types.
  * Other types, such as archives, fail before inference.
  */
 const GOOGLE_INLINE_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
@@ -660,10 +661,14 @@ const GOOGLE_INLINE_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
   "application/x-javascript",
   "application/x-python",
   "application/x-typescript",
+  "application/typescript",
+  "application/yaml",
+  "application/x-yaml",
 ]);
 
 function isGoogleInlineMediaType(mimeType: string): boolean {
-  return /^(image|audio|video|text)\//.test(mimeType) || GOOGLE_INLINE_DOCUMENT_TYPES.has(mimeType);
+  return /^(image|audio|video|text)\//.test(mimeType) || /\+(json|xml)$/.test(mimeType) ||
+    GOOGLE_INLINE_DOCUMENT_TYPES.has(mimeType);
 }
 
 function toGoogleUserParts(

@@ -48,10 +48,11 @@ annotated without their data URL. Uploaded `https` files are annotated as before
 OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
 send a request that carries a non-image file to the Responses API, as they
 already did for hosted tools, so those requests keep working. Mistral and
-custom OpenAI-compatible base URLs stay on Chat Completions and reject the file,
-including an `OpenAIProvider` model created directly with a non-OpenAI
-`baseURL`. OpenAI Responses sends inline `data:` files as
-`file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
+custom OpenAI-compatible base URLs do not move a request to Responses for a
+file, so Chat Completions rejects it. This includes an `OpenAIProvider` model
+created directly with a `baseURL` that is not on `api.openai.com`, such as a
+proxy or gateway. Reasoning models and hosted tools still use Responses there.
+OpenAI Responses sends inline `data:` files as `file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
 files as `inlineData`. Use `fileFromBytes` from `veryfront/llm` to build inline
 file parts from local bytes.
 

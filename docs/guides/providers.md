@@ -576,9 +576,11 @@ that names the file and MIME type. Chat Completions transports reject all
 non-image files, and Anthropic rejects files other than images and PDFs. OpenAI
 and Veryfront Cloud OpenAI models on the default `auto` transport send requests
 with non-image files through Responses. Mistral and custom OpenAI-compatible
-base URLs stay on Chat Completions, including an OpenAI model created with a
-`baseURL` that is not on `api.openai.com`. Set `openAITransport: "responses"` when a
-model is pinned to Chat Completions. Select a model that supports the file type. The helper does
+base URLs do not move a request to Responses for a file, so Chat Completions
+rejects it. This includes an OpenAI model created with a `baseURL` that is not
+on `api.openai.com`. Reasoning models and hosted tools still use Responses there.
+Set `openAITransport: "responses"` when a model is pinned to Chat Completions or
+its compatible server implements Responses. Select a model that supports the file type. The helper does
 not add model capabilities. The check covers stored chat history too, so a
 conversation with a document attachment needs a document-capable model on every
 later turn.

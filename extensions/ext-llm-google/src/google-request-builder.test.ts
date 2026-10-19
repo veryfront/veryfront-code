@@ -144,6 +144,7 @@ describe("ext-llm-google/google-request-builder", () => {
       "text/plain",
       "Text/Markdown",
       "application/json",
+      "application/ld+json",
       "audio/mpeg",
       "video/mp4",
       "image/webp",

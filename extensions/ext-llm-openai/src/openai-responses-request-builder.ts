@@ -417,21 +417,14 @@ const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Inline document types Responses reads, besides `text/*` (text and code).
- * Other types, such as archives, fail before inference.
+ * Inline document types Responses reads, besides `text/*` and `+json`/`+xml`
+ * types. From OpenAI's file input table, plus common aliases. Other types,
+ * such as archives, fail before inference.
  */
 const RESPONSES_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
   "application/pdf",
-  "application/json",
-  "application/xml",
-  "application/rtf",
-  "application/csv",
-  "application/x-iif",
-  "application/javascript",
-  "application/x-javascript",
-  "application/x-python",
-  "application/x-sh",
   "application/msword",
+  "application/rtf",
   "application/vnd.ms-excel",
   "application/vnd.ms-powerpoint",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -444,7 +437,44 @@ const RESPONSES_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
   "application/vnd.google-apps.document",
   "application/vnd.google-apps.spreadsheet",
   "application/vnd.google-apps.presentation",
+  "application/csv",
+  "application/x-iif",
+  "application/json",
+  "application/json5",
+  "application/x-json5",
+  "application/x-ndjson",
+  "application/xml",
+  "application/yaml",
+  "application/x-yaml",
+  "application/toml",
+  "application/x-toml",
+  "application/graphql",
+  "application/x-graphql",
+  "application/javascript",
+  "application/x-javascript",
+  "application/typescript",
+  "application/x-python",
+  "application/x-sh",
+  "application/x-bash",
+  "application/x-awk",
+  "application/x-sql",
+  "application/x-scala",
+  "application/x-rust",
+  "application/x-powershell",
+  "application/x-patch",
+  "application/x-php",
+  "application/x-httpd-php",
+  "application/x-httpd-php-source",
+  "application/x-protobuf",
+  "application/x-terraform",
+  "application/x-subrip",
+  "message/rfc822",
 ]);
+
+function isResponsesDocumentType(mediaType: string): boolean {
+  return mediaType.startsWith("text/") || /\+(json|xml)$/.test(mediaType) ||
+    RESPONSES_DOCUMENT_TYPES.has(mediaType);
+}
 
 type RuntimeUserFilePart = Exclude<
   Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"][number],
@@ -460,11 +490,11 @@ function toOpenAIResponsesInlineFile(
   data: string,
 ): Record<string, unknown> {
   const mediaType = part.mediaType.toLowerCase();
-  if (!mediaType.startsWith("text/") && !RESPONSES_DOCUMENT_TYPES.has(mediaType)) {
+  if (!isResponsesDocumentType(mediaType)) {
     throw unsupportedFileInputError(
       "OpenAI Responses",
       part,
-      "Send a document such as PDF, text, or a spreadsheet.",
+      "Send a document such as PDF, text, code, a spreadsheet, or an office document.",
     );
   }
   const extension = INLINE_FILE_EXTENSIONS[mediaType];

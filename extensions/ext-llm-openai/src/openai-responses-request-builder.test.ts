@@ -206,6 +206,11 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       ["a.json", "application/json"],
       ["a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
       ["a.xls", "application/vnd.ms-excel"],
+      ["a.ts", "application/typescript"],
+      ["a.sql", "application/x-sql"],
+      ["a.eml", "message/rfc822"],
+      ["a.yaml", "application/yaml"],
+      ["a.jsonld", "application/ld+json"],
     ] as const
   ) {
     it(`sends inline ${mediaType} data`, () => {
