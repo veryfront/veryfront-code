@@ -33,6 +33,7 @@ const ThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const AddEventListener = EventTarget.prototype.addEventListener;
 const AbortReason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason")!.get!;
 const IsAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const AbortSignalTimeout = AbortSignal.timeout;
 const checkSignal = (signal: AbortSignal) => Apply(ThrowIfAborted, signal, []);
 
 export const getProjectEventPersistenceSchema = defineSchema((v) =>
@@ -134,7 +135,12 @@ export function createProjectEventWriter(input: {
     if (!signal) throw new Error("Project writer lifetime is unbound");
     const aborted = Apply(IsAborted, signal, []) as boolean;
     const snapshot = await mirror.flush(
-      aborted ? undefined : { abortSignal: signal, waitForRetries: true },
+      {
+        abortSignal: aborted
+          ? Apply(AbortSignalTimeout, AbortSignal, [30_000]) as AbortSignal
+          : signal,
+        waitForRetries: true,
+      },
     );
     if (!aborted) assertActive();
     if (snapshot.disabled || snapshot.pendingEventCount !== 0) {

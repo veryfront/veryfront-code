@@ -214,7 +214,7 @@ it("closes a sandbox that finishes creation after its owner was revoked", async 
   });
 });
 
-it("attempts all descendant closes when one close fails", async () => {
+it("attempts all descendant closes and retries a failed close", async () => {
   await fixture(async ({ transport, scope, eventToken, authToken }) => {
     const closed: number[] = [];
     let created = 0;
@@ -226,7 +226,9 @@ it("attempts all descendant closes when one close fails", async () => {
           ...sandbox,
           closeSandbox() {
             closed.push(id);
-            if (id === 0) throw new Error("close failed");
+            if (id === 0 && closed.filter((closedId) => closedId === id).length === 1) {
+              throw new Error("close failed");
+            }
             return sandbox.closeSandbox();
           },
         };
@@ -242,10 +244,14 @@ it("attempts all descendant closes when one close fails", async () => {
       eventToken(child.childRunId),
       authToken,
     );
-    await tools.revoke(root);
+    await assertRejects(() => tools.revoke(root), Error, "close failed");
     assertEquals(closed.sort(), [0, 1]);
     assertThrows(() => runWithHostedPlatformDependencies(root, () => Promise.resolve("leaked")));
     assertThrows(() => runWithHostedPlatformDependencies(child, () => Promise.resolve("leaked")));
+    await tools.revoke(root);
+    assertEquals(closed.sort(), [0, 0, 1]);
+    await tools.revoke(root);
+    assertEquals(closed.sort(), [0, 0, 1]);
   });
 });
 

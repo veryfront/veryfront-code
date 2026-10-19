@@ -9,6 +9,7 @@ import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-asyn
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
+  forEachPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
   somePrivateArray,
@@ -76,9 +77,23 @@ export function createConnectedLocalPlatformTools(
     revokeHostedPlatformDependencies(owner);
     const pending = cleanups.get(owner) ?? [];
     cleanups.set(owner, []);
-    await apply(allSettled, nativePromise, [
+    const results = await apply(allSettled, nativePromise, [
       mapPrivateArray(pending, async (close) => await close()),
     ]);
+    const retry: Array<() => Promise<void>> = [];
+    let failure: unknown;
+    forEachPrivateArray(results, (result, index) => {
+      if (result.status !== "rejected") return;
+      const close = pending[index];
+      if (close) pushPrivateArray(retry, close);
+      failure ??= result.reason;
+    });
+    if (retry.length > 0) {
+      const current = cleanups.get(owner) ?? [];
+      forEachPrivateArray(retry, (close) => pushPrivateArray(current, close));
+      cleanups.set(owner, current);
+      throw failure;
+    }
   };
   return {
     verify,
