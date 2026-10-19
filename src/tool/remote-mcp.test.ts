@@ -482,6 +482,37 @@ describe("tool/remote-mcp", () => {
     );
   });
 
+  for (
+    const [shape, result] of [
+      ["structured", (content: string) => ({ content: [], structuredContent: { content } })],
+      [
+        "text",
+        (content: string) => ({ content: [{ type: "text", text: JSON.stringify({ content }) }] }),
+      ],
+    ] as const
+  ) {
+    it(`returns one ${shape} result string over 1 MiB within the response bound`, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "docs",
+        endpoint: "https://93.184.216.34",
+        headers: { Authorization: "Bearer remote-token" },
+      });
+      const content = "A".repeat(2 * 1024 * 1024);
+
+      const output = await withMockFetch(
+        async () =>
+          Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:call:download",
+            result: result(content),
+          }),
+        async () => await source.executeTool("download", {}),
+      );
+
+      assertEquals(output, { content });
+    });
+  }
+
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",

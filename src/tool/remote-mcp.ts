@@ -3,7 +3,10 @@ import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
@@ -354,10 +357,13 @@ function parseJsonValue(text: string): unknown | undefined {
   }
 }
 
-function parseJsonText(text: string): unknown | undefined {
+/** A byte-bounded source may pass `maxSourceBytes` so one string can use all of it. */
+function parseJsonText(text: string, maxSourceBytes?: number): unknown | undefined {
   const value = parseJsonValue(text);
   if (value === undefined) return undefined;
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = maxSourceBytes === undefined
+    ? snapshotBoundedJsonValue(value)
+    : snapshotBoundedParsedJsonValue(value, maxSourceBytes);
   return snapshot.success ? snapshot.value : undefined;
 }
 
@@ -975,7 +981,7 @@ function normalizeCallToolResult(input: {
       return result.structuredContent;
     }
 
-    return parseJsonText(text) ?? text;
+    return parseJsonText(text, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES) ?? text;
   }
 
   if (isError) {
@@ -1153,7 +1159,11 @@ function createRemoteMCPToolSourceWithFetch(
             normalizeKnownToolError(result.result, toolName, endpoint, context),
           );
         }
-        const resultSnapshot = snapshotBoundedJsonValue(result);
+        // The response text is already bounded, so one string may use the whole response.
+        const resultSnapshot = snapshotBoundedParsedJsonValue(
+          result,
+          MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+        );
         if (!resultSnapshot.success) {
           throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
         }

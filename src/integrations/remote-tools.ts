@@ -667,7 +667,16 @@ function decodeRemoteToolFailure(
     ? result.structuredContent
     : parseJsonText(text);
   const condition = isRecord(result._meta) ? result._meta.condition : undefined;
-  return applyRemoteFailureCondition(parsed, text, condition);
+  // The failure copies the text into `message`, so re-bound the decoded result.
+  const failure = snapshotBoundedJsonValue(
+    applyRemoteFailureCondition(parsed, text, condition),
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+  );
+  if (!failure.success) {
+    throw new TypeError("Integration tools API failure result exceeds the response bound");
+  }
+  return failure.value;
 }
 
 function decodeRemoteToolResult(result: BoundedJsonValue): unknown {

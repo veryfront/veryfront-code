@@ -543,7 +543,7 @@ function withoutHostedCredentials<TResult>(input: {
   );
 }
 
-/** Bound a tool result by its whole 4 MiB size; one string, such as base64 attachment content, may use all of it. */
+/** Bound a result by its whole 4 MiB size, so one string may use all of it. */
 function snapshotHostedToolResult(result: unknown): unknown {
   if (result === undefined) return undefined;
   const snapshot = snapshotBoundedJsonValue(result, JSON_VALUE_MAX_SERIALIZED_BYTES);

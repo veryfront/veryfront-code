@@ -781,6 +781,24 @@ describe("integrations/remote-tools hardening", () => {
     });
   }
 
+  it("rejects a decoded failure result that grows past the response bound", async () => {
+    configureRemoteTools();
+    const half = "A".repeat(1536 * 1024);
+    const text = JSON.stringify({ detail: half, more: half });
+
+    const error = await withMockFetch(
+      async () =>
+        Response.json({
+          isError: true,
+          content: [{ type: "text", text }],
+          _meta: { condition: { slug: "upstream-error", status: 502, retryable: false } },
+        }),
+      () => captureRejection(() => runRemoteIntegrationTool("outlook__get_attachment", {})),
+    );
+
+    assertEquals(error instanceof TypeError, true);
+  });
+
   it("rejects a serialized call body above the aggregate byte ceiling", async () => {
     configureRemoteTools();
     const emptyArguments = { a: "", b: "", c: "", d: "" };
