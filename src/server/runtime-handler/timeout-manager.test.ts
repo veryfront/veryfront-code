@@ -5,8 +5,38 @@ import { PERMISSION_DENIED } from "#veryfront/errors";
 import { HTTP_GATEWAY_TIMEOUT } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
+import { ControlPlaneRequestError } from "#veryfront/internal-agents/control-plane-auth.ts";
+
 describe("timeout-manager", () => {
   describe("withRequestTimeout", () => {
+    it("keeps typed ingress errors opaque outside execute and ignores arbitrary status", async () => {
+      for (
+        const [path, method, failure] of [
+          ["/other", "POST", new ControlPlaneRequestError(401, "private detail")],
+          [
+            "/api/control-plane/runs/run/execute",
+            "GET",
+            new ControlPlaneRequestError(401, "private detail"),
+          ],
+          [
+            "/api/control-plane/runs/run/execute",
+            "POST",
+            Object.assign(new Error("private detail"), { status: 401 }),
+          ],
+        ] as const
+      ) {
+        const { response } = await withRequestTimeout(
+          async () => {
+            throw failure;
+          },
+          path,
+          method,
+        );
+        assertEquals(response.status, 500);
+        assertEquals((await response.text()).includes("private detail"), false);
+      }
+    });
+
     it("returns handler response when it completes quickly", async () => {
       const expectedBody = "Hello, World!";
       const handler = async () => new Response(expectedBody);

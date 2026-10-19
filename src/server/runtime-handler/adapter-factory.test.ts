@@ -1703,9 +1703,37 @@ describe("adapter-factory", () => {
           throw new Error("execute config fail");
         },
       };
-      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const { createControlPlaneSignature } = await import(
+        "../handlers/request/internal-agent-run.test-helpers.ts"
+      );
+      const body = JSON.stringify({
+        runId: "run_1",
+        projectId: "proj_proxy",
+        kind: "task",
+        target: "task:knowledge-ingest",
+      });
+      const signed = await createControlPlaneSignature(body, {
+        audience: "proxy-slug",
+        projectId: "proj_proxy",
+        requestId: "run_1",
+        requestMethod: "POST",
+        requestPath: "/api/control-plane/runs/run_1/execute",
+      });
+      const adapter = {
+        ...base,
+        env: {
+          ...base.env,
+          get: (name: string) =>
+            name === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY"
+              ? signed.publicKeyPem
+              : base.env.get(name),
+        },
+        fs: extendedFs,
+      } as unknown as RuntimeAdapter;
       const req = new Request("http://example.com/api/control-plane/runs/run_1/execute", {
         method: "POST",
+        headers: { "x-veryfront-control-plane-jws": signed.jws },
+        body,
       });
 
       await assertRejects(
