@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   installMockFetch,
   observeFetchRequestInit,
@@ -409,7 +410,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
     });
 
     it("compiles remote TypeScript with the resolved module's loader", async () => {
-      const projectDir = await Deno.makeTempDir();
+      const projectDir = await makeTempDir();
       const resolvedUrl = "https://esm.sh/typed/parse.ts?version=1&filename=ignored.js";
       const source = "export interface Result { value: number }\n" +
         "export const result: Result = { value: 42 };";
@@ -476,7 +477,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
     });
 
     it("uses a locked TypeScript URL rather than the JavaScript import alias", async () => {
-      const projectDir = await Deno.makeTempDir();
+      const projectDir = await makeTempDir();
       const requestUrl = "https://esm.sh/parser.js";
       const resolvedUrl = "https://esm.sh/pinned/parser.ts?version=1";
       const source = "export const value: number = 42;";
