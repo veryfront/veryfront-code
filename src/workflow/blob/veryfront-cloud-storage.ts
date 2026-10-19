@@ -33,6 +33,8 @@ const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
 const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
 // Bounds list() against an API that keeps answering with a continuation.
 const MAX_LIST_PAGES = 1_000;
+// Blobs list() reads at once; each read is several requests.
+const LIST_STAT_CONCURRENCY = 8;
 const textEncoder = new TextEncoder();
 // Stored-login credentials are attached after project code may have loaded.
 // Construct and mutate their header container through captured intrinsics.
@@ -551,19 +553,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         resolved,
         scope.signal,
       );
-      await this.#uploadFile(
-        metadataPath,
-        "application/json",
-        metadataBytes.byteLength,
-        metadataBytes,
-        resolved,
-        scope.signal,
-      );
-
       try {
+        // Inside the rollback too: a metadata upload can commit and still fail to report it.
+        await this.#uploadFile(
+          metadataPath,
+          "application/json",
+          metadataBytes.byteLength,
+          metadataBytes,
+          resolved,
+          scope.signal,
+        );
         await this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
       } catch (error) {
-        logger.warn("Failed to upload blob data, restoring the metadata sidecar", {
+        logger.warn("Failed to upload blob, restoring the metadata sidecar", {
           id,
           dataPath,
           error: error instanceof Error ? error.message : String(error),
@@ -678,9 +680,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const resolved = this.#resolveConfig();
     const ids: string[] = [];
     let cursor: string | null = null;
-    let pages = 0;
+    const seenCursors = new Set<string>();
     do {
-      if (pages++ === MAX_LIST_PAGES) {
+      if (seenCursors.size === MAX_LIST_PAGES) {
         throw API_ERROR.create({
           detail: `Veryfront Cloud upload listing exceeded ${MAX_LIST_PAGES} pages`,
         });
@@ -704,10 +706,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         if (isSafeBlobId(id)) ids.push(id);
       }
       cursor = parsed.page_info?.next ?? null;
+      if (cursor && seenCursors.has(cursor)) {
+        throw API_ERROR.create({ detail: "Veryfront Cloud upload listing repeated a page cursor" });
+      }
+      if (cursor) seenCursors.add(cursor);
     } while (cursor);
 
     // A blob created while paging can appear on two pages.
-    const refs = await Promise.all([...new Set(ids)].map((id) => this.stat(id)));
+    const unique = [...new Set(ids)];
+    const refs: (BlobRef | null)[] = [];
+    for (let i = 0; i < unique.length; i += LIST_STAT_CONCURRENCY) {
+      const batch = unique.slice(i, i + LIST_STAT_CONCURRENCY);
+      refs.push(...await Promise.all(batch.map((id) => this.stat(id))));
+    }
     return refs
       .filter((ref): ref is BlobRef => ref !== null)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

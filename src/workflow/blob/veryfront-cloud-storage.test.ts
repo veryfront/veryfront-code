@@ -64,6 +64,10 @@ function createMockUploadService(
     failDataUpload?: boolean;
     /** Delay each request that reads a `.meta.json` sidecar, unless the request is aborted first. */
     metadataReadDelayMs?: number;
+    /** Store a `.meta.json` sidecar, then answer its PUT with an error, as when the response is lost. */
+    commitMetadataThenFail?: boolean;
+    /** Answer every list page with this same `page_info.next` cursor. */
+    repeatCursor?: string;
     /** Answer the list with pages of this many files, continued by `page_info.next`. */
     pageSize?: number;
     /** Answer deletes with an empty 204, as the route did before the 200 acknowledgement. */
@@ -75,6 +79,7 @@ function createMockUploadService(
   const uploads = new Map<string, StoredUpload>();
   const pendingUploads = new Map<string, PendingUpload>();
   const fetchCalls: FetchCallRecord[] = [];
+  const signedUrlRequests = { inFlight: 0, max: 0 };
 
   installMockFetch(
     (async (input: string | URL | Request, init?: RequestInit) => {
@@ -118,7 +123,7 @@ function createMockUploadService(
           const start = Number(url.searchParams.get("cursor") ?? "0");
           const end = options.pageSize ? start + options.pageSize : files.length;
           const data = files.slice(start, end);
-          const next = end < files.length ? String(end) : null;
+          const next = options.repeatCursor ?? (end < files.length ? String(end) : null);
           // Folders are a separate array, and `data` repeats them as folder items.
           const folders = [{
             path: ".vf-test/",
@@ -173,6 +178,10 @@ function createMockUploadService(
 
         const downloadMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads\/(.+)\/url$/);
         if (downloadMatch && method === "GET") {
+          signedUrlRequests.inFlight++;
+          signedUrlRequests.max = Math.max(signedUrlRequests.max, signedUrlRequests.inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          signedUrlRequests.inFlight--;
           const projectSlug = decodeURIComponent(downloadMatch[1] ?? "");
           const path = decodeURIComponent(downloadMatch[2] ?? "");
           const key = makeStorageKey(projectSlug, path);
@@ -256,6 +265,9 @@ function createMockUploadService(
         });
         pendingUploads.delete(key);
 
+        if (options.commitMetadataThenFail && path.endsWith(".meta.json")) {
+          return new Response("Response lost", { status: 502 });
+        }
         return new Response(null, { status: 200 });
       }
 
@@ -282,6 +294,7 @@ function createMockUploadService(
   return {
     uploads,
     fetchCalls,
+    signedUrlRequests,
     restore() {
       restoreMockFetch();
     },
@@ -637,6 +650,85 @@ describe("VeryfrontCloudBlobStorage", () => {
       );
       options.metadataReadDelayMs = 0;
       assertEquals(await storage.getText("doc"), "first version");
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("restores the previous metadata when its upload commits but the request fails", async () => {
+    const options = { commitMetadataThenFail: false };
+    const service = createMockUploadService(options);
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      await storage.put("first version", {
+        id: "doc",
+        mimeType: "text/plain",
+        metadata: { v: "1" },
+      });
+      options.commitMetadataThenFail = true;
+      await assertRejects(() =>
+        storage.put("second", { id: "doc", mimeType: "text/markdown", metadata: { v: "2" } })
+      );
+      options.commitMetadataThenFail = false;
+      assertEquals(await storage.getText("doc"), "first version");
+      assertEquals((await storage.stat("doc"))?.metadata, { v: "1" });
+
+      options.commitMetadataThenFail = true;
+      await assertRejects(() => storage.put("new", { id: "other", mimeType: "text/plain" }));
+      options.commitMetadataThenFail = false;
+      assertEquals(await storage.stat("other"), null);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("stops listing when the API repeats a cursor", async () => {
+    const service = createMockUploadService({ repeatCursor: "same" });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      await assertRejects(() => storage.list(), Error, "repeated");
+      const listCalls = service.fetchCalls.filter((call) =>
+        call.method === "GET" && new URL(call.url).pathname === "/projects/demo-project/uploads"
+      );
+      assertEquals(listCalls.length, 2);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("bounds how many blobs list() reads at once", async () => {
+    const service = createMockUploadService({ pageSize: 10 });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      for (let i = 0; i < 30; i++) await storage.put(String(i), { id: `blob-${i}` });
+      service.signedUrlRequests.max = 0;
+      assertEquals((await storage.list()).length, 30);
+      assertEquals(
+        service.signedUrlRequests.max <= 8,
+        true,
+        `max ${service.signedUrlRequests.max}`,
+      );
     } finally {
       service.restore();
     }
