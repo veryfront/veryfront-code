@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { acceptInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
@@ -193,5 +194,60 @@ for (const fail of [false, true]) {
       "Inherited local tool writer is unavailable",
     );
     assertEquals(finalizations.map(({ id }) => id), [grandchildId, childId]);
+  });
+}
+
+for (const outcome of ["completed", "failed", "cancelled"] as const) {
+  it(`attempts ${outcome === "cancelled" ? "cancelled" : "failed"} finalization after an inherited ${outcome} event drain times out`, async () => {
+    const finalizations: string[] = [];
+    const controller = new AbortController();
+    const transport = (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/events")) {
+        throw TIMEOUT_ERROR.create({ detail: "Fixture append timed out" });
+      }
+      if (path.endsWith("/finalize") || path.endsWith("/cancel")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        finalizations.push(path.endsWith("/cancel") ? "cancelled" : body.status);
+        if (outcome === "completed") {
+          assertEquals(body.error?.code, "DURABLE_RUN_EVENT_PERSISTENCE_FAILED");
+        }
+        return Response.json({ id: childId, status: body.status });
+      }
+      throw new Error(`Unexpected fixture request ${path}`);
+    }) as typeof fetch;
+    const child = await acceptInheritedRunAdmission(admission(childId, projectId, "child"), {
+      projectId,
+      parentRunId: projectId,
+      agentId: "child",
+      apiUrl,
+      fetch: transport,
+    });
+    const rejected = await assertRejects(() =>
+      runInheritedLocalAgent(
+        child,
+        { projectId, apiUrl, fetch: transport },
+        async (_signal, onEvent) => {
+          if (outcome === "completed") {
+            await onEvent!({
+              type: "tool-input-start",
+              toolCallId: "pending",
+              toolName: "example",
+            });
+          } else await onEvent!({ type: "text-delta", delta: "partial" });
+          if (outcome === "cancelled") controller.abort(new Error("Fixture cancelled"));
+          if (outcome === "failed") throw new Error("Fixture execution failed");
+          return { success: true, output: "done", executionTime: 0 };
+        },
+        controller.signal,
+        false,
+        outcome === "completed",
+      )
+    );
+    assertEquals(
+      finalizations,
+      [outcome === "cancelled" ? "cancelled" : "failed"],
+      String(rejected),
+    );
   });
 }

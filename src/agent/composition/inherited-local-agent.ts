@@ -188,20 +188,34 @@ export async function runInheritedLocalAgent(
   });
   let pending: Promise<StepResult> | undefined;
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
-    await mirror.appendEvents(toolStream?.finish() ?? []);
-    await mirror.flush({ throwOnTimeoutRetry: true });
+    let drainFailure: { error: unknown } | undefined;
+    try {
+      await mirror.appendEvents(toolStream?.finish() ?? []);
+      await mirror.flush({ throwOnTimeoutRetry: true });
+    } catch (error) {
+      drainFailure = { error };
+    }
+    const terminalState: HostedChildLifecycleTerminalState =
+      drainFailure && state.status === "completed"
+        ? {
+          status: "failed",
+          terminalErrorCode: "DURABLE_RUN_EVENT_PERSISTENCE_FAILED",
+          terminalErrorMessage: "Child run events could not be persisted",
+        }
+        : state;
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,
       conversationId: child.conversationId,
       runId: child.runId,
-      status: state.status,
-      output: state.output ?? null,
+      status: terminalState.status,
+      output: terminalState.output ?? null,
       model: "",
       provider: "",
-      terminalErrorCode: state.terminalErrorCode ?? undefined,
-      terminalErrorMessage: state.terminalErrorMessage ?? undefined,
+      terminalErrorCode: terminalState.terminalErrorCode ?? undefined,
+      terminalErrorMessage: terminalState.terminalErrorMessage ?? undefined,
     });
+    if (drainFailure) throw drainFailure.error;
   };
   const executeUnderLease = async (signal?: AbortSignal): Promise<StepResult> => {
     const result: StepResult = await runWithMandatoryRunEventSink(
