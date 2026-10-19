@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   commandResponse,
   type FetchCall,
@@ -429,7 +430,7 @@ describe("src/skill/executor", () => {
       setEnv("VERYFRONT_API_URL", "https://operator-api.test.com");
       setEnv("VERYFRONT_API_USER", "ambient-user");
       setEnv("TENANT_PROJECT_ID", "ambient-tenant-project");
-      const materializedRoot = await Deno.makeTempDir({ prefix: "vf-sandbox-command-" });
+      const materializedRoot = await makeTempDir({ prefix: "vf-sandbox-command-" });
       const sandboxPathMap = new Map<string, string>();
       let executed: Awaited<ReturnType<typeof executeSandboxCommandBody>> | undefined;
       mockFetch([
@@ -552,7 +553,7 @@ describe("src/skill/executor", () => {
     });
 
     it("keeps a verified run credential out of synchronous command history", async () => {
-      const materializedRoot = await Deno.makeTempDir({ prefix: "vf-sandbox-command-" });
+      const materializedRoot = await makeTempDir({ prefix: "vf-sandbox-command-" });
       const sandboxPathMap = new Map<string, string>();
       mockFetch([
         jsonResponse({
