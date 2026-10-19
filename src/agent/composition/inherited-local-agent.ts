@@ -92,10 +92,22 @@ function restoreInheritedAgentResponse(
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (value === undefined) throw invalid();
   if (outputFormat === "text-data-v1") {
+    if (value === null) return { text: "", status: "completed" };
+    if (typeof value !== "object" || Array.isArray(value)) throw invalid();
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length === 0 ||
+      keys.some((key) => key !== "text" && key !== "data")
+    ) throw invalid();
+    const text = Object.getOwnPropertyDescriptor(value, "text");
+    const data = Object.getOwnPropertyDescriptor(value, "data");
+    if (
+      (text && (!("value" in text) || typeof text.value !== "string")) ||
+      (data && !("value" in data))
+    ) throw invalid();
     return {
-      text: privateJsonStringify(value),
-      data: value,
-      object: value,
+      text: text && "value" in text ? text.value : privateJsonStringify(data!.value),
+      ...(data && "value" in data ? { data: data.value, object: data.value } : {}),
       status: "completed",
     };
   }

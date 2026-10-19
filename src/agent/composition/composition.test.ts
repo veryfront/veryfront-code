@@ -507,7 +507,7 @@ describe("agentAsTool", () => {
         {
           terminalReceipt: {
             status: "completed",
-            output: data,
+            output: { data },
             outputFormat: "text-data-v1",
           },
         },
@@ -529,6 +529,71 @@ describe("agentAsTool", () => {
       });
     });
   }
+
+  it("restores a canonical text-only replay without inventing structured data", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: { text: "done" },
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "done", status: "completed" },
+      executionTime: 0,
+    });
+  });
+
+  it("restores an explicit canonical no-value replay without structured aliases", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: null,
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "", status: "completed" },
+      executionTime: 0,
+    });
+  });
+
+  it("rejects unknown fields in a marked canonical output envelope", async () => {
+    await assertRejects(
+      () =>
+        runInheritedLocalAgent(
+          {
+            terminalReceipt: {
+              status: "completed",
+              output: { text: "done", status: "completed" },
+              outputFormat: "text-data-v1",
+            },
+          },
+          { projectId: "project", apiUrl: "https://api.example.test", fetch },
+          () => {
+            throw new Error("must not execute");
+          },
+        ),
+      Error,
+      "Stored local child result is invalid",
+    );
+  });
 
   it("restores an unmarked legacy agent response without interpreting business keys", async () => {
     const result = await runInheritedLocalAgent(

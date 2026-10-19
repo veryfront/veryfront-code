@@ -664,21 +664,21 @@ describe("inherited execution input and receipt authority", () => {
     const response = () =>
       inheritedExecutionResponse({
         status: "completed",
-        output: { text: "business" },
+        output: { data: { text: "business" } },
         outputFormat: "text-data-v1",
       });
     const workflow = await acceptWorkflowInheritedRunAdmission(response(), inheritedBinding());
     assertEquals(workflow, {
       terminalReceipt: {
         status: "completed",
-        output: { text: "business" },
+        output: { data: { text: "business" } },
         outputFormat: "text-data-v1",
       },
     });
     const run = await acceptInheritedRunAdmission(response(), inheritedBinding());
     assertEquals(hostedInheritedTerminalReceipt(run), {
       status: "completed",
-      output: { text: "business" },
+      output: { data: { text: "business" } },
       outputFormat: "text-data-v1",
     });
 
