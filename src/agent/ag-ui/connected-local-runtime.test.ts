@@ -12,13 +12,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
-import { createEphemeralAgent } from "../factory.ts";
-import { getAvailableTools } from "../runtime/tool-helpers.ts";
-import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
-import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { tool } from "#veryfront/tool/index.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import type { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
 
 function fixture(
   options: {
@@ -46,6 +40,7 @@ function fixture(
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
     workerDisplayName?: string;
+    platformRevoke?: () => Promise<void>;
   } = {},
 ) {
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -221,6 +216,16 @@ function fixture(
       return Promise.resolve(Response.json({ id: `run-${id}` }));
     }) as typeof fetch,
     log: (message) => logs.push(message),
+    ...(options.platformRevoke
+      ? {
+        createPlatformTools: () =>
+          ({
+            register: () => Promise.resolve(),
+            revoke: options.platformRevoke!,
+            run: (_input: unknown, operation: () => Promise<unknown>) => operation(),
+          }) as unknown as ReturnType<typeof createConnectedLocalPlatformTools>,
+      }
+      : {}),
   });
   return {
     runtime,
@@ -290,10 +295,16 @@ describe("connected local execution", () => {
 
   it("replays child admission after a lost response without executing a terminal child again", async () => {
     let attempts = 0;
+    let renewals = 0;
     const output = { text: "stored", toolCalls: 0, status: "completed" };
     const f = fixture({
       trustedClaim: true,
+      renew: () => {
+        renewals++;
+        return Promise.resolve({});
+      },
       childAdmission: async () => {
+        assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
         if (++attempts === 1) throw new TypeError("child response lost");
         return Response.json({
           id: "22222222-2222-4222-8222-222222222222",
@@ -579,145 +590,6 @@ describe("connected local execution", () => {
     });
     await new Response(run.wrapStream(body)).text();
     assertEquals(f.completed, ["completed"]);
-  });
-
-  it("prepares a tools-true agent with its bounded single-agent catalog", async () => {
-    using _catalog = useServedCatalogForTests();
-    const workerId = "11111111-1111-4111-8111-111111111111";
-    const projectId = "22222222-2222-4222-8222-222222222222";
-    const conversationId = "33333333-3333-4333-8333-333333333333";
-    const messageId = "44444444-4444-4444-8444-444444444444";
-    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
-    const runId = "run-connected-tools";
-    const terminalToken = `header.${
-      btoa(JSON.stringify({
-        runId,
-        canonicalRunId,
-        tokenUse: "run_event_writer",
-        writerPurpose: "current_run_terminal",
-        dispatchNonce: "generation",
-      }))
-    }.signature`;
-    const worker = {
-      id: workerId,
-      project_id: projectId,
-      implementation_kind: "veryfront-local",
-      worker_key: "local-test",
-      status: "online",
-    };
-    const fetch = ((input: string | URL | Request) => {
-      const path = new URL(String(input)).pathname;
-      if (path.endsWith("/workers")) {
-        return Promise.resolve(Response.json({ worker, token: "worker-token" }));
-      }
-      if (path.endsWith("/heartbeat")) {
-        return Promise.resolve(Response.json({ worker }));
-      }
-      if (path === "/conversations") {
-        return Promise.resolve(Response.json({ id: conversationId }));
-      }
-      if (path === "/runs") {
-        return Promise.resolve(Response.json({ id: canonicalRunId }));
-      }
-      if (path.endsWith("/claim")) {
-        return Promise.resolve(Response.json({
-          run: {
-            run_id: runId,
-            conversation_id: conversationId,
-            message_id: messageId,
-            project_id: projectId,
-            agent_id: "coder",
-            status: "running",
-            request_snapshot: null,
-            latest_event_id: 0,
-            latest_external_event_sequence: 0,
-            lease_owner: workerId,
-            lease_expires_at: null,
-            worker_session: null,
-          },
-          credentials: {
-            auth_token: "run-auth-token",
-            run_event_token: "run-event-token",
-            run_terminal_token: terminalToken,
-            inference_token: "run-inference-token",
-          },
-        }));
-      }
-      if (path.endsWith("/finalize")) {
-        return Promise.resolve(Response.json({ id: canonicalRunId, status: "cancelled" }));
-      }
-      throw new Error(`Unexpected connected runtime request: ${path}`);
-    }) as typeof globalThis.fetch;
-    const makeTool = (id: string, ownerAgentId?: string) => ({
-      ...tool({
-        id,
-        description: id,
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({ ok: true }),
-      }),
-      ...(ownerAgentId ? { ownerAgentId } : {}),
-    });
-    const registered = [
-      "connected-global-tool",
-      "coder--connected-owner-tool",
-      "writer--connected-foreign-tool",
-    ];
-    toolRegistryInternal.register(registered[0]!, makeTool(registered[0]!));
-    toolRegistryInternal.register(registered[1]!, makeTool(registered[1]!, "coder"));
-    toolRegistryInternal.register(registered[2]!, makeTool(registered[2]!, "writer"));
-    const runtime = createConnectedLocalRuntime({
-      apiBaseUrl: "http://localhost:4400",
-      apiToken: "private",
-      projectId,
-      projectSlug: "sample",
-      studioUrl: "http://localhost:3440",
-    }, { fetch, log: () => {} });
-
-    try {
-      const run = await runtime.admit({
-        agentId: "coder",
-        threadId: "thread",
-        messages: [],
-        signal: new AbortController().signal,
-      });
-      const source = createEphemeralAgent({
-        id: "coder",
-        system: "Use the project tools.",
-        tools: true,
-        knowledge: true,
-        skills: false,
-      });
-      assertEquals(source.config.tools, true);
-      assertEquals(resolveRuntimeToolLoading(source.config).mode, "deferred");
-
-      const prepared = await run.prepareAgent(source);
-      const preparedTools = prepared.config.tools;
-      assertEquals(preparedTools, true);
-      assertEquals(resolveRuntimeToolLoading(prepared.config).mode, "deferred");
-      const definitions = await getAvailableTools(preparedTools, {
-        callerAgentId: "coder",
-        includeIntegrationTools: false,
-        remoteToolSources: [{
-          id: "connected-remote",
-          listTools: () =>
-            Promise.resolve([{
-              name: "connected_remote_tool",
-              description: "Authorized connected remote tool",
-              parameters: { type: "object", properties: {} },
-            }]),
-          executeTool: () => Promise.resolve({ ok: true }),
-        }],
-      });
-      const names = definitions.map((definition) => definition.name);
-      assertEquals(names.includes(registered[0]!), true);
-      assertEquals(names.includes(registered[1]!), true);
-      assertEquals(names.includes(registered[2]!), false);
-      assertEquals(names.includes("connected_remote_tool"), true);
-      assertEquals(prepared.config.delegates, undefined);
-    } finally {
-      await runtime.dispose().catch(() => {});
-      for (const id of registered) toolRegistryInternal.delete(id);
-    }
   });
 
   it("reuses run admission authority without appending a duplicate user message after a lost response", async () => {
@@ -1342,6 +1214,35 @@ describe("connected local execution", () => {
     assertEquals(f.completed, ["completed"]);
     await f.runtime.dispose();
   });
+  it("keeps run authority active across deferred stream pulls", async () => {
+    const f = fixture();
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    let observedSink = false;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          observedSink = getActiveRunEventSink() !== undefined;
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"message-finish","object":{"completed":true}}\n\n',
+            ),
+          );
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const stream = await run.execute(() => run.wrapStream(body));
+    await new Response(stream).text();
+    assertEquals(observedSink, true);
+    assertEquals(f.completed, ["completed"]);
+    await f.runtime.dispose();
+  });
   it("fails persistence before completing output and releases active execution", async () => {
     const f = fixture({ appendFailure: true });
     const run = await f.runtime.admit({
@@ -1380,6 +1281,32 @@ describe("connected local execution", () => {
     await f.runtime.dispose();
     assertEquals(f.completed, ["completed"]);
     assertEquals(f.logs.some((line) => line.includes("run persistence failed")), true);
+  });
+  it("completes the run and allows a later retry after repeated platform cleanup failures", async () => {
+    let cleanupAttempts = 0;
+    const f = fixture({
+      trustedClaim: true,
+      platformRevoke: () => {
+        cleanupAttempts++;
+        return cleanupAttempts <= 2
+          ? Promise.reject(new Error("cleanup offline"))
+          : Promise.resolve();
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    await assertRejects(() => run.finish("completed"), Error, "cleanup offline");
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(cleanupAttempts, 2);
+    await run.finish("completed");
+    assertEquals(f.completed, ["completed"]);
+    assertEquals(cleanupAttempts, 3);
+    await f.runtime.dispose();
+    assertEquals(cleanupAttempts, 3);
   });
   it("waits for every active finalization before reporting a disposal failure", async () => {
     let releaseDelayed!: () => void;

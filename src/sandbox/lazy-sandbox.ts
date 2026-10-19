@@ -57,6 +57,8 @@ export interface LazySandboxOptions extends SandboxOptions {
   /** Delete the sandbox when closing. Defaults to false for persistent, always-on or attached workspaces, and true for temporary workspaces created by this client. */
   deleteOnClose?: boolean;
   getProjectId?: () => string | null | undefined;
+  /** Read the current credential before each request when the host renews it. */
+  getAuthToken?: () => string;
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -120,6 +122,7 @@ const urlHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "
 const regExpExec = RegExp.prototype.exec;
 interface LazySandboxPrivateState {
   authToken: string;
+  getAuthToken?: () => string;
   apiUrl: string;
   allowsCustomRuntimeEndpoint: boolean;
 }
@@ -136,7 +139,10 @@ function getLazySandboxPrivateState(sandbox: LazySandbox): LazySandboxPrivateSta
 }
 
 function getLazySandboxAuthToken(sandbox: LazySandbox): string {
-  return getLazySandboxPrivateState(sandbox).authToken;
+  const state = getLazySandboxPrivateState(sandbox);
+  return state.getAuthToken
+    ? applyIntrinsic(state.getAuthToken, undefined, []) as string
+    : state.authToken;
 }
 
 /** Resolves default sandbox runtime endpoint. */
@@ -217,6 +223,7 @@ export class LazySandbox {
     applyIntrinsic(weakMapSet, lazySandboxPrivateStates, [this, {
       apiUrl: resolveSandboxApiUrl(options),
       authToken: resolveSandboxAuthToken(options),
+      getAuthToken: options.getAuthToken,
       allowsCustomRuntimeEndpoint: explicitAuthToken.length > 0,
     }]);
     this.creationPolicy = {
@@ -924,7 +931,7 @@ export class LazySandbox {
       const policy = await currentSandboxCleanupPolicy({
         apiUrl: getLazySandboxPrivateState(this).apiUrl,
         sessionId,
-        authToken: getLazySandboxPrivateState(this).authToken,
+        authToken: getLazySandboxAuthToken(this),
         timeoutMs: this.controlRequestTimeoutMs,
       });
       if (policy === "unavailable") return;

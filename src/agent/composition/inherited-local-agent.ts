@@ -1,3 +1,27 @@
+import type { createConnectedLocalPlatformTools } from "../ag-ui/connected-local-platform-tools.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
+import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
+import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+const localToolAdmissions = createPrivateWeakStore<
+  object,
+  ((
+    call: { occurrenceId: string; toolCallId: string },
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<AgentRunToolCallAdmissionReceipt>) | undefined
+>();
+/** Exact-child bridge retained only while its host-owned mirror is alive. */
+export function admitInheritedLocalTool(
+  child: ConversationRunProjection | InheritedRunResult,
+  call: { occurrenceId: string; toolCallId: string },
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const admit = localToolAdmissions.get(child);
+  if (!admit) throw new Error("Inherited local tool writer is unavailable");
+  return admit(call, name, args);
+}
 import { createDurableRunEventSink } from "../hosted/durable-run-event-sink.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import {
@@ -39,6 +63,13 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
+const apply = Reflect.apply;
+const AbortSignalTimeout = AbortSignal.timeout;
+const retryDrainSignal = (signal?: AbortSignal) =>
+  signal && !signal.aborted
+    ? signal
+    : apply(AbortSignalTimeout, AbortSignal, [30_000]) as AbortSignal;
+
 /** @internal Validate the result returned by durable local child execution. */
 export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
   if (
@@ -65,6 +96,11 @@ export async function runInheritedLocalAgent(
   ) => Promise<StepResult>,
   parentSignal?: AbortSignal,
   resolveProjectModels = false,
+  toolCallAdmissions = false,
+  platform?: {
+    tools: Pick<ReturnType<typeof createConnectedLocalPlatformTools>, "run" | "revoke">;
+    agentId: string;
+  },
 ): Promise<StepResult> {
   const receipt = "terminalReceipt" in child
     ? child.terminalReceipt
@@ -88,6 +124,7 @@ export async function runInheritedLocalAgent(
     latestEventId: child.latestEventId,
     latestExternalEventSequence: child.latestExternalEventSequence,
     runtimeObservations: true,
+    ...(toolCallAdmissions ? { toolCallAdmissions: true as const } : {}),
   });
   if (!writer || !finalize || !admit || !mirror) {
     throw ORCHESTRATION_ERROR.create({ detail: "Inherited local agent authority is unavailable" });
@@ -103,31 +140,31 @@ export async function runInheritedLocalAgent(
   const startedTools = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
   const completedTools = new Set<string>();
+  const toolStream = toolCallAdmissions ? createLocalToolStream() : undefined;
   const onEvent = async (event: AgUiRuntimeStreamEvent) => {
     if (
       event.type === "tool-input-start" && typeof event.toolCallId === "string" &&
-      startedTools.has(event.toolCallId)
+      startedTools.has(event.toolCallId) && !toolStream
     ) return;
     const events = mapRuntimeStreamEventToAgUiEvents(encoder, event).map((
       { event: type, payload },
     ) => coerceWireEvent(type, payload));
-    await mirror.appendEvents(
-      events.filter((event): event is Record<string, unknown> & { type: string } => {
-        if (typeof event.type !== "string") throw new Error("Invalid encoded stream event");
-        const id = "toolCallId" in event ? event.toolCallId : undefined;
-        if (typeof id !== "string") return true;
-        if (event.type === "TOOL_CALL_START") {
-          if (startedTools.has(id)) return false;
-          startedTools.set(id, typeof event.toolCallName === "string" ? event.toolCallName : "");
-        }
+    const filtered = events.filter((event): event is Record<string, unknown> & { type: string } => {
+      if (typeof event.type !== "string") throw new Error("Invalid encoded stream event");
+      const id = "toolCallId" in event ? event.toolCallId : undefined;
+      if (typeof id !== "string") return true;
+      if (event.type === "TOOL_CALL_START") {
+        if (startedTools.has(id) && !toolStream) return false;
+        startedTools.set(id, typeof event.toolCallName === "string" ? event.toolCallName : "");
+      }
 
-        if (event.type === "TOOL_CALL_RESULT") {
-          if (completedTools.has(id)) return false;
-          completedTools.add(id);
-        }
-        return true;
-      }),
-    );
+      if (event.type === "TOOL_CALL_RESULT") {
+        if (completedTools.has(id)) return false;
+        completedTools.add(id);
+      }
+      return true;
+    });
+    await mirror.appendEvents(toolStream ? toolStream.encode(filtered) : filtered);
   };
   const admitTool = async (id: string, name: string, input: unknown) => {
     toolInputs.set(
@@ -141,20 +178,70 @@ export async function runInheritedLocalAgent(
       await onEvent({ type: "tool-input-start", toolCallId: id, toolName: name });
     }
   };
+  localToolAdmissions.set(child, async (call, name) => {
+    const start = {
+      type: "tool-input-start" as const,
+      toolCallId: call.toolCallId,
+      toolName: name,
+    };
+    bindToolCallStartOccurrence(start, call.occurrenceId);
+    await mirror.handleChunk(start);
+    startedTools.set(call.toolCallId, name);
+    await mirror.flush({
+      abortSignal: retryDrainSignal(parentSignal),
+      throwOnTimeoutRetry: true,
+      waitForRetries: true,
+    });
+    await mirror.appendEvents(toolStream?.admit(call.toolCallId) ?? []);
+    const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
+    if (!receipt) throw new Error("Inherited local tool admission missing");
+    return receipt;
+  });
   let pending: Promise<StepResult> | undefined;
+  let platformRevoked = false;
+  const revokePlatformTools = async () => {
+    if (!platform || platformRevoked) return;
+    await platform.tools.revoke(child);
+    platformRevoked = true;
+  };
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
+    let drainFailure: { error: unknown } | undefined;
+    try {
+      await mirror.appendEvents(toolStream?.finish() ?? []);
+      await mirror.flush({
+        abortSignal: retryDrainSignal(parentSignal),
+        throwOnTimeoutRetry: true,
+        waitForRetries: true,
+      });
+    } catch (error) {
+      drainFailure = { error };
+    }
+    const terminalState: HostedChildLifecycleTerminalState =
+      drainFailure && state.status === "completed"
+        ? {
+          status: "failed",
+          terminalErrorCode: "DURABLE_RUN_EVENT_PERSISTENCE_FAILED",
+          terminalErrorMessage: "Child run events could not be persisted",
+        }
+        : state;
+    // Finalization must not be skipped by a transient sandbox close failure.
+    // The outer finally retries the retained cleanup before releasing the owner.
+    try {
+      await revokePlatformTools();
+    } catch { /* Retained cleanup is retried by the owner-lifetime finally. */ }
     await finalize({
       authToken: "",
       apiUrl: transport.apiUrl,
       conversationId: child.conversationId,
       runId: child.runId,
-      status: state.status,
-      output: state.output ?? null,
+      status: terminalState.status,
+      output: terminalState.output ?? null,
       model: "",
       provider: "",
-      terminalErrorCode: state.terminalErrorCode ?? undefined,
-      terminalErrorMessage: state.terminalErrorMessage ?? undefined,
+      terminalErrorCode: terminalState.terminalErrorCode ?? undefined,
+      terminalErrorMessage: terminalState.terminalErrorMessage ?? undefined,
     });
+    if (drainFailure) throw drainFailure.error;
   };
   const executeUnderLease = async (signal?: AbortSignal): Promise<StepResult> => {
     const result: StepResult = await runWithMandatoryRunEventSink(
@@ -226,6 +313,8 @@ export async function runInheritedLocalAgent(
                       },
                       delegationSignal,
                       resolveProjectModels,
+                      toolCallAdmissions,
+                      platform ? { tools: platform.tools, agentId: invocation.agentId } : undefined,
                     );
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
@@ -244,7 +333,21 @@ export async function runInheritedLocalAgent(
                   },
                 );
               },
-              () => execute(signal, onEvent),
+              () =>
+                platform
+                  ? platform.tools.run({
+                    owner: child,
+                    scope: {
+                      projectId: transport.projectId,
+                      runId: child.runId,
+                      agentId: platform.agentId,
+                    },
+                    canonicalRunId,
+                    writer,
+                    signal: signal ?? parentSignal ?? new AbortController().signal,
+                    admit: (call, name, args) => admitInheritedLocalTool(child, call, name, args),
+                  }, () => execute(signal, onEvent))
+                  : execute(signal, onEvent),
               onEvent,
               admitTool,
             ),
@@ -290,7 +393,12 @@ export async function runInheritedLocalAgent(
       executionTime: 0,
     };
   } finally {
-    revokeRuntimeObservationWriterCapability(observationWriter);
-    mirror.dispose();
+    try {
+      await revokePlatformTools();
+    } finally {
+      localToolAdmissions.set(child, undefined);
+      revokeRuntimeObservationWriterCapability(observationWriter);
+      mirror.dispose();
+    }
   }
 }

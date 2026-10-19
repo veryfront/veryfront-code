@@ -688,6 +688,8 @@ jobs:
       # The public pool runs its trusted main definition, so PR-only collector
       # additions must execute here against the checked-out source.
       - name: Collect context ownership coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
             tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
@@ -708,6 +710,7 @@ jobs:
             tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
             tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
             tests/integration/server/agent-stream.programmatic-platform.test.ts \
+            tests/integration/server/agent-stream.project-event-persistence.test.ts \
             tests/integration/agent/managed-recovery
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
@@ -725,7 +728,14 @@ jobs:
             tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts \
-            tests/integration/agent/connected-local-inference.test.ts
+            tests/integration/agent/connected-local-inference.test.ts \
+            tests/integration/agent/connected-local-tools.test.ts \
+            tests/integration/agent/connected-local-platform-boundary.test.ts \
+            tests/integration/agent/inherited-local-platform-scope.test.ts \
+            tests/integration/agent/run-stream-project-observation.test.ts \
+            tests/integration/agent/connected-writer-verifier.test.ts \
+            tests/integration/agent/connected-local-setup-cleanup.test.ts \
+            tests/integration/agent/connected-platform-cleanup.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
       - name: Merge coverage reports for SonarQube
