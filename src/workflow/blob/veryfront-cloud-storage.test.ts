@@ -62,6 +62,8 @@ function createMockUploadService(
     failMetadataSidecarUpload?: boolean;
     /** Fail the PUT of a data object (not a `.meta.json` sidecar). */
     failDataUpload?: boolean;
+    /** Delay each request that reads a `.meta.json` sidecar, unless the request is aborted first. */
+    metadataReadDelayMs?: number;
     /** Answer the list with pages of this many files, continued by `page_info.next`. */
     pageSize?: number;
     /** Answer deletes with an empty 204, as the route did before the 200 acknowledgement. */
@@ -86,6 +88,19 @@ function createMockUploadService(
         method,
         headers,
       });
+
+      if (
+        options.metadataReadDelayMs && method === "GET" &&
+        decodeURIComponent(url.pathname).includes(".meta.json")
+      ) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, options.metadataReadDelayMs);
+          request.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(request.signal.reason);
+          }, { once: true });
+        });
+      }
 
       if (url.origin === "https://93.184.216.34") {
         const authHeader = headers.get("Authorization");
@@ -593,6 +608,35 @@ describe("VeryfrontCloudBlobStorage", () => {
       assertEquals(await storage.getText("doc"), "first version");
       const stat = await storage.stat("doc");
       assertEquals([stat?.size, stat?.mimeType, stat?.metadata], [13, "text/plain", { v: "1" }]);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("reads the previous metadata within the put deadline", async () => {
+    const options = { metadataReadDelayMs: 0 };
+    const service = createMockUploadService(options);
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+      requestTimeoutMs: 100,
+    });
+
+    try {
+      await storage.put("first version", { id: "doc", mimeType: "text/plain" });
+      // Each of the two reads (signed URL, then download) fits one request deadline, both do not:
+      // the put must stop at its own deadline, not run on for both reads.
+      options.metadataReadDelayMs = 90;
+      await assertRejects(
+        () => beforeDeadline(storage.put("second", { id: "doc", mimeType: "text/plain" }), 150),
+        Error,
+        "Blob request timed out",
+      );
+      options.metadataReadDelayMs = 0;
+      assertEquals(await storage.getText("doc"), "first version");
     } finally {
       service.restore();
     }

@@ -546,7 +546,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       // Metadata first, data last: reads return the data object, so a put that fails at either step
       // leaves an existing blob readable as it was. A failed data upload restores the previous metadata
       // sidecar, or removes the new one when the blob did not exist.
-      const previousMetadata = await this.#downloadUploadText(metadataPath, resolved);
+      const previousMetadata = await this.#downloadUploadText(
+        metadataPath,
+        resolved,
+        scope.signal,
+      );
       await this.#uploadFile(
         metadataPath,
         "application/json",
@@ -871,6 +875,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   async #getDownloadUrl(
     path: string,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<{ signedUrl: string; expiresAt: Date } | null> {
     const ttl = resolved.downloadTtl;
     const query = ttl ? `?ttl_seconds=${encodeURIComponent(String(ttl))}` : "";
@@ -880,7 +885,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         encodeURIComponent(path)
       }/url${query}`,
       resolved,
-      { allowNotFound: true },
+      { allowNotFound: true, signal },
     );
 
     if (!raw) return null;
@@ -892,25 +897,29 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     };
   }
 
+  /** Reads one upload. A caller's `signal` replaces the per-request deadlines. */
   async #downloadUpload(
     path: string,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<ReadableStream | null> {
-    const download = await this.#getDownloadUrl(path, resolved);
+    const download = await this.#getDownloadUrl(path, resolved, signal);
     if (!download) return null;
 
-    const scope = createRequestScope(resolved.requestTimeoutMs);
+    const scope = signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
+    const requestSignal = signal ?? scope?.signal;
+    if (!requestSignal) throw new TypeError("Blob download request signal is unavailable");
     try {
       const response = await guardedOutboundFetch(download.signedUrl, {
         redirect: "error",
-        signal: scope.signal,
+        signal: requestSignal,
       });
       if (response.status === 404) {
         void response.body?.cancel().catch(() => {});
         return null;
       }
       if (!response.ok) {
-        const errorBody = await readErrorBody(response, scope.signal);
+        const errorBody = await readErrorBody(response, requestSignal);
         throw API_ERROR.create({
           detail:
             `Veryfront Cloud download failed for "${path}": ${response.status} ${response.statusText}${
@@ -918,20 +927,21 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
             }`,
         });
       }
-      const bytes = await readResponseBytes(response, resolved.maxResponseBytes, scope.signal);
+      const bytes = await readResponseBytes(response, resolved.maxResponseBytes, requestSignal);
       return new Blob([
         bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
       ]).stream();
     } finally {
-      scope.dispose();
+      scope?.dispose();
     }
   }
 
   async #downloadUploadText(
     path: string,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<string | null> {
-    const stream = await this.#downloadUpload(path, resolved);
+    const stream = await this.#downloadUpload(path, resolved, signal);
     if (!stream) return null;
     return new Response(stream).text();
   }
