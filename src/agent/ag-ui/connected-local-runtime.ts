@@ -203,6 +203,7 @@ export function getConnectedLocalRuntime() {
 /** @internal Dependencies keep protocol tests independent of a live API. */
 export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOptions, dependencies: {
   client?: ExternalAgentWorkerClient;
+  createPlatformTools?: typeof createConnectedLocalPlatformTools;
   fetch?: typeof fetch;
   log?: (message: string) => void;
   append?: (
@@ -232,7 +233,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     });
   const platformTools = dependencies.client
     ? undefined
-    : createConnectedLocalPlatformTools(options.apiBaseUrl, transport);
+    : (dependencies.createPlatformTools ?? createConnectedLocalPlatformTools)(
+      options.apiBaseUrl,
+      transport,
+    );
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
   const conversations = new Map<string, string>();
@@ -681,35 +685,11 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 apiUrl: options.apiBaseUrl,
                 fetch: transport,
               },
-              async (signal, onEvent) => {
-                const invoke = createInheritedLocalInvocationExecutor(invocation, delegated);
-                if (!platformTools || "terminalReceipt" in delegated) {
-                  return invoke(signal, onEvent);
-                }
-                const writer = hostedInheritedEventWriter(delegated);
-                if (!writer) throw new Error("Connected child writer unavailable");
-                return platformTools.run({
-                  owner: delegated,
-                  scope: {
-                    projectId: options.projectId,
-                    runId: delegated.runId,
-                    agentId: invocation.agentId,
-                  },
-                  canonicalRunId: delegated.canonicalRunId ?? delegated.runId,
-                  writer,
-                  signal: signal ?? controller.signal,
-                  admit: async (call, name, args) => {
-                    // The inherited mirror shares its own cursor and owns this append.
-                    const { admitInheritedLocalTool } = await import(
-                      "../composition/inherited-local-agent.ts"
-                    );
-                    return admitInheritedLocalTool(delegated, call, name, args);
-                  },
-                }, () => invoke(signal, onEvent));
-              },
+              createInheritedLocalInvocationExecutor(invocation, delegated),
               controller.signal,
               true,
               Boolean(platformTools),
+              platformTools ? { tools: platformTools, agentId: invocation.agentId } : undefined,
             );
             if (!result.success) throw new Error(result.error ?? "Local child failed.");
             return readInheritedLocalChildResult(result.output);

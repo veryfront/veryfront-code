@@ -1,13 +1,15 @@
+import type { createConnectedLocalPlatformTools } from "../ag-ui/connected-local-platform-tools.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
-const localToolAdmissions = new WeakMap<
+const localToolAdmissions = createPrivateWeakStore<
   object,
-  (
+  ((
     call: { occurrenceId: string; toolCallId: string },
     name: string,
     args: Record<string, unknown>,
-  ) => Promise<AgentRunToolCallAdmissionReceipt>
+  ) => Promise<AgentRunToolCallAdmissionReceipt>) | undefined
 >();
 /** Exact-child bridge retained only while its host-owned mirror is alive. */
 export function admitInheritedLocalTool(
@@ -88,6 +90,10 @@ export async function runInheritedLocalAgent(
   parentSignal?: AbortSignal,
   resolveProjectModels = false,
   toolCallAdmissions = false,
+  platform?: {
+    tools: Pick<ReturnType<typeof createConnectedLocalPlatformTools>, "run" | "revoke">;
+    agentId: string;
+  },
 ): Promise<StepResult> {
   const receipt = "terminalReceipt" in child
     ? child.terminalReceipt
@@ -267,6 +273,8 @@ export async function runInheritedLocalAgent(
                       },
                       delegationSignal,
                       resolveProjectModels,
+                      toolCallAdmissions,
+                      platform ? { tools: platform.tools, agentId: invocation.agentId } : undefined,
                     );
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
@@ -285,7 +293,21 @@ export async function runInheritedLocalAgent(
                   },
                 );
               },
-              () => execute(signal, onEvent),
+              () =>
+                platform
+                  ? platform.tools.run({
+                    owner: child,
+                    scope: {
+                      projectId: transport.projectId,
+                      runId: child.runId,
+                      agentId: platform.agentId,
+                    },
+                    canonicalRunId,
+                    writer,
+                    signal: signal ?? parentSignal ?? new AbortController().signal,
+                    admit: (call, name, args) => admitInheritedLocalTool(child, call, name, args),
+                  }, () => execute(signal, onEvent))
+                  : execute(signal, onEvent),
               onEvent,
               admitTool,
             ),
@@ -331,8 +353,12 @@ export async function runInheritedLocalAgent(
       executionTime: 0,
     };
   } finally {
-    localToolAdmissions.delete(child);
-    revokeRuntimeObservationWriterCapability(observationWriter);
-    mirror.dispose();
+    try {
+      await platform?.tools.revoke(child);
+    } finally {
+      localToolAdmissions.set(child, undefined);
+      revokeRuntimeObservationWriterCapability(observationWriter);
+      mirror.dispose();
+    }
   }
 }
