@@ -20,6 +20,7 @@ import type {
   EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
+  EvalMockToolsResolverContext,
   EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
   EvalReport,
@@ -29,6 +30,7 @@ import type {
   EvalToolAdapterContext,
   EvalToolCall,
 } from "veryfront/eval";
+import { runWithLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
 import { RECORD_INCOMPLETE_EXPLANATION } from "../../../src/eval/report.ts";
 import { orchestrateExtensions } from "veryfront/extensions";
 import {
@@ -38,12 +40,7 @@ import {
   type EvalReportExportRedaction,
 } from "veryfront/extensions/eval";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
-import {
-  createEvalRunId,
-  exportEvalReport,
-  resolveEvalRunProvenance,
-  runEval,
-} from "veryfront/eval";
+import { exportEvalReport, resolveEvalRunProvenance, runEval } from "veryfront/eval";
 import { getVeryfrontCloudBootstrap } from "../../../src/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -840,7 +837,7 @@ function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): 
 
 async function resolveEvalMockTools(
   mockTools: EvalMockTools | undefined,
-  context: EvalAgentAdapterContext,
+  context: EvalMockToolsResolverContext,
 ): Promise<ToolSet | undefined> {
   if (mockTools === undefined) {
     return undefined;
@@ -868,56 +865,57 @@ export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTim
 }
 
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
-  return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
-    const started = Date.now();
-    const runId = createEvalRunId();
-    const mockTools = await resolveEvalMockTools(definition.mockTools, {
-      definition,
-      example,
-      repetition,
-      runId,
-      // A resolver that awaits network work cancels with the case.
-      ...(signal ? { signal } : {}),
-    });
-    // A resolver that ignored the signal can return after the deadline. The
-    // record is already reported as timed out, so start no model request.
-    if (signal?.aborted) throw signal.reason;
-    const generate = () =>
-      agent.generate({
-        input: normalizeEvalInputForAgent(example.input),
-        context: {
-          runId,
-          eval: {
-            definitionId: definition.id,
-            exampleId: example.id,
-            repetition,
-            metadata: example.metadata ?? {},
-          },
-        },
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-        ...(definition.mockTools !== undefined
-          ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-          : {}),
-        // The runner aborts this when the case passes --record-timeout.
-        ...(signal ? { abortSignal: signal } : {}),
+  return ({ definition, example, repetition, signal }: EvalAgentAdapterContext) =>
+    runWithLocalEvalIdentity(async (runId) => {
+      const started = Date.now();
+      const mockTools = await resolveEvalMockTools(definition.mockTools, {
+        definition,
+        example,
+        repetition,
+        runId,
+        // A resolver that awaits network work cancels with the case.
+        ...(signal ? { signal } : {}),
       });
-    const response = definition.mockTools !== undefined
-      ? await runWithEvalMockToolScope(mockTools ?? {}, generate)
-      : await generate();
-    return {
-      text: response.text,
-      trace: {
-        events: response.messages,
-        toolCalls: normalizeToolCalls(response),
-      },
-      usage: normalizeUsage(response),
-      durationMs: Date.now() - started,
-      completed: response.status === "completed",
-      ...(response.status === "error" ? { outcome: "error" as const } : {}),
-      ...(response.status === "error" ? { error: response.text } : {}),
-    };
-  };
+      // A resolver that ignored the signal can return after the deadline. The
+      // record is already reported as timed out, so start no model request.
+      if (signal?.aborted) throw signal.reason;
+      const generate = () =>
+        agent.generate({
+          input: normalizeEvalInputForAgent(example.input),
+          context: {
+            runId,
+            runIdBindsToolAuthorization: false,
+            eval: {
+              definitionId: definition.id,
+              exampleId: example.id,
+              repetition,
+              metadata: example.metadata ?? {},
+            },
+          },
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+          ...(definition.mockTools !== undefined
+            ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+            : {}),
+          // The runner aborts this when the case passes --record-timeout.
+          ...(signal ? { abortSignal: signal } : {}),
+        });
+      const response = definition.mockTools !== undefined
+        ? await runWithEvalMockToolScope(mockTools ?? {}, generate)
+        : await generate();
+      return {
+        text: response.text,
+        trace: {
+          events: response.messages,
+          toolCalls: normalizeToolCalls(response),
+        },
+        usage: normalizeUsage(response),
+        durationMs: Date.now() - started,
+        completed: response.status === "completed",
+        ...(response.status === "error" ? { outcome: "error" as const } : {}),
+        ...(response.status === "error" ? { error: response.text } : {}),
+      };
+    });
 }
 
 export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {

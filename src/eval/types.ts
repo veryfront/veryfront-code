@@ -517,8 +517,6 @@ export interface EvalToolInput {
 
 /** Context passed to an agent adapter when `runEval` executes an example. */
 export interface EvalAgentAdapterContext {
-  /** Local runtime identity supplied by the CLI adapter; not a persisted platform run. */
-  runId?: string;
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;

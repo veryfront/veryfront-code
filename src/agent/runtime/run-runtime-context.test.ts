@@ -1,3 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { runWithLocalEvalIdentity } from "#veryfront/runtime/local-eval-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,6 +16,29 @@ describe("agent run runtime context", () => {
   const context = captureAgentRunRuntimeContext(
     new Date("2026-07-19T07:30:00.000Z"),
   );
+
+  it("uses local eval identity only when no durable writer is bound", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
+    const sink = async () => {};
+    bindRuntimeObservationWriterCapability(
+      sink,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "public-run",
+          canonicalRunId,
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    runWithLocalEvalIdentity((runId) => {
+      assertEquals(captureAgentRunRuntimeContext().runId, runId);
+      assertEquals(
+        runWithMandatoryRunEventSink(sink, () => captureAgentRunRuntimeContext().runId),
+        canonicalRunId,
+      );
+    });
+    assertEquals(captureAgentRunRuntimeContext().runId, undefined);
+  });
 
   it("removes authored runtime context blocks with whitespace or attributes", () => {
     for (
