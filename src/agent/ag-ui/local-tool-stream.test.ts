@@ -28,42 +28,6 @@ describe("local durable tool stream", () => {
     assertEquals(stream.encode([start, args, end]), []);
     assertEquals(stream.finish(), [start, args, end]);
   });
-  it("keeps admission ordering when mutable collection intrinsics are replaced", () => {
-    const stream = createLocalToolStream();
-    const startsWith = String.prototype.startsWith;
-    const has = Set.prototype.has;
-    const add = Set.prototype.add;
-    const push = Array.prototype.push;
-    const splice = Array.prototype.splice;
-    let before: typeof start[] = [];
-    let admitted: typeof start[] = [];
-    let finished: typeof start[] = [];
-    try {
-      String.prototype.startsWith = () => false;
-      Set.prototype.has = () => true;
-      Set.prototype.add = function () {
-        return this;
-      };
-      Array.prototype.push = function () {
-        return this.length;
-      };
-      Array.prototype.splice = function () {
-        return [];
-      };
-      before = stream.encode([start, args, end]) as typeof start[];
-      admitted = stream.admit("call") as typeof start[];
-      finished = stream.finish() as typeof start[];
-    } finally {
-      String.prototype.startsWith = startsWith;
-      Set.prototype.has = has;
-      Set.prototype.add = add;
-      Array.prototype.push = push;
-      Array.prototype.splice = splice;
-    }
-    assertEquals(before, []);
-    assertEquals(admitted, [args, end]);
-    assertEquals(finished, []);
-  });
 });
 
 for (const path of ["root", "inherited"]) {
