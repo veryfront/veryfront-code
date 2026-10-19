@@ -83,6 +83,13 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
+const apply = Reflect.apply;
+const AbortSignalTimeout = AbortSignal.timeout;
+const retryDrainSignal = (signal?: AbortSignal) =>
+  signal && !signal.aborted
+    ? signal
+    : apply(AbortSignalTimeout, AbortSignal, [30_000]) as AbortSignal;
+
 /** @internal Validate the result returned by durable local child execution. */
 function restoreCanonicalAgentResponse(value: unknown): Record<string, unknown> {
   const invalid = () =>
@@ -243,7 +250,11 @@ export async function runInheritedLocalAgent(
     bindToolCallStartOccurrence(start, call.occurrenceId);
     await mirror.handleChunk(start);
     startedTools.set(call.toolCallId, name);
-    await mirror.flush({ throwOnTimeoutRetry: true });
+    await mirror.flush({
+      abortSignal: retryDrainSignal(parentSignal),
+      throwOnTimeoutRetry: true,
+      waitForRetries: true,
+    });
     await mirror.appendEvents(toolStream?.admit(call.toolCallId) ?? []);
     const receipt = mirror.takeToolCallAdmissionReceipt?.(call.occurrenceId);
     if (!receipt) throw new Error("Inherited local tool admission missing");
@@ -260,7 +271,11 @@ export async function runInheritedLocalAgent(
     let drainFailure: { error: unknown } | undefined;
     try {
       await mirror.appendEvents(toolStream?.finish() ?? []);
-      await mirror.flush({ throwOnTimeoutRetry: true });
+      await mirror.flush({
+        abortSignal: retryDrainSignal(parentSignal),
+        throwOnTimeoutRetry: true,
+        waitForRetries: true,
+      });
     } catch (error) {
       drainFailure = { error };
     }

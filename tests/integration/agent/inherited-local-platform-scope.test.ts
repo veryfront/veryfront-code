@@ -63,6 +63,7 @@ for (const fail of [false, true]) {
     const entered: string[] = [], revoked: string[] = [];
     const lifecycle: string[] = [];
     const admissions: string[] = [];
+    let transientAdmissionFailures = 0;
     let admitGrandchild:
       | Parameters<ReturnType<typeof createConnectedLocalPlatformTools>["run"]>[0]["admit"]
       | undefined;
@@ -73,6 +74,10 @@ for (const fail of [false, true]) {
       if (path === "/runs") return admission(grandchildId, childId, "grandchild");
       const id = path.split("/")[2]!;
       if (path.endsWith("/events")) {
+        if (
+          id === grandchildId && body.tool_call_starts?.length > 0 &&
+          transientAdmissionFailures++ === 0
+        ) return new Response("retry", { status: 503 });
         return Response.json({
           run_id: id,
           latest_event_id: body.events.length,
@@ -184,6 +189,7 @@ for (const fail of [false, true]) {
     assertEquals(entered, [`child:${childId}`, `grandchild:${grandchildId}`]);
     assertEquals(revoked, ["run-grandchild", "run-child"]);
     assertEquals(admissions, [grandchildId]);
+    assertEquals(transientAdmissionFailures, 2);
     await assertRejects(
       async () =>
         await admitGrandchild!(
