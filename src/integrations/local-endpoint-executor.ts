@@ -45,6 +45,7 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const clearTimeoutIntrinsic = clearTimeout;
 const DOMExceptionConstructor = DOMException;
+const decodeUriComponent = decodeURIComponent;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
@@ -79,6 +80,7 @@ const stringSlice = String.prototype.slice;
 const textEncoder = new TextEncoder();
 const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
+const URLSearchParamsConstructor = URLSearchParams;
 const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlSearchParams = Object.getOwnPropertyDescriptor(URL.prototype, "searchParams")?.get;
 const urlSearchParamsAppend = URLSearchParams.prototype.append;
@@ -368,6 +370,21 @@ function pathSegment(value: unknown): string {
   return encoded;
 }
 
+/**
+ * Decodes a `$skiptoken` copied from `@odata.nextLink`. The link carries it
+ * URL-encoded, and URLSearchParams encodes it again, so an undecoded token would
+ * reach Graph as a different token and the next page would be lost.
+ */
+function graphSkipToken(value: string, name: string): string {
+  try {
+    return decodeUriComponent(value);
+  } catch {
+    requestInvalid(
+      `Local integration argument "${name}" must be the $skiptoken value from @odata.nextLink`,
+    );
+  }
+}
+
 function appendQueryValue(
   searchParams: URLSearchParams,
   name: string,
@@ -379,6 +396,8 @@ function appendQueryValue(
       ? `"${replaceAll(item, '"', '\\"')}"`
       : field.queryValueFormat === "microsoft-graph-conversation-id"
       ? `conversationId eq '${replaceAll(item, "'", "''")}'`
+      : field.queryValueFormat === "microsoft-graph-skiptoken"
+      ? graphSkipToken(item, name)
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
@@ -511,12 +530,14 @@ function snapshotAndValidateArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
-    // Path and header arguments are fully validated here, not only where the
-    // request is built: `executeTool` mints credentials between this snapshot
-    // and `buildRequest`, so a rejection that waits for build time would
-    // already have sent the client credentials to the token endpoint.
+    // Path, query and header arguments are fully validated here, not only where
+    // the request is built: `executeTool` mints credentials between this
+    // snapshot and `buildRequest`, so a rejection that waits for build time
+    // would already have sent the client credentials to the token endpoint.
     if (field.in === "path") pathSegment(resolved.value);
-    else if (field.in === "header") {
+    else if (field.in === "query") {
+      appendQueryValue(new URLSearchParamsConstructor(), name, resolved.value, field);
+    } else if (field.in === "header") {
       setHeader(
         new HeadersConstructor(),
         field.headerName ?? name,

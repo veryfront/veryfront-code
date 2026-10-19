@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
@@ -13,6 +14,7 @@ import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
   type LocalIntegrationEndpointTransportRequest,
+  snapshotLocalIntegrationEndpointArguments,
 } from "./local-endpoint-executor.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
@@ -292,7 +294,7 @@ describe("Outlook shared-mailbox catalog routes", () => {
     }
   });
 
-  it("returns the next-page link from searches and accepts it as $skiptoken", async () => {
+  it("returns the next-page link from searches and accepts its $skiptoken as copied", async () => {
     for (
       const [toolId, args] of [
         ["search_emails", { query: "invoice" }],
@@ -301,12 +303,13 @@ describe("Outlook shared-mailbox catalog routes", () => {
     ) {
       const requests: LocalIntegrationEndpointTransportRequest[] = [];
       const nextLink =
-        `${graph}/v1.0/me/messages?%24search=%22invoice%22&%24top=2&%24skiptoken=page-2`;
+        `${graph}/v1.0/me/messages?%24search=%22invoice%22&%24top=2&%24skiptoken=page%3D2`;
       const result = await executeLocalIntegrationEndpoint({
         connectorName: "outlook",
         toolId: `outlook__${toolId}`,
         endpoint: outlookEndpoint(toolId),
-        args: { ...args, $top: 2, $skiptoken: "page-2" },
+        // The token is passed exactly as it appears in the link, still URL-encoded.
+        args: { ...args, $top: 2, $skiptoken: "page%3D2" },
         authHeaders: { Authorization: `Bearer ${SECRET}` },
         allowedOrigin: graph,
         transport: (request) => {
@@ -318,7 +321,8 @@ describe("Outlook shared-mailbox catalog routes", () => {
         },
       });
 
-      assertEquals(requests[0]?.url.searchParams.get("$skiptoken"), "page-2", toolId);
+      // Decoded once before sending, so Graph receives page=2 and not page%3D2.
+      assertEquals(requests[0]?.url.searchParams.get("$skiptoken"), "page=2", toolId);
       assertEquals(requests[0]?.url.searchParams.get("$search"), '"invoice"', toolId);
       assertEquals(
         result,
@@ -326,20 +330,15 @@ describe("Outlook shared-mailbox catalog routes", () => {
         toolId,
       );
 
-      // A still-encoded token would be encoded twice and silently miss the next page.
-      await assertRejects(
+      // A malformed escape is rejected before credentials are minted.
+      assertThrows(
         () =>
-          executeLocalIntegrationEndpoint({
-            connectorName: "outlook",
-            toolId: `outlook__${toolId}`,
-            endpoint: outlookEndpoint(toolId),
-            args: { ...args, $skiptoken: "page%3D2" },
-            authHeaders: { Authorization: `Bearer ${SECRET}` },
-            allowedOrigin: graph,
-            transport: () => Promise.reject(new Error("must not send")),
+          snapshotLocalIntegrationEndpointArguments(outlookEndpoint(toolId), {
+            ...args,
+            $skiptoken: "page%E0%A4%A",
           }),
         VeryfrontError,
-        "does not match its allowed pattern",
+        "must be the $skiptoken value from @odata.nextLink",
       );
     }
   });

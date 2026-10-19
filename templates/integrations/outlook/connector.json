@@ -287,8 +287,8 @@
           "$skiptoken": {
             "type": "string",
             "in": "query",
-            "pattern": "^[^%]+$",
-            "description": "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink"
+            "queryValueFormat": "microsoft-graph-skiptoken",
+            "description": "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is"
           },
           "$select": {
             "type": "string",
@@ -1808,8 +1808,8 @@
           "$skiptoken": {
             "type": "string",
             "in": "query",
-            "pattern": "^[^%]+$",
-            "description": "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink"
+            "queryValueFormat": "microsoft-graph-skiptoken",
+            "description": "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is"
           },
           "$select": {
             "type": "string",

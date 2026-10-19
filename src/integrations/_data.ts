@@ -37943,8 +37943,8 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink",
-            "pattern": "^[^%]+$",
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
           },
           "$select": {
             "type": "string",
@@ -39039,8 +39039,8 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Search page token: the URL-decoded $skiptoken value from the previous page's @odata.nextLink",
-            "pattern": "^[^%]+$",
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
           },
           "$select": {
             "type": "string",
