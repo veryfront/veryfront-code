@@ -36,6 +36,15 @@ const MapConstructor = Map;
 const mapSet = Map.prototype.set;
 const apply = Reflect.apply;
 
+/** @internal Encode a validated broker event for the downstream SSE boundary. */
+export function encodeExecutorBrokerEvent(
+  event: Parameters<typeof structuredAgentOutputForWire>[0],
+): Uint8Array {
+  return encodePrivateText(
+    `data: ${privateJsonStringify(structuredAgentOutputForWire(event))}\n\n`,
+  );
+}
+
 async function startExecutorRuntimeStream(
   start: () => Promise<ReadableStream<Uint8Array>>,
   signal: AbortSignal,
@@ -224,7 +233,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                   ended ||= event.type === "message-finish" || event.type === "error" ||
                     event.type === "data-veryfront.manual_pause";
                   controller.enqueue(
-                    encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
+                    encodeExecutorBrokerEvent(event),
                   );
                 } else if (frame.type === "complete") {
                   if (!ended || !(await iterator.next()).done) {

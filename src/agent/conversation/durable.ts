@@ -2109,7 +2109,11 @@ function conversationAgentRunTerminalBody(
 ) {
   if (cancelled) return undefined;
   if (input.status === "completed") {
-    return { status: "completed", ...(input.output !== undefined ? { output: input.output } : {}) };
+    return {
+      status: "completed",
+      ...(input.output !== undefined ? { output: input.output } : {}),
+      ...(input.finalText !== undefined ? { final_text: input.finalText } : {}),
+    };
   }
   return {
     status: "failed",

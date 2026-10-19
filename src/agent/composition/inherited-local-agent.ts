@@ -200,7 +200,19 @@ export async function runInheritedLocalAgent(
   }
   const canonicalRunId = hostedRunCanonicalId(writer, child.runId);
   if (!canonicalRunId) throw new Error("Inherited child canonical identity is unavailable");
-  const modelSink = createDurableRunEventSink({ mirror, abortSignal: parentSignal });
+  let observedText = "";
+  const appendObservedEvents: typeof mirror.appendEvents = async (events) => {
+    for (const event of events) {
+      if (event.type === "TEXT_MESSAGE_CONTENT" && typeof event.delta === "string") {
+        observedText += event.delta;
+      }
+    }
+    await mirror.appendEvents(events);
+  };
+  const modelSink = createDurableRunEventSink({
+    mirror: { ...mirror, appendEvents: appendObservedEvents },
+    abortSignal: parentSignal,
+  });
   const observationWriter = createRuntimeObservationWriterCapability({
     scope: { runId: child.runId, canonicalRunId, projectId: transport.projectId },
   });
@@ -209,10 +221,8 @@ export async function runInheritedLocalAgent(
   const startedTools = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
   const completedTools = new Set<string>();
-  let observedText = false;
   const toolStream = toolCallAdmissions ? createLocalToolStream() : undefined;
   const onEvent = async (event: AgUiRuntimeStreamEvent) => {
-    if (event.type === "text-delta" && event.delta) observedText = true;
     if (
       event.type === "tool-input-start" && typeof event.toolCallId === "string" &&
       startedTools.has(event.toolCallId) && !toolStream
@@ -235,7 +245,7 @@ export async function runInheritedLocalAgent(
       }
       return true;
     });
-    await mirror.appendEvents(toolStream ? toolStream.encode(filtered) : filtered);
+    await appendObservedEvents(toolStream ? toolStream.encode(filtered) : filtered);
   };
   const admitTool = async (id: string, name: string, input: unknown) => {
     toolInputs.set(
@@ -312,6 +322,11 @@ export async function runInheritedLocalAgent(
       runId: child.runId,
       status: terminalState.status,
       output: terminalAgentOutput(terminalState.output),
+      ...(terminalState.status === "completed" &&
+          terminalAgentText(terminalState.output) !== undefined &&
+          terminalAgentText(terminalState.output) !== observedText
+        ? { finalText: terminalAgentText(terminalState.output) }
+        : {}),
       model: "",
       provider: "",
       terminalErrorCode: terminalState.terminalErrorCode ?? undefined,

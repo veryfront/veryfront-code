@@ -516,6 +516,8 @@ export interface FinalizeConversationAgentRunInput {
   terminalAuthToken: string;
   /** Final execution output persisted by the target finalize operation. */
   output?: unknown;
+  /** Authoritative post-middleware text for completed exact-run finalization. */
+  finalText?: string;
   apiUrl: string;
   conversationId: string;
   runId: string;

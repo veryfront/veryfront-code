@@ -219,6 +219,70 @@ describe("workflow agent child protocol", () => {
     });
   }
 
+  for (const filteredText of ["Contact [REDACTED]", ""]) {
+    it(`replays authoritative post-middleware text ${JSON.stringify(filteredText)}`, async () => {
+      let stored: unknown;
+      let cursor = 0;
+      let finalized = false;
+      const deltas: string[] = [];
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = requestJsonBody(init);
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path === "/runs") {
+          return Promise.resolve(
+            finalized
+              ? admission("completed", stored, childId, "run_child", parentId, "text-data-v1")
+              : admission(),
+          );
+        }
+        if (path.endsWith("/events")) {
+          for (const event of body.events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") deltas.push(event.delta);
+          }
+          cursor += body.events.length;
+          return Promise.resolve(
+            json({
+              run_id: childId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
+          );
+        }
+        assertEquals(body.final_text, filteredText);
+        assertEquals(body.output, undefined);
+        stored = { text: body.final_text };
+        finalized = true;
+        return Promise.resolve(json({ id: childId, status: "completed" }));
+      };
+      const fresh = await runner(send)({
+        ...invocation,
+        execute: async () => {
+          await observeGeneratedAgentTurn("provider-message", {
+            text: "Contact synthetic-person@example.test",
+            toolCalls: [],
+          });
+          return {
+            success: true,
+            output: { text: filteredText, toolCalls: 0, status: "completed" },
+            executionTime: 1,
+          };
+        },
+      });
+      assertEquals(fresh.success, true);
+      assertEquals(fresh.output, { text: filteredText, toolCalls: 0, status: "completed" });
+      const replay = await runner(send)({
+        ...invocation,
+        execute: () => {
+          throw new Error("Replay must not execute");
+        },
+      });
+      assertEquals(replay.output, { text: filteredText, status: "completed" });
+      assertEquals(deltas, ["Contact synthetic-person@example.test"]);
+    });
+  }
+
   it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
     const order: string[] = [];
     const send: typeof fetch = (_url, init) => {

@@ -12,6 +12,7 @@ import {
 import {
   createExecutorAgentOperations,
   createExecutorHostedChatRuntimeAgent,
+  encodeExecutorBrokerEvent,
 } from "./executor-agent-bridge.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_AGENT_MAX_PAYLOAD_BYTES } from "./executor-agent-schema.ts";
@@ -1117,4 +1118,14 @@ describe("executor hosted agent bridge", () => {
       await channels.close();
     }
   });
+});
+
+it("serializes reconstructed structured output once at the broker SSE boundary", () => {
+  const payload = { category: "synthetic" };
+  const wire = new TextDecoder().decode(encodeExecutorBrokerEvent({
+    type: "message-finish",
+    data: payload,
+    object: payload,
+  }));
+  assertEquals(JSON.parse(wire.slice(6).trim()), { type: "message-finish", data: payload });
 });
