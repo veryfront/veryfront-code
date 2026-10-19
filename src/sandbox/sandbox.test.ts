@@ -5207,6 +5207,34 @@ describe("Sandbox", () => {
     });
   });
 
+  it("uses renewed lazy sandbox credentials for commands and cleanup", async () => {
+    let token = "initial-token";
+    mockFetch([
+      jsonResponse({ ok: true }),
+      textResponse("attachment text"),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = new LazySandbox({
+      authToken: token,
+      getAuthToken: function (this: unknown) {
+        assertEquals(this, undefined, "Credential provider must not receive private sandbox state");
+        return token;
+      },
+      apiUrl: "https://api.test.com",
+      sandboxId: "renewed-session",
+      sandboxEndpoint: "https://sb.test",
+      deleteOnClose: true,
+    });
+    await sandbox.ensure();
+    token = "renewed-token";
+    await sandbox.readFile("attachment.txt");
+    await sandbox.close();
+    assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer initial-token");
+    for (let index = 1; index < fetchCalls.length; index++) {
+      assertEquals(headerValue(fetchCalls, index, "Authorization"), "Bearer renewed-token");
+    }
+  });
+
   it("rejects malformed command metadata instead of returning typed guesses", async () => {
     mockFetch([
       jsonResponse({ command_id: "invalid-command", command: "true", status: "unknown" }),

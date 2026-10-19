@@ -248,3 +248,35 @@ it("attempts all descendant closes when one close fails", async () => {
     assertThrows(() => runWithHostedPlatformDependencies(child, () => Promise.resolve("leaked")));
   });
 });
+
+it("renews only the root sandbox credential and keeps child credentials isolated", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const credentials: Array<() => string> = [];
+    let currentToken = authToken;
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport, {
+      async createSandboxTools(input) {
+        credentials.push(input.getAuthToken ?? (() => input.authToken!));
+        return await createAgentServiceSandboxTools(input);
+      },
+    });
+    const root = { runId: scope.runId };
+    const child = { childRunId: "credential-child" };
+    await tools.register(root, scope, eventToken(scope.runId), authToken, () => ({
+      auth_token: currentToken,
+      run_event_token: eventToken(scope.runId),
+    }));
+    await registerHostedChildPlatformDependencies(
+      root,
+      child,
+      { ...scope, runId: child.childRunId },
+      eventToken(child.childRunId),
+      authToken,
+    );
+    assertEquals(credentials.length, 2);
+    assertEquals(credentials[0]!(), authToken);
+    currentToken = "renewed-root-credential";
+    assertEquals(credentials[0]!(), currentToken);
+    assertEquals(credentials[1]!(), authToken);
+    await tools.revoke(root);
+  });
+});

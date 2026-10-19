@@ -157,6 +157,10 @@ export function createConnectedLocalPlatformTools(
                   await (dependencies.createSandboxTools ?? createAgentServiceSandboxTools)({
                     apiUrl,
                     authToken: token,
+                    getAuthToken: () =>
+                      childScope.runId === scope.runId
+                        ? currentAuthority?.().auth_token ?? token
+                        : token,
                     getProjectId: () => childScope.projectId,
                     createBashTool: createBashSandboxShellToolsProvider,
                   });
