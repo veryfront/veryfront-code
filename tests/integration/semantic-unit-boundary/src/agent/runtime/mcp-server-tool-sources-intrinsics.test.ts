@@ -249,7 +249,7 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
 
     assertEquals(
       await resolveRemoteEndpoint(remoteConfig?.endpoint),
-      "https://api.example/projects/server-project/mcp",
+      "https://api.example/mcp",
     );
   });
 });

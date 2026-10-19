@@ -3,7 +3,10 @@ import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
-import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  runWithMandatoryRunEventSink,
+  runWithRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -39,6 +42,41 @@ describe("agent run runtime context", () => {
         "run_id:",
       ),
       false,
+    );
+  });
+
+  it("uses only the mandatory writer when public observers are active", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
+    const mandatory = async () => {};
+    const observer = async () => {};
+    const otherObserver = async () => {};
+    for (
+      const [sink, id] of [
+        [mandatory, canonicalRunId],
+        [otherObserver, "66666666-6666-4666-8666-666666666666"],
+      ] as const
+    ) {
+      bindRuntimeObservationWriterCapability(
+        sink,
+        createRuntimeObservationWriterCapability({
+          scope: {
+            runId: id,
+            canonicalRunId: id,
+            projectId: "22222222-2222-4222-8222-222222222222",
+          },
+        }),
+      );
+    }
+    for (const publicSink of [observer, otherObserver]) {
+      const result = runWithMandatoryRunEventSink(
+        mandatory,
+        () => runWithRunEventSink(publicSink, () => captureAgentRunRuntimeContext()),
+      );
+      assertEquals(result.runId, canonicalRunId);
+    }
+    assertEquals(
+      runWithRunEventSink(otherObserver, () => captureAgentRunRuntimeContext().runId),
+      undefined,
     );
   });
 
