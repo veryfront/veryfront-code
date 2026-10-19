@@ -88,7 +88,9 @@ async function validateRemoteModuleSource(
       "[API] handler build failed: import.meta location cannot be preserved because the remote module source could not be parsed or its resolver is dynamic",
     );
   }
-  const loader = getLoaderForFile(new URL(moduleUrl).pathname.toLowerCase());
+  const pathname = new URL(moduleUrl).pathname.toLowerCase();
+  // .mts and .cts are TypeScript module extensions the shared helper does not map.
+  const loader = /\.[mc]ts$/.test(pathname) ? "ts" : getLoaderForFile(pathname);
   // Remote sources are validated as executable modules, not JSON. Query
   // parameters and redirect aliases must not determine their source grammar.
   return { contents: rewritten, loader: loader === "json" ? "js" : loader };

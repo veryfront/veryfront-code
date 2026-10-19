@@ -446,6 +446,40 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("compiles remote .mts and .cts modules as TypeScript", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      createHTTPPlugin(["https://esm.sh"]).setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(
+              "export interface Result { value: number }\n" +
+                "export const result: Result = { value: 42 };",
+            )) as typeof fetch,
+        );
+        for (const extension of ["mts", "cts"] as const) {
+          const result = await loadHandler({
+            path: `https://esm.sh/typed/parse.${extension}?filename=ignored.js`,
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          }) as { contents: string; loader: "js" | "ts" };
+          assertEquals(result.loader, "ts", extension);
+          const compiled = await esbuild.transform(result.contents, { loader: result.loader });
+          assertEquals(compiled.code.includes("interface Result"), false);
+        }
+      } finally {
+        restoreMockFetch();
+        await esbuild.stop();
+      }
+    });
+
     it("compiles fetched JSX and TSX modules with their source grammar", async () => {
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
       createHTTPPlugin(["https://esm.sh"]).setup(createMockBuild(
