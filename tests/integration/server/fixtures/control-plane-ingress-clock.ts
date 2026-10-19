@@ -9,11 +9,13 @@ await (async () => {
     const { prepareDeclarativeConfigContext } = await import(
       "#veryfront/config/declarative-evaluator.ts"
     );
-    const { resolveAdapter } = await import("../adapter-factory.ts");
+    const { resolveAdapter } = await import("#veryfront/server/runtime-handler/adapter-factory.ts");
     const { ProjectRunExecuteHandler } = await import(
-      "../../handlers/request/project-run-execute.handler.ts"
+      "#veryfront/server/handlers/request/project-run-execute.handler.ts"
     );
-    const { createCtx } = await import("../../handlers/request/internal-agent-run.test-helpers.ts");
+    const { createCtx } = await import(
+      "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts"
+    );
     const { base64urlEncode, base64urlEncodeBytes } = await import("#veryfront/utils/base64url.ts");
     const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
     if (!("publicKey" in pair)) throw new Error("Expected asymmetric key pair");
@@ -166,7 +168,9 @@ await (async () => {
         ...readFailureModes,
       ].includes(mode)
     ) {
-      const { withRequestTimeout } = await import("../timeout-manager.ts");
+      const { withRequestTimeout } = await import(
+        "#veryfront/server/runtime-handler/timeout-manager.ts"
+      );
       const { response } = await withRequestTimeout(
         async () => {
           await resolve();

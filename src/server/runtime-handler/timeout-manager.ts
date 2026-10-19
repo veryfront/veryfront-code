@@ -136,7 +136,6 @@ export async function withRequestTimeout(
     ) {
       return {
         response: Response.json({ error: e.message }, { status: e.status }),
-        error: e,
         settled,
       };
     }

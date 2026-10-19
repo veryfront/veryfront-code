@@ -6,9 +6,31 @@ import { HTTP_GATEWAY_TIMEOUT } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
 import { ControlPlaneRequestError } from "#veryfront/internal-agents/control-plane-auth.ts";
+import { InternalAgentRequestBodyTooLargeError } from "#veryfront/internal-agents/request-body.ts";
 
 describe("timeout-manager", () => {
   describe("withRequestTimeout", () => {
+    it("does not report expected execute ingress rejections as application faults", async () => {
+      for (
+        const failure of [
+          new ControlPlaneRequestError(400, "Invalid project run execute request"),
+          new ControlPlaneRequestError(401, "Invalid control-plane signature"),
+          new InternalAgentRequestBodyTooLargeError(),
+        ]
+      ) {
+        const { response, error } = await withRequestTimeout(
+          async () => {
+            throw failure;
+          },
+          "/api/control-plane/runs/run/execute",
+          "POST",
+        );
+        assertEquals(response.status, failure.status);
+        assertEquals(await response.json(), { error: failure.message });
+        assertEquals(error, undefined);
+      }
+    });
+
     it("keeps typed ingress errors opaque outside execute and ignores arbitrary status", async () => {
       for (
         const [path, method, failure] of [
@@ -25,7 +47,7 @@ describe("timeout-manager", () => {
           ],
         ] as const
       ) {
-        const { response } = await withRequestTimeout(
+        const { response, error } = await withRequestTimeout(
           async () => {
             throw failure;
           },
@@ -33,6 +55,7 @@ describe("timeout-manager", () => {
           method,
         );
         assertEquals(response.status, 500);
+        assertExists(error);
         assertEquals((await response.text()).includes("private detail"), false);
       }
     });
