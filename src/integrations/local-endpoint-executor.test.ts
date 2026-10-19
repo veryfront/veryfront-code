@@ -716,6 +716,8 @@ describe("local integration endpoint executor", () => {
         }),
       // Undeclared length: discovered while streaming.
       () => new Response(`{"body":"${"x".repeat(oversized)}"}`, { status: 201 }),
+      // Under the byte limit, but over the JSON node bound.
+      () => Response.json({ items: new Array(100_001).fill(0) }, { status: 201 }),
     ];
 
     for (const fixture of fixtures) {

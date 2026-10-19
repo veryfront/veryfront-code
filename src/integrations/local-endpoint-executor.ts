@@ -813,7 +813,11 @@ async function readResponseJson(
   }
   // The source text is already bounded, so one string may use the whole response.
   const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
-  if (!snapshot.success) responseInvalid(identity, status);
+  if (!snapshot.success) {
+    // Over a structural bound (node count, depth): too large as well.
+    if (write) return RESPONSE_OMITTED;
+    responseInvalid(identity, status);
+  }
   return snapshot.value;
 }
 
