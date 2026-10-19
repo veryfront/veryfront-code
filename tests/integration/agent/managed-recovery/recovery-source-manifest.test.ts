@@ -62,6 +62,7 @@ const nativeBinary = {
   path: "knowledge/raw.bin",
   entityType: "virtual_file",
   contentBase64: "AP+ACg==",
+  contentType: "application/octet-stream",
   contentHash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
   byteSize: 4,
 };
@@ -70,7 +71,7 @@ const nativeText = { kind: "text", path: "a.ts", entityType: "function", content
 it("native mixed source hashes exact non-UTF8 bytes with the canonical v2 digest", () => {
   const expected = {
     version: 2,
-    hash: "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6",
+    hash: "f41a2ea57c6e706a4c469dcf8167adf5882e810d1f3dece05de0ba2de17b8e58",
     fileCount: 2,
     totalBytes: 9,
   };
@@ -142,7 +143,7 @@ it("native binary validation does not expose payloads to project RegExp hooks", 
       throw new Error("project exec hook");
     };
     const manifest = createRecoverySourceManifest([nativeBinary, nativeText]);
-    assertEquals(manifest.hash, "dfe306b6f0d39aaabf254b84fe3534ac3b412df2ab3d7b08bb96b2b52f63bfa6");
+    assertEquals(manifest.hash, "f41a2ea57c6e706a4c469dcf8167adf5882e810d1f3dece05de0ba2de17b8e58");
     assertThrows(() =>
       createRecoverySourceManifest([{ ...nativeBinary, contentBase64: "!!!!!!!!" }])
     );
@@ -182,4 +183,64 @@ it("legacy source discriminator ignores inherited getters and replaced Object.ha
   }
   assertEquals(exposed, 0);
   assertEquals(actual, expected);
+});
+
+it("native identity preserves printable MIME and rejects missing or malformed binary types", () => {
+  const original = createRecoverySourceManifest([nativeBinary, nativeText]);
+  const changed = createRecoverySourceManifest([
+    { ...nativeBinary, contentType: "image/png" },
+    nativeText,
+  ]);
+  assertEquals(original.hash === changed.hash, false);
+  const { contentType: _omitted, ...missing } = nativeBinary;
+  assertThrows(() => createRecoverySourceManifest([missing, nativeText]));
+  for (const contentType of ["", "x".repeat(201), "image/png\n", "image/画像"]) {
+    assertThrows(() =>
+      createRecoverySourceManifest([{ ...nativeBinary, contentType }, nativeText])
+    );
+  }
+  createRecoverySourceManifest([{ ...nativeBinary, contentType: "x".repeat(200) }, nativeText]);
+});
+
+it("missing native MIME cannot expose source through an inherited contentType getter", () => {
+  createRecoverySourceManifest([nativeBinary, nativeText]); // trusted schema initialization
+  const { contentType: _omitted, ...missing } = nativeBinary;
+  const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, "contentType");
+  let exposed = 0;
+  try {
+    Object.defineProperty(Object.prototype, "contentType", {
+      configurable: true,
+      get() {
+        exposed++;
+        return "application/octet-stream";
+      },
+    });
+    assertThrows(() => createRecoverySourceManifest([missing, nativeText]));
+    const { kind: _kind, ...withoutKind } = missing;
+    Object.setPrototypeOf(withoutKind, { kind: "binary" });
+    assertThrows(() => createRecoverySourceManifest([withoutKind, nativeText]));
+    const accessor = { ...nativeBinary };
+    Object.defineProperty(accessor, "contentType", {
+      configurable: true,
+      get() {
+        exposed++;
+        return "application/octet-stream";
+      },
+    });
+    assertThrows(() => createRecoverySourceManifest([accessor, nativeText]));
+    const kindAccessor = { ...nativeBinary };
+    Object.defineProperty(kindAccessor, "kind", {
+      configurable: true,
+      get() {
+        exposed++;
+        return "binary";
+      },
+    });
+    assertThrows(() => createRecoverySourceManifest([kindAccessor, nativeText]));
+    createRecoverySourceManifest([nativeBinary, nativeText]);
+  } finally {
+    if (descriptor) Object.defineProperty(Object.prototype, "contentType", descriptor);
+    else Reflect.deleteProperty(Object.prototype, "contentType");
+  }
+  assertEquals(exposed, 0);
 });

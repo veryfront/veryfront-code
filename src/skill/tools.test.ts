@@ -729,6 +729,48 @@ Do work.`,
     assertEquals(result.stdout.trim(), "adapter-sibling");
   });
 
+  it("execute_skill_script forwards only the trusted context project binding", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo bound",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    const received: Array<{ projectId?: string; branch?: string | null }> = [];
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          received.push(input);
+          return Promise.resolve({ stdout: "bound", stderr: "", exitCode: 0 });
+        },
+      },
+    });
+    for (const projectId of ["trusted-project", undefined]) {
+      await scriptTool.execute({
+        skillId: "my-skill",
+        script: "scripts/run.sh",
+        projectId: "untrusted-project",
+        branch: "untrusted-branch",
+        env: {
+          VERYFRONT_PROJECT_ID: "untrusted-project",
+          VERYFRONT_BRANCH_REF: "untrusted-branch",
+        },
+      }, {
+        projectId,
+        branch: projectId ? "trusted-branch" : undefined,
+        activeSkillId: "my-skill",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: ["scripts/run.sh"],
+        },
+      });
+    }
+    assertEquals(received.map((input) => input.projectId), [
+      "trusted-project",
+      undefined,
+    ]);
+    assertEquals(received.map((input) => input.branch), ["trusted-branch", undefined]);
+  });
+
   it("execute_skill_script reuses its authoritative script listing", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "listed-once";',

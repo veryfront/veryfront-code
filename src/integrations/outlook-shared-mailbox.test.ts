@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
@@ -13,6 +14,7 @@ import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
   type LocalIntegrationEndpointTransportRequest,
+  snapshotLocalIntegrationEndpointArguments,
 } from "./local-endpoint-executor.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
@@ -218,6 +220,127 @@ describe("Outlook shared-mailbox catalog routes", () => {
       VeryfrontError,
     );
     assertEquals(requests.length, 2);
+  });
+
+  it("reports a completed move as succeeded when Graph returns an oversized message", async () => {
+    for (
+      const [toolId, args] of [
+        ["move_email", { messageId, destinationId: "archive" }],
+        ["move_shared_mailbox_email", { mailbox, messageId, destinationId: "archive" }],
+      ] as const
+    ) {
+      let attempts = 0;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args,
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: () => {
+          attempts += 1;
+          const body = { id: "moved", body: { content: "x".repeat(4 * 1024 * 1024) } };
+          return Promise.resolve(Response.json(body, { status: 201 }));
+        },
+      });
+
+      assertEquals(result, { success: true, status: 201, response_omitted: "too_large" }, toolId);
+      assertEquals(attempts, 1, toolId);
+    }
+  });
+
+  it("returns the next-page link from $skip-paged lists and accepts it as $skip", async () => {
+    const window = { startDateTime: "2026-01-01T00:00:00Z", endDateTime: "2026-02-01T00:00:00Z" };
+    for (
+      const [toolId, args] of [
+        ["list_folders", {}],
+        ["list_shared_mailbox_folders", { mailbox }],
+        ["list_shared_mailbox_child_folders", { mailbox, folderId: "inbox" }],
+        ["list_emails", {}],
+        ["list_drafts", {}],
+        ["list_threads", {}],
+        ["list_conversation_messages", { conversationId: "conversation-1" }],
+        ["list_shared_mailbox_emails", { mailbox }],
+        ["list_calendars", {}],
+        ["list_events", { calendarId: "calendar-1" }],
+        ["list_calendar_view", window],
+        ["get_event_instances", { eventId: "event-1", ...window }],
+      ] as const
+    ) {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      const nextLink = `${graph}/v1.0/me/mailFolders?%24skip=2`;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args: { ...args, $top: 2, $skip: 2 },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({
+            value: [{ id: "item-1" }, { id: "item-2" }],
+            "@odata.nextLink": nextLink,
+          }));
+        },
+      });
+
+      assertEquals(requests[0]?.url.searchParams.get("$skip"), "2", toolId);
+      assertEquals(
+        result,
+        { value: [{ id: "item-1" }, { id: "item-2" }], "@odata.nextLink": nextLink },
+        toolId,
+      );
+    }
+  });
+
+  it("returns the next-page link from searches and accepts its $skiptoken as copied", async () => {
+    for (
+      const [toolId, args] of [
+        ["search_emails", { query: "invoice" }],
+        ["search_shared_mailbox_emails", { mailbox, query: "invoice" }],
+      ] as const
+    ) {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      const nextLink =
+        `${graph}/v1.0/me/messages?%24search=%22invoice%22&%24top=2&%24skiptoken=page%3D2`;
+      const result = await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        // The token is passed exactly as it appears in the link, still URL-encoded.
+        args: { ...args, $top: 2, $skiptoken: "page%3D2" },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({
+            value: [{ id: "item-1" }, { id: "item-2" }],
+            "@odata.nextLink": nextLink,
+          }));
+        },
+      });
+
+      // Decoded once before sending, so Graph receives page=2 and not page%3D2.
+      assertEquals(requests[0]?.url.searchParams.get("$skiptoken"), "page=2", toolId);
+      assertEquals(requests[0]?.url.searchParams.get("$search"), '"invoice"', toolId);
+      assertEquals(
+        result,
+        { value: [{ id: "item-1" }, { id: "item-2" }], "@odata.nextLink": nextLink },
+        toolId,
+      );
+
+      // A malformed escape is rejected before credentials are minted.
+      assertThrows(
+        () =>
+          snapshotLocalIntegrationEndpointArguments(outlookEndpoint(toolId), {
+            ...args,
+            $skiptoken: "page%E0%A4%A",
+          }),
+        VeryfrontError,
+        "must be the $skiptoken value from @odata.nextLink",
+      );
+    }
   });
 
   it("sends a failed shared-mailbox move exactly once", async () => {

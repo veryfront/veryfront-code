@@ -230,7 +230,8 @@ export function createConnectedLocalPlatformTools(
       });
       bindToolCallAdmissionOwner(admit, { ...input.scope, canonicalRunId: input.canonicalRunId });
       const source = sources.get(input.owner);
-      // Legacy writers have no dependency runner and retain the no-platform execution path.
+      // Legacy writers have no delegated dependency runner, but still retain their
+      // directly authenticated first-party platform source.
       return runWithHostedPlatformDependencies(
         input.owner,
         () =>

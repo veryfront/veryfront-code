@@ -92,6 +92,7 @@ for (const native of [false, true]) {
       path: "knowledge/raw.bin",
       entityType: "virtual_file",
       contentBase64: "AP+ACg==",
+      contentType: "application/octet-stream",
       byteSize: 4,
       contentHash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
     };
@@ -136,6 +137,16 @@ for (const native of [false, true]) {
       );
       if (native) {
         listedFiles = [{ ...text, kind: "text" }, { ...binary, contentBase64: "AP+ACn==" }];
+        await assertRejects(() =>
+          manager.startManagedRecoveryRun({
+            runId: identity.publicRunId,
+            threadId: "thread",
+            claims,
+          })
+        );
+      }
+      if (native) {
+        listedFiles = [{ ...text, kind: "text" }, { ...binary, contentType: "image/png" }];
         await assertRejects(() =>
           manager.startManagedRecoveryRun({
             runId: identity.publicRunId,

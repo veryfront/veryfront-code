@@ -8,6 +8,10 @@ import {
   runWithToolCallOccurrences,
 } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { createProjectEventWriter } from "#veryfront/internal-agents/project-event-writer.ts";
+import { bindProjectEventWriter } from "#veryfront/internal-agents/project-event-writer.ts";
+import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
+import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import type { Agent } from "#veryfront/agent";
 
 const id = "11111111-1111-4111-8111-111111111111";
 function writer(bind = true) {
@@ -58,6 +62,145 @@ it("buffers ordinary deltas and drains them together at a terminal barrier", asy
     }
   });
 });
+
+it("ignores a replaced array includes while recognizing terminal barriers", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result } = writer();
+    const includes = Array.prototype.includes;
+    try {
+      Array.prototype.includes = function (
+        searchElement: unknown,
+        fromIndex?: number,
+      ): boolean {
+        if (this[0] === "RUN_STARTED") return false;
+        return Reflect.apply(includes, this, [searchElement, fromIndex]);
+      };
+      await result.appendMappedEvent(delta("persisted"));
+      await result.appendMappedEvent({ event: "RunFinished", payload: { type: "RUN_FINISHED" } });
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("persisted"), true);
+    } finally {
+      Array.prototype.includes = includes;
+      result.close();
+    }
+  });
+});
+
+it("drains queued events after cancellation before closing", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result, controller } = writer();
+    try {
+      await result.appendMappedEvent(delta("before cancellation"));
+      controller.abort(new Error("cancelled"));
+      await result.flush();
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("before cancellation"), true);
+    } finally {
+      result.close();
+    }
+  });
+});
+
+for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
+  it(
+    `flushes buffered events before a failed runtime closes after producer ${producerOutcome}`,
+    async () => {
+      const batches: unknown[][] = [];
+      await withMockFetch(async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        batches.push(body.events);
+        return Response.json({
+          run_id: id,
+          latest_event_id: body.events.length,
+          latest_external_event_sequence: body.events.length,
+          appended_count: body.events.length,
+        });
+      }, async () => {
+        const input = {
+          agentId: "writer-agent",
+          threadId: id,
+          runId: id,
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+        const { result } = writer(false);
+        bindProjectEventWriter(input, result);
+        const response = await createRuntimeAgentStreamResponse(
+          input,
+          {
+            id: "writer-agent",
+            config: { id: "writer-agent", model: "anthropic/claude-opus-4-6", system: "test" },
+          } as unknown as Agent,
+          {
+            sessionManager: new AgentRunSessionManager(),
+            createRuntime: () => ({
+              stream: async (_messages, _context, callbacks) => {
+                if (producerOutcome !== "missing") {
+                  callbacks?.onStreamCompletion?.(
+                    producerOutcome === "rejected"
+                      ? Promise.reject(new Error("producer cleanup failed"))
+                      : Promise.resolve(),
+                  );
+                }
+                let emitted = false;
+                return new ReadableStream<Uint8Array>({
+                  pull(controller) {
+                    if (emitted) {
+                      if (producerOutcome === "missing") {
+                        controller.enqueue(
+                          new TextEncoder().encode(
+                            'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}\n\n',
+                          ),
+                        );
+                      } else {
+                        controller.error(new Error("provider failed"));
+                      }
+                    } else {
+                      emitted = true;
+                      controller.enqueue(
+                        new TextEncoder().encode(
+                          'data: {"type":"text-delta","id":"text","delta":"before failure"}\n\n',
+                        ),
+                      );
+                    }
+                  },
+                });
+              },
+            }),
+          },
+        );
+        await response.text();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(batches.length, 1);
+        assertEquals(
+          JSON.stringify(batches[0]).includes("before failure"),
+          true,
+        );
+      });
+    },
+  );
+}
 
 it("retries a recoverable append while draining a terminal barrier", async () => {
   let attempts = 0;

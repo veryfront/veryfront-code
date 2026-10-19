@@ -1,3 +1,4 @@
+import { isHostedConfigRequestCancellation } from "#veryfront/config/request-cancellation.ts";
 import type { HostedServiceRunEventAppendTokenResult } from "#veryfront/agent/service/auth.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
@@ -11,6 +12,11 @@ import {
   readPlatformToolDependencies,
   type VerifiedPlatformToolDependencies,
 } from "#veryfront/agent/service/platform-tool-dependency-claims.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "./request-body.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
@@ -132,7 +138,9 @@ export class ControlPlaneRequestError extends Error {
   }
 }
 
-export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): string | undefined {
+export function getControlPlaneVerificationPublicKey(
+  ctx: Pick<HandlerContext, "adapter">,
+): string | undefined {
   // Project env overlays intentionally hide host secrets from request-scoped reads.
   // Control-plane verification is framework-owned config, so it must fall back to
   // the host environment when the runtime adapter env is overlay-aware.
@@ -196,7 +204,7 @@ function readPlatformDependencyScope(
   return { projectId, runId, agentId };
 }
 
-function readControlPlaneRequestContext(req: Request, ctx: HandlerContext) {
+function readControlPlaneRequestContext(req: Request, ctx: Pick<HandlerContext, "projectSlug">) {
   const projectSlug = ctx.projectSlug;
   if (!projectSlug) {
     throw new ControlPlaneRequestError(400, "Project context is unavailable");
@@ -247,7 +255,7 @@ async function verifyOperatorSignature(
 
 export async function verifyControlPlaneRequest(
   req: Request,
-  ctx: HandlerContext,
+  ctx: Pick<HandlerContext, "adapter" | "projectSlug" | "projectId">,
   rawBody: string,
   options: {
     expectedSubject?: string;
@@ -362,4 +370,80 @@ export async function verifyControlPlaneRequest(
     });
     throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
   }
+}
+
+interface ExecuteIngressReceipt {
+  readonly rawBody: string;
+  readonly claims: VerifiedControlPlaneRequestClaims;
+  readonly projectSlug: string;
+  readonly projectId: string;
+  readonly runId: string;
+}
+const executeIngressReceipts = createPrivateWeakStore<Request, ExecuteIngressReceipt | null>();
+
+/** Authenticate before any tenant filesystem/configuration work. No client-visible receipt. */
+export async function prepareControlPlaneExecuteIngress(
+  req: Request,
+  ctx: Pick<HandlerContext, "adapter" | "projectSlug" | "projectId">,
+): Promise<void> {
+  const path = new URL(req.url).pathname;
+  const match = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/.exec(path);
+  if (req.method !== "POST" || !match || !match[1]) return;
+  if (executeIngressReceipts.get(req) !== undefined) {
+    throw new ControlPlaneRequestError(401, "Control-plane request already admitted");
+  }
+  if (!ctx.projectSlug || !ctx.projectId) {
+    throw new ControlPlaneRequestError(401, "Control-plane project context is unavailable");
+  }
+  const runId = match[1];
+  let rawBody: string;
+  try {
+    rawBody = await readInternalAgentRequestBody(req, INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES);
+  } catch (error) {
+    if (
+      error instanceof InternalAgentRequestBodyTooLargeError ||
+      isHostedConfigRequestCancellation(error)
+    ) throw error;
+    // Match the execute handler's opaque client error for malformed/cancelled reads.
+    throw new ControlPlaneRequestError(400, "Invalid project run execute request");
+  }
+  const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
+    expectedSubject: runId,
+    expectedSurface: "studio",
+  });
+  const body = readControlPlaneBody(rawBody);
+  if (
+    !body || readOwnDataProperty(body, "projectId", "Project", false) !== ctx.projectId ||
+    readOwnDataProperty(body, "runId", "Run", false) !== runId
+  ) {
+    throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
+  }
+  executeIngressReceipts.set(
+    req,
+    ObjectFreeze({
+      rawBody,
+      claims,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      runId,
+    }),
+  );
+}
+
+/** Consume once on the identical Request and routed identity; never refresh signature time. */
+export function consumeControlPlaneExecuteIngress(
+  req: Request,
+  ctx: Pick<HandlerContext, "projectSlug" | "projectId">,
+  runId: string,
+): ExecuteIngressReceipt | undefined {
+  const receipt = executeIngressReceipts.get(req);
+  if (receipt === undefined) return undefined;
+  executeIngressReceipts.set(req, null);
+  if (
+    !receipt || receipt.projectSlug !== ctx.projectSlug || receipt.projectId !== ctx.projectId ||
+    receipt.runId !== runId || receipt.claims.exp <= DateNow() / 1000
+  ) {
+    throw new ControlPlaneRequestError(401, "Invalid control-plane ingress receipt");
+  }
+  return receipt;
 }

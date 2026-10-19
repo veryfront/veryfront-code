@@ -1,4 +1,4 @@
-import type { Browser, ConsoleMessage, Page } from "npm:playwright@1.60.0";
+import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.60.0";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 
 export interface BrowserDiagnostics {
@@ -268,4 +268,78 @@ export function findHydrationOrCspFailures(messages: string[]): string[] {
   return messages.filter((message) =>
     HYDRATION_OR_CSP_FAILURE_PATTERNS.some((pattern) => message.includes(pattern))
   );
+}
+
+/** Preserve default navigation semantics while retaining failed-load evidence. */
+export async function navigateBrowserPage(
+  page: Page,
+  url: string,
+  diagnostics: BrowserDiagnostics,
+  serverLogs: string[],
+): Promise<Response | null> {
+  const pending = new Set<Request>();
+  const responses: { url: string; status: number }[] = [];
+  const failed: { url: string; error: string | undefined }[] = [];
+  const onRequest = (request: Request) => {
+    if (pending.size < 100) pending.add(request);
+  };
+  const onFinished = (request: Request) => pending.delete(request);
+  const onResponse = (response: Response) => {
+    if (responses.length < 100) {
+      responses.push({ url: response.url().slice(0, 2048), status: response.status() });
+    }
+  };
+  const onFailed = (request: Request) => {
+    pending.delete(request);
+    if (failed.length < 100) {
+      failed.push({ url: request.url().slice(0, 2048), error: request.failure()?.errorText });
+    }
+  };
+  page.on("request", onRequest);
+  page.on("requestfinished", onFinished);
+  page.on("response", onResponse);
+  page.on("requestfailed", onFailed);
+  try {
+    return await page.goto(url);
+  } catch (cause) {
+    let documentState: unknown;
+    try {
+      documentState = await withTimeout(
+        page.evaluate(() => ({
+          url: location.href,
+          readyState: document.readyState,
+          html: document.documentElement.outerHTML.slice(0, 8000),
+        })),
+        1000,
+        "Document diagnostics unavailable within 1000ms",
+      );
+    } catch (error) {
+      documentState = { unavailable: String(error) };
+    }
+    throw new Error(
+      `${String(cause)}\nNavigation diagnostics:\n${
+        JSON.stringify(
+          {
+            pending: [...pending].map((request) => request.url().slice(0, 2048)),
+            responses,
+            failed,
+            document: documentState,
+            console: diagnostics.consoleMessages.slice(-50).map((message) =>
+              message.slice(0, 2000)
+            ),
+            pageErrors: diagnostics.pageErrors.slice(-50).map((message) => message.slice(0, 2000)),
+            serverLogs: serverLogs.join("\n").slice(-8000),
+          },
+          null,
+          2,
+        )
+      }`,
+      { cause },
+    );
+  } finally {
+    page.off("request", onRequest);
+    page.off("requestfinished", onFinished);
+    page.off("response", onResponse);
+    page.off("requestfailed", onFailed);
+  }
 }

@@ -412,6 +412,8 @@ export interface EvalCheckContext {
 
 /** Context passed to an agent eval mock tool resolver. */
 export interface EvalMockToolsResolverContext {
+  /** Local runtime identity shared with the agent for this case. */
+  runId?: string;
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;

@@ -727,6 +727,41 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             undefined,
             childScope.signal,
           );
+        const executeInRunScope: ConnectedLocalRun["execute"] = (operation) =>
+          runWithMandatoryRunEventSink(
+            sink,
+            () =>
+              platformTools && rootWriter
+                ? platformTools.run({
+                  owner: platformOwner,
+                  scope: rootScope,
+                  canonicalRunId: accepted.id,
+                  writer: rootWriter,
+                  signal: controller.signal,
+                  admit: async (call, name) => {
+                    await streamMirror.flush();
+                    const result = await append(
+                      [{
+                        type: "TOOL_CALL_START",
+                        toolCallId: call.toolCallId,
+                        toolCallName: name,
+                      }],
+                      false,
+                      [{ occurrenceId: call.occurrenceId, eventIndex: 0 }],
+                    );
+                    persistedToolStarts.add(call.toolCallId);
+                    streamMirror.enqueue(toolStream?.admit(call.toolCallId) ?? []);
+                    const receipts = "toolCallAdmissions" in result
+                      ? result.toolCallAdmissions as AgentRunToolCallAdmissionReceipt[]
+                      : [];
+                    const receipt = receipts?.find((row) => row.occurrenceId === call.occurrenceId);
+                    if (!receipt) throw new Error("Connected tool admission receipt missing");
+                    await streamMirror.flush();
+                    return receipt;
+                  },
+                }, () => executeWithLocalChildScope(operation))
+                : executeWithLocalChildScope(operation),
+          );
         const run: ConnectedLocalRun = {
           runId: claim.run_id,
           conversationId,
@@ -737,43 +772,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           },
           signal: controller.signal,
           finish,
-          execute: (operation) =>
-            runWithMandatoryRunEventSink(
-              sink,
-              () =>
-                platformTools && rootWriter
-                  ? platformTools.run({
-                    owner: platformOwner,
-                    scope: rootScope,
-                    canonicalRunId: accepted.id,
-                    writer: rootWriter,
-                    signal: controller.signal,
-                    admit: async (call, name) => {
-                      await streamMirror.flush();
-                      const result = await append(
-                        [{
-                          type: "TOOL_CALL_START",
-                          toolCallId: call.toolCallId,
-                          toolCallName: name,
-                        }],
-                        false,
-                        [{ occurrenceId: call.occurrenceId, eventIndex: 0 }],
-                      );
-                      persistedToolStarts.add(call.toolCallId);
-                      streamMirror.enqueue(toolStream?.admit(call.toolCallId) ?? []);
-                      const receipts = "toolCallAdmissions" in result
-                        ? result.toolCallAdmissions as AgentRunToolCallAdmissionReceipt[]
-                        : [];
-                      const receipt = receipts?.find((row) =>
-                        row.occurrenceId === call.occurrenceId
-                      );
-                      if (!receipt) throw new Error("Connected tool admission receipt missing");
-                      await streamMirror.flush();
-                      return receipt;
-                    },
-                  }, () => executeWithLocalChildScope(operation))
-                  : executeWithLocalChildScope(operation),
-            ),
+          execute: executeInRunScope,
 
           async prepareAgent(agent) {
             const assertActive = () => {
@@ -849,8 +848,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             return new ReadableStream<Uint8Array>({
               async pull(streamController) {
                 try {
-                  controller.signal.throwIfAborted();
-                  const next = await iterator.next();
+                  const next = await executeInRunScope(async () => {
+                    controller.signal.throwIfAborted();
+                    return await iterator.next();
+                  });
                   if (next.done) {
                     if (
                       !finished ||

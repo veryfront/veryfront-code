@@ -692,6 +692,7 @@ jobs:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
@@ -718,6 +719,8 @@ jobs:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/cli/mcp-startup-output.test.ts \
+            tests/integration/cli/mcp/notification-transport.test.ts \
             tests/integration/cli/dev/proxy-mode.test.ts \
             tests/integration/cli/dev/display-options.test.ts \
             tests/integration/cli/pull/project-bootstrap.test.ts \
@@ -1977,7 +1980,7 @@ jobs:
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2677,7 +2680,7 @@ jobs:
         if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2794,7 +2797,7 @@ jobs:
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}

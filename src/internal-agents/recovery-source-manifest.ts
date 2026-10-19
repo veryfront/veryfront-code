@@ -8,6 +8,8 @@ import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const hasOwn = Object.hasOwn;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ceil = Math.ceil;
 const isArray = Array.isArray;
 const apply = Reflect.apply;
@@ -18,10 +20,9 @@ const bufferFrom = Buffer.from;
 const bufferToString = Buffer.prototype.toString;
 const MAX_RELEASE_FILES = 10_000;
 const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
-// JSON can encode one decoded text/path byte as six ASCII escape bytes. Base64
-// expansion is smaller. Reserve fixed identity/field overhead per file and envelope.
-export const MAX_RECOVERY_SOURCE_RESPONSE_BYTES = 6 * MAX_RELEASE_BYTES +
-  MAX_RELEASE_FILES * (6 * 1_024 + 512) + 65_536;
+// The API admits at most 96 MiB of encoded manifest JSON. validatedJson/Hono
+// serializes that manifest directly, without an additional response envelope.
+export const MAX_RECOVERY_SOURCE_RESPONSE_BYTES = 96 * 1024 * 1024;
 const getReleaseFileSchema = defineSchema((v) =>
   v.object({
     path: v.string().min(1).max(1_024),
@@ -30,7 +31,7 @@ const getReleaseFileSchema = defineSchema((v) =>
   }).strict()
 );
 const getNativeReleaseFileSchema = defineSchema((v) =>
-  v.union([
+  v.discriminatedUnion("kind", [
     v.object({
       kind: v.literal("text"),
       path: v.string().min(1).max(1_024),
@@ -42,6 +43,9 @@ const getNativeReleaseFileSchema = defineSchema((v) =>
       path: v.string().min(1).max(1_024),
       entityType: v.enum(["page", "component", "function", "virtual_file"]),
       contentBase64: v.string().max(4 * ceil(8 * 1024 * 1024 / 3)),
+      contentType: v.string().min(1).max(200).refine((value) =>
+        testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+      ),
       contentHash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
       byteSize: v.number().int().min(0).max(8 * 1024 * 1024),
     }).strict(),
@@ -55,6 +59,29 @@ function isNativeReleaseFile(file: ReleaseFile): file is Extract<ReleaseFile, { 
   return hasOwn(file, "kind") && "kind" in file;
 }
 const hash = (value: string) => privateSha256Hex(value);
+
+/** Reject inherited binary metadata before schema parsing can read a prototype getter. */
+export function assertOwnRecoveryBinaryContentType(
+  file: unknown,
+  property: "contentType" | "content_type",
+): string | undefined {
+  if (
+    typeof file !== "object" || file === null
+  ) return undefined;
+  const kindDescriptor = getOwnPropertyDescriptor(file, "kind");
+  if (!kindDescriptor) return undefined;
+  if (!hasOwn(kindDescriptor, "value")) {
+    throw new Error("Native recovery source requires its own data discriminator");
+  }
+  if (kindDescriptor.value !== "binary") return undefined;
+  const descriptor = getOwnPropertyDescriptor(file, property);
+  const value: unknown = descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  if (
+    typeof value !== "string" || value.length < 1 || value.length > 200 ||
+    !testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+  ) throw new Error("Native binary source requires its own printable content type");
+  return value;
+}
 
 /**
  * Immutable release-source manifests: unchanged UTF-8 v1 and native mixed-byte v2.
@@ -75,7 +102,16 @@ export function createRecoverySourceManifest(value: unknown): {
   let hasBinary = false;
   let totalBytes = 0;
   const parsed = mapPrivateArray(value, (entry) => {
-    const file = getAnyReleaseFileSchema().parse(entry);
+    const contentType = assertOwnRecoveryBinaryContentType(entry, "contentType");
+    const file = typeof entry === "object" && entry !== null && hasOwn(entry, "kind")
+      ? getAnyReleaseFileSchema().parse(entry)
+      : getReleaseFileSchema().parse(entry);
+    if (
+      isNativeReleaseFile(file) && file.kind === "binary" &&
+      contentType !== undefined
+    ) {
+      defineProperty(file, "contentType", { value: contentType, enumerable: true });
+    }
     if (isNativeReleaseFile(file)) native = true;
     if (isNativeReleaseFile(file) && file.kind === "binary") hasBinary = true;
     const size = isNativeReleaseFile(file) && file.kind === "binary"
@@ -122,7 +158,14 @@ export function createRecoverySourceManifest(value: unknown): {
       contentHash = hash(file.content);
     }
     return native && isNativeReleaseFile(file)
-      ? { path: file.path, type: file.entityType, kind: file.kind, contentHash, byteSize }
+      ? {
+        path: file.path,
+        type: file.entityType,
+        kind: file.kind,
+        contentHash,
+        byteSize,
+        ...(file.kind === "binary" ? { contentType: file.contentType } : {}),
+      }
       : { path: file.path, type: file.entityType, contentHash, byteSize };
   });
   apply(sort, files, [

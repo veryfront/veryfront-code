@@ -26,6 +26,7 @@ async function fixture(
     tools: ReturnType<typeof createConnectedLocalPlatformTools>,
     owner: typeof scope,
     token: string,
+    platformRequests: Array<{ authorization: string | null; eventToken: string | null }>,
   ) => Promise<void>,
 ) {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -45,20 +46,44 @@ async function fixture(
   const token = `${signed}.${
     sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")
   }`;
-  const transport = (() =>
-    Promise.resolve(Response.json({
-      keys: [{ ...publicKey.export({ format: "jwk" }), kid: "boundary" }],
-    }))) as typeof fetch;
+  const platformRequests: Array<{ authorization: string | null; eventToken: string | null }> = [];
+  const transport = (async (input, init) => {
+    if (new URL(String(input)).pathname === "/.well-known/jwks.json") {
+      return Response.json({
+        keys: [{ ...publicKey.export({ format: "jwk" }), kid: "boundary" }],
+      });
+    }
+    const headers = new Headers(init?.headers);
+    platformRequests.push({
+      authorization: headers.get("authorization"),
+      eventToken: headers.get("x-veryfront-run-event-token"),
+    });
+    const body = JSON.parse(String(init?.body)) as { id: string; method: string };
+    return Response.json({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: body.method === "tools/list"
+        ? {
+          tools: [{
+            name: "get_run",
+            description: "Read the admitted run",
+            inputSchema: { type: "object", properties: {} },
+          }],
+        }
+        : { content: [{ type: "text", text: canonicalRunId }] },
+    });
+  }) as typeof fetch;
   await withMockFetch(transport, () =>
     operation(
       createConnectedLocalPlatformTools("https://api.veryfront.com", transport),
       { ...scope },
       token,
+      platformRequests,
     ));
 }
 
 it("executes a legacy writer without a platform dependency claim", async () => {
-  await fixture(false, async (tools, owner, token) => {
+  await fixture(false, async (tools, owner, token, platformRequests) => {
     await tools.register(owner, scope, token, "fixture-auth");
     const writer = createHostedRunEventWriterCapability({
       apiUrl: "https://api.veryfront.com",
@@ -76,9 +101,17 @@ it("executes a legacy writer without a platform dependency claim", async () => {
         admit: () => {
           throw new Error("No tools execute");
         },
-      }, () => Promise.resolve("inference completed")),
-      "inference completed",
+      }, () => {
+        const source = getActiveRuntimeRemoteToolSources()?.[0];
+        assertEquals(source?.id, "veryfront-platform-mcp");
+        return source!.executeTool("veryfront__get_run", {}, scope);
+      }),
+      canonicalRunId,
     );
+    assertEquals(platformRequests, [
+      { authorization: "Bearer fixture-auth", eventToken: token },
+      { authorization: "Bearer fixture-auth", eventToken: token },
+    ]);
     await tools.revoke(owner);
   });
 });
@@ -125,7 +158,11 @@ it("keeps its execution identity private from replaced async storage methods", a
     const original = AsyncLocalStorage.prototype.run;
     const originalGet = AsyncLocalStorage.prototype.getStore;
     let exposedIdentity = false;
-    AsyncLocalStorage.prototype.run = function (store, callback, ...args) {
+    AsyncLocalStorage.prototype.run = function <R, TArgs extends unknown[]>(
+      store: unknown,
+      callback: (...args: TArgs) => R,
+      ...args: TArgs
+    ): R {
       if (
         store && typeof store === "object" &&
         (Object.keys(store).length === 0 || "policy" in store ||
@@ -134,7 +171,7 @@ it("keeps its execution identity private from replaced async storage methods", a
       ) {
         exposedIdentity = true;
       }
-      return Reflect.apply(original, this, [store, callback, ...args]);
+      return Reflect.apply(original, this, [store, callback, ...args]) as R;
     };
     AsyncLocalStorage.prototype.getStore = function () {
       const value = Reflect.apply(originalGet, this, []);

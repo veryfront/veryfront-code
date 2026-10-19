@@ -149,7 +149,7 @@ Deno.test("getRuntimeRemoteToolSources blocks denied MCP tool execution", async 
   assertEquals(calls.length, 0);
 });
 
-Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from server env", async () => {
+Deno.test("getRuntimeRemoteToolSources uses the owning API endpoint and binds the bootstrap project", async () => {
   let remoteConfig: RemoteMCPToolSourceConfig | undefined;
   const listContexts: Array<ToolExecutionContext | undefined> = [];
   const executeCalls: Array<{
@@ -213,7 +213,7 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
   assertEquals(sources?.length, 1);
   assertEquals(
     await resolveRemoteEndpoint(remoteConfig?.endpoint),
-    "https://api.example/projects/server-project/mcp",
+    "https://api.example/mcp",
   );
   assertEquals(
     await (remoteConfig?.headers as (context?: ToolExecutionContext) => HeadersInit)?.({
@@ -368,7 +368,7 @@ Deno.test("getRuntimeRemoteToolSources implicitly connects unresolved named tool
 
   assertEquals(
     await resolveRemoteEndpoint(remoteConfig?.endpoint),
-    "https://api.example/projects/server-project/mcp",
+    "https://api.example/mcp",
   );
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), [
     "veryfront__get_file",

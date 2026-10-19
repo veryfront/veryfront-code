@@ -88,14 +88,14 @@ export async function configureHostedPlatformDependencySource(
   const authority = owners.get(owner);
   if (!authority?.active) return;
   authority.sourceFactory = factory;
-  if (authority.runner && authority.scope.agentId) {
+  if (authority.scope.agentId) {
     const source = await factory(
       { ...authority.scope, agentId: authority.scope.agentId },
       authority.authToken,
       owner,
       parentOwner,
     );
-    if (source) authority.runner.captureSource(source);
+    if (source) authority.runner?.captureSource(source);
   }
 }
 

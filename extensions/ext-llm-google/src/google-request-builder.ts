@@ -3,6 +3,7 @@ import {
   jsonValuesEqual,
   readInlineFileData,
   readRecord,
+  readRemoteFileUrl,
   unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
@@ -647,6 +648,30 @@ function isGeminiFileUri(url: string): boolean {
     /^\/v1[a-z0-9]*\/files\/[^/]+$/.test(pathname);
 }
 
+/**
+ * Inline types Gemini reads, besides images, audio, video, `text/*`, and
+ * `+json`/`+xml` types.
+ * Other types, such as archives, fail before inference.
+ */
+const GOOGLE_INLINE_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "application/pdf",
+  "application/json",
+  "application/xml",
+  "application/rtf",
+  "application/javascript",
+  "application/x-javascript",
+  "application/x-python",
+  "application/x-typescript",
+  "application/typescript",
+  "application/yaml",
+  "application/x-yaml",
+]);
+
+function isGoogleInlineMediaType(mimeType: string): boolean {
+  return /^(image|audio|video|text)\//.test(mimeType) || /\+(json|xml)$/.test(mimeType) ||
+    GOOGLE_INLINE_DOCUMENT_TYPES.has(mimeType);
+}
+
 function toGoogleUserParts(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -663,9 +688,18 @@ function toGoogleUserParts(
     const mimeType = part.mediaType.toLowerCase();
     const data = readInlineFileData(part);
     if (data !== undefined) {
+      if (!isGoogleInlineMediaType(mimeType)) {
+        throw unsupportedFileInputError(
+          "Google",
+          part,
+          "Send a supported type such as an image, audio, video, PDF, or text file.",
+        );
+      }
       content.push({ inlineData: { mimeType, data } });
-    } else if (isImageFileInput(part) || isGeminiFileUri(part.url)) {
+    } else if (isGeminiFileUri(part.url)) {
       content.push({ fileData: { mimeType, fileUri: part.url } });
+    } else if (isImageFileInput(part)) {
+      content.push({ fileData: { mimeType, fileUri: readRemoteFileUrl("Google", part) } });
     } else {
       throw unsupportedFileInputError(
         "Google",

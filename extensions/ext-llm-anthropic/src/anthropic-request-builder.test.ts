@@ -111,6 +111,20 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }]);
   });
+  it("sends a remote image URL as a url source", () => {
+    const url = "https://example.test/photo.png";
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "image", source: { type: "url", url } }],
+    }]);
+  });
   it("sends an image/jpg inline image as image/jpeg", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-5",
@@ -183,6 +197,31 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       );
     });
   }
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-5",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
   it("rejects a PDF whose URL is a local path instead of sending it", () => {
     assertThrows(
       () =>

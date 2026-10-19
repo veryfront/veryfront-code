@@ -1,12 +1,16 @@
+import { pushPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { privateTextStartsWith } from "#veryfront/security/private-text.ts";
+
 type ToolEvent = { type: string; toolCallId?: unknown };
 
 /** Keep streamed events ordered behind execution-owned durable tool starts. */
 export function createLocalToolStream() {
-  const admitted = new Set<string>();
-  const started = new Set<string>();
-  const pending: ToolEvent[] = [];
+  const admitted = createPrivateSet<string>();
+  const started = createPrivateSet<string>();
+  let pending: ToolEvent[] = [];
   const toolId = (event: ToolEvent) =>
-    event.type.startsWith("TOOL_CALL_") && typeof event.toolCallId === "string"
+    privateTextStartsWith(event.type, "TOOL_CALL_") && typeof event.toolCallId === "string"
       ? event.toolCallId
       : undefined;
   const drain = (finishing = false): ToolEvent[] => {
@@ -18,10 +22,10 @@ export function createLocalToolStream() {
       if (!finishing && id !== undefined && !admitted.has(id)) break;
       consumed++;
       if (event.type !== "TOOL_CALL_START" || id === undefined || !admitted.has(id)) {
-        events.push(event);
+        pushPrivateArray(events, event);
       }
     }
-    pending.splice(0, consumed);
+    pending = slicePrivateArray(pending, consumed);
     return events;
   };
   return {
@@ -32,7 +36,7 @@ export function createLocalToolStream() {
           if (started.has(id) || admitted.has(id)) continue;
           started.add(id);
         }
-        pending.push(event);
+        pushPrivateArray(pending, event);
       }
       return drain();
     },

@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { runWithLocalEvalIdentity } from "#veryfront/runtime/local-eval-context.ts";
 import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
-import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  runWithMandatoryRunEventSink,
+  runWithRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -16,29 +20,72 @@ describe("agent run runtime context", () => {
     new Date("2026-07-19T07:30:00.000Z"),
   );
 
-  it("exposes only the host-bound canonical run id", () => {
+  it("uses local eval identity only when no durable writer is bound", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
     const sink = async () => {};
-    const id = "55555555-5555-4555-8555-555555555555";
     bindRuntimeObservationWriterCapability(
       sink,
       createRuntimeObservationWriterCapability({
         scope: {
           runId: "public-run",
-          canonicalRunId: id,
+          canonicalRunId,
           projectId: "22222222-2222-4222-8222-222222222222",
         },
       }),
     );
-    const result = runWithMandatoryRunEventSink(
-      sink,
-      () => withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()),
+    runWithLocalEvalIdentity((runId) => {
+      assertEquals(captureAgentRunRuntimeContext().runId, runId);
+      assertEquals(
+        runWithMandatoryRunEventSink(sink, () => captureAgentRunRuntimeContext().runId),
+        canonicalRunId,
+      );
+    });
+    assertEquals(captureAgentRunRuntimeContext().runId, undefined);
+  });
+
+  it("keeps the mandatory canonical writer when a public observer is also active", () => {
+    const canonicalRunId = "55555555-5555-4555-8555-555555555555";
+    const mandatory = async () => {};
+    const observer = async () => {};
+    bindRuntimeObservationWriterCapability(
+      mandatory,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "durable-run",
+          canonicalRunId,
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
     );
-    assertEquals(result.includes(`run_id: ${id}`), true);
+    // Even another bound sink in the public lane cannot replace mandatory authority.
+    const otherObserver = async () => {};
+    bindRuntimeObservationWriterCapability(
+      otherObserver,
+      createRuntimeObservationWriterCapability({
+        scope: {
+          runId: "other-run",
+          canonicalRunId: "66666666-6666-4666-8666-666666666666",
+          projectId: "22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+    runWithLocalEvalIdentity(() => {
+      for (const publicSink of [observer, otherObserver]) {
+        const rendered = runWithMandatoryRunEventSink(
+          mandatory,
+          () =>
+            runWithRunEventSink(
+              publicSink,
+              () => withAgentRunRuntimeContext("Read run", captureAgentRunRuntimeContext()),
+            ),
+        );
+        assertEquals(rendered.includes(`run_id: ${canonicalRunId}`), true);
+        assertEquals(rendered.includes("66666666-6666-4666-8666-666666666666"), false);
+      }
+    });
     assertEquals(
-      withAgentRunRuntimeContext("Read my run", captureAgentRunRuntimeContext()).includes(
-        "run_id:",
-      ),
-      false,
+      runWithRunEventSink(otherObserver, () => captureAgentRunRuntimeContext().runId),
+      undefined,
     );
   });
 

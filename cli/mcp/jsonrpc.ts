@@ -13,7 +13,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 export const getJSONRPCRequestSchema = defineSchema((v) =>
   v.object({
     jsonrpc: v.literal("2.0"),
-    id: v.union([v.string(), v.number()]).optional(),
+    id: v.union([v.string(), v.number()]).nullable().optional(),
     method: v.string(),
     params: v.unknown().optional(),
   })
@@ -108,7 +108,10 @@ export function internalError(
 /**
  * Create a JSON-RPC success response
  */
-export function successResponse(id: string | number | undefined, result: unknown): JSONRPCResponse {
+export function successResponse(
+  id: string | number | null | undefined,
+  result: unknown,
+): JSONRPCResponse {
   return { jsonrpc: "2.0", id, result };
 }
 
@@ -116,7 +119,7 @@ export function successResponse(id: string | number | undefined, result: unknown
  * Create a JSON-RPC error response
  */
 export function errorResponse(
-  id: string | number | undefined,
+  id: string | number | null | undefined,
   e: unknown,
   code?: number,
 ): JSONRPCResponse {

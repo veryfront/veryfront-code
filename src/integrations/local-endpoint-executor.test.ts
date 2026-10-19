@@ -9,6 +9,8 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { connectors } from "./_data.ts";
+import { MAX_INTEGRATION_CALL_REQUEST_BYTES } from "./limits.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
 import {
   executeLocalIntegrationEndpoint as executeEndpoint,
@@ -159,12 +161,13 @@ describe("local integration endpoint executor", () => {
   );
 
   it("returns null for a successful response with no representation", async () => {
-    const execute = (status: number) =>
+    const execute = (status: number, requiresWrite?: boolean) =>
       executeLocalIntegrationEndpoint({
         endpoint: endpoint({
           method: "POST",
           url: "https://api.example.test/items/item-1/pause",
         }),
+        requiresWrite,
         args: {},
         authHeaders: {},
         allowedOrigin: "https://api.example.test",
@@ -174,8 +177,14 @@ describe("local integration endpoint executor", () => {
     assertEquals(await execute(204), null);
     // An accepted action, such as Microsoft Graph sendMail, has no body.
     assertEquals(await execute(202), null);
-    // A 200 must still carry JSON.
-    await assertRejects(() => execute(200));
+    // A 200 must still carry JSON. After a write the call still succeeded, so
+    // the missing body is reported as omitted rather than as a failure.
+    await assertRejects(() => execute(200, false));
+    assertEquals(await execute(200), {
+      success: true,
+      status: 200,
+      response_omitted: "unreadable",
+    });
   });
 
   it("supports passthrough JSON bodies and Microsoft Graph query formatting", async () => {
@@ -703,6 +712,152 @@ describe("local integration endpoint executor", () => {
     assertEquals(response.bodyUsed, true);
   });
 
+  it("reports an oversized response to a successful write as succeeded, not failed", async () => {
+    const oversized = 4 * 1024 * 1024 + 1;
+    const fixtures = [
+      // Declared too large: rejected before any body is read.
+      () =>
+        new Response("{}", {
+          status: 201,
+          headers: { "content-length": String(oversized) },
+        }),
+      // Undeclared length: discovered while streaming.
+      () => new Response(`{"body":"${"x".repeat(oversized)}"}`, { status: 201 }),
+      // Under the byte limit, but over the JSON node bound.
+      () => Response.json({ items: new Array(100_001).fill(0) }, { status: 201 }),
+    ];
+
+    for (const fixture of fixtures) {
+      const response = fixture();
+      const result = await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "POST",
+          url: "https://api.example.test/messages/message-1/move",
+          response: { transform: "id" },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(response),
+      });
+
+      assertEquals(result, { success: true, status: 201, response_omitted: "too_large" });
+      assertEquals(response.bodyUsed, true);
+    }
+
+    // A body that cannot be read or parsed after a 2xx write is omitted the same way.
+    const unreadable = [
+      () => new Response("{not json", { status: 201 }),
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"id":'));
+              controller.error(new TypeError("connection reset"));
+            },
+          }),
+          { status: 201 },
+        ),
+    ];
+    for (const fixture of unreadable) {
+      assertEquals(
+        await executeLocalIntegrationEndpoint({
+          endpoint: endpoint({ method: "POST", url: "https://api.example.test/messages" }),
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(fixture()),
+        }),
+        { success: true, status: 201, response_omitted: "unreadable" },
+      );
+    }
+
+    // A write body without the declared transform path is omitted too.
+    assertEquals(
+      await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "POST",
+          url: "https://api.example.test/tasks",
+          response: { transform: "data" },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(Response.json({ id: "task-1" }, { status: 201 })),
+      }),
+      { success: true, status: 201, response_omitted: "unreadable" },
+    );
+
+    // A GET the catalog marks as a write, such as a credit-consuming lookup, is one too.
+    assertEquals(
+      await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({ method: "GET", url: "https://api.example.test/enrich" }),
+        requiresWrite: true,
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () => Promise.resolve(fixtures[1]!()),
+      }),
+      { success: true, status: 201, response_omitted: "too_large" },
+    );
+
+    // A read-only POST, such as a query, wrote nothing, so the limit still fails it.
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: endpoint({ method: "POST", url: "https://api.example.test/query" }),
+          requiresWrite: false,
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(fixtures[1]!()),
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-response-invalid");
+  });
+
+  it("keeps declared paging fields next to a transformed collection", async () => {
+    const execute = (outputFields?: Array<{ name: string }>) =>
+      executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "GET",
+          url: "https://api.example.test/mailFolders",
+          response: {
+            transform: "value",
+            ...(outputFields
+              ? {
+                historicalSummary: {
+                  collectionKeys: ["value"],
+                  collectionName: "folders",
+                  itemFields: [{ name: "id" }],
+                  outputFields,
+                  omitted: "provider fields",
+                },
+              }
+              : {}),
+          },
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        transport: () =>
+          Promise.resolve(Response.json({
+            "@odata.context": "https://api.example.test/$metadata#mailFolders",
+            "@odata.nextLink": "https://api.example.test/mailFolders?$skip=1",
+            value: [{ id: "folder-1" }],
+          })),
+      });
+
+    assertEquals(await execute([{ name: "@odata.nextLink" }, { name: "@odata.count" }]), {
+      value: [{ id: "folder-1" }],
+      "@odata.nextLink": "https://api.example.test/mailFolders?$skip=1",
+    });
+    // Without declared output fields the transform still selects only the collection.
+    assertEquals(await execute(), [{ id: "folder-1" }]);
+  });
+
   it("enforces its deadline and propagates caller cancellation", async () => {
     const abortController = new AbortController();
     const abortReason = new DOMException("caller stopped", "AbortError");
@@ -777,5 +932,89 @@ describe("local integration endpoint executor", () => {
     assertInstanceOf(timeoutError, VeryfrontError);
     assertEquals(timeoutError.slug, "local-integration-request-failed");
     assertEquals(timeoutError.cause, undefined);
+  });
+});
+
+describe("Outlook attachment payloads", () => {
+  const graph = "https://graph.microsoft.com";
+  // Base64 of a synthetic attachment just under the 3 MB Graph inline limit.
+  // It exceeds 1 MiB as one string but fits the 4 MiB request and response bounds.
+  const contentBytes = "QUJD".repeat(1_000_000);
+
+  function outlookEndpoint(toolId: string): IntegrationEndpoint {
+    const tool = connectors.find((connector) => connector.name === "outlook")?.tools.find(
+      (item) => item.id === `outlook__${toolId}`,
+    );
+    assert(tool?.endpoint, `Expected outlook__${toolId} to have an endpoint`);
+    return tool.endpoint;
+  }
+
+  it("returns an attachment whose base64 content exceeds 1 MiB", async () => {
+    const result = await executeLocalIntegrationEndpoint({
+      connectorName: "outlook",
+      toolId: "outlook__get_attachment",
+      endpoint: outlookEndpoint("get_attachment"),
+      args: { messageId: "m1", attachmentId: "a1" },
+      authHeaders: {},
+      allowedOrigin: graph,
+      transport: () =>
+        Promise.resolve(Response.json({ name: "report.pdf", size: 3_000_000, contentBytes })),
+    }) as Record<string, unknown>;
+
+    assertStrictEquals(result.contentBytes, contentBytes);
+  });
+
+  for (
+    const [toolId, idName] of [
+      ["add_attachment_to_message", "messageId"],
+      ["add_event_attachment", "eventId"],
+    ] as const
+  ) {
+    it(`uploads base64 content over 1 MiB through ${toolId}`, async () => {
+      const requests: LocalIntegrationEndpointTransportRequest[] = [];
+      await executeLocalIntegrationEndpoint({
+        connectorName: "outlook",
+        toolId: `outlook__${toolId}`,
+        endpoint: outlookEndpoint(toolId),
+        args: { [idName]: "id1", name: "report.pdf", contentBytes },
+        authHeaders: {},
+        allowedOrigin: graph,
+        transport: (request) => {
+          requests.push(request);
+          return Promise.resolve(Response.json({ id: "att1" }, { status: 201 }));
+        },
+      });
+
+      assertEquals(requests.length, 1);
+      const body = JSON.parse(String(requests[0]?.init.body)) as Record<string, unknown>;
+      assertStrictEquals(body.contentBytes, contentBytes);
+    });
+  }
+
+  it("still rejects an upload string over the request bound before any transport call", async () => {
+    let calls = 0;
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          connectorName: "outlook",
+          toolId: "outlook__add_attachment_to_message",
+          endpoint: outlookEndpoint("add_attachment_to_message"),
+          args: {
+            messageId: "id1",
+            name: "report.pdf",
+            contentBytes: "A".repeat(MAX_INTEGRATION_CALL_REQUEST_BYTES + 1),
+          },
+          authHeaders: {},
+          allowedOrigin: graph,
+          transport: () => {
+            calls++;
+            return Promise.resolve(Response.json({}));
+          },
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(calls, 0);
   });
 });

@@ -118,6 +118,52 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
+  for (const mediaType of ["application/zip", "application/octet-stream"]) {
+    it(`rejects inline ${mediaType} data before inference`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: `data:${mediaType};base64,AAAA`,
+                mediaType,
+                filename: "archive.bin",
+              }],
+            }],
+          }, createWarningCollector()),
+        TypeError,
+        `Google does not support file input "archive.bin" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const mediaType of [
+      "text/plain",
+      "Text/Markdown",
+      "application/json",
+      "application/ld+json",
+      "audio/mpeg",
+      "video/mp4",
+      "image/webp",
+    ]
+  ) {
+    it(`sends inline ${mediaType} data`, () => {
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: `data:${mediaType};base64,AAAA`, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
+        role: "user",
+        parts: [{ inlineData: { mimeType: mediaType.toLowerCase(), data: "AAAA" } }],
+      }]);
+    });
+  }
+
   it("matches inline data MIME types case-insensitively", () => {
     const body = buildGoogleGenerateContentRequest("google", {
       prompt: [{
@@ -158,17 +204,52 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
-  it("sends Gemini Files API URIs for non-image files as fileData", () => {
-    const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+  for (const mediaType of ["application/pdf", "image/png"]) {
+    it(`sends Gemini Files API URIs as fileData: ${mediaType}`, () => {
+      const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: fileUri, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
+        role: "user",
+        parts: [{ fileData: { mimeType: mediaType, fileUri } }],
+      }]);
+    });
+  }
+
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+          }, createWarningCollector()),
+        TypeError,
+        "Google does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("sends a remote image URL as fileData", () => {
+    const fileUri = "https://example.test/photo.png";
     const body = buildGoogleGenerateContentRequest("google", {
       prompt: [{
         role: "user",
-        content: [{ type: "file", url: fileUri, mediaType: "application/pdf" }],
+        content: [{ type: "image", url: fileUri, mediaType: "image/png" }],
       }],
     }, createWarningCollector());
     assertEquals(body.contents, [{
       role: "user",
-      parts: [{ fileData: { mimeType: "application/pdf", fileUri } }],
+      parts: [{ fileData: { mimeType: "image/png", fileUri } }],
     }]);
   });
 

@@ -2,12 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertInstanceOf,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import { VeryfrontError } from "#veryfront/errors";
+import { createOutlookServiceAccountToolSource } from "./outlook-service-account.ts";
 import {
   assertLocalCredentialHostGrant,
   HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
@@ -55,6 +57,20 @@ describe("local integration credential host policy", () => {
       assertStringIncludes(error.message, HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
       assertStringIncludes(error.message, "=1");
       return Promise.resolve();
+    });
+  });
+
+  it("refuses the Outlook attachment reader without the grant", async () => {
+    const source = createOutlookServiceAccountToolSource({
+      allowedTools: ["outlook__get_shared_mailbox_attachment"],
+      credentialProvider: () => "unused",
+    });
+    await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "0" }, async () => {
+      const error = await assertRejects(
+        () => source.readAttachment({ messageId: "m1", attachmentId: "a1" }),
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
     });
   });
 });
