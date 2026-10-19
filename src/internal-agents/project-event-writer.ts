@@ -85,7 +85,7 @@ export function createProjectEventWriter(input: {
     string,
     ReturnType<typeof createPrivateDeferred<AgentRunToolCallAdmissionReceipt>>
   >();
-  let active = true, signal: AbortSignal | undefined;
+  let active = true, closed = false, signal: AbortSignal | undefined;
   const assertActive = () => {
     if (!active) throw new Error("Project event writer is closed");
     if (signal) checkSignal(signal);
@@ -130,10 +130,13 @@ export function createProjectEventWriter(input: {
     projectId: input.projectId,
   });
   const flush = async () => {
-    assertActive();
+    if (closed) throw new Error("Project event writer is closed");
     if (!signal) throw new Error("Project writer lifetime is unbound");
-    const snapshot = await mirror.flush({ abortSignal: signal, waitForRetries: true });
-    assertActive();
+    const aborted = Apply(IsAborted, signal, []) as boolean;
+    const snapshot = await mirror.flush(
+      aborted ? undefined : { abortSignal: signal, waitForRetries: true },
+    );
+    if (!aborted) assertActive();
     if (snapshot.disabled || snapshot.pendingEventCount !== 0) {
       throw new Error("Project event append failed");
     }
@@ -183,7 +186,6 @@ export function createProjectEventWriter(input: {
         active = false;
         revokeRuntimeObservationWriterCapability(observationWriter);
         for (const p of admissions.values()) p.reject(Apply(AbortReason, value, []));
-        mirror.dispose();
       };
       Apply(AddEventListener, value, ["abort", abort, { once: true }]);
       if (Apply(IsAborted, value, [])) abort();
@@ -200,11 +202,11 @@ export function createProjectEventWriter(input: {
       occurrenceId?: string,
       observed = false,
     ) {
+      assertActive();
       const event = coerceWireEvent(mapped.event, mapped.payload);
       if (
-        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "MODEL_CALL_COMPLETED"].includes(
-          String(event.type),
-        )
+        event.type === "RUN_STARTED" || event.type === "RUN_FINISHED" ||
+        event.type === "RUN_ERROR" || event.type === "MODEL_CALL_COMPLETED"
       ) {
         if (event.type !== "RUN_STARTED") await flush();
         return;
@@ -220,6 +222,7 @@ export function createProjectEventWriter(input: {
     close() {
       revokeRuntimeObservationWriterCapability(observationWriter);
       active = false;
+      closed = true;
       for (const p of admissions.values()) p.reject(new Error("Project event writer closed"));
       mirror.dispose();
     },

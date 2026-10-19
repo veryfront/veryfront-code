@@ -63,6 +63,64 @@ it("buffers ordinary deltas and drains them together at a terminal barrier", asy
   });
 });
 
+it("ignores a replaced array includes while recognizing terminal barriers", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result } = writer();
+    const includes = Array.prototype.includes;
+    try {
+      Array.prototype.includes = function (
+        searchElement: unknown,
+        fromIndex?: number,
+      ): boolean {
+        if (this[0] === "RUN_STARTED") return false;
+        return Reflect.apply(includes, this, [searchElement, fromIndex]);
+      };
+      await result.appendMappedEvent(delta("persisted"));
+      await result.appendMappedEvent({ event: "RunFinished", payload: { type: "RUN_FINISHED" } });
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("persisted"), true);
+    } finally {
+      Array.prototype.includes = includes;
+      result.close();
+    }
+  });
+});
+
+it("drains queued events after cancellation before closing", async () => {
+  const batches: unknown[][] = [];
+  await withMockFetch(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    batches.push(body.events);
+    return Response.json({
+      run_id: id,
+      latest_event_id: body.events.length,
+      latest_external_event_sequence: body.events.length,
+      appended_count: body.events.length,
+    });
+  }, async () => {
+    const { result, controller } = writer();
+    try {
+      await result.appendMappedEvent(delta("before cancellation"));
+      controller.abort(new Error("cancelled"));
+      await result.flush();
+      assertEquals(batches.length, 1);
+      assertEquals(JSON.stringify(batches[0]).includes("before cancellation"), true);
+    } finally {
+      result.close();
+    }
+  });
+});
+
 for (const producerOutcome of ["fulfilled", "rejected", "missing"] as const) {
   it(
     `flushes buffered events before a failed runtime closes after producer ${producerOutcome}`,
