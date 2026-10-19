@@ -22,6 +22,7 @@ import {
   getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
   inheritedChildAdmitter,
+  refreshHostedRunEventWriterCapability,
   registerHostedRunEventWriterToken,
   runWithHostedRunEventWriterCapability,
   runWithVerifiedHostedRunEventWriterRequest,
@@ -1214,4 +1215,37 @@ Deno.test("an unrelated tool append timeout retries without failing child execut
     fixture.mirror.dispose();
     await outcome;
   }
+});
+
+Deno.test("trusted worker renewal replaces the exact-run writer credential", async () => {
+  let authorization: string | null = null;
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run_parent",
+    runEventAppendToken: "old-writer",
+    fetch: (_url, init) => {
+      authorization = new Headers(init?.headers).get("Authorization");
+      return Promise.resolve(
+        Response.json({
+          token: "child-writer",
+          token_type: "Bearer",
+          run_id: "22222222-2222-4222-8222-222222222222",
+          expires_at: "2030-01-01T00:00:00Z",
+          permissions: ["run.events.append"],
+        }, { headers: { "Cache-Control": "no-store" } }),
+      );
+    },
+  });
+  assertThrows(() =>
+    refreshHostedRunEventWriterCapability(capability, {
+      runId: "other-run",
+      runEventAppendToken: "new-writer",
+    })
+  );
+  refreshHostedRunEventWriterCapability(capability, {
+    runId: "run_parent",
+    runEventAppendToken: "new-writer",
+  });
+  await capability.mintChildRunEventWriterCapability("22222222-2222-4222-8222-222222222222");
+  assertEquals(authorization, "Bearer new-writer");
 });

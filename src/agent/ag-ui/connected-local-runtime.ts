@@ -1,5 +1,8 @@
 import { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
-import { createHostedRunEventWriterCapability } from "../hosted/child-run-event-writer-token.ts";
+import {
+  createHostedRunEventWriterCapability,
+  refreshHostedRunEventWriterCapability,
+} from "../hosted/child-run-event-writer-token.ts";
 import { hostedInheritedEventWriter } from "../hosted/terminal-credential.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
@@ -543,6 +546,13 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
             leaseDurationSeconds: 60,
           }).then((lease) => {
             if (!lease) failLease("Veryfront local run lease expired.");
+            else if (rootWriter) {
+              refreshHostedRunEventWriterCapability(rootWriter, {
+                runId: claim!.run_id,
+                runEventAppendToken:
+                  readExternalAgentWorkerRunAuthority(client, claim!.run_id).run_event_token,
+              });
+            }
           }).catch(() => failLease("Veryfront local run lease renewal failed.")).finally(() => {
             renewal = undefined;
           });
@@ -598,7 +608,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               );
               throw error;
             } finally {
-              platformTools?.revoke(platformOwner);
+              await platformTools?.revoke(platformOwner);
               active.delete(run);
             }
           })();

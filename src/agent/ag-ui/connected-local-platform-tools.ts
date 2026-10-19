@@ -1,3 +1,9 @@
+import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { canonicalPlatformHostTools } from "../platform-host-tools.ts";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { VERYFRONT_API_MCP_SOURCE_ID } from "../runtime/mcp-server-tool-sources.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
@@ -43,9 +49,14 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
     requestFetch: transport,
   });
   const sources = new WeakMap<object, RemoteToolSource>();
+  const cleanups = new WeakMap<object, Array<() => Promise<void>>>();
   return {
     verify,
-    revoke: revokeHostedPlatformDependencies,
+    async revoke(owner: HostedPlatformDependencyOwner) {
+      revokeHostedPlatformDependencies(owner);
+      await Promise.allSettled((cleanups.get(owner) ?? []).map((close) => close()));
+      cleanups.delete(owner);
+    },
     async register(
       owner: HostedPlatformDependencyOwner,
       scope: Scope,
@@ -56,11 +67,13 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
       const verification = await verify({ ...scope, token: eventToken });
       if (!verification.verified) throw new Error("Connected local writer verification failed");
       registerHostedPlatformDependencyRequest(owner, verification, scope, verify, authToken);
+      const cleanup: Array<() => Promise<void>> = [];
+      cleanups.set(owner, cleanup);
       await configureHostedPlatformDependencySource(
         owner,
         async (childScope, token, childOwner) => {
           const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
-          const source = createLivePlatformMcpSource(factory({
+          let source = createLivePlatformMcpSource(factory({
             id: VERYFRONT_API_MCP_SOURCE_ID,
             endpoint,
             headers: () => {
@@ -73,6 +86,49 @@ export function createConnectedLocalPlatformTools(apiUrl: string, transport: typ
               };
             },
           }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }));
+          // The API issues this scope only for this child's sealed sandbox selection.
+          let allowSandbox = false;
+          try {
+            const claims = privateJsonParse(
+              Buffer.from(token.split(".")[1]!, "base64url").toString(),
+            );
+            allowSandbox = Array.isArray(claims.scope) &&
+              claims.scope.includes("sandboxes:write");
+          } catch { /* A session credential without sandbox scope exposes no native tools. */ }
+          if (allowSandbox) {
+            const { createBashSandboxShellToolsProvider } = await importFirstPartyExtensionModule<{
+              createBashSandboxShellToolsProvider: Parameters<
+                typeof createAgentServiceSandboxTools
+              >[0]["createBashTool"];
+            }>("ext-sandbox-shell-tools", "@veryfront/ext-sandbox-shell-tools");
+            const sandbox = await createAgentServiceSandboxTools({
+              apiUrl,
+              authToken: token,
+              getProjectId: () => childScope.projectId,
+              createBashTool: createBashSandboxShellToolsProvider,
+            });
+            cleanup.push(sandbox.closeSandbox);
+            const native = canonicalPlatformHostTools(markTrustedHostToolSet(sandbox.tools));
+            const mcp = source;
+            source = markTrustedPlatformSource({
+              id: mcp.id,
+              listTools: async (context) => [
+                ...await mcp.listTools(context),
+                ...Object.entries(native).map(([name, tool]) => ({
+                  name,
+                  description: tool.description ?? name,
+                  parameters: (tool.inputSchemaJson ?? tool.parameters ??
+                    { type: "object", properties: {} }) as Record<string, unknown>,
+                })),
+              ],
+              executeTool: async (name, input, context) => {
+                const tool = native[name];
+                if (!tool) return mcp.executeTool(name, input, context);
+                if (!tool.execute) throw new Error("Sandbox tool cannot execute");
+                return await tool.execute(input, context);
+              },
+            });
+          }
           sources.set(childOwner, source);
           return source;
         },
