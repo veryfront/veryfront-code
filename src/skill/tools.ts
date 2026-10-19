@@ -682,20 +682,20 @@ export function createExecuteSkillScriptTool(
         authoritativeScripts,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
-      const result = await budget.run(async (abortSignal) =>
-        await executor.execute({
-          projectId: context?.projectId,
-          branch: context?.branch,
-          scriptPath: validatedPath,
-          scriptContent,
-          scriptSnapshot,
-          args: input.args,
-          env: input.env,
-          validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
-          timeoutMs: budget.remainingMs(),
-          abortSignal,
-        })
-      );
+      budget.throwIfTerminated();
+      const result = await executor.execute({
+        projectId: context?.projectId,
+        branch: context?.branch,
+        scriptPath: validatedPath,
+        scriptContent,
+        scriptSnapshot,
+        args: input.args,
+        env: input.env,
+        validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
+        timeoutMs: budget.remainingMs(),
+        abortSignal: budget.abortSignal,
+      });
+      budget.throwIfTerminated();
       return snapshotScriptOutput(result);
     },
   });

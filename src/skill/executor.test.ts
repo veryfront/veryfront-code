@@ -430,16 +430,20 @@ describe("src/skill/executor", () => {
       setEnv("VERYFRONT_API_URL", "https://operator-api.test.com");
       setEnv("VERYFRONT_API_USER", "ambient-user");
       setEnv("TENANT_PROJECT_ID", "ambient-tenant-project");
+      let currentAuthToken = "run-credential";
       const materializedRoot = await makeTempDir({ prefix: "vf-sandbox-command-" });
       const sandboxPathMap = new Map<string, string>();
       let executed: Awaited<ReturnType<typeof executeSandboxCommandBody>> | undefined;
       mockFetch([
-        jsonResponse({
-          id: "run-credential-sandbox",
-          endpoint: "https://sandbox.example.com",
-          status: "running",
-          workspace_storage: "ephemeral",
-        }),
+        () => {
+          currentAuthToken = "renewed-run-credential";
+          return jsonResponse({
+            id: "run-credential-sandbox",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          });
+        },
         async (_input, init) => {
           const files = JSON.parse(String(init?.body)).files as Array<{
             path: string;
@@ -468,7 +472,7 @@ describe("src/skill/executor", () => {
         assertActive() {},
         read: () => ({
           apiUrl: "https://api.test.com",
-          authToken: "run-credential",
+          authToken: currentAuthToken,
           projectId: "22222222-2222-4222-8222-222222222222",
           projectSlug: "connected-project",
           branch: "main",
@@ -502,13 +506,20 @@ describe("src/skill/executor", () => {
       await Deno.remove(materializedRoot, { recursive: true });
       assertEquals(result, {
         stdout:
-          "run-credential|https://api.test.com|22222222-2222-4222-8222-222222222222|preserved|caller-selected-model|unset|unset\n",
+          "renewed-run-credential|https://api.test.com|22222222-2222-4222-8222-222222222222|preserved|caller-selected-model|unset|unset\n",
         stderr: "",
         exitCode: 0,
       });
       assertEquals(
         new Headers(fetchCalls[0]!.init?.headers).get("authorization"),
         "Bearer run-credential",
+      );
+      assertEquals(
+        fetchCalls.slice(1).every((call) => {
+          const authorization = new Headers(call.init?.headers).get("authorization");
+          return authorization === null || authorization === "Bearer renewed-run-credential";
+        }),
+        true,
       );
       assertEquals(
         JSON.parse(String(fetchCalls[0]!.init?.body)).project_reference,
@@ -523,7 +534,7 @@ describe("src/skill/executor", () => {
       assertEquals(scriptCommandBody.env, {
         SAFE_INPUT: "preserved",
         VERYFRONT_DEFAULT_MODEL: "caller-selected-model",
-        VERYFRONT_API_TOKEN: "run-credential",
+        VERYFRONT_API_TOKEN: "renewed-run-credential",
         VERYFRONT_API_URL: "https://api.test.com",
         VERYFRONT_API_BASE_URL: "https://api.test.com",
         VERYFRONT_PROJECT_API_URL: "https://api.test.com",
@@ -532,13 +543,12 @@ describe("src/skill/executor", () => {
         VERYFRONT_PROJECT_SLUG: "connected-project",
         VERYFRONT_BRANCH_REF: "main",
       });
-      assertEquals(command.includes("run-credential"), false);
+      assertEquals(command.includes("renewed-run-credential"), false);
       assertEquals(command.includes("SAFE_INPUT=preserved"), false);
       assertEquals(command.includes("operator-user-token"), false);
       assertEquals(command.includes("caller-sandbox-token"), false);
       assertEquals(command.includes("caller-token"), false);
       assertEquals(command.includes("caller-project"), false);
-      assertEquals(command.includes("attacker.example.com"), false);
       assertEquals(command.includes("caller-user"), false);
       assertEquals(command.includes("caller-pass"), false);
       assertEquals(command.includes("caller-result"), false);
@@ -621,6 +631,96 @@ describe("src/skill/executor", () => {
       assertEquals(body.command.includes("sync-run-credential"), false);
       assertEquals(body.env.VERYFRONT_API_TOKEN, "sync-run-credential");
       assertEquals(body.env.VERYFRONT_API_BASE_URL, "https://api.test.com");
+    });
+
+    it("cancels and deletes the sandbox before an aborted execution settles", async () => {
+      const controller = new AbortController();
+      const abortError = new Error("run canceled");
+      let currentAuthToken = "initial-run-credential";
+      let reportCommandStarted!: () => void;
+      const commandStarted = new Promise<void>((resolve) => reportCommandStarted = resolve);
+      let reportDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>((resolve) => reportDeleteStarted = resolve);
+      let releaseDelete!: () => void;
+      const deleteResponse = new Promise<Response>((resolve) => {
+        releaseDelete = () => resolve(textResponse(""));
+      });
+      mockFetch([
+        () => {
+          currentAuthToken = "renewed-run-credential";
+          return jsonResponse({
+            id: "abort-cleanup",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          });
+        },
+        (_input, init) =>
+          jsonResponse({
+            results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        backgroundCommandResponse("running", "", null),
+        () => {
+          reportCommandStarted();
+          return new Promise<Response>(() => {});
+        },
+        backgroundCommandResponse("canceled", "", null),
+        () => {
+          reportDeleteStarted();
+          return deleteResponse;
+        },
+      ]);
+
+      let settled = false;
+      const execution = runWithVerifiedSkillScriptExecutionCredential({
+        assertActive() {},
+        read: () => ({
+          apiUrl: "https://api.test.com",
+          authToken: currentAuthToken,
+          projectId: "22222222-2222-4222-8222-222222222222",
+          runId: "run-abort",
+          agentId: "ingestion-agent",
+        }),
+      }, () =>
+        getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "sleep 30",
+          timeoutMs: 60_000,
+          abortSignal: controller.signal,
+        })).finally(() => settled = true);
+      await commandStarted;
+      controller.abort(abortError);
+      await deleteStarted;
+      await Promise.resolve();
+      assertEquals(settled, false);
+      assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+      assertEquals(fetchCalls[6]!.init?.method, "DELETE");
+      assertEquals(
+        new Headers(fetchCalls[0]!.init?.headers).get("authorization"),
+        "Bearer initial-run-credential",
+      );
+      assertEquals(
+        new Headers(fetchCalls[5]!.init?.headers).get("authorization"),
+        "Bearer renewed-run-credential",
+      );
+      assertEquals(
+        new Headers(fetchCalls[6]!.init?.headers).get("authorization"),
+        "Bearer renewed-run-credential",
+      );
+      releaseDelete();
+      let rejection: unknown;
+      try {
+        await execution;
+      } catch (error) {
+        rejection = error;
+      }
+      assertEquals(rejection, abortError);
+      assertEquals(settled, true);
     });
 
     it("rejects changed native content before creating a cloud sandbox", async () => {

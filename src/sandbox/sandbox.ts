@@ -89,6 +89,7 @@ interface SandboxPrivateState {
   endpoint: string;
   sessionId: string;
   authToken: string;
+  getAuthToken?: () => string;
   apiUrl: string;
   deleteOnClose: boolean;
   createdByClient: boolean;
@@ -109,7 +110,10 @@ function getSandboxPrivateState(sandbox: Sandbox): SandboxPrivateState {
 }
 
 function getSandboxAuthToken(sandbox: Sandbox): string {
-  return getSandboxPrivateState(sandbox).authToken;
+  const state = getSandboxPrivateState(sandbox);
+  return state.getAuthToken
+    ? applyIntrinsic(state.getAuthToken, undefined, []) as string
+    : state.authToken;
 }
 
 /** Client for isolated coding workspaces with command execution and file I/O. */
@@ -121,11 +125,13 @@ export class Sandbox {
     apiUrl: string,
     deleteOnClose = true,
     createdByClient = false,
+    getAuthToken?: () => string,
   ) {
     applyIntrinsic(weakMapSet, sandboxPrivateStates, [this, {
       endpoint,
       sessionId,
       authToken,
+      getAuthToken,
       apiUrl,
       deleteOnClose,
       createdByClient,
@@ -155,7 +161,7 @@ export class Sandbox {
     const { id, endpoint } = created;
     const session = created.status === "running"
       ? created
-      : await Sandbox.#waitForReady(apiUrl, id, authToken);
+      : await Sandbox.#waitForReady(apiUrl, id, authToken, options.getAuthToken);
 
     return new Sandbox(
       typeof session.endpoint === "string" ? session.endpoint : endpoint,
@@ -164,6 +170,7 @@ export class Sandbox {
       apiUrl,
       options.ttlMode !== "always_on" && hasTemporarySandboxPolicy(session),
       true,
+      options.getAuthToken,
     );
   }
 
@@ -313,10 +320,18 @@ export class Sandbox {
     apiUrl: string,
     id: string,
     authToken: string,
+    getAuthToken?: () => string,
     maxWaitMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<Record<string, unknown>> {
-    return await waitForSandboxReadyRecord({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
+    return await waitForSandboxReadyRecord({
+      apiUrl,
+      id,
+      authToken,
+      getAuthToken,
+      maxWaitMs,
+      pollIntervalMs,
+    });
   }
 
   /** Create a client that provisions its sandbox when first used. */
@@ -619,7 +634,7 @@ export async function waitForSandboxReady(input: {
 }
 
 async function waitForSandboxReadyRecord(
-  input: Parameters<typeof waitForSandboxReady>[0],
+  input: Parameters<typeof waitForSandboxReady>[0] & { getAuthToken?: () => string },
 ): Promise<Record<string, unknown>> {
   const maxWaitMs = input.maxWaitMs ?? 60_000;
   const pollIntervalMs = input.pollIntervalMs ?? 2_000;
@@ -631,7 +646,9 @@ async function waitForSandboxReadyRecord(
     const res = await fetchSandboxUrl(
       `${input.apiUrl}/sandboxes/${encodeURIComponent(input.id)}`,
       {
-        headers: { Authorization: `Bearer ${input.authToken}` },
+        headers: {
+          Authorization: `Bearer ${input.getAuthToken ? input.getAuthToken() : input.authToken}`,
+        },
       },
     );
 

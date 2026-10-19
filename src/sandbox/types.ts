@@ -18,6 +18,8 @@ export interface SandboxClientOptions {
   apiUrl?: string;
   /** Explicit Veryfront auth token or API key override. */
   authToken?: string;
+  /** Read the current credential before each request when the host renews it. */
+  getAuthToken?: () => string;
 }
 
 /** Options for discovering caller creation capabilities in a billing project. */

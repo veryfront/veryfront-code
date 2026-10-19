@@ -771,6 +771,62 @@ Do work.`,
     assertEquals(received.map((input) => input.branch), ["trusted-branch", undefined]);
   });
 
+  it("execute_skill_script waits for executor cleanup after cancellation", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    const controller = new AbortController();
+    const abortError = new Error("run canceled");
+    let reportStarted!: () => void;
+    const started = new Promise<void>((resolve) => reportStarted = resolve);
+    let reportCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => reportCleanupStarted = resolve);
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => releaseCleanup = resolve);
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          reportStarted();
+          return new Promise((_resolve, reject) => {
+            input.abortSignal?.addEventListener("abort", () => {
+              reportCleanupStarted();
+              void cleanup.then(() => reject(input.abortSignal?.reason));
+            }, { once: true });
+          });
+        },
+      },
+    });
+
+    let settled = false;
+    const execution = scriptTool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    }, {
+      abortSignal: controller.signal,
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      },
+    }).finally(() => settled = true);
+    await started;
+    controller.abort(abortError);
+    await cleanupStarted;
+    await Promise.resolve();
+    assertEquals(settled, false);
+    releaseCleanup();
+    let rejection: unknown;
+    try {
+      await execution;
+    } catch (error) {
+      rejection = error;
+    }
+    assertEquals(rejection, abortError);
+    assertEquals(settled, true);
+  });
+
   it("execute_skill_script reuses its authoritative script listing", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "listed-once";',

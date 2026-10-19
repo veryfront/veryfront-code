@@ -13,6 +13,13 @@ import { dirname, extname } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import { createError, REQUEST_ERROR, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type {
@@ -46,6 +53,8 @@ const TIMEOUT_EXIT_CODE = 124;
 const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ENV_KEY_REGEX = /^[A-Za-z_]\w*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
+const ABORT_SENTINEL = Symbol("skill-script-abort");
+const NativeDOMException = DOMException;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -284,6 +293,34 @@ async function withTimeout<T>(
   }
 }
 
+async function withTimeoutOrAbort<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T | typeof TIMEOUT_SENTINEL | typeof ABORT_SENTINEL> {
+  if (signal && isAbortSignalAborted(signal)) return ABORT_SENTINEL;
+  let abortListener: (() => void) | undefined;
+  const abortPromise = signal
+    ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
+      abortListener = () => resolve(ABORT_SENTINEL);
+      addAbortSignalListenerOnce(signal, abortListener);
+    })
+    : undefined;
+  const pending: Promise<T | typeof ABORT_SENTINEL> = abortPromise
+    ? Promise.race([promise, abortPromise])
+    : promise;
+  try {
+    return await withTimeout(pending, timeoutMs);
+  } finally {
+    if (signal && abortListener) removeAbortSignalListener(signal, abortListener);
+  }
+}
+
+function skillScriptAbortReason(signal: AbortSignal): unknown {
+  return getAbortSignalReason(signal) ??
+    new NativeDOMException("The skill script execution was aborted", "AbortError");
+}
+
 const SANDBOX_CLEANUP_TIMEOUT_MS = 1000;
 
 async function boundedSandboxCleanup<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -431,6 +468,12 @@ function hasCloudScriptExecutionAuth(): boolean {
   );
 }
 
+function requireVerifiedSkillScriptExecutionCredential(): VerifiedSkillScriptExecutionCredential {
+  const credential = getVerifiedSkillScriptExecutionCredential();
+  if (!credential) throw new TypeError("Verified skill script execution credential is unavailable");
+  return credential;
+}
+
 /**
  * Detect the runtime command for a script based on file extension.
  */
@@ -545,6 +588,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         ? {
           apiUrl: credential.apiUrl,
           authToken: credential.authToken,
+          getAuthToken: () => requireVerifiedSkillScriptExecutionCredential().authToken,
           projectReference: credential.projectId,
         }
         : {
@@ -553,6 +597,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         },
     );
     try {
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
       const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
       const sandboxScriptPath = scriptSnapshot === undefined
         ? createSandboxScriptPath(input.scriptPath)
@@ -571,18 +616,25 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       }
 
       await sandbox.writeFiles(sandboxFiles);
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
       await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
 
       const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
+      const currentCredential = credential
+        ? requireVerifiedSkillScriptExecutionCredential()
+        : undefined;
       const commandEnvironment = buildCommandEnvironment(
         scriptEnvironment(input),
-        credential !== undefined,
+        currentCredential !== undefined,
       );
-      if (credential) setVerifiedCredentialEnvironment(commandEnvironment, credential);
-      const commandParts = credential
+      if (currentCredential) {
+        setVerifiedCredentialEnvironment(commandEnvironment, currentCredential);
+      }
+      const commandParts = currentCredential
         ? [
           "env",
           ...formatVerifiedCredentialEnvironmentUnsets(input.env, commandEnvironment),
@@ -640,9 +692,13 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           }
           return timeoutResult(timeoutMs);
         })();
-      const result = await withTimeout(commandPromise, timeoutMs).finally(() => polling.abort());
+      const result = await withTimeoutOrAbort(
+        commandPromise,
+        timeoutMs,
+        input.abortSignal,
+      ).finally(() => polling.abort());
 
-      if (result === TIMEOUT_SENTINEL) {
+      if (result === TIMEOUT_SENTINEL || result === ABORT_SENTINEL) {
         commandPromise.catch(() => {
           // The command may reject after the timeout path has already returned.
         });
@@ -659,6 +715,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         } catch (error) {
           logger.warn("[skill/executor] Failed to cancel sandbox command after timeout", error);
         }
+        if (result === ABORT_SENTINEL) throw skillScriptAbortReason(input.abortSignal!);
         return timeoutResult(timeoutMs);
       }
 

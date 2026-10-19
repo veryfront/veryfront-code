@@ -22,12 +22,28 @@ const apply = Reflect.apply;
 const freeze = Object.freeze;
 
 /** @internal Bind a host-verified exact-run credential around trusted skill execution. */
-export function runWithVerifiedSkillScriptExecutionCredential<T>(
+export async function runWithVerifiedSkillScriptExecutionCredential<T>(
   authority: CredentialAuthority,
-  operation: () => T,
-): T {
+  operation: () => Promise<T>,
+): Promise<T> {
   authority.assertActive();
-  return apply(run, credentialStorage, [authority, operation]) as T;
+  let active = true;
+  const scopedAuthority: CredentialAuthority = freeze({
+    assertActive() {
+      if (!active) throw new TypeError("Skill script execution credential is no longer active");
+      authority.assertActive();
+    },
+    read() {
+      if (!active) throw new TypeError("Skill script execution credential is no longer active");
+      authority.assertActive();
+      return authority.read();
+    },
+  });
+  try {
+    return await (apply(run, credentialStorage, [scopedAuthority, operation]) as Promise<T>);
+  } finally {
+    active = false;
+  }
 }
 
 /** @internal Read the active credential only after its host authority remains live. */
