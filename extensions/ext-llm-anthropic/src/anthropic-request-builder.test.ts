@@ -111,6 +111,20 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }]);
   });
+  it("sends a remote image URL as a url source", () => {
+    const url = "https://example.test/photo.png";
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "image", source: { type: "url", url } }],
+    }]);
+  });
   it("sends an image/jpg inline image as image/jpeg", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-5",

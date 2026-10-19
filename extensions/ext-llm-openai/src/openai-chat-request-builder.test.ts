@@ -38,6 +38,22 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-chat-request-builder", () => {
+  it("sends remote and inline image URLs as image_url", () => {
+    for (const url of ["https://example.test/photo.png", "data:image/png;base64,iVBORw=="]) {
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.messages, [{
+        role: "user",
+        content: [{ type: "image_url", image_url: { url } }],
+      }]);
+    }
+  });
+
   for (
     const url of [
       "/home/user/photo.png",

@@ -158,19 +158,21 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
-  it("sends Gemini Files API URIs for non-image files as fileData", () => {
-    const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
-    const body = buildGoogleGenerateContentRequest("google", {
-      prompt: [{
+  for (const mediaType of ["application/pdf", "image/png"]) {
+    it(`sends Gemini Files API URIs as fileData: ${mediaType}`, () => {
+      const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: fileUri, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
         role: "user",
-        content: [{ type: "file", url: fileUri, mediaType: "application/pdf" }],
-      }],
-    }, createWarningCollector());
-    assertEquals(body.contents, [{
-      role: "user",
-      parts: [{ fileData: { mimeType: "application/pdf", fileUri } }],
-    }]);
-  });
+        parts: [{ fileData: { mimeType: mediaType, fileUri } }],
+      }]);
+    });
+  }
 
   for (
     const url of [
