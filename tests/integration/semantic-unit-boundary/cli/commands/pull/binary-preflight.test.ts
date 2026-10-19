@@ -1,10 +1,14 @@
+/**
+ * Binary pull safety needs real local files and process environment state.
+ * Keep this byte-preservation regression at the semantic integration boundary.
+ */
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
-import { pullCommand } from "./command.ts";
+import { pullCommand } from "../../../../../../cli/commands/pull/command.ts";
 
 for (
   const options of [
