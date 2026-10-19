@@ -123,6 +123,19 @@ describe("explicit integration client", () => {
     assertEquals(executions, 1);
   });
 
+  it("sends one argument string over 1 MiB within the request bound", async () => {
+    const content = "A".repeat(2 * 1024 * 1024);
+    let sent: unknown;
+    await withClientFetch(async (url, init) => {
+      if (String(url).includes("/integration-tools/")) sent = JSON.parse(String(init?.body));
+      return projectOr(url, { content: [], structuredContent: { ok: true } });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      await client.runTool("github__create_issue", { body: content });
+    });
+    assertStrictEquals((sent as { arguments: { body: string } }).arguments.body, content);
+  });
+
   it("retains typed rate limit metadata and native retryAfter without replay", async () => {
     let calls = 0;
     const condition = {
