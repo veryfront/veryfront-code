@@ -212,6 +212,12 @@ function getDefaultFormat(
  * per-request project env overlay cannot change process-level logger config.
  */
 let loggerConfig: LoggerConfig | null = null;
+let stderrOnly = false;
+
+/** Reserve stdout for a host protocol while preserving framework diagnostics. */
+export function setLoggerStderrOnly(enabled: boolean): void {
+  stderrOnly = enabled;
+}
 
 let legacyLogRecordEmitter: LogRecordEmitter | null = null;
 const logRecordSubscribers = new NativeSet<LogRecordEmitter>();
@@ -712,7 +718,7 @@ class ConsoleLogger implements Logger {
         }
       }
 
-      const consoleFn = NativeConsole[consoleMethod];
+      const consoleFn = NativeConsole[stderrOnly ? "error" : consoleMethod];
       if (typeof consoleFn === "function") {
         try {
           apply(consoleFn, NativeConsole, [line]);
