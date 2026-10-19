@@ -361,8 +361,11 @@ describe("agent output schema", () => {
       );
       assertEquals(Boolean(finishLine), true);
       const finish = parseExecutorDataEvent(JSON.parse(finishLine!.slice(6)));
-      assertEquals(finish.data, { city: "Berlin", tempC: 12 });
-      assertEquals(finish.object, finish.data);
+      assertEquals("data" in finish ? finish.data : undefined, { city: "Berlin", tempC: 12 });
+      assertEquals(
+        "object" in finish ? finish.object : undefined,
+        "data" in finish ? finish.data : undefined,
+      );
     });
 
     it("should emit an error event when streamed output is not parseable", async () => {
