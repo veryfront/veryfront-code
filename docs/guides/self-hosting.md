@@ -248,16 +248,6 @@ export async function attachmentParts(messageId: string, attachmentId: string, f
 }
 ```
 
-This source runs only in your own process. In a run on Veryfront Cloud, use
-the hosted `outlook__upload_attachment` tool for a large attachment instead. It
-returns an upload reference, not bytes: the API downloads the attachment with
-the project's Outlook connection, saves it to project uploads, and returns
-`upload_id`, `file_name`, `content_type` and `size`. Delegated connections and
-app-only access to the configured mailbox both work. Attachments up to 25 MiB
-fit; a larger one fails with an error that names the size and the limit. The
-tool needs `outlook__get_attachment` enabled for the project. Pass
-`message_id`, `attachment_id`, and the destination upload path as `file_path`.
-
 The source exchanges the client secret at
 `login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token
 in process memory until shortly before it expires. It stores no refresh token
@@ -268,6 +258,18 @@ HTTP 401, the source drops it and retries the call once with a new token. A
 rejected token request fails with an error that names the credential
 variables.
 Requests go only to Microsoft origins and never to Veryfront APIs.
+
+This source runs only in your own process. In a run on Veryfront Cloud, use
+the hosted `outlook__upload_attachment` tool for a large attachment instead. It
+returns an upload reference, not bytes: the API downloads the attachment with
+the project's Outlook connection, saves it to project uploads, and returns
+`upload_id`, `file_name`, `content_type` and `size`. Delegated connections and
+app-only access to the configured mailbox both work. Attachments up to 25 MiB
+fit; a larger one fails with an error that names the size and the limit. Pass
+`project_reference`, `message_id`, `attachment_id`, and the destination upload
+path as `file_path`. An existing upload at that path is returned as is, without
+a new download. The tool needs `outlook__get_attachment` enabled for the
+project, and the caller needs write access to project uploads.
 
 ## Build the project
 
