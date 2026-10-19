@@ -1,9 +1,9 @@
-import { createConnectedLocalPlatformTools } from "../ag-ui/connected-local-platform-tools.ts";
-import { getActiveRuntimeRemoteToolSources } from "../runtime/remote-tool-source-context.ts";
-import { createHostedRunEventWriterCapability } from "../hosted/child-run-event-writer-token.ts";
+import { createConnectedLocalPlatformTools } from "../../../src/agent/ag-ui/connected-local-platform-tools.ts";
+import { getActiveRuntimeRemoteToolSources } from "../../../src/agent/runtime/remote-tool-source-context.ts";
+import { createHostedRunEventWriterCapability } from "../../../src/agent/hosted/child-run-event-writer-token.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { executeConfiguredTool } from "../runtime/tool-helpers.ts";
+import { executeConfiguredTool } from "../../../src/agent/runtime/tool-helpers.ts";
 import { tool } from "#veryfront/tool";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -13,7 +13,7 @@ import {
   createConnectedLocalWriterVerifier,
   createVerifiedPlatformToolDependencyRunner,
   getVerifiedPlatformToolDependencies,
-} from "./auth.ts";
+} from "../../../src/agent/service/auth.ts";
 
 it("connected writer admits only API-signed exact-run wrapper dependencies", async () => {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
