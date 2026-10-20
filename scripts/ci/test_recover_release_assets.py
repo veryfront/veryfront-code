@@ -50,6 +50,10 @@ class RecoveryAssetsTests(unittest.TestCase):
 
     def transport(self, args):
         self.calls.append(args)
+        if args[:2] == ['api', 'graphql']:
+            release = {'databaseId': self.release['id'], 'tagName': self.release['tag_name'],
+                       'isDraft': self.release['draft'], 'isPrerelease': self.release['prerelease']}
+            return json.dumps({'data': {'repository': {'release': release}}}).encode()
         if uploading(args):
             self.assets.append(self.uploaded())
         elif args[0] == 'api' and 'DELETE' in args:
@@ -79,18 +83,23 @@ class RecoveryAssetsTests(unittest.TestCase):
     def run_recovery(self):
         return module().recover(self.manifest_path, self.digest, self.directory, self.transport)
 
-    def test_authenticated_list_finds_draft_when_tag_endpoint_returns_404(self):
-        original = self.transport
-        def realistic(args):
-            if args[0] == 'api' and '/releases/tags/' in args[-1]:
-                raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
-            if args[0] == 'api' and '/releases?' in args[-1]:
-                self.calls.append(args)
-                return json.dumps([self.release]).encode()
-            return original(args)
+    def test_exact_tag_lookup_ignores_more_than_1000_unrelated_releases(self):
+        calls = []
+        def inventory(args):
+            calls.append(args)
+            if args[:2] == ['api', 'graphql']:
+                return json.dumps({'data': {'repository': {'release': None}}}).encode()
+            return json.dumps([{'tag_name': 'unrelated'}] * 100).encode()
+        result = module().discover_release(inventory)
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:2], ['api', 'graphql'])
+
+    def test_exact_lookup_resumes_existing_draft_without_creation(self):
         self.assets = [self.uploaded()]
-        module().recover(self.manifest_path, self.digest, self.directory, realistic)
+        self.run_recovery()
         self.assertFalse(any(a[:2] == ['release', 'create'] for a in self.calls))
+        self.assertTrue(any(a[:2] == ['api', 'graphql'] for a in self.calls))
 
     def test_uploads_missing_once_then_verifies_before_publication(self):
         result = self.run_recovery()
@@ -111,7 +120,7 @@ class RecoveryAssetsTests(unittest.TestCase):
             self.public_ref = value
             with self.assertRaises(ValueError):
                 recover(self.manifest_path, self.digest, self.directory, self.transport)
-            self.assertTrue(all('GET' in args for args in self.calls))
+            self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_public_tag_changed_immediately_before_publication_is_rejected(self):
         recover = module().recover
@@ -156,7 +165,7 @@ class RecoveryAssetsTests(unittest.TestCase):
         recover = module().recover
         with self.assertRaises(ValueError):
             recover(self.manifest_path, self.digest, self.directory, older_latest)
-        self.assertTrue(all('GET' in args for args in self.calls))
+        self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_newer_or_unrecognized_latest_blocks_publication(self):
         recover = module().recover
@@ -269,15 +278,15 @@ class RecoveryAssetsTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.run_recovery()
         self.assertEqual(self.calls, [])
 
-    def test_creates_only_after_complete_empty_list_and_rejects_auth_failure(self):
+    def test_creates_only_after_exact_null_and_rejects_auth_failure(self):
         original = self.transport
         missing = True
         def absent(args):
             nonlocal missing
-            if args[0] == 'api' and '/releases?' in args[-1] and missing:
+            if args[:2] == ['api', 'graphql'] and missing:
                 missing = False
                 self.calls.append(args)
-                return b'[]'
+                return b'{"data":{"repository":{"release":null}}}'
             if args[:2] == ['release', 'create']:
                 self.calls.append(args)
                 self.assertIn('--draft', args)
@@ -304,7 +313,7 @@ class RecoveryAssetsTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             recover(self.manifest_path, self.digest, self.directory, missing_tag)
         self.assertEqual(len(self.calls), 1)
-        self.assertTrue(all('GET' in args for args in self.calls))
+        self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_missing_final_upload_never_publishes(self):
         original = self.transport
@@ -345,26 +354,32 @@ class RecoveryAssetsTests(unittest.TestCase):
             recover(self.manifest_path, self.digest, self.directory, wrong)
         self.assertTrue(all(not uploading(a) and not publishing(a) for a in self.calls))
 
-    def test_duplicate_tags_or_incomplete_bounded_listing_never_create(self):
-        for rows in [[self.release, dict(self.release, id=8)],
-                     [{'tag_name': 'another'}] * 100]:
+    def test_invalid_exact_query_never_creates(self):
+        original = self.transport
+        recover = module().recover
+        for response in ({'errors': [{'message': 'denied'}]}, {'data': {'repository': None}}):
             self.calls = []
-            def listed(args):
-                self.calls.append(args)
-                return json.dumps(rows).encode()
-            recover = module().recover
+            def invalid(args):
+                if args[:2] == ['api', 'graphql']:
+                    self.calls.append(args)
+                    return json.dumps(response).encode()
+                return original(args)
             with self.assertRaises(ValueError):
-                recover(self.manifest_path, self.digest, self.directory, listed)
-            self.assertTrue(all(a[0] == 'api' and 'GET' in a for a in self.calls))
+                recover(self.manifest_path, self.digest, self.directory, invalid)
+            self.assertTrue(all('GET' in a or a[:2] == ['api', 'graphql'] for a in self.calls))
 
-    def test_list_404_is_not_absence_and_never_creates(self):
+    def test_query_404_is_not_absence_and_never_creates(self):
+        original = self.transport
         def unavailable(args):
+            if args[:2] != ['api', 'graphql']:
+                return original(args)
             self.calls.append(args)
             raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
         recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
             recover(self.manifest_path, self.digest, self.directory, unavailable)
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
+        self.assertTrue(all('GET' in a or a[:2] == ['api', 'graphql'] for a in self.calls))
 
 
 

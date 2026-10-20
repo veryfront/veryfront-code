@@ -51,16 +51,33 @@ def verify_ref(value, target):
             and value['object'].get('sha') == target, 'Existing tag is not the exact pinned commit')
 
 
+def find_release(repository, transport):
+    owner, name = repository.split('/')
+    query = ('query($owner:String!,$name:String!,$tag:String!){'
+             'repository(owner:$owner,name:$name){release(tagName:$tag){'
+             'databaseId tagName isDraft isPrerelease}}}')
+    value = decode(transport(['api', 'graphql', '-f', 'query=' + query,
+                              '-f', 'owner=' + owner, '-f', 'name=' + name, '-f', 'tag=' + TAG]))
+    require(type(value) is dict and not value.get('errors') and type(value.get('data')) is dict,
+            'Release query failed')
+    repo = value['data'].get('repository')
+    require(type(repo) is dict and 'release' in repo, 'Release repository unavailable')
+    release = repo['release']
+    if release is None:
+        return None
+    require(type(release) is dict and type(release.get('databaseId')) is int
+            and release['databaseId'] > 0 and release.get('tagName') == TAG
+            and type(release.get('isDraft')) is bool and type(release.get('isPrerelease')) is bool,
+            'Release query identity or mode differs')
+    exact = read_api(f'repos/{repository}/releases/{release["databaseId"]}', transport)
+    require(type(exact) is dict and type(exact.get('id')) is int and exact['id'] == release['databaseId']
+            and exact.get('tag_name') == TAG and exact.get('draft') is release['isDraft']
+            and exact.get('prerelease') is release['isPrerelease'], 'Release readback differs')
+    return exact
+
+
 def find_source_release(transport):
-    matches = []
-    for page in range(1, 11):
-        rows = read_api(f'repos/{SOURCE_REPO}/releases?per_page=100&page={page}', transport)
-        require(type(rows) is list and all(type(row) is dict for row in rows), 'Invalid release listing')
-        matches.extend(row for row in rows if row.get('tag_name') == TAG)
-        require(len(matches) <= 1, 'Duplicate source release tags')
-        if len(rows) < 100:
-            return matches[0] if matches else None
-    raise ValueError('Source release listing exceeds bound')
+    return find_release(SOURCE_REPO, transport)
 
 
 def verify_source_release(value):
