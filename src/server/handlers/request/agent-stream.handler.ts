@@ -641,7 +641,7 @@ async function verifiedCanonicalRunId(
     token: string | null;
     projectId: string | undefined;
     publicRunId: string;
-    verify?: AgentStreamHandlerDeps["verifyRunTerminalToken"];
+    verify: AgentStreamHandlerDeps["verifyRunTerminalToken"];
   },
 ): Promise<string | undefined> {
   if (!input.token || !input.projectId || !input.verify) return undefined;
