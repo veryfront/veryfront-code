@@ -1005,6 +1005,11 @@ describe("src/skill/executor", () => {
           fetchCalls[3]!.init?.body?.toString() ?? "",
           "cd '/workspace/.veryfront-skill-script-",
         );
+        const scriptCommand = JSON.parse(String(fetchCalls[3]!.init?.body)) as {
+          command: string;
+        };
+        assertStringIncludes(scriptCommand.command, "'npx' 'tsx'");
+        assertEquals(scriptCommand.command.includes("'deno' 'run'"), false);
       });
     }
 
