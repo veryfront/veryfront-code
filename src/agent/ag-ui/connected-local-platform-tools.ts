@@ -293,7 +293,10 @@ export function createConnectedLocalPlatformTools(
       // Worker event scopes may use a public ID. Run queries use the admitted
       // canonical UUID, scoped to this execution rather than retained globally.
       const source = registeredSource
-        ? createLivePlatformMcpSource(registeredSource, { runId: input.canonicalRunId })
+        ? createLivePlatformMcpSource(registeredSource, {
+          runId: input.canonicalRunId,
+          runIdBindsToolAuthorization: true,
+        })
         : undefined;
       const credential = credentials.get(input.owner);
       if (!credential) throw new Error("Connected run credential is unavailable");

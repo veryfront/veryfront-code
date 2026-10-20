@@ -259,7 +259,7 @@ describe("current-run platform lookup", () => {
     return { ...catalog, calls };
   }
   it("projects only get_run and dispatches the authoritative ID when omitted", async () => {
-    const bound = fixture({ runId });
+    const bound = fixture({ runId, runIdBindsToolAuthorization: true });
     assertEquals(bound.definitions[0]?.parameters.required, []);
     assertEquals(bound.definitions[1]?.parameters.required, ["run_id"]);
     assertEquals(definitions[0]?.parameters.required, ["run_id"]);
@@ -267,7 +267,7 @@ describe("current-run platform lookup", () => {
     assertEquals(bound.calls, [{ run_id: runId }]);
   });
   it("preserves every explicit run_id for API validation and authorization", async () => {
-    const bound = fixture({ runId });
+    const bound = fixture({ runId, runIdBindsToolAuthorization: true });
     for (const value of ["10000000-1000-4000-8000-100000000001", "invalid", null, undefined]) {
       const args = { run_id: value };
       await bound.source.executeTool("veryfront__get_run", args);
@@ -278,7 +278,10 @@ describe("current-run platform lookup", () => {
   });
   it("requires explicit IDs without valid binding authority", async () => {
     for (
-      const binding of [undefined, {}, { runId: "invalid" }, {
+      const binding of [undefined, {}, { runId }, {
+        runId: "invalid",
+        runIdBindsToolAuthorization: true,
+      }, {
         runId,
         runIdBindsToolAuthorization: false,
       }]
@@ -311,9 +314,19 @@ it("live current-run binding follows each execution context without retaining an
   });
   const first = "bf486556-ec8a-446d-9184-7a9890966a1d";
   const second = "10000000-1000-4000-8000-100000000001";
-  assertEquals((await source.listTools({ runId: first }))[0]?.parameters.required, []);
-  await source.executeTool("veryfront__get_run", {}, { runId: first });
-  await source.executeTool("veryfront__get_run", {}, { runId: second });
+  assertEquals(
+    (await source.listTools({ runId: first, runIdBindsToolAuthorization: true }))[0]?.parameters
+      .required,
+    [],
+  );
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: first,
+    runIdBindsToolAuthorization: true,
+  });
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: second,
+    runIdBindsToolAuthorization: true,
+  });
   await source.executeTool("veryfront__get_run", {}, {
     runId: second,
     runIdBindsToolAuthorization: false,
@@ -340,7 +353,7 @@ it("a verified run-scoped live source binds discovery and dispatch without calle
       calls.push(args);
       return args;
     },
-  }, { runId });
+  }, { runId, runIdBindsToolAuthorization: true });
   assertEquals((await source.listTools())[0]?.parameters.required, []);
   await source.executeTool("veryfront__get_run", {});
   await source.executeTool("veryfront__get_run", {}, {

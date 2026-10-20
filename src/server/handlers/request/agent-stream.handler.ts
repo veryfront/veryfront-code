@@ -729,7 +729,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const platformCatalog = createPlatformMcpCatalogSource(
     platformRemoteToolSource,
     platformToolDefinitions,
-    { runId: input.currentRunId },
+    { runId: input.currentRunId, runIdBindsToolAuthorization: true },
   );
   platformToolDefinitions = platformCatalog.definitions;
   includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);

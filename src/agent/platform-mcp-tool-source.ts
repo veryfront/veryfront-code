@@ -75,7 +75,7 @@ function trustedCurrentRunId(
   context?: Pick<ToolExecutionContext, "runId" | "runIdBindsToolAuthorization">,
 ): string | undefined {
   const id = context?.runId;
-  return context?.runIdBindsToolAuthorization !== false && typeof id === "string" &&
+  return context?.runIdBindsToolAuthorization === true && typeof id === "string" &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
     ? id
     : undefined;
