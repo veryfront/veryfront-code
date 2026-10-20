@@ -510,6 +510,13 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
   }
 }
 
+function detectSandboxRuntime(scriptPath: string): { command: string; args: string[] } {
+  if (extname(scriptPath).toLowerCase() === ".ts") {
+    return { command: "npx", args: ["tsx", scriptPath] };
+  }
+  return detectRuntime(scriptPath);
+}
+
 /**
  * Local script executor using runCommand() from the compat layer.
  */
@@ -633,7 +640,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       });
       if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
 
-      const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
+      const { command, args: runtimeArgs } = detectSandboxRuntime(sandboxScriptPath);
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
