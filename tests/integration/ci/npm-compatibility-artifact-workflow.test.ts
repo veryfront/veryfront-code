@@ -1,7 +1,19 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
+import {
+  type InstalledCredentialProbe,
+  installedCredentialProbeProfile,
+  runInstalledCredentialProbes,
+  withInstalledProbeCleanup,
+} from "../../../scripts/test/installed-credential-probes.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -502,5 +514,242 @@ describe("canonical npm artifact workflow", () => {
       1,
     );
     assertEquals((await runArtifactGate(skipped)).code, 1);
+  });
+});
+
+function credentialProbeOutput(rejected = 3, changes: Record<string, unknown> = {}) {
+  return {
+    code: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      node: "24.14.0",
+      undici: "7.21.0",
+      observations: 0,
+      fetches: 0,
+      rejected,
+      cleanRequests: 1,
+      ...changes,
+    }),
+  };
+}
+
+describe("installed credential probe orchestration", () => {
+  it("retires the process directory before returning a successful result", async () => {
+    const order: string[] = [];
+    const value = {};
+    const observed = await withInstalledProbeCleanup(
+      () => {
+        order.push("execute");
+        return Promise.resolve(value);
+      },
+      () => {
+        order.push("cleanup");
+        return Promise.resolve();
+      },
+    );
+    assertStrictEquals(observed, value);
+    assertEquals(order, ["execute", "cleanup"]);
+  });
+
+  it("retains single and concurrent process/cleanup failures without a success fallback", async () => {
+    const primary = new Error("synthetic process failure");
+    const cleanup = new Error("synthetic cleanup failure");
+    for (const processFailed of [false, true]) {
+      for (const cleanupFailed of [false, true]) {
+        if (!processFailed && !cleanupFailed) continue;
+        let cleanupCalls = 0;
+        let caught: unknown;
+        try {
+          await withInstalledProbeCleanup(
+            () => processFailed ? Promise.reject(primary) : Promise.resolve({}),
+            () => {
+              cleanupCalls++;
+              return cleanupFailed ? Promise.reject(cleanup) : Promise.resolve();
+            },
+          );
+        } catch (error) {
+          caught = error;
+        }
+        assertEquals(cleanupCalls, 1);
+        if (processFailed && cleanupFailed) {
+          assert(caught instanceof AggregateError);
+          assertStrictEquals(caught.errors[0], primary);
+          assertStrictEquals(caught.errors[1], cleanup);
+        } else {
+          assertStrictEquals(caught, processFailed ? primary : cleanup);
+        }
+      }
+    }
+  });
+  it("requires the canonical remote install job and preserves local smoke behavior", () => {
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: [],
+        githubActions: "true",
+        githubJob: "tests-npm-install-smoke",
+      }),
+      true,
+    );
+    for (const githubJob of [undefined, "tests", "registry-release"]) {
+      assertEquals(
+        installedCredentialProbeProfile({
+          args: [],
+          githubActions: "true",
+          githubJob,
+        }),
+        false,
+      );
+    }
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: [],
+        githubActions: undefined,
+        githubJob: "tests-npm-install-smoke",
+      }),
+      false,
+    );
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: ["--credential-boundary-probes"],
+        githubActions: undefined,
+        githubJob: undefined,
+      }),
+      true,
+    ); // Execution still refuses outside Linux Actions.
+  });
+  it("runs both retained fixtures in order without claiming deployment acceptance", async () => {
+    const calls: InstalledCredentialProbe[] = [];
+    const report = await runInstalledCredentialProbes({
+      githubActions: "true",
+      runnerOs: "Linux",
+      execute: (fixture) => {
+        calls.push(fixture);
+        return Promise.resolve(credentialProbeOutput(fixture.includes("header") ? 3 : 2));
+      },
+    });
+    assertEquals(calls, [
+      "native-header-package-probe.mjs",
+      "native-body-package-probe.mjs",
+    ]);
+    assertEquals(report.probes.length, 2);
+    assertEquals(report.probes[0].observed.observations, 0);
+    assertEquals(report.probes[1].observed.rejected, 2);
+    assertEquals(report.deployedBoundaryAccepted, false);
+  });
+
+  it("refuses a local or non-Linux profile before invoking a process callback", async () => {
+    for (
+      const [githubActions, runnerOs] of [
+        [undefined, "Linux"],
+        ["false", "Linux"],
+        ["true", "Darwin"],
+        ["true", "Windows"],
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          runInstalledCredentialProbes({
+            githubActions,
+            runnerOs,
+            execute: () => {
+              calls++;
+              return Promise.resolve(credentialProbeOutput());
+            },
+          }),
+        Error,
+        "require Linux Actions",
+      );
+      assertEquals(calls, 0);
+    }
+  });
+
+  it("rejects a leaking, fetching, skipped or miscounted probe without retry", async () => {
+    for (
+      const changes of [
+        { observations: 1 },
+        { fetches: 1 },
+        { cleanRequests: 0 },
+        { rejected: 0 },
+        { rejected: "3" },
+        { extra: "unexpected" },
+        { node: "unknown" },
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          runInstalledCredentialProbes({
+            githubActions: "true",
+            runnerOs: "Linux",
+            execute: () => {
+              calls++;
+              return Promise.resolve(credentialProbeOutput(3, changes));
+            },
+          }),
+        Error,
+        "assertions are unconfirmed",
+      );
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("does not accept successful exit with malformed or noisy output", async () => {
+    for (
+      const result of [
+        { ...credentialProbeOutput(), code: 1 },
+        { ...credentialProbeOutput(), stderr: "unexpected warning" },
+        { ...credentialProbeOutput(), stdout: "x".repeat(4097) },
+        { ...credentialProbeOutput(), stdout: "not json" },
+        { ...credentialProbeOutput(), stdout: "null" },
+        { ...credentialProbeOutput(), stdout: "[]" },
+      ]
+    ) {
+      await assertRejects(() =>
+        runInstalledCredentialProbes({
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => Promise.resolve(result),
+        })
+      );
+    }
+  });
+
+  it("requires the body fixture after a successful header fixture", async () => {
+    let calls = 0;
+    await assertRejects(
+      () =>
+        runInstalledCredentialProbes({
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve(credentialProbeOutput()); // Header rejection count is invalid for the body fixture.
+          },
+        }),
+      Error,
+      "assertions are unconfirmed",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("preserves the process error instead of swallowing it or starting another probe", async () => {
+    const failure = new Error("synthetic execution failure");
+    let caught: unknown;
+    let calls = 0;
+    try {
+      await runInstalledCredentialProbes({
+        githubActions: "true",
+        runnerOs: "Linux",
+        execute: () => {
+          calls++;
+          return Promise.reject(failure);
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assertEquals(caught, failure);
+    assertEquals(calls, 1);
   });
 });
