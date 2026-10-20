@@ -29,6 +29,8 @@
  *  10. the managed broker executes through a separate executor process,
  *      retains persistence during shutdown, and keeps synthetic credentials
  *      out of project-controlled hooks
+ *  11. the Linux Actions opt-in runs the retained header/body credential probes
+ *      in separate installed-package Node processes with cleared environments
  *
  * The runtime under test stays the packed npm artifact under the ambient Node
  * version: this orchestrator only spawns `npm`, `node`, and `deno eval`
@@ -40,6 +42,10 @@
  */
 
 import { fromFileUrl } from "#std/path";
+import {
+  installedCredentialProbeProfile,
+  runInstalledCredentialProbes,
+} from "./installed-credential-probes.ts";
 import {
   formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
@@ -1900,6 +1906,63 @@ async function runSmoke(workDir: string): Promise<void> {
     if (Deno.args.includes("--managed-broker-only")) {
       await checkManagedBroker(workDir);
       return;
+    }
+
+    if (
+      installedCredentialProbeProfile({
+        args: Deno.args,
+        githubActions: Deno.env.get("GITHUB_ACTIONS"),
+        githubJob: Deno.env.get("GITHUB_JOB"),
+      })
+    ) {
+      const result = await runInstalledCredentialProbes({
+        githubActions: Deno.env.get("GITHUB_ACTIONS"),
+        runnerOs: Deno.env.get("RUNNER_OS"),
+        execute: async (fixture) => {
+          const directory = await Deno.makeTempDir({
+            dir: workDir,
+            prefix: "credential-probe-",
+          });
+          let processFailure: unknown;
+          try {
+            const path = `${directory}/${fixture}`;
+            await Deno.copyFile(
+              `${ROOT_DIR}/tests/integration/agent/fixtures/${fixture}`,
+              path,
+            );
+            return await runChecked("installed credential boundary", "node", [
+              path,
+            ], {
+              cwd: workDir,
+              clearEnv: true,
+              env: {
+                PATH: Deno.env.get("PATH") ?? "",
+                HOME: directory,
+                TMPDIR: directory,
+                NODE_ENV: "production",
+                VF_DISABLE_LRU_INTERVAL: "1",
+              },
+              timeoutMs: 45_000,
+            });
+          } catch (error) {
+            processFailure = error;
+            throw error;
+          } finally {
+            try {
+              await Deno.remove(directory, { recursive: true });
+            } catch (cleanupFailure) {
+              if (processFailure !== undefined) {
+                throw new AggregateError(
+                  [processFailure, cleanupFailure],
+                  "Installed credential probe and cleanup failed",
+                );
+              }
+              throw cleanupFailure;
+            }
+          }
+        },
+      });
+      console.log(JSON.stringify(result));
     }
 
     await checkRootInstall(workDir);
