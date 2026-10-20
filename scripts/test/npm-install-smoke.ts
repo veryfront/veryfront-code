@@ -45,6 +45,7 @@ import { fromFileUrl } from "#std/path";
 import {
   installedCredentialProbeProfile,
   runInstalledCredentialProbes,
+  withInstalledProbeCleanup,
 } from "./installed-credential-probes.ts";
 import {
   formatNpmCompatibilityArtifactCliError,
@@ -1923,8 +1924,7 @@ async function runSmoke(workDir: string): Promise<void> {
             dir: workDir,
             prefix: "credential-probe-",
           });
-          let processFailure: unknown;
-          try {
+          return await withInstalledProbeCleanup(async () => {
             const path = `${directory}/${fixture}`;
             await Deno.copyFile(
               `${ROOT_DIR}/tests/integration/agent/fixtures/${fixture}`,
@@ -1944,22 +1944,7 @@ async function runSmoke(workDir: string): Promise<void> {
               },
               timeoutMs: 45_000,
             });
-          } catch (error) {
-            processFailure = error;
-            throw error;
-          } finally {
-            try {
-              await Deno.remove(directory, { recursive: true });
-            } catch (cleanupFailure) {
-              if (processFailure !== undefined) {
-                throw new AggregateError(
-                  [processFailure, cleanupFailure],
-                  "Installed credential probe and cleanup failed",
-                );
-              }
-              throw cleanupFailure;
-            }
-          }
+          }, () => Deno.remove(directory, { recursive: true }));
         },
       });
       console.log(JSON.stringify(result));

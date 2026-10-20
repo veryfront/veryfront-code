@@ -2,6 +2,7 @@ import {
   assert,
   assertEquals,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -11,6 +12,7 @@ import {
   type InstalledCredentialProbe,
   installedCredentialProbeProfile,
   runInstalledCredentialProbes,
+  withInstalledProbeCleanup,
 } from "../../../scripts/test/installed-credential-probes.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -532,6 +534,53 @@ function credentialProbeOutput(rejected = 3, changes: Record<string, unknown> = 
 }
 
 describe("installed credential probe orchestration", () => {
+  it("retires the process directory before returning a successful result", async () => {
+    const order: string[] = [];
+    const value = {};
+    const observed = await withInstalledProbeCleanup(
+      () => {
+        order.push("execute");
+        return Promise.resolve(value);
+      },
+      () => {
+        order.push("cleanup");
+        return Promise.resolve();
+      },
+    );
+    assertStrictEquals(observed, value);
+    assertEquals(order, ["execute", "cleanup"]);
+  });
+
+  it("retains single and concurrent process/cleanup failures without a success fallback", async () => {
+    const primary = new Error("synthetic process failure");
+    const cleanup = new Error("synthetic cleanup failure");
+    for (const processFailed of [false, true]) {
+      for (const cleanupFailed of [false, true]) {
+        if (!processFailed && !cleanupFailed) continue;
+        let cleanupCalls = 0;
+        let caught: unknown;
+        try {
+          await withInstalledProbeCleanup(
+            () => processFailed ? Promise.reject(primary) : Promise.resolve({}),
+            () => {
+              cleanupCalls++;
+              return cleanupFailed ? Promise.reject(cleanup) : Promise.resolve();
+            },
+          );
+        } catch (error) {
+          caught = error;
+        }
+        assertEquals(cleanupCalls, 1);
+        if (processFailed && cleanupFailed) {
+          assert(caught instanceof AggregateError);
+          assertStrictEquals(caught.errors[0], primary);
+          assertStrictEquals(caught.errors[1], cleanup);
+        } else {
+          assertStrictEquals(caught, processFailed ? primary : cleanup);
+        }
+      }
+    }
+  });
   it("requires the canonical remote install job and preserves local smoke behavior", () => {
     assertEquals(
       installedCredentialProbeProfile({

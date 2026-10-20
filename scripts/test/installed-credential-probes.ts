@@ -19,6 +19,32 @@ export function installedCredentialProbeProfile(options: {
       options.githubJob === "tests-npm-install-smoke");
 }
 
+/** Retire the owned process directory on every outcome, preserving both errors. */
+export async function withInstalledProbeCleanup<T>(
+  execute: () => Promise<T>,
+  cleanup: () => Promise<void>,
+): Promise<T> {
+  let result: { ok: true; value: T } | { ok: false; error: unknown };
+  try {
+    result = { ok: true, value: await execute() };
+  } catch (error) {
+    result = { ok: false, error };
+  }
+  try {
+    await cleanup();
+  } catch (cleanupFailure) {
+    if (!result.ok) {
+      throw new AggregateError(
+        [result.error, cleanupFailure],
+        "Installed credential probe and cleanup failed",
+      );
+    }
+    throw cleanupFailure;
+  }
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
 interface ProbeOutput {
   code: number;
   stdout: string;
