@@ -10,6 +10,7 @@ import {
 } from "#veryfront/server/handlers/request/agent-stream.handler.test-helpers.ts";
 import {
   createAgent,
+  createAgentWithConfig,
   createControlPlaneSignature,
   encodeDataStreamEvent,
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
@@ -17,6 +18,7 @@ import { sealIngressCredentials } from "#veryfront/security/http/ingress-credent
 import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { getRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import type { RemoteToolSource } from "#veryfront/tool";
 
 const projectId = "10000000-1000-4000-8000-100000000005";
 const canonicalRunId = "22222222-2222-4222-8222-222222222222";
@@ -27,6 +29,8 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
   Deno.test(`validates signed project event persistence (${testCase})`, async () => {
     let discoveryCalls = 0;
     let scope: unknown;
+    let platformSource: RemoteToolSource | undefined;
+    const platformCalls: Record<string, unknown>[] = [];
     const writes: { headers: Headers; body: Record<string, unknown>; url: string }[] = [];
     let latestEventId = 7;
     let latestExternalSequence = 3;
@@ -66,6 +70,8 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
         }
         : {}),
       platformToolDependencies: [],
+      credentials: { authToken: "invocation-token" },
+      tools: [{ name: "veryfront__get_run" }],
       projectEventPersistence: {
         mode: "runtime-owned-v1",
         canonicalRunId,
@@ -122,11 +128,17 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
         discoveryCalls++;
         return Promise.resolve(createEmptyDiscoveryResult());
       },
-      getAgent: () => createAgent("assistant-1"),
+      getAgent: () =>
+        accepted
+          ? createAgentWithConfig("assistant-1", {
+            mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_run"] } }],
+          })
+          : createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
+      createRuntime: (runtimeAgent) => ({
         stream: () => {
+          platformSource = Reflect.get(runtimeAgent.config, "__vfRemoteToolSources")?.[0];
           scope = getRuntimeObservationWriterScope(getActiveRunEventSink()!);
           return Promise.resolve(
             new ReadableStream<Uint8Array>({
@@ -149,8 +161,25 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
       const observed = observeFetchRequestInit(init);
       const request = JSON.parse(String(observed.body));
       if (!request.events) {
+        if (request.method === "tools/call") platformCalls.push(request.params);
         return Promise.resolve(
-          Response.json({ jsonrpc: "2.0", id: request.id, result: { tools: [] } }),
+          Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: request.method === "tools/list"
+              ? {
+                tools: [{
+                  name: "get_run",
+                  description: "Get a run",
+                  inputSchema: {
+                    type: "object",
+                    properties: { run_id: { type: "string", format: "uuid" } },
+                    required: ["run_id"],
+                  },
+                }],
+              }
+              : { content: [{ type: "text", text: "accepted" }] },
+          }),
         );
       }
       writes.push({ headers: new Headers(observed.headers), body: request, url: String(url) });
@@ -195,6 +224,10 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
       assertEquals(result.response.status, accepted ? 200 : 500);
       const output = await result.response.text();
       if (accepted) assertStringIncludes(output, "Done", JSON.stringify(writes));
+      if (accepted) {
+        assertExists(platformSource);
+        await platformSource.executeTool("veryfront__get_run", {}, { runId: "run_1" });
+      }
     });
     assertEquals(discoveryCalls, accepted ? 1 : 0);
     if (accepted) {
@@ -206,6 +239,11 @@ for (const testCase of ["valid", "missing-token", "managed-recovery"]) {
       );
       assertEquals(writes.every((write) => write.url.includes(canonicalRunId)), true);
       assertEquals(writes[0]!.body.expected_previous_external_event_sequence, 3);
+      assertEquals(platformCalls[0]?.name, "get_run");
+      assertEquals(
+        (platformCalls[0]?.arguments as Record<string, unknown>)?.run_id,
+        canonicalRunId,
+      );
       assertEquals(
         writes.flatMap((write) => write.body.events as Array<{ type?: string }>).some((event) =>
           event.type === "TEXT_MESSAGE_END"

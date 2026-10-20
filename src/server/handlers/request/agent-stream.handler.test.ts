@@ -6835,3 +6835,70 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(captures.length, 0);
   });
 });
+
+for (const verification of ["valid", "rejected", "throws"] as const) {
+  Deno.test(`canonical terminal verification fails closed: ${verification}`, async () => {
+    const runId = "run_1";
+    const projectId = "10000000-1000-4000-8000-100000000005";
+    const payload = btoa(JSON.stringify({
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      runId,
+      canonicalRunId: "22222222-2222-4222-8222-222222222222",
+      dispatchNonce: "dispatch-1",
+    })).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const token = `header.${payload}.signature`;
+    let verified = 0;
+    let streamed = false;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      verifyRunTerminalToken: (input) => {
+        verified++;
+        assertEquals(input, { token, projectId, runId });
+        if (verification === "throws") throw new Error("Verifier unavailable");
+        return Promise.resolve(verification === "valid");
+      },
+      createRuntime: () => ({
+        stream: () => {
+          streamed = true;
+          return Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+          );
+        },
+      }),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId,
+    });
+    const result = await handler.handle(
+      sealIngressCredentials(
+        new Request(
+          `https://example.com/api/control-plane/runs/${runId}/stream`,
+          {
+            method: "POST",
+            headers: {
+              "x-veryfront-control-plane-jws": jws,
+              [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+            },
+            body,
+          },
+        ),
+      ),
+      { ...createCtx(publicKeyPem), projectId },
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 200, await result.response.clone().text());
+    await result.response.text();
+    assertEquals(verified, 1);
+    assertEquals(streamed, true);
+  });
+}
