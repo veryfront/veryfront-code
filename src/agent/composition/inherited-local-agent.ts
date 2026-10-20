@@ -8,6 +8,9 @@ import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ownKeys = Reflect.ownKeys;
+const isArray = Array.isArray;
+const arraySome = Array.prototype.some;
+const apply = Reflect.apply;
 
 /** Read only a completed framework response, not arbitrary workflow business data. */
 function terminalAgentText(output: unknown): string | undefined {
@@ -20,7 +23,7 @@ function terminalAgentText(output: unknown): string | undefined {
     !text || !("value" in text) || typeof text.value !== "string" ||
     !status || !("value" in status) || status.value !== "completed" ||
     !calls || !("value" in calls) ||
-    (typeof calls.value !== "number" && !Array.isArray(calls.value))
+    (typeof calls.value !== "number" && !isArray(calls.value))
   ) return undefined;
   return text.value;
 }
@@ -93,7 +96,6 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
-const apply = Reflect.apply;
 const AbortSignalTimeout = AbortSignal.timeout;
 const retryDrainSignal = (signal?: AbortSignal) =>
   signal && !signal.aborted
@@ -106,11 +108,11 @@ function restoreCanonicalAgentResponse(value: unknown): Record<string, unknown> 
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (value === undefined) throw invalid();
   if (value === null) return { text: "", status: "completed" };
-  if (typeof value !== "object" || Array.isArray(value)) throw invalid();
+  if (typeof value !== "object" || isArray(value)) throw invalid();
   const keys = ownKeys(value);
   if (
     keys.length === 0 ||
-    keys.some((key) => key !== "text" && key !== "data")
+    apply(arraySome, keys, [(key: PropertyKey) => key !== "text" && key !== "data"])
   ) throw invalid();
   const text = getOwnPropertyDescriptor(value, "text");
   const data = getOwnPropertyDescriptor(value, "data");
@@ -136,13 +138,13 @@ export function readInheritedLocalChildResult(value: unknown): LocalChildResult 
   if (!text || !("value" in text) || typeof text.value !== "string") throw invalid();
   if (
     !calls || !("value" in calls) ||
-    (typeof calls.value !== "number" && !Array.isArray(calls.value))
+    (typeof calls.value !== "number" && !isArray(calls.value))
   ) throw invalid();
   if (!status || !("value" in status) || typeof status.value !== "string") throw invalid();
   const structured = readStructuredAgentOutput(value);
   return {
     text: text.value,
-    toolCalls: Array.isArray(calls.value) ? calls.value.length : calls.value,
+    toolCalls: isArray(calls.value) ? calls.value.length : calls.value,
     status: status.value,
     ...structured,
   };

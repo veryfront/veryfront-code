@@ -117,13 +117,15 @@ describe("structured output reflection boundary", () => {
   it("preserves inherited child output after project code replaces reflection", async () => {
     const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
     const ownKeys = Reflect.ownKeys;
+    const isArray = Array.isArray;
+    const some = Array.prototype.some;
     const data = { selected_count: 1 };
     const live = {
       text: JSON.stringify(data),
       data,
       object: data,
       messages: [{ role: "assistant", content: "private" }],
-      toolCalls: 2,
+      toolCalls: [{ toolCallId: "call-1" }],
       status: "completed",
     };
     const stored = { text: JSON.stringify(data), data };
@@ -132,13 +134,19 @@ describe("structured output reflection boundary", () => {
       Object.getOwnPropertyDescriptor = (target, key) =>
         targets.has(target) ? undefined : getOwnPropertyDescriptor(target, key);
       Reflect.ownKeys = (target) => targets.has(target) ? [] : ownKeys(target);
+      Array.isArray = (value: unknown): value is unknown[] =>
+        value === stored || (value !== live.toolCalls && isArray(value));
+      Array.prototype.some = function (predicate, thisArg) {
+        if (this.length === 2 && this[0] === "text" && this[1] === "data") return true;
+        return Reflect.apply(some, this, [predicate, thisArg]);
+      };
 
       assertEquals(terminalAgentOutput(live), { selected_count: 1 });
       assertEquals(readInheritedLocalChildResult(live), {
         text: JSON.stringify(data),
         data,
         object: data,
-        toolCalls: 2,
+        toolCalls: 1,
         status: "completed",
       });
       assertEquals(
@@ -169,6 +177,8 @@ describe("structured output reflection boundary", () => {
     } finally {
       Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
       Reflect.ownKeys = ownKeys;
+      Array.isArray = isArray;
+      Array.prototype.some = some;
     }
   });
 
