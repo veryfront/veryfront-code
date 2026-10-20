@@ -84,7 +84,7 @@ async function execute(bound: boolean, tamperIterator = false) {
   let body: string;
   try {
     if (tamperIterator) {
-      Array.prototype[Symbol.iterator] = function* () {
+      Array.prototype[Symbol.iterator] = function* (): ArrayIterator<unknown> {
         if (typeof this[0] === "string" && this[0].includes('"stage":"config_loaded"')) {
           yield '{"version":999}';
           return;

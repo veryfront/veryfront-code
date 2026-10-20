@@ -42,16 +42,20 @@ Deno.test("project array hooks never receive captured source evidence", () => {
       }
       return Reflect.apply(map, this, args);
     };
-    Array.prototype.every = function (...args) {
-      return Reflect.apply(every, this, args);
-    };
-    frames = prepareSourceObservationFrames(input, { toolLoading: "eager" });
+    Object.defineProperty(Array.prototype, "every", {
+      configurable: true,
+      writable: true,
+      value: function (this: unknown[], ...args: Parameters<typeof every>): boolean {
+        return Reflect.apply(every, this, args);
+      },
+    });
+    frames = prepareSourceObservationFrames(input, { system: "Test.", toolLoading: "eager" });
   } finally {
     Array.prototype.map = map;
     Array.prototype.every = every;
   }
   assertEquals(leaked, false);
-  assertEquals(JSON.parse(frames[0]).snapshot.members[0].sha256, "b".repeat(64));
+  assertEquals(JSON.parse(frames[0]!).snapshot.members[0].sha256, "b".repeat(64));
 });
 
 Deno.test("inherited descriptor fields cannot break private frame construction", () => {
@@ -60,8 +64,9 @@ Deno.test("inherited descriptor fields cannot break private frame construction",
   const define = Object.defineProperty;
   let frames: readonly string[] = [];
   try {
-    define(Object.prototype, "get", { __proto__: null, value: undefined, configurable: true });
-    frames = prepareSourceObservationFrames(input, { toolLoading: "eager" });
+    const descriptor = { __proto__: null, value: undefined, configurable: true };
+    define(Object.prototype, "get", descriptor);
+    frames = prepareSourceObservationFrames(input, { system: "Test.", toolLoading: "eager" });
   } finally {
     delete (Object.prototype as { get?: unknown }).get;
   }
