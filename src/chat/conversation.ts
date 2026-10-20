@@ -5,6 +5,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 import { getOptionalStringField, isRecord, toRecord } from "./part-field-access.ts";
 import { isTextPart } from "./message-part-parsing.ts";
+import { markToolPartAsErrored } from "./tool-ui-errors.ts";
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
@@ -492,34 +493,6 @@ export function markIncompleteToolPartsAsErrored<T extends ChatUiMessage | ChatM
   });
 
   return mutated ? { ...message, parts } : message;
-}
-
-function markToolPartAsErrored(part: ToolUiPart, errorText: string): ChatUiMessagePart {
-  if (part.type === "dynamic-tool") {
-    return {
-      type: "dynamic-tool",
-      toolName: part.toolName,
-      toolCallId: part.toolCallId,
-      ...(part.title ? { title: part.title } : {}),
-      ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
-      ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
-      input: part.input,
-      state: "output-error",
-      errorText,
-    };
-  }
-
-  return {
-    type: part.type,
-    toolCallId: part.toolCallId,
-    ...(part.toolName ? { toolName: part.toolName } : {}),
-    ...(part.title ? { title: part.title } : {}),
-    ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
-    ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
-    input: part.input,
-    state: "output-error",
-    errorText,
-  };
 }
 
 /** Check whether a value is a tool-call part. */
