@@ -3,12 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { agent } from "#veryfront/agent";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
 import {
   bindSourceObservationStages,
   SOURCE_SNAPSHOT_SSE_EVENT_NAME,
-} from "./source-observation.ts";
+} from "#veryfront/internal-agents/source-observation.ts";
 
 function snapshot() {
   return {
