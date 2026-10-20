@@ -31,7 +31,8 @@ const domExceptionSlots = typeof DOMException === "function"
 const canBrandBunDomException = isBun && domExceptionSlots.length === 0 &&
   domExceptionName !== undefined;
 
-function hasSafePrototypeChain(value: object): boolean {
+function hasSafePrototypeChain(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
   let prototype: object | null = value;
   for (let depth = 0; depth < 32; depth++) {
     if (prototype === null) return true;
@@ -41,7 +42,8 @@ function hasSafePrototypeChain(value: object): boolean {
   return false;
 }
 
-function nativeDomExceptionName(value: object): unknown {
+function nativeDomExceptionName(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
   if (!domExceptionName) return undefined;
   try {
     for (const key of domExceptionSlots) {
@@ -54,7 +56,7 @@ function nativeDomExceptionName(value: object): unknown {
   }
 }
 
-function ownData(value: object, key: string): unknown {
+function ownData(value: Error, key: string): unknown {
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
@@ -79,7 +81,8 @@ function transportCode(value: unknown) {
   }
 }
 
-function errorName(error: object, domName: unknown) {
+function errorName(error: unknown, domName: unknown) {
+  if (typeof error !== "object" || error === null) return "redacted";
   const descriptor = getOwnPropertyDescriptor(error, "name");
   if (descriptor && !hasOwn(descriptor, "value")) return "redacted";
   if (!descriptor) {
