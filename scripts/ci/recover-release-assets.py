@@ -99,7 +99,7 @@ def verify_release(release):
             and release.get('prerelease') is False, 'Release identity or mode differs')
 
 
-def inventory(release, expected, transport, complete=False):
+def inventory(release, expected, transport, complete=False, allow_starters=False):
     assets = []
     for page in range(1, 3):
         rows = read_api(f'{API}/releases/{release["id"]}/assets?per_page=100&page={page}', transport)
@@ -109,16 +109,62 @@ def inventory(release, expected, transport, complete=False):
             break
     require(len(assets) <= len(expected), 'Unexpected remote assets')
     found = set()
+    names = set()
+    identifiers = set()
+    starters = []
     for asset in assets:
         require(type(asset) is dict, 'Invalid remote asset')
         name = asset.get('name')
-        require(type(name) is str and name in expected and name not in found, 'Unexpected or duplicate remote asset')
+        require(type(name) is str and name in expected and name not in names, 'Unexpected or duplicate remote asset')
+        names.add(name)
+        identifier = asset.get('id')
+        require(type(identifier) is int and identifier > 0 and identifier not in identifiers, 'Invalid or duplicate asset ID')
+        identifiers.add(identifier)
+        if allow_starters and release['draft'] and empty_starter(asset):
+            starters.append(asset)
+            continue
         row = expected[name]
         require(asset.get('state') == 'uploaded' and type(asset.get('size')) is int
                 and asset['size'] == row['size'] and asset.get('digest') == 'sha256:' + row['sha256'], 'Remote asset is incomplete or differs')
         found.add(name)
     require(not complete or found == set(expected), 'Release asset inventory incomplete')
-    return found
+    return found, starters
+
+
+def empty_starter(asset):
+    return (asset.get('state') == 'starter' and type(asset.get('size')) is int
+            and asset['size'] == 0 and asset.get('digest') in (None, ''))
+
+
+def clear_starters(release, starters, transport):
+    for asset in starters:
+        current = read_api(f'{API}/releases/{release["id"]}', transport)
+        verify_release(current)
+        require(current['id'] == release['id'] and current['draft'], 'Draft changed before starter cleanup')
+        path = f'{API}/releases/assets/{asset["id"]}'
+        current_asset = read_api(path, transport)
+        require(type(current_asset) is dict and current_asset.get('id') == asset['id']
+                and current_asset.get('name') == asset['name'] and empty_starter(current_asset),
+                'Starter changed before cleanup')
+        transport(['api', '--method', 'DELETE', path])
+
+
+def prevent_latest_downgrade(release, transport):
+    latest = read_api(API + '/releases/latest', transport)
+    require(type(latest) is dict, 'Invalid latest release')
+    if latest.get('id') == release['id'] and latest.get('tag_name') == TAG:
+        return
+    tag = latest.get('tag_name')
+    match = re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag) if type(tag) is str else None
+    require(match is not None and latest.get('draft') is False and latest.get('prerelease') is False
+            and tuple(map(int, match.groups())) < tuple(map(int, VERSION.split('.'))),
+            'Latest release is newer or unrecognized; refusing to replace it')
+
+
+def verify_latest(release, transport):
+    latest = read_api(API + '/releases/latest', transport)
+    verify_release(latest)
+    require(latest['id'] == release['id'] and not latest['draft'], 'Recovered release is not latest')
 
 
 def recover(manifest, expected_sha256, directory, transport=gh):
@@ -134,9 +180,13 @@ def recover(manifest, expected_sha256, directory, transport=gh):
     release = read_api(path, transport)
     verify_release(release)
     require(release['id'] == selected_id, 'Selected release changed')
-    found = inventory(release, expected, transport, complete=not release['draft'])
+    found, starters = inventory(release, expected, transport, complete=not release['draft'], allow_starters=True)
     if not release['draft']:
+        verify_latest(release, transport)
         return release
+    if starters:
+        clear_starters(release, starters, transport)
+        found, _ = inventory(release, expected, transport)
     for name in sorted(set(expected) - found):
         # Recheck bytes immediately before upload; --clobber is intentionally absent.
         verify_local_asset(directory, expected[name])
@@ -148,12 +198,14 @@ def recover(manifest, expected_sha256, directory, transport=gh):
     verify_release(current)
     require(current['id'] == release['id'] and current['draft'], 'Draft changed during recovery')
     inventory(current, expected, transport, complete=True)
+    prevent_latest_downgrade(current, transport)
     transport(['api', '--method', 'PATCH', '-F', 'draft=false', '-F', 'prerelease=false',
-               '-f', 'make_latest=false', path])
+               '-f', 'make_latest=true', path])
     final = read_api(path, transport)
     verify_release(final)
     require(final['id'] == release['id'] and not final['draft'], 'Publication was not confirmed')
     inventory(final, expected, transport, complete=True)
+    verify_latest(final, transport)
     return final
 
 

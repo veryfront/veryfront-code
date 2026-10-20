@@ -74,6 +74,18 @@ class PreparedDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verify(lambda entries: entries.__setitem__(1, ('assets/asset-0.json', b'evil')))
 
+    def test_extraction_target_enforces_resolved_containment(self):
+        destination = self.root / 'verified'
+        destination.mkdir()
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (destination / 'assets').symlink_to(outside, target_is_directory=True)
+        for name in ('../outside/file', str(outside / 'file'), 'assets/file', '.'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                r.extraction_target(destination, name)
+        self.assertEqual(r.extraction_target(destination, 'manifest.json'), destination.resolve() / 'manifest.json')
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_preserves_existing_destination(self):
         destination = self.root / 'verified'
         destination.mkdir()

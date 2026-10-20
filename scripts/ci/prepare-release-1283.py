@@ -23,6 +23,8 @@ import uuid
 HERE=pathlib.Path(__file__).resolve().parent
 VERSION='0.1.1283'
 SOURCE='8b9eb53979953e4a934014232982cca02eff63b0'
+SHA256_PREFIX='sha256:'
+MANIFEST_NAME='manifest.json'
 
 
 def module(name,filename):
@@ -69,11 +71,11 @@ def extract_flat(archive_path,destination,expected):
 
 def stage_binary(archive,target,assets,expected):
     """Move authenticated raw bytes once; remove only this owned archive/staging dir."""
-    require('sha256:'+file_sha(archive)==expected['digest'],'Binary archive changed before extraction')
+    require(SHA256_PREFIX+file_sha(archive)==expected['digest'],'Binary archive changed before extraction')
     extract_flat(archive,target,{expected['name']})
     binary=target/expected['name']
     receipt={'name':expected['name'],'size':binary.stat().st_size,'sha256':file_sha(binary),
-             'archiveSha256':expected['digest'].removeprefix('sha256:')}
+             'archiveSha256':expected['digest'].removeprefix(SHA256_PREFIX)}
     destination=assets/expected['name']
     require(not destination.exists() and not destination.is_symlink(),'Binary asset already exists')
     binary.rename(destination)
@@ -156,7 +158,7 @@ def download_artifact(plan_item,output,run_id):
     required_free=plan_item['size_in_bytes']+3*1024**3
     require(shutil.disk_usage(output).free>=required_free,'Insufficient free disk for archive, bounded extraction and 2 GiB reserve')
     metadata=preflight.gh_json('repos/'+verifier.REPOSITORY+'/actions/artifacts/'+str(plan_item['id']))
-    expected_digest=plan_item.get('digest','sha256:'+plan_item.get('sha256',''))
+    expected_digest=plan_item.get('digest',SHA256_PREFIX+plan_item.get('sha256',''))
     for field in ('id','name','size_in_bytes'):
         require(metadata.get(field)==plan_item[field],'Artifact metadata mismatch: '+field)
     require(metadata.get('digest')==expected_digest and metadata.get('expired') is False
@@ -166,7 +168,7 @@ def download_artifact(plan_item,output,run_id):
     with path.open('xb') as target:
         subprocess.run(['gh','api','repos/'+verifier.REPOSITORY+'/actions/artifacts/'+str(plan_item['id'])+'/zip'],
                        stdout=target,check=True,timeout=1800)
-    require(path.stat().st_size==plan_item['size_in_bytes'] and 'sha256:'+file_sha(path)==expected_digest,
+    require(path.stat().st_size==plan_item['size_in_bytes'] and SHA256_PREFIX+file_sha(path)==expected_digest,
             'Downloaded archive digest/size mismatch')
     (output/(str(plan_item['id'])+'.metadata.json')).write_text(json.dumps(metadata,indent=2)+'\n')
     return path
@@ -185,7 +187,7 @@ def source_snapshot(source):
 
 def canonical_packages(directory):
     """Called only after the existing canonical verifier has authenticated this directory."""
-    manifest=json.loads((directory/'manifest.json').read_text())
+    manifest=json.loads((directory/MANIFEST_NAME).read_text())
     published=[]
     for entry in manifest['packages']:
         with tarfile.open(directory/entry['file']) as archive:
@@ -281,8 +283,8 @@ def prepare(source,output):
     archives=output/'archives';archives.mkdir()
     npm_zip=download_artifact(plan['npmArtifact'],archives,verifier.TESTED_RUN)
     with zipfile.ZipFile(npm_zip) as archive:
-        manifest=json.loads(archive.read('manifest.json'))
-        names={'manifest.json',*[entry['file'] for entry in manifest['packages']]}
+        manifest=json.loads(archive.read(MANIFEST_NAME))
+        names={MANIFEST_NAME,*[entry['file'] for entry in manifest['packages']]}
     canonical=output/'canonical-npm'
     extract_flat(npm_zip,canonical,names)
     run(['deno','run','--allow-read','--allow-run=tar','scripts/ci/npm-compatibility-artifact.ts',
@@ -329,7 +331,7 @@ def prepare(source,output):
     entries=[{'name':path.name,'size':path.stat().st_size,'sha256':file_sha(path)} for path in sorted(assets.iterdir())]
     require(len(entries)==45,'Wrong release asset inventory')
     manifest={'schema_version':1,'version':VERSION,'source_revision':SOURCE,'assets':entries}
-    manifest_path=output/'manifest.json';manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+    manifest_path=output/MANIFEST_NAME;manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
     receipt={'schemaVersion':1,'scope':'original-release-preparation-only','version':VERSION,'source':before,
              'canonicalNpmArtifactVerified':True,'registryPackages':len(records),'npmVerifiedFirstPartyAttestations':len(signatures),
              'installedRegistrySmokePassed':True,'binaryMaterials':binary_materials,'manifestSha256':file_sha(manifest_path),'assets':entries,

@@ -65,7 +65,7 @@ def find_source_release(transport):
 
 def verify_source_release(value):
     require(type(value) is dict and type(value.get('id')) is int and value['id'] > 0
-            and value.get('tag_name') == TAG and value.get('target_commitish') == TARGETS[SOURCE_REPO]
+            and value.get('tag_name') == TAG
             and value.get('draft') is False and value.get('prerelease') is False,
             'Source release identity or mode differs')
 
@@ -74,7 +74,7 @@ def finish_source_release(transport):
     release = find_source_release(transport)
     if release is None:
         transport(['release', 'create', TAG, '--repo', SOURCE_REPO, '--verify-tag',
-                   '--target', TARGETS[SOURCE_REPO], '--title', TAG, '--latest=false',
+                   '--title', TAG, '--latest=false',
                    '--notes', 'Original tested 0.1.1283 release; no npm republish. Binaries: https://github.com/veryfront/veryfront/releases/tag/' + TAG])
         release = find_source_release(transport)
     verify_source_release(release)
@@ -100,6 +100,8 @@ def recover(repository, transport=gh, source_release=False):
     verify_ref(value, target)
     if source_release:
         finish_source_release(transport)
+        value = read_api(path, transport)
+        verify_ref(value, target)
     return value
 
 

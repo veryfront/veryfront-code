@@ -52,13 +52,15 @@ class RecoveryTagTests(unittest.TestCase):
             self.assertTrue(all('GET' in args for args in self.calls))
 
     def test_wrong_ref_target_or_annotated_tag_never_mutates(self):
+        recover = load().recover
         self.present = True
         for kind, target in [('tag', self.target), ('commit', '0' * 40)]:
             self.kind, self.readback = kind, target
-            with self.assertRaises(ValueError): load().recover('veryfront/veryfront', self.transport)
+            with self.assertRaises(ValueError): recover('veryfront/veryfront', self.transport)
         self.assertTrue(all('GET' in args for args in self.calls))
 
     def test_auth_network_and_malformed_404_do_not_create(self):
+        recover = load().recover
         for output in [b'{"status":"403"}', b'network error', b'{"status":"404","message":"other"}']:
             self.calls = []
             def failing(args):
@@ -66,31 +68,34 @@ class RecoveryTagTests(unittest.TestCase):
                 if '/git/commits/' in args[-1]: return json.dumps({'sha': self.target}).encode()
                 raise subprocess.CalledProcessError(1, args, output=output)
             with self.assertRaises(subprocess.CalledProcessError):
-                load().recover('veryfront/veryfront', failing)
+                recover('veryfront/veryfront', failing)
             self.assertTrue(all('GET' in args for args in self.calls))
 
     def test_absent_target_commit_never_attempts_ref(self):
+        recover = load().recover
         def absent(args):
             self.calls.append(args)
             raise subprocess.CalledProcessError(1, args, output=b'{"status":"404","message":"Not Found"}')
-        with self.assertRaises(subprocess.CalledProcessError): load().recover('veryfront/veryfront', absent)
+        with self.assertRaises(subprocess.CalledProcessError): recover('veryfront/veryfront', absent)
         self.assertEqual(len(self.calls), 1)
 
     def test_wrong_target_commit_or_repository_refused_before_write(self):
+        recover = load().recover
         self.target = '0' * 40
-        with self.assertRaises(ValueError): load().recover('veryfront/veryfront', self.transport)
+        with self.assertRaises(ValueError): recover('veryfront/veryfront', self.transport)
         self.assertEqual(len(self.calls), 1)
         self.calls = []
-        with self.assertRaises(ValueError): load().recover('other/repo', self.transport)
+        with self.assertRaises(ValueError): recover('other/repo', self.transport)
         self.assertEqual(self.calls, [])
 
     def test_readback_mismatch_and_create_conflict_are_not_retried_or_forced(self):
+        recover = load().recover
         original = self.transport
         def mismatch(args):
             result = original(args)
             if 'POST' in args: self.readback = '0' * 40
             return result
-        with self.assertRaises(ValueError): load().recover('veryfront/veryfront', mismatch)
+        with self.assertRaises(ValueError): recover('veryfront/veryfront', mismatch)
         self.assertEqual(sum('POST' in args for args in self.calls), 1)
         self.calls = []
         self.present = False
@@ -99,7 +104,7 @@ class RecoveryTagTests(unittest.TestCase):
                 self.calls.append(args)
                 raise subprocess.CalledProcessError(1, args, output=b'{"status":"422"}')
             return original(args)
-        with self.assertRaises(subprocess.CalledProcessError): load().recover('veryfront/veryfront', conflict)
+        with self.assertRaises(subprocess.CalledProcessError): recover('veryfront/veryfront', conflict)
         self.assertEqual(sum('POST' in args for args in self.calls), 1)
         self.assertFalse(any('PATCH' in args or 'DELETE' in args for args in self.calls))
 
@@ -113,8 +118,9 @@ class RecoveryTagTests(unittest.TestCase):
                 if args[:2] == ['release', 'create']:
                     self.assertIn('--verify-tag', args)
                     self.assertIn('--latest=false', args)
+                    self.assertNotIn('--target', args)
                     self.assertFalse(any(arg.endswith('.tgz') for arg in args))
-                    rows.append({'id': 3, 'tag_name': 'v0.1.1283', 'target_commitish': self.target,
+                    rows.append({'id': 3, 'tag_name': 'v0.1.1283', 'target_commitish': 'main',
                                  'draft': False, 'prerelease': False})
                     return b''
                 if '/releases?' in args[-1]: return json.dumps(rows).encode()
@@ -130,14 +136,29 @@ class RecoveryTagTests(unittest.TestCase):
         load().recover('veryfront/veryfront-code', self.source_transport(rows), source_release=True)
         self.assertTrue(all('GET' in args for args in self.calls))
 
+    def test_source_tag_readback_after_release_rejects_concurrent_change(self):
+        recover = load().recover
+        original = self.source_transport([])
+        def changed(args):
+            result = original(args)
+            if args[:2] == ['release', 'create']:
+                self.readback = '0' * 40
+            return result
+        with self.assertRaises(ValueError):
+            recover('veryfront/veryfront-code', changed, source_release=True)
+        self.assertIn('/git/ref/tags/v0.1.1283', self.calls[-1][-1])
+        self.assertFalse(any('PATCH' in args or 'DELETE' in args for args in self.calls))
+
     def test_optional_source_release_rejects_wrong_source_draft_duplicate_and_list_failure(self):
+        recover = load().recover
         correct = {'id': 3, 'tag_name': 'v0.1.1283', 'target_commitish': '8b9eb53979953e4a934014232982cca02eff63b0',
                    'draft': False, 'prerelease': False}
-        for rows in [[dict(correct, target_commitish='main')], [dict(correct, draft=True)],
+        for rows in [[dict(correct, prerelease=True)], [dict(correct, draft=True)],
                      [correct, dict(correct, id=4)], [{'tag_name': 'other'}] * 100]:
             self.calls = []
+            transport = self.source_transport(rows)
             with self.assertRaises(ValueError):
-                load().recover('veryfront/veryfront-code', self.source_transport(rows), source_release=True)
+                recover('veryfront/veryfront-code', transport, source_release=True)
             self.assertTrue(all('GET' in args for args in self.calls))
         self.calls = []
         original = self.source_transport([])
@@ -147,11 +168,11 @@ class RecoveryTagTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args, output=b'{"status":"403"}')
             return original(args)
         with self.assertRaises(subprocess.CalledProcessError):
-            load().recover('veryfront/veryfront-code', failed, source_release=True)
+            recover('veryfront/veryfront-code', failed, source_release=True)
         self.assertTrue(all('GET' in args for args in self.calls))
         self.calls = []
         with self.assertRaises(ValueError):
-            load().recover('veryfront/veryfront', self.transport, source_release=True)
+            recover('veryfront/veryfront', self.transport, source_release=True)
         self.assertEqual(self.calls, [])
 
 
