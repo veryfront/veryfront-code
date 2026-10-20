@@ -38,6 +38,11 @@ export const devHelp: CommandHelp = {
     "veryfront dev --no-hmr",
   ],
   notes: [
+    "Unlinked projects run locally without Cloud login or source sync.",
+    "Connected projects sync source before startup using push conflict checks.",
+    "Sync does not deploy or prune files; sync errors stop connected startup.",
+    "Restart dev to sync changed source declarations.",
+    "",
     "Port selection priority (highest to lowest):",
     "  1. --port / -p flag",
     "  2. PORT env var",

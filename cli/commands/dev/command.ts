@@ -335,6 +335,18 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             );
             return Boolean(preflightIdentity);
           },
+          sync: async (target) => {
+            console.log("  Syncing project source for local development...");
+            await pushCommand({
+              projectDir,
+              projectSlug: target.projectSlug,
+              quiet: true,
+              noAdoptPins: true,
+              transport: createCloudOnboardingTransport(
+                connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+              ),
+            });
+          },
           resolve: async (projectSlug, environmentName) => {
             runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
             runtimeAuth.apiBaseUrl = connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl);
