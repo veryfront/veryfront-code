@@ -5,12 +5,16 @@ import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ownKeys = Reflect.ownKeys;
+
 /** Read only a completed framework response, not arbitrary workflow business data. */
 function terminalAgentText(output: unknown): string | undefined {
   if (typeof output !== "object" || output === null) return undefined;
-  const text = Object.getOwnPropertyDescriptor(output, "text");
-  const status = Object.getOwnPropertyDescriptor(output, "status");
-  const calls = Object.getOwnPropertyDescriptor(output, "toolCalls");
+  const text = getOwnPropertyDescriptor(output, "text");
+  const status = getOwnPropertyDescriptor(output, "status");
+  const calls = getOwnPropertyDescriptor(output, "toolCalls");
   // Only unwrap the framework-produced agent response, not arbitrary workflow data.
   if (
     !text || !("value" in text) || typeof text.value !== "string" ||
@@ -103,13 +107,13 @@ function restoreCanonicalAgentResponse(value: unknown): Record<string, unknown> 
   if (value === undefined) throw invalid();
   if (value === null) return { text: "", status: "completed" };
   if (typeof value !== "object" || Array.isArray(value)) throw invalid();
-  const keys = Reflect.ownKeys(value);
+  const keys = ownKeys(value);
   if (
     keys.length === 0 ||
     keys.some((key) => key !== "text" && key !== "data")
   ) throw invalid();
-  const text = Object.getOwnPropertyDescriptor(value, "text");
-  const data = Object.getOwnPropertyDescriptor(value, "data");
+  const text = getOwnPropertyDescriptor(value, "text");
+  const data = getOwnPropertyDescriptor(value, "data");
   if (
     (text && (!("value" in text) || typeof text.value !== "string")) ||
     (data && !("value" in data))
@@ -126,9 +130,9 @@ export function readInheritedLocalChildResult(value: unknown): LocalChildResult 
   const invalid = () =>
     ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
   if (typeof value !== "object" || value === null) throw invalid();
-  const text = Object.getOwnPropertyDescriptor(value, "text");
-  const calls = Object.getOwnPropertyDescriptor(value, "toolCalls");
-  const status = Object.getOwnPropertyDescriptor(value, "status");
+  const text = getOwnPropertyDescriptor(value, "text");
+  const calls = getOwnPropertyDescriptor(value, "toolCalls");
+  const status = getOwnPropertyDescriptor(value, "status");
   if (!text || !("value" in text) || typeof text.value !== "string") throw invalid();
   if (
     !calls || !("value" in calls) ||

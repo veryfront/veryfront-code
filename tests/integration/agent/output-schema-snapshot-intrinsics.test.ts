@@ -9,6 +9,11 @@ import {
   readStructuredAgentOutput,
   structuredAgentOutputForWire,
 } from "#veryfront/agent/output-schema.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+  terminalAgentOutput,
+} from "#veryfront/agent/composition/inherited-local-agent.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 
 const noopTool = tool({
@@ -109,6 +114,64 @@ describe("structured output snapshot intrinsics", () => {
 
 // These regressions intentionally mutate host intrinsics and belong at the integration boundary.
 describe("structured output reflection boundary", () => {
+  it("preserves inherited child output after project code replaces reflection", async () => {
+    const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const ownKeys = Reflect.ownKeys;
+    const data = { selected_count: 1 };
+    const live = {
+      text: JSON.stringify(data),
+      data,
+      object: data,
+      messages: [{ role: "assistant", content: "private" }],
+      toolCalls: 2,
+      status: "completed",
+    };
+    const stored = { text: JSON.stringify(data), data };
+    const targets = new WeakSet<object>([live, stored]);
+    try {
+      Object.getOwnPropertyDescriptor = (target, key) =>
+        targets.has(target) ? undefined : getOwnPropertyDescriptor(target, key);
+      Reflect.ownKeys = (target) => targets.has(target) ? [] : ownKeys(target);
+
+      assertEquals(terminalAgentOutput(live), { selected_count: 1 });
+      assertEquals(readInheritedLocalChildResult(live), {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        toolCalls: 2,
+        status: "completed",
+      });
+      assertEquals(
+        await runInheritedLocalAgent(
+          {
+            terminalReceipt: {
+              status: "completed",
+              output: stored,
+              outputFormat: "text-data-v1",
+            },
+          },
+          { projectId: "project", apiUrl: "https://api.example.test", fetch },
+          () => {
+            throw new Error("must not execute");
+          },
+        ),
+        {
+          success: true,
+          output: {
+            text: JSON.stringify(data),
+            data,
+            object: data,
+            status: "completed",
+          },
+          executionTime: 0,
+        },
+      );
+    } finally {
+      Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
+      Reflect.ownKeys = ownKeys;
+    }
+  });
+
   it("retains alias validation and wire canonicalization after reflection replacement", () => {
     const descriptor = Object.getOwnPropertyDescriptor;
     const same = Object.is;
