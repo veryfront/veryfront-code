@@ -17,6 +17,7 @@ import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/erro
 import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { isRetriableConnectFailure } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import {
   fetchSandboxRuntimeUrl,
@@ -39,11 +40,13 @@ import {
   type CommandResult,
   type CommandStreamEvent,
   type SandboxOptions,
+  type SandboxWriteFilesOptions,
 } from "./types.ts";
 
 type CommandFetchAttempt<T> =
   | { kind: "result"; result: T }
   | { kind: "fetch-failure"; error: unknown };
+const anyAbortSignal = AbortSignal.any.bind(AbortSignal);
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -201,6 +204,7 @@ export class LazySandbox {
       sandboxId: string;
     }) => string)
     | undefined;
+  private provisioningSignal: AbortSignal | undefined;
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
@@ -250,10 +254,12 @@ export class LazySandbox {
     this.execStartRetryDelayMs = options.execStartRetryDelayMs ??
       DEFAULT_EXEC_START_RETRY_DELAY_MS;
     this.resolveRuntimeEndpointOption = options.resolveRuntimeEndpoint;
+    this.provisioningSignal = options.signal;
   }
 
   async ensure(): Promise<void> {
     if (this.endpoint) return;
+    throwIfAborted(this.provisioningSignal);
     if (this.ensurePromise) {
       await this.ensurePromise.promise;
       return;
@@ -264,6 +270,7 @@ export class LazySandbox {
 
     try {
       await pending.promise;
+      this.provisioningSignal = undefined;
     } finally {
       if (this.ensurePromise === pending) {
         this.ensurePromise = null;
@@ -272,17 +279,20 @@ export class LazySandbox {
   }
 
   async runCommand(command: string, options?: CommandOptions): Promise<CommandResult> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
         const outcome = await withSandboxRequestDeadline<CommandFetchAttempt<CommandResult>>(
           sandboxCommandRequestTimeoutMs(options),
           async (signal) => {
+            const requestSignal = options?.signal && signal
+              ? anyAbortSignal([options.signal, signal])
+              : options?.signal ?? signal;
             const init: RequestInit = {
               method: "POST",
               headers: this.#jsonHeaders(),
-              signal,
+              signal: requestSignal,
               body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
             };
             let response: Response;
@@ -302,7 +312,7 @@ export class LazySandbox {
         if (attempt >= this.execStartMaxAttempts || !isPreDispatchExecStartFailure(outcome.error)) {
           throw outcome.error;
         }
-        await this.waitForExecStartRetry();
+        await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
       }
     }
     let stdout = "";
@@ -330,12 +340,13 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): AsyncGenerator<CommandStreamEvent> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     let outcome = await this.startExec(command, options);
     if (outcome.kind === "fetch-failure") {
       if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
-      await this.reprovisionAfterExecStartFailure();
-      await this.touchSession();
+      throwIfAborted(options?.signal);
+      await awaitAbortable(this.reprovisionAfterExecStartFailure(), options?.signal);
+      await this.#touchSessionForCommand(options?.signal);
       outcome = await this.startExec(command, options);
       if (outcome.kind === "fetch-failure") throw outcome.error;
     }
@@ -346,7 +357,7 @@ export class LazySandbox {
       throw new Error("Exec response has no body");
     }
 
-    yield* readCommandStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body, options?.signal);
   }
 
   async readFile(path: string): Promise<string> {
@@ -368,14 +379,18 @@ export class LazySandbox {
     return await readSandboxFileContent(res);
   }
 
-  async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
-    await this.touchSession();
+  async writeFiles(
+    files: Array<{ path: string; content: string }>,
+    options?: SandboxWriteFilesOptions,
+  ): Promise<void> {
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       `${route.baseUrl}/files`,
       {
         method: "POST",
+        signal: options?.signal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify({ files }),
       },
@@ -395,7 +410,7 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): Promise<BackgroundCommand> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
@@ -404,6 +419,7 @@ export class LazySandbox {
       {
         method: "POST",
         headers: this.#jsonHeaders(),
+        signal: options?.signal,
         body: JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) }),
       },
       route.kind,
@@ -517,7 +533,7 @@ export class LazySandbox {
     return backgroundCommand;
   }
 
-  async heartbeat(force = false): Promise<void> {
+  async heartbeat(force = false, signal?: AbortSignal): Promise<void> {
     const currentSessionId = this.sessionId;
     if (!currentSessionId) return;
 
@@ -541,6 +557,7 @@ export class LazySandbox {
           }/heartbeat`,
           {
             method: "POST",
+            signal,
             headers: this.#authHeaders(),
           },
         );
@@ -690,6 +707,7 @@ export class LazySandbox {
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes`,
       {
         method: "POST",
+        signal: this.provisioningSignal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify(buildSandboxCreateInput(this.creationPolicy, projectId ?? undefined)),
       },
@@ -713,7 +731,7 @@ export class LazySandbox {
           this.sessionCanBeReplacedOnMissing;
       });
       this.endpoint = endpoint;
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.endpoint = null;
@@ -735,10 +753,10 @@ export class LazySandbox {
   ): Promise<string> {
     const readySession = session.status === "running"
       ? session
-      : await this.waitForReadySession(session.id, onSession);
+      : await this.waitForReadySession(session.id, onSession, this.provisioningSignal);
 
     if (this.#shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
-      await this.waitForRuntimeDataPlaneReady(readySession);
+      await this.waitForRuntimeDataPlaneReady(readySession, this.provisioningSignal);
     }
     return readySession.endpoint;
   }
@@ -751,10 +769,10 @@ export class LazySandbox {
     try {
       const session = this.sandboxEndpoint
         ? { id: sessionId, endpoint: this.sandboxEndpoint, status: "running" }
-        : await this.getSession(sessionId);
+        : await this.getSession(sessionId, this.provisioningSignal);
       this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
       this.endpoint = await this.resolveReadyEndpoint(session);
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.resetSessionState(sessionId);
@@ -762,10 +780,14 @@ export class LazySandbox {
     }
   }
 
-  private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
+  private async getSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SandboxSessionRecord> {
     const res = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
       {
+        signal,
         headers: this.#authHeaders(),
       },
     );
@@ -782,15 +804,17 @@ export class LazySandbox {
   private async waitForReadySession(
     sessionId: string,
     onSession?: (session: SandboxSessionRecord) => void,
+    signal?: AbortSignal,
   ): Promise<SandboxSessionRecord> {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
 
       const res = await this.#fetchControl(
         `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
         {
+          signal,
           headers: this.#authHeaders(),
         },
       );
@@ -814,7 +838,10 @@ export class LazySandbox {
     throw REQUEST_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
   }
 
-  private async waitForRuntimeDataPlaneReady(session: SandboxSessionRecord): Promise<void> {
+  private async waitForRuntimeDataPlaneReady(
+    session: SandboxSessionRecord,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (resolveDefaultSandboxRuntimeEndpoint({ endpoint: session.endpoint }) === session.endpoint) {
       return;
     }
@@ -826,7 +853,7 @@ export class LazySandbox {
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, routeKind);
+        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, { signal }, routeKind);
 
         if (res.ok) {
           return;
@@ -840,7 +867,7 @@ export class LazySandbox {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
 
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
     }
 
     throw REQUEST_ERROR.create({
@@ -863,6 +890,11 @@ export class LazySandbox {
 
     await this.ensure();
     await this.heartbeat();
+  }
+
+  async #touchSessionForCommand(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await awaitAbortable(this.touchSession(), signal);
   }
 
   private heartbeatFailureCount = 0;
@@ -1049,17 +1081,18 @@ export class LazySandbox {
   ): Promise<CommandFetchAttempt<Response>> {
     const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) });
+    const signal = options?.signal;
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
       const outcome = await this.#fetchExecStart(
         commandStreamUrl(route),
-        { method: "POST", headers: this.#jsonHeaders(), body },
+        { method: "POST", headers: this.#jsonHeaders(), body, signal },
         route.kind,
       );
       if (outcome.kind === "result") return outcome;
       if (!isPreDispatchExecStartFailure(outcome.error) || attempt >= this.execStartMaxAttempts) {
         return outcome;
       }
-      await this.waitForExecStartRetry();
+      await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
     }
     throw new Error("Sandbox exec failed before a request was made");
   }
@@ -1074,7 +1107,13 @@ export class LazySandbox {
       this.execStartTimeoutMs,
       async (signal) => {
         try {
-          const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+          const requestSignal = init.signal && signal
+            ? anyAbortSignal([init.signal, signal])
+            : init.signal ?? signal;
+          const response = await fetchUrl(
+            url,
+            requestSignal ? { ...init, signal: requestSignal } : init,
+          );
           return { kind: "result", result: response };
         } catch (error) {
           return { kind: "fetch-failure", error };
@@ -1269,7 +1308,13 @@ async function fetchWithTimeout(
   return await withSandboxRequestDeadline(
     timeoutMs,
     async (signal) => {
-      const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+      const requestSignal = init.signal && signal
+        ? anyAbortSignal([init.signal, signal])
+        : init.signal ?? signal;
+      const response = await fetchUrl(
+        url,
+        requestSignal ? { ...init, signal: requestSignal } : init,
+      );
       // Control responses are finite receipts/data; consume their bytes while the
       // request deadline can still abort a partial body. Exec streams stay streaming.
       if (!bufferResponseBody || !response.body) return response;

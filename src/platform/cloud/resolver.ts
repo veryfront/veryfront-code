@@ -13,6 +13,7 @@ import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { readVeryfrontApiTokenFile } from "./credential-file.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -175,6 +176,7 @@ function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiB
   return {
     apiToken: requestContext?.token ??
       scopedContext?.apiToken ??
+      readVeryfrontApiTokenFile(getHostEnv("VERYFRONT_API_TOKEN_FILE")) ??
       getHostEnv("VERYFRONT_API_TOKEN") ??
       runtimeBootstrap.apiToken,
     projectSlug: requestContext?.projectSlug ??

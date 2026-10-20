@@ -27,6 +27,16 @@ import { createRenewingLocalModel } from "./connected-local-model.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
 import { readExternalAgentWorkerRunAuthority } from "../service/external-worker-client.ts";
 import { appendConversationRunEvents } from "../conversation/durable.ts";
+import {
+  buildConversationRunEventBatches,
+  MAX_CONVERSATION_RUN_EVENTS_PER_APPEND,
+} from "../conversation/run-event-limits.ts";
+import {
+  concatPrivateArrays,
+  forEachPrivateArray,
+  pushPrivateArray,
+  slicePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import {
   loadVeryfrontCloudCatalog,
@@ -235,6 +245,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
     : (dependencies.createPlatformTools ?? createConnectedLocalPlatformTools)(
       options.apiBaseUrl,
       transport,
+      { projectContext: { projectSlug: options.projectSlug, branch: "main" } },
     );
   const log = dependencies.log ?? console.log;
   const workerKey = `local:${crypto.randomUUID()}`;
@@ -485,7 +496,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           void operation.catch(() => {});
           return operation;
         };
-        const pendingStreamEvents: unknown[] = [];
+        let pendingStreamEvents: unknown[] = [];
         const streamQueueSnapshot = () => ({
           latestEventId: latestEventId ?? 0,
           latestExternalEventSequence: sequence,
@@ -498,14 +509,28 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
           flushDelayMs: 50,
           queueController: {
             enqueue(events) {
-              pendingStreamEvents.push(...events);
+              forEachPrivateArray(events, (event) => pushPrivateArray(pendingStreamEvents, event));
             },
             async flush() {
-              const events = pendingStreamEvents.splice(0);
+              const events = pendingStreamEvents;
+              pendingStreamEvents = [];
+              let acknowledgedCount = 0;
               try {
-                if (events.length) await append(events, true);
+                const batches = buildConversationRunEventBatches({
+                  events,
+                  maxEventsPerBatch: MAX_CONVERSATION_RUN_EVENTS_PER_APPEND,
+                });
+                for (let index = 0; index < batches.length; index += 1) {
+                  const batch = batches[index];
+                  if (!batch) continue;
+                  await append(batch, true);
+                  acknowledgedCount += batch.length;
+                }
               } catch (error) {
-                pendingStreamEvents.unshift(...events);
+                pendingStreamEvents = concatPrivateArrays(
+                  slicePrivateArray(events, acknowledgedCount),
+                  pendingStreamEvents,
+                );
                 controller.abort(error);
                 throw error;
               }

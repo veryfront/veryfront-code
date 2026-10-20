@@ -652,6 +652,7 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     ...mirrorInput,
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
+    getAuthToken: () => state.runEventAppendToken,
     runId: state.runId,
     canonicalRunId: state.canonicalRunId,
     // Capability transports are host-owned, but durable persistence still

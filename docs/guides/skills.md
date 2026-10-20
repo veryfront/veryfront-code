@@ -106,6 +106,13 @@ as `VERYFRONT_BRANCH_REF` (default `main`). Tool arguments and script environmen
 input cannot override these bindings. Cloud execution requires a project binding;
 local execution can run without one.
 
+Authenticated renewable scripts receive `VERYFRONT_API_TOKEN_FILE`, not a fixed
+`VERYFRONT_API_TOKEN`. The runtime updates this private file when the exact run
+credential renews. The Veryfront SDK reads it for each request. Other API clients
+must read the file again before each request; do not cache its contents or copy
+it into a fixed environment token. Nonrenewable script environments keep their
+existing token behavior.
+
 Hosted chat providers use nested `veryfront__load_skill` input. After loading a skill,
 hosted chat can read only a reference listed by that skill through
 `veryfront__load_skill({ reference: { skillId, file } })`. The `load.file` form is no

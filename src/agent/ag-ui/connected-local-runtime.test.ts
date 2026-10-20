@@ -1189,7 +1189,7 @@ describe("connected local execution", () => {
     });
     const body = new ReadableStream<Uint8Array>({
       start(c) {
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < 300; i++) {
           c.enqueue(new TextEncoder().encode('data: {"type":"text-delta","delta":"x"}\n\n'));
         }
         c.enqueue(new TextEncoder().encode('data: {"type":"message-finish"}\n\n'));
@@ -1210,7 +1210,13 @@ describe("connected local execution", () => {
     while (!(await reader.read()).done) { /* drain */ }
     assertEquals(forwarded, true);
     assertEquals(f.batches.length < 10, true);
-    assertEquals(f.batches.every((batch) => batch.length <= 64), true);
+    assertEquals(f.batches.every((batch) => batch.length <= 100), true);
+    assertEquals(
+      f.batches.flat().filter((event) =>
+        (event as { type?: string }).type === "TEXT_MESSAGE_CONTENT"
+      ).length,
+      300,
+    );
     assertEquals(f.completed, ["completed"]);
     await f.runtime.dispose();
   });

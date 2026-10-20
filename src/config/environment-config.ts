@@ -5,6 +5,7 @@ import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/co
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
+import { readVeryfrontApiTokenFile } from "#veryfront/platform/cloud/credential-file.ts";
 
 export interface EnvironmentConfig {
   nodeEnv: "development" | "production" | "test" | string;
@@ -162,7 +163,8 @@ function readEnvSnapshot(
     publicApiBaseUrl: readEnv("VERYFRONT_PUBLIC_API_BASE_URL") ||
       DEFAULTS.apiBaseUrl,
     apiUrl,
-    apiToken: readEnv("VERYFRONT_API_TOKEN") || undefined,
+    apiToken: readVeryfrontApiTokenFile(readEnv("VERYFRONT_API_TOKEN_FILE")) ??
+      (readEnv("VERYFRONT_API_TOKEN") || undefined),
     projectSlug: readEnv("VERYFRONT_PROJECT_SLUG") || undefined,
 
     homeDir: readEnv("HOME") || readEnv("USERPROFILE") || undefined,

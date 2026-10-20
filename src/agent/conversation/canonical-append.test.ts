@@ -74,7 +74,7 @@ for (const density of ["dense", "sparse", "unobserved"] as const) {
       },
     });
     assertEquals(result.outcome, "flushed");
-    assertEquals(batches, density === "unobserved" ? [125] : [100, 25]);
+    assertEquals(batches, [100, 25]);
     assertEquals(
       observedDeltas,
       density === "dense"
@@ -85,6 +85,44 @@ for (const density of ["dense", "sparse", "unobserved"] as const) {
     );
   });
 }
+
+it("caps long tool argument streams at the API event-count contract", async () => {
+  const nativeToolCallId = `call_${"a".repeat(96)}`;
+  const events = Array.from({ length: 130 }, (_, index) => ({
+    type: "TOOL_CALL_ARGS",
+    toolCallId: nativeToolCallId,
+    delta: String(index),
+  }));
+  const batches: number[] = [];
+  let cursor = 0;
+
+  const result = await flushConversationRunEventBatches({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    events,
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+    maxEventsPerBatch: 1_000,
+    maxCursorResyncsPerFlush: 2,
+    fetch: async (_input, init) => {
+      const body = await new Request(_input, init).json();
+      batches.push(body.events.length);
+      cursor += body.events.length;
+      return Response.json({
+        run_id: canonicalRunId,
+        latest_event_id: cursor,
+        latest_external_event_sequence: cursor,
+        appended_count: body.events.length,
+      });
+    },
+  });
+
+  assertEquals(result.outcome, "flushed");
+  assertEquals(batches, [100, 30]);
+});
 
 function modelCallCaptureEvent(id = modelCallId) {
   return {
