@@ -6904,85 +6904,128 @@ for (const verification of ["valid", "rejected", "throws"] as const) {
   });
 }
 
-Deno.test("signed preview ingress binds both active-stage source captures before model execution", async () => {
-  const runId = "run_1";
-  const canonicalRunId = "22222222-2222-4222-8222-222222222222";
-  const encoded = btoa(
-    JSON.stringify({
-      tokenUse: "run_event_writer",
-      writerPurpose: "current_run_terminal",
-      runId,
-      canonicalRunId,
-      dispatchNonce: "dispatch-source",
-    }),
-  );
-  const token = `header.${encoded}.signature`;
-  let captures = 0;
-  let modelCalls = 0;
-  const handler = createTestAgentStreamHandler({
-    ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
-    getAgent: () =>
-      createAgentWithConfig("assistant-1", {
-        toolLoading: "deferred",
-        toolResultContext: { maxInlineBytes: 1024, previewBytes: 256, maxSectionBytes: 65536 },
+for (const target of ["preview_branch", "main_branch"] as const) {
+  Deno.test(`signed ${target} ingress preserves ordinary execution and scopes source proof`, async () => {
+    const runId = "run_1";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const encoded = btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId,
+        canonicalRunId,
+        dispatchNonce: "dispatch-source",
       }),
-    getAllAgentIds: () => ["assistant-1"],
-    sessionManager: new AgentRunSessionManager(),
-    verifyRunTerminalToken: () => Promise.resolve(true),
-    createRuntime: () => ({
-      stream: () => {
-        assertEquals(captures, 2, "both adapter snapshots precede model execution");
-        modelCalls++;
-        return Promise.resolve(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.close();
-            },
-          }),
-        );
-      },
-    }),
-  });
-  const body = createAgentStreamRequestBody();
-  const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-    requestId: runId,
-    projectId: "10000000-1000-4000-8000-100000000005",
-  });
-  const ctx = { ...createCtx(publicKeyPem), projectId: "10000000-1000-4000-8000-100000000005" };
-  registerCachedSourceObserver(ctx.adapter.fs, () => {
-    captures++;
-    return Promise.resolve({
-      identity: "branch:test-project:main",
-      version: captures,
-      fingerprint: { algorithm: "veryfront-source-snapshot-multiset-v1", value: "a".repeat(64) },
-      members: Array.from(
-        { length: 46 },
-        (_, i) => ({ path: `source-${String(i).padStart(2, "0")}.ts`, sha256: "b".repeat(64) }),
-      ),
-    });
-  });
-  const result = await handler.handle(
-    sealIngressCredentials(
-      new Request(`https://example.com/api/control-plane/runs/${runId}/stream`, {
-        method: "POST",
-        headers: {
-          "x-veryfront-control-plane-jws": jws,
-          [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+    );
+    const token = `header.${encoded}.signature`;
+    let captures = 0;
+    let modelCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () =>
+        createAgentWithConfig("assistant-1", {
+          toolLoading: "deferred",
+          toolResultContext: { maxInlineBytes: 1024, previewBytes: 256, maxSectionBytes: 65536 },
+        }),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      verifyRunTerminalToken: () => Promise.resolve(true),
+      createRuntime: () => ({
+        stream: () => {
+          assertEquals(captures, 2, "both adapter snapshots precede model execution");
+          modelCalls++;
+          return Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "proof-text" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "proof-text",
+                    delta: "ordinary output",
+                  }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "proof-text" }));
+                controller.close();
+              },
+            }),
+          );
         },
-        body,
       }),
-    ),
-    ctx,
-  );
-  assertExists(result.response);
-  const text = await result.response.text();
-  assertEquals(result.response.status, 200, text);
-  const observations = text.split("\n\n").filter((frame) =>
-    frame.startsWith("event: AgentRunSourceSnapshot\n")
-  ).map((frame) => JSON.parse(frame.split("\ndata: ")[1]!));
-  assertEquals(modelCalls, 1);
-  assertEquals(observations.map((frame) => frame.stage), ["config_loaded", "discovery_completed"]);
-  assertEquals(observations[1].identity.canonicalRunId, canonicalRunId);
-  assertEquals(observations[1].snapshot.members.length, 46);
-  assertEquals(observations[1].resolvedConfig.toolResultContext.maxStoredResults, 256);
-});
+    });
+    const branchId = "10000000-1000-4000-8000-100000000006";
+    const body = createAgentStreamRequestBody({
+      project: target === "preview_branch"
+        ? { runtimeTargetKind: target, runtimeTargetBranchId: branchId }
+        : { runtimeTargetKind: target },
+      agentSource: {
+        type: "branch",
+        branch: target === "preview_branch" ? "proof-branch" : "main",
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId: "10000000-1000-4000-8000-100000000005",
+    });
+    const baseContext = createCtx(publicKeyPem);
+    const {
+      branchId: _branchId,
+      branchName: _branchName,
+      defaultBranchName: _defaultBranchName,
+      ...sharedContext
+    } = baseContext;
+    const ctx = {
+      ...sharedContext,
+      projectId: "10000000-1000-4000-8000-100000000005",
+      ...(target === "preview_branch"
+        ? { branchId, branchName: "proof-branch" }
+        : { defaultBranchName: "main" }),
+    };
+    registerCachedSourceObserver(ctx.adapter.fs, () => {
+      captures++;
+      return Promise.resolve({
+        identity: `branch:test-project:${target === "preview_branch" ? "proof-branch" : "main"}`,
+        version: captures,
+        fingerprint: { algorithm: "veryfront-source-snapshot-multiset-v1", value: "a".repeat(64) },
+        members: Array.from(
+          { length: 46 },
+          (_, i) => ({ path: `source-${String(i).padStart(2, "0")}.ts`, sha256: "b".repeat(64) }),
+        ),
+      });
+    });
+    const result = await handler.handle(
+      sealIngressCredentials(
+        new Request(`https://example.com/api/control-plane/runs/${runId}/stream`, {
+          method: "POST",
+          headers: {
+            "x-veryfront-control-plane-jws": jws,
+            [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+          },
+          body,
+        }),
+      ),
+      ctx,
+    );
+    assertExists(result.response);
+    const text = await result.response.text();
+    assertEquals(result.response.status, 200, text);
+    const observations = text.split("\n\n").filter((frame) =>
+      frame.startsWith("event: AgentRunSourceSnapshot\n")
+    ).map((frame) => JSON.parse(frame.split("\ndata: ")[1]!));
+    assertEquals(modelCalls, 1);
+    assertEquals(text.includes("ordinary output"), true);
+    if (target === "main_branch") {
+      // Main has no concrete branch UUID, so it runs without preview qualification proof.
+      assertEquals(observations, []);
+      return;
+    }
+    assertEquals(observations[1].identity.branchId, branchId);
+    assertEquals(observations.map((frame) => frame.stage), [
+      "config_loaded",
+      "discovery_completed",
+    ]);
+    assertEquals(observations[1].identity.canonicalRunId, canonicalRunId);
+    assertEquals(observations[1].snapshot.members.length, 46);
+    assertEquals(observations[1].resolvedConfig.toolResultContext.maxStoredResults, 256);
+  });
+}

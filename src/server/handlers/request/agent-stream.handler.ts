@@ -1729,6 +1729,8 @@ export class AgentStreamHandler extends BaseHandler {
           toRuntimeRunAgentInput(payload),
           runtimeBaseAgent as Agent,
         );
+        // Preview qualification requires a concrete branch UUID. Main-branch runs
+        // execute normally without private proof and cannot qualify this protocol.
         if (
           configSourceObservation && discoverySourceObservation && currentRunId &&
           projectScopedContext.projectId &&
