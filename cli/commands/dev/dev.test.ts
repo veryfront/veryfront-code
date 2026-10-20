@@ -8,12 +8,18 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
 import {
+  createConnectedDevPushOptions,
   createSelectedProjectPushOptions,
   loginForDevShortcut,
   preloadDevAuth,
   startDevServerOnFreePort,
 } from "./command.ts";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { UntrustedApiUrlCredentialError } from "#cli/shared/config";
 
 describe("cli/commands/dev", () => {
@@ -443,5 +449,32 @@ describe("cli/commands/dev: auth shortcut", () => {
     const identity = { authenticated: true, type: "apiKey" } as const;
 
     assertEquals(await loginForDevShortcut(() => Promise.resolve(identity)), identity);
+  });
+});
+
+it("connected startup sync preserves guards and streams source responses", async () => {
+  const controller = new AbortController();
+  let signal: AbortSignal | null | undefined;
+  await withMockFetch((_input, init) => {
+    signal = observeFetchRequestInit(init).signal;
+    return Promise.resolve(new Response(new ReadableStream({ cancel() {} })));
+  }, async () => {
+    const options = createConnectedDevPushOptions(
+      "/tmp/project",
+      "demo",
+      "https://api.veryfront.com",
+    );
+    assertEquals(options.projectDir, "/tmp/project");
+    assertEquals(options.projectSlug, "demo");
+    assertEquals(options.force, undefined);
+    assertEquals(options.prune, undefined);
+    assertEquals(options.noAdoptPins, true);
+    assertEquals(options.quiet, true);
+    const response = await options.transport!("https://api.veryfront.com/projects/demo/files", {
+      signal: controller.signal,
+    });
+    assertEquals(signal, controller.signal, "source sync must not add an onboarding deadline");
+    await response.body?.cancel();
+    controller.abort();
   });
 });

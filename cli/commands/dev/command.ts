@@ -179,6 +179,21 @@ export async function loginForDevShortcut(
   }
 }
 
+/** Startup sync updates the linked source with ordinary push conflict guards. */
+export function createConnectedDevPushOptions(
+  projectDir: string,
+  projectSlug: string,
+  apiBaseUrl: string,
+): PushOptions {
+  return {
+    projectDir,
+    projectSlug,
+    quiet: true,
+    noAdoptPins: true,
+    transport: createConnectedDevSyncTransport(apiBaseUrl),
+  };
+}
+
 export function createSelectedProjectPushOptions(
   projectDir: string,
   project: RemoteProject,
@@ -337,15 +352,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           },
           sync: async (target) => {
             console.log("  Syncing project source for local development...");
-            await pushCommand({
+            await pushCommand(createConnectedDevPushOptions(
               projectDir,
-              projectSlug: target.projectSlug,
-              quiet: true,
-              noAdoptPins: true,
-              transport: createCloudOnboardingTransport(
-                connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
-              ),
-            });
+              target.projectSlug,
+              connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+            ));
           },
           resolve: async (projectSlug, environmentName) => {
             runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
