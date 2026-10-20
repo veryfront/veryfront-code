@@ -1712,7 +1712,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-          currentRunId: runtimeInput.runId,
+          currentRunId: projectEventPersistence?.canonicalRunId ?? runtimeInput.runId,
           agent: runtimeBaseAgent as Agent,
           token: apiAuthToken || null,
           projectId: executionProject?.projectId ??
