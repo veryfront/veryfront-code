@@ -25,7 +25,9 @@ class RecoveryTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 r.validate_run(run,39465167710,'push','main','.github/workflows/cicd.yml',['Build'],[{'name':'Build','status':'completed','conclusion':'success','run_id':39465167710}])
         for jobs in [[],[{'name':'Build','status':'completed','conclusion':'failure','run_id':39465167710}], [{'name':'Build','status':'completed','conclusion':'success','run_id':1}]]:
-            with self.assertRaises(ValueError): r.validate_run(self.run_fixture(),39465167710,'push','main','.github/workflows/cicd.yml',['Build'],jobs)
+            run = self.run_fixture()
+            with self.assertRaises(ValueError):
+                r.validate_run(run,39465167710,'push','main','.github/workflows/cicd.yml',['Build'],jobs)
 
     def archive(self, entries):
         out=io.BytesIO()
@@ -37,9 +39,13 @@ class RecoveryTests(unittest.TestCase):
         expected={'veryfront-linux-arm64': hashlib.sha256(b'binary').hexdigest()}
         r.validate_binary_zip(self.archive([('veryfront-linux-arm64',b'binary')]),expected)
         for entries in [[('../veryfront-linux-arm64',b'binary')],[('veryfront-linux-arm64',b'wrong')],[('veryfront-linux-arm64',b'binary'),('extra',b'x')],[],[('veryfront-linux-arm64',b'binary')]*2]:
-            with self.assertRaises(ValueError): r.validate_binary_zip(self.archive(entries),expected)
+            archive = self.archive(entries)
+            with self.assertRaises(ValueError):
+                r.validate_binary_zip(archive,expected)
         info=zipfile.ZipInfo('veryfront-linux-arm64'); info.create_system=3; info.external_attr=(stat.S_IFLNK|0o777)<<16
-        with self.assertRaises(ValueError): r.validate_binary_zip(self.archive([(info,b'binary')]),expected)
+        archive = self.archive([(info,b'binary')])
+        with self.assertRaises(ValueError):
+            r.validate_binary_zip(archive,expected)
 
     def test_artifact_metadata_and_archive_are_bound(self):
         data=b'archive'; digest=hashlib.sha256(data).hexdigest()

@@ -78,6 +78,21 @@ class PreflightTests(unittest.TestCase):
                 self.assertFalse(failed['releaseQualified'])
                 self.assertTrue(failed['failures'])
 
+    def test_jobs_pagination_still_refuses_changed_empty_or_overbound_responses(self):
+        for defect in ('changed-total', 'empty-page', 'overbound'):
+            calls = []
+            def github(path):
+                calls.append(path)
+                page = int(path.rsplit('page=', 1)[1])
+                if defect == 'empty-page':
+                    return {'total_count': 2, 'jobs': []}
+                total = 1001 if defect == 'overbound' else (2 if page == 1 else 3)
+                return {'total_count': total, 'jobs': [{'name': 'unqualified'}]}
+            with self.subTest(defect=defect):
+                with self.assertRaises(ValueError):
+                    p.read_jobs('repos/source/', 1, github)
+                self.assertEqual(len(calls), {'changed-total': 2, 'empty-page': 1, 'overbound': 10}[defect])
+
     def test_wrong_root_source_or_tarball_rejected(self):
         good={'name':'veryfront','version':'0.1.1283','gitHead':p.verifier.SOURCE,
               'dist':{'integrity':'sha512-'+'A'*86+'==','tarball':'https://registry.npmjs.org/veryfront/-/veryfront-0.1.1283.tgz'}}

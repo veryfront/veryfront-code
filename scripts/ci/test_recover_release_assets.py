@@ -160,8 +160,9 @@ class RecoveryAssetsTests(unittest.TestCase):
         def denied(args):
             self.calls.append(args)
             raise subprocess.CalledProcessError(1, args, output=b'{"status":"403"}')
+        recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
-            module().recover(self.manifest_path, self.digest, self.directory, denied)
+            recover(self.manifest_path, self.digest, self.directory, denied)
         self.assertEqual(len(self.calls), 1)
 
     def test_absent_public_tag_failure_does_not_upload_or_publish(self):
@@ -172,8 +173,9 @@ class RecoveryAssetsTests(unittest.TestCase):
             self.assertEqual(args[:2], ['release', 'create'])
             self.assertIn('--verify-tag', args)
             raise subprocess.CalledProcessError(1, args, output=b'tag does not exist')
+        recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
-            module().recover(self.manifest_path, self.digest, self.directory, missing_tag)
+            recover(self.manifest_path, self.digest, self.directory, missing_tag)
         self.assertEqual(len(self.calls), 2)
         self.assertFalse(any((uploading(a) or publishing(a)) for a in self.calls))
 
@@ -184,8 +186,9 @@ class RecoveryAssetsTests(unittest.TestCase):
                 self.calls.append(args)
                 return b''
             return original(args)
+        recover = module().recover
         with self.assertRaises(ValueError):
-            module().recover(self.manifest_path, self.digest, self.directory, lost)
+            recover(self.manifest_path, self.digest, self.directory, lost)
         self.assertFalse(any(publishing(a) for a in self.calls))
 
     def test_upload_failure_does_not_delete_or_publish(self):
@@ -195,8 +198,9 @@ class RecoveryAssetsTests(unittest.TestCase):
                 self.calls.append(args)
                 raise subprocess.CalledProcessError(1, args)
             return original(args)
+        recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
-            module().recover(self.manifest_path, self.digest, self.directory, failing)
+            recover(self.manifest_path, self.digest, self.directory, failing)
         self.assertFalse(any(publishing(a) or 'DELETE' in a for a in self.calls))
 
     def test_published_missing_assets_and_wrong_release_fail_closed(self):
@@ -209,8 +213,9 @@ class RecoveryAssetsTests(unittest.TestCase):
                 self.calls.append(args)
                 return json.dumps(dict(self.release, tag_name='v0.1.1263')).encode()
             return original(args)
+        recover = module().recover
         with self.assertRaises(ValueError):
-            module().recover(self.manifest_path, self.digest, self.directory, wrong)
+            recover(self.manifest_path, self.digest, self.directory, wrong)
         self.assertTrue(all(not uploading(a) and not publishing(a) for a in self.calls))
 
     def test_duplicate_tags_or_incomplete_bounded_listing_never_create(self):
@@ -220,18 +225,50 @@ class RecoveryAssetsTests(unittest.TestCase):
             def listed(args):
                 self.calls.append(args)
                 return json.dumps(rows).encode()
+            recover = module().recover
             with self.assertRaises(ValueError):
-                module().recover(self.manifest_path, self.digest, self.directory, listed)
+                recover(self.manifest_path, self.digest, self.directory, listed)
             self.assertTrue(all(a[0] == 'api' and 'GET' in a for a in self.calls))
 
     def test_list_404_is_not_absence_and_never_creates(self):
         def unavailable(args):
             self.calls.append(args)
             raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
+        recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
-            module().recover(self.manifest_path, self.digest, self.directory, unavailable)
+            recover(self.manifest_path, self.digest, self.directory, unavailable)
         self.assertEqual(len(self.calls), 1)
 
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class ManifestLocationTests(unittest.TestCase):
+    def test_rejects_outside_manifest_before_reading(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            assets = root / 'assets'
+            assets.mkdir()
+            outside = root / 'unrelated.json'
+            outside.write_text('not release data')
+            load_manifest = module().load_manifest
+            with self.assertRaisesRegex(ValueError, 'Manifest must belong'):
+                load_manifest(outside, '0' * 64, assets)
+
+    def test_rejects_manifest_symlink_before_reading(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            assets = root / 'assets'
+            assets.mkdir()
+            unrelated = root / 'unrelated.json'
+            unrelated.write_text('not release data')
+            manifest = root / 'manifest.json'
+            manifest.symlink_to(unrelated)
+            load_manifest = module().load_manifest
+            with self.assertRaisesRegex(ValueError, 'Manifest cannot be a symlink'):
+                load_manifest(manifest, '0' * 64, assets)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -66,7 +66,13 @@ def verify_local_asset(directory, row):
 
 def load_manifest(path, expected_sha256, directory):
     require(type(expected_sha256) is str and re.fullmatch('[a-f0-9]{64}', expected_sha256), 'Invalid manifest digest')
-    raw = Path(path).read_bytes()
+    manifest_path = Path(path)
+    asset_root = Path(directory).resolve(strict=True)
+    require(not manifest_path.is_symlink(), 'Manifest cannot be a symlink')
+    manifest_path = manifest_path.resolve(strict=True)
+    require(manifest_path in {asset_root / 'manifest.json', asset_root.parent / 'manifest.json'},
+            'Manifest must belong to the prepared asset directory')
+    raw = manifest_path.read_bytes()
     require(hashlib.sha256(raw).hexdigest() == expected_sha256, 'Manifest digest differs')
     value = decode(raw)
     require(type(value) is dict and set(value) == {'schema_version', 'version', 'source_revision', 'assets'}, 'Invalid manifest fields')
