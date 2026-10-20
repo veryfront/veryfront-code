@@ -97,6 +97,8 @@ const gateway = createServer(async (request, response) => {
 await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
 gateway.unref();
 process.env.VERYFRONT_PUBLIC_API_BASE_URL = `http://127.0.0.1:${gateway.address().port}`;
+process.env.VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS =
+  process.env.VERYFRONT_PUBLIC_API_BASE_URL;
 after(async () => {
   gateway.closeAllConnections();
   await new Promise((resolve) => gateway.close(resolve));
