@@ -866,13 +866,45 @@ describe("src/skill/executor", () => {
     });
 
     for (const authSource of ["SANDBOX_AUTH_TOKEN", "VERYFRONT_API_TOKEN"] as const) {
+      it(`cancels cloud sandbox provisioning with ${authSource}`, async () => {
+        const controller = new AbortController();
+        const cancellation = new Error("Provisioning canceled by the caller");
+        setEnv(authSource, "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          (_input, init) => {
+            const signal = init?.signal;
+            if (!signal) throw new Error("Provisioning did not receive cancellation");
+            return new Promise<Response>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+              controller.abort(cancellation);
+            });
+          },
+        ]);
+
+        await assertRejects(
+          () =>
+            getSkillScriptExecutor().execute({
+              projectId: "trusted-project",
+              scriptPath: "scripts/run.sh",
+              scriptContent: "echo bound",
+              abortSignal: controller.signal,
+            }),
+          Error,
+          cancellation.message,
+        );
+        assertEquals(fetchCalls.length, 1);
+      });
+
       it(`binds cloud script sandboxes to the trusted project with ${authSource}`, async () => {
+        const controller = new AbortController();
         setEnv(authSource, "sandbox-token");
         setEnv("VERYFRONT_API_URL", "https://api.test.com");
         mockFetch([
           (_input, init) => {
             assertEquals(JSON.parse(String(init?.body)).project_reference, "trusted-project");
             assertEquals(new Headers(init?.headers).get("authorization"), "Bearer sandbox-token");
+            assertEquals(init?.signal?.aborted, false);
             return jsonResponse({
               id: "project-script",
               endpoint: "https://sandbox.example.com",
@@ -905,6 +937,7 @@ describe("src/skill/executor", () => {
           scriptPath: "scripts/run.sh",
           scriptContent: "echo bound",
           timeoutMs: 1000,
+          abortSignal: controller.signal,
           env: {
             VERYFRONT_PROJECT_ID: "untrusted-project",
             VERYFRONT_BRANCH_REF: "untrusted-branch",

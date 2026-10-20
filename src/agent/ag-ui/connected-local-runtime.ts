@@ -1,3 +1,4 @@
+import { retainVerifiedSkillScriptExecutionCredentialUntil } from "#veryfront/skill/execution-credential.ts";
 import { createLocalToolStream } from "./local-tool-stream.ts";
 import { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
 import {
@@ -884,6 +885,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 ...(agent.config.tools === true ? {} : { delegates: undefined }),
               }, {
                 resolveModelRuntime: resolver,
+                onStreamCompletion: retainVerifiedSkillScriptExecutionCredentialUntil,
                 preserveToolCatalog: agent.config.tools !== true,
               })
             );

@@ -611,6 +611,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         }
         : {
           projectReference: input.projectId,
+          signal: input.abortSignal,
           ...(authToken ? { authToken } : {}),
         },
     );

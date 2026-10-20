@@ -20,20 +20,13 @@ import { fileURLToPath } from "node:url";
  * For compiled binaries, files are embedded with --include and extracted to:
  *   /tmp/deno-compile-xxx/{relative_path_from_include}
  *
- * The extraction root IS the framework root because --include paths are
- * relative to the project root. So dist/framework-src extracts to
- * /tmp/deno-compile-xxx/dist/framework-src.
+ * The VFS can retain a project prefix when embedded dependencies have a
+ * different common ancestor. Resolve the framework's source directory before
+ * falling back to the extraction root.
  */
 export function getFrameworkRoot(filePath: string): string {
   const portablePath = filePath.replace(/\\/g, "/");
   const denoCompileMatch = portablePath.match(/^(.*\/deno-compile-[^/]+)\//);
-  if (denoCompileMatch?.[1]) {
-    // For compiled binaries, always return the extraction root.
-    // Files included with --include are placed relative to the extraction root,
-    // matching their original relative paths from the compile command's CWD.
-    // This means dist/framework-src is at {extraction_root}/dist/framework-src.
-    return denoCompileMatch[1];
-  }
 
   const parts = portablePath.split("/");
   let frameworkSourceIndex = -1;
@@ -50,6 +43,8 @@ export function getFrameworkRoot(filePath: string): string {
   if (frameworkSourceIndex > 0) {
     return parts.slice(0, frameworkSourceIndex).join("/");
   }
+
+  if (denoCompileMatch?.[1]) return denoCompileMatch[1];
 
   // Published packages execute from dist rather than src.
   const distIndex = parts.lastIndexOf("dist");
