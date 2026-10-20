@@ -169,6 +169,62 @@ function createMinimalAgent(id: string): Agent {
 }
 
 describe("agentAsTool", () => {
+  it("streams a local tool result and final child text after a stop-finished preamble", async () => {
+    const { createEphemeralAgent } = await import("../factory.ts");
+    const { tool } = await import("#veryfront/tool");
+    let executions = 0;
+    const model = scriptedModel([
+      {
+        parts: [
+          { type: "text-delta", text: "Checking the demo record." },
+          { type: "tool-call", toolCallId: "inspect", toolName: "inspect_record", input: {} },
+          { type: "finish", finishReason: "stop" },
+        ],
+      },
+      { text: "The demo record is valid.", finishReason: "stop" },
+    ], { only: "stream", provider: "custom", modelId: "custom/child-stop" });
+    const child = createEphemeralAgent({
+      id: "child-stop",
+      system: "Inspect the synthetic demo record.",
+      model: "custom/child-stop",
+      resolveModelTransport: () => ({ model }),
+      maxSteps: 3,
+      tools: {
+        inspect_record: tool({
+          id: "inspect_record",
+          description: "Inspect a synthetic record",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({ valid: true });
+          },
+        }),
+      },
+    });
+    const events: Array<Record<string, unknown>> = [];
+    const result = await agentAsTool(child, "Inspect", { publishChildStream: true }).execute(
+      { input: "Check the record" },
+      {
+        toolCallId: "parent",
+        publishDataEvent: (event) => {
+          const value = parseInvokeAgentStreamValue(event.value);
+          if (value) events.push(value.event);
+        },
+      },
+    );
+    assertEquals(executions, 1);
+    assertEquals(result.status, "completed");
+    assertStringIncludes(result.text, "The demo record is valid.");
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-available").map((event) => event.output),
+      [{ valid: true }],
+    );
+    assertStringIncludes(
+      events.filter((event) => event.type === "text-delta").map((event) => event.delta).join(""),
+      "The demo record is valid.",
+    );
+  });
+
   for (const selection of ["all tools", "delegates"] as const) {
     it(`preserves connected child ${selection} when binding its model runtime`, async () => {
       const child = createMinimalAgent(`connected-${selection.replaceAll(" ", "-")}`);

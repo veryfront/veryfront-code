@@ -214,6 +214,19 @@ export function shouldContinueAfterStreamStep(
     return canRecoverInterruptedClientToolCall;
   }
 
+  // A committed local call still needs execution even when the provider
+  // ends with stop after a text preamble. Do not replay calls with results.
+  if (
+    somePrivateArray(
+      streamedToolCalls,
+      (toolCall) =>
+        toolCall.providerExecuted !== true &&
+        !finalToolResults.has(toolCall.id),
+    )
+  ) {
+    return true;
+  }
+
   if (hasAssistantText) {
     return false;
   }
