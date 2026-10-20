@@ -40,19 +40,20 @@ def gh(args):
     return subprocess.check_output(['gh', *args], stderr=subprocess.PIPE)
 
 
-def read_api(path, transport, allow_absent=False):
-    try:
-        return decode(transport(['api', '--method', 'GET', path]))
-    except subprocess.CalledProcessError as error:
-        # Only an explicit API 404 is absence; auth/network failures must stop.
-        if allow_absent:
-            try:
-                absent = decode(error.output)
-                if type(absent) is dict and str(absent.get('status')) == '404':
-                    return None
-            except (ValueError, TypeError):
-                pass
-        raise
+def read_api(path, transport):
+    return decode(transport(['api', '--method', 'GET', path]))
+
+
+def discover_release(transport):
+    matches = []
+    for page in range(1, 11):
+        rows = read_api(f'{API}/releases?per_page=100&page={page}', transport)
+        require(type(rows) is list and all(type(row) is dict for row in rows), 'Invalid release listing')
+        matches.extend(row for row in rows if row.get('tag_name') == TAG)
+        require(len(matches) <= 1, 'Duplicate release tags')
+        if len(rows) < 100:
+            return matches[0] if matches else None
+    raise ValueError('Release listing exceeds bounded inventory')
 
 
 def verify_local_asset(directory, row):
@@ -116,25 +117,33 @@ def inventory(release, expected, transport, complete=False):
 
 def recover(manifest, expected_sha256, directory, transport=gh):
     expected = load_manifest(manifest, expected_sha256, directory)
-    path = f'{API}/releases/tags/{TAG}'
-    release = read_api(path, transport, allow_absent=True)
+    release = discover_release(transport)
     if release is None:
         transport(['release', 'create', TAG, '--repo', REPOSITORY, '--title', TAG,
                    '--verify-tag', '--draft', '--notes', f'Original tested {VERSION} artifacts from {SOURCE}; no npm republish.'])
-        release = read_api(path, transport)
+        release = discover_release(transport)
     verify_release(release)
+    path = f'{API}/releases/{release["id"]}'
+    selected_id = release['id']
+    release = read_api(path, transport)
+    verify_release(release)
+    require(release['id'] == selected_id, 'Selected release changed')
     found = inventory(release, expected, transport, complete=not release['draft'])
     if not release['draft']:
         return release
     for name in sorted(set(expected) - found):
         # Recheck bytes immediately before upload; --clobber is intentionally absent.
         verify_local_asset(directory, expected[name])
-        transport(['release', 'upload', TAG, str((Path(directory) / name).resolve()), '--repo', REPOSITORY])
+        transport(['api', '--method', 'POST',
+                   '-H', 'Content-Type: application/octet-stream', '--input',
+                   str((Path(directory) / name).resolve()),
+                   f'https://uploads.github.com/{API}/releases/{release["id"]}/assets?name={name}'])
     current = read_api(path, transport)
     verify_release(current)
     require(current['id'] == release['id'] and current['draft'], 'Draft changed during recovery')
     inventory(current, expected, transport, complete=True)
-    transport(['release', 'edit', TAG, '--repo', REPOSITORY, '--draft=false', '--prerelease=false', '--latest=false'])
+    transport(['api', '--method', 'PATCH', '-F', 'draft=false', '-F', 'prerelease=false',
+               '-f', 'make_latest=false', path])
     final = read_api(path, transport)
     verify_release(final)
     require(final['id'] == release['id'] and not final['draft'], 'Publication was not confirmed')

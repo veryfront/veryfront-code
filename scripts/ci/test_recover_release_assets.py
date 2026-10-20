@@ -16,6 +16,14 @@ def module():
     return value
 
 
+def uploading(args):
+    return args[0] == 'api' and 'POST' in args
+
+
+def publishing(args):
+    return args[0] == 'api' and 'PATCH' in args
+
+
 class RecoveryAssetsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -41,15 +49,18 @@ class RecoveryAssetsTests(unittest.TestCase):
 
     def transport(self, args):
         self.calls.append(args)
-        if args[0] == 'api':
+        if uploading(args):
+            self.assets.append(self.uploaded())
+        elif publishing(args):
+            self.release['draft'] = False
+        elif args[0] == 'api':
             if '/assets?' in args[-1]:
                 return json.dumps(self.assets).encode()
+            if '/releases?' in args[-1]:
+                return json.dumps([self.release]).encode()
             if '/releases/' in args[-1]:
                 return json.dumps(self.release).encode()
-        if args[:2] == ['release', 'upload']:
-            self.assets.append(self.uploaded())
-        elif args[:2] == ['release', 'edit']:
-            self.release['draft'] = False
+            raise AssertionError(args)
         else:
             raise AssertionError(args)
         return b''
@@ -57,25 +68,40 @@ class RecoveryAssetsTests(unittest.TestCase):
     def run_recovery(self):
         return module().recover(self.manifest_path, self.digest, self.directory, self.transport)
 
+    def test_authenticated_list_finds_draft_when_tag_endpoint_returns_404(self):
+        original = self.transport
+        def realistic(args):
+            if args[0] == 'api' and '/releases/tags/' in args[-1]:
+                raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
+            if args[0] == 'api' and '/releases?' in args[-1]:
+                self.calls.append(args)
+                return json.dumps([self.release]).encode()
+            return original(args)
+        self.assets = [self.uploaded()]
+        module().recover(self.manifest_path, self.digest, self.directory, realistic)
+        self.assertFalse(any(a[:2] == ['release', 'create'] for a in self.calls))
+
     def test_uploads_missing_once_then_verifies_before_publication(self):
         result = self.run_recovery()
         self.assertFalse(result['draft'])
-        upload = [a for a in self.calls if a[:2] == ['release', 'upload']]
+        upload = [a for a in self.calls if uploading(a)]
         self.assertEqual(len(upload), 1)
         self.assertNotIn('--clobber', upload[0])
-        self.assertIn('--latest=false', next(a for a in self.calls if a[:2] == ['release', 'edit']))
+        self.assertNotIn('--hostname', upload[0])
+        self.assertEqual(upload[0][-1], 'https://uploads.github.com/repos/veryfront/veryfront/releases/7/assets?name=binary')
+        self.assertIn('make_latest=false', next(a for a in self.calls if publishing(a)))
         self.assertTrue(any('/assets?' in a[-1] for a in self.calls[self.calls.index(upload[0]) + 1:]))
 
     def test_preserves_uploaded_and_identical_published_release(self):
         self.assets = [self.uploaded()]
         self.release['draft'] = False
         self.run_recovery()
-        self.assertTrue(all(a[0] == 'api' for a in self.calls))
+        self.assertTrue(all(not uploading(a) and not publishing(a) for a in self.calls))
 
     def test_preserves_uploaded_draft_asset(self):
         self.assets = [self.uploaded()]
         self.run_recovery()
-        self.assertFalse(any(a[:2] == ['release', 'upload'] for a in self.calls))
+        self.assertFalse(any(uploading(a) for a in self.calls))
 
     def test_rejects_extra_duplicate_mismatched_or_incomplete_assets_before_writes(self):
         for assets in [[self.uploaded(), self.uploaded()],
@@ -87,7 +113,7 @@ class RecoveryAssetsTests(unittest.TestCase):
                 self.calls = []
                 self.assets = assets
                 with self.assertRaises(ValueError): self.run_recovery()
-                self.assertTrue(all(a[0] == 'api' for a in self.calls))
+                self.assertTrue(all(not uploading(a) and not publishing(a) for a in self.calls))
 
     def test_rejects_wrong_manifest_hash_source_version_or_unsafe_paths(self):
         for change in [{'version': '0.1.1284'}, {'source_revision': '0' * 40},
@@ -113,15 +139,15 @@ class RecoveryAssetsTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.run_recovery()
         self.assertEqual(self.calls, [])
 
-    def test_creates_only_after_explicit_404_and_does_not_misread_auth_failure(self):
+    def test_creates_only_after_complete_empty_list_and_rejects_auth_failure(self):
         original = self.transport
         missing = True
         def absent(args):
             nonlocal missing
-            if args[0] == 'api' and '/releases/tags/' in args[-1] and missing:
+            if args[0] == 'api' and '/releases?' in args[-1] and missing:
                 missing = False
                 self.calls.append(args)
-                raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
+                return b'[]'
             if args[:2] == ['release', 'create']:
                 self.calls.append(args)
                 self.assertIn('--draft', args)
@@ -142,44 +168,70 @@ class RecoveryAssetsTests(unittest.TestCase):
         def missing_tag(args):
             self.calls.append(args)
             if args[0] == 'api':
-                raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
+                return b'[]'
             self.assertEqual(args[:2], ['release', 'create'])
             self.assertIn('--verify-tag', args)
             raise subprocess.CalledProcessError(1, args, output=b'tag does not exist')
         with self.assertRaises(subprocess.CalledProcessError):
             module().recover(self.manifest_path, self.digest, self.directory, missing_tag)
         self.assertEqual(len(self.calls), 2)
-        self.assertFalse(any(a[:2] in (['release', 'upload'], ['release', 'edit']) for a in self.calls))
+        self.assertFalse(any((uploading(a) or publishing(a)) for a in self.calls))
 
     def test_missing_final_upload_never_publishes(self):
         original = self.transport
         def lost(args):
-            if args[:2] == ['release', 'upload']:
+            if uploading(args):
                 self.calls.append(args)
                 return b''
             return original(args)
         with self.assertRaises(ValueError):
             module().recover(self.manifest_path, self.digest, self.directory, lost)
-        self.assertFalse(any(a[:2] == ['release', 'edit'] for a in self.calls))
+        self.assertFalse(any(publishing(a) for a in self.calls))
 
     def test_upload_failure_does_not_delete_or_publish(self):
         original = self.transport
         def failing(args):
-            if args[:2] == ['release', 'upload']:
+            if uploading(args):
                 self.calls.append(args)
                 raise subprocess.CalledProcessError(1, args)
             return original(args)
         with self.assertRaises(subprocess.CalledProcessError):
             module().recover(self.manifest_path, self.digest, self.directory, failing)
-        self.assertFalse(any(a[:2] == ['release', 'edit'] or 'DELETE' in a for a in self.calls))
+        self.assertFalse(any(publishing(a) or 'DELETE' in a for a in self.calls))
 
     def test_published_missing_assets_and_wrong_release_fail_closed(self):
         self.release['draft'] = False
         with self.assertRaises(ValueError): self.run_recovery()
         self.release['draft'] = True
-        self.release['tag_name'] = 'v0.1.1263'
-        with self.assertRaises(ValueError): self.run_recovery()
-        self.assertTrue(all(a[0] == 'api' for a in self.calls))
+        original = self.transport
+        def wrong(args):
+            if args[0] == 'api' and args[-1].endswith('/releases/7'):
+                self.calls.append(args)
+                return json.dumps(dict(self.release, tag_name='v0.1.1263')).encode()
+            return original(args)
+        with self.assertRaises(ValueError):
+            module().recover(self.manifest_path, self.digest, self.directory, wrong)
+        self.assertTrue(all(not uploading(a) and not publishing(a) for a in self.calls))
+
+    def test_duplicate_tags_or_incomplete_bounded_listing_never_create(self):
+        for rows in [[self.release, dict(self.release, id=8)],
+                     [{'tag_name': 'another'}] * 100]:
+            self.calls = []
+            def listed(args):
+                self.calls.append(args)
+                return json.dumps(rows).encode()
+            with self.assertRaises(ValueError):
+                module().recover(self.manifest_path, self.digest, self.directory, listed)
+            self.assertTrue(all(a[0] == 'api' and 'GET' in a for a in self.calls))
+
+    def test_list_404_is_not_absence_and_never_creates(self):
+        def unavailable(args):
+            self.calls.append(args)
+            raise subprocess.CalledProcessError(1, args, output=b'{"status":"404"}')
+        with self.assertRaises(subprocess.CalledProcessError):
+            module().recover(self.manifest_path, self.digest, self.directory, unavailable)
+        self.assertEqual(len(self.calls), 1)
+
 
 
 if __name__ == '__main__': unittest.main()
