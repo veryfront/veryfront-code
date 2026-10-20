@@ -33,7 +33,7 @@ jobs:
           python3 -B -m unittest discover -s scripts/ci -p 'test_prepare_release_1283.py' -v
 
   prepare:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'veryfront/veryfront-code'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'veryfront/veryfront-code' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -51,6 +51,7 @@ jobs:
           path: original
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.18.0
