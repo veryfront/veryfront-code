@@ -55,7 +55,7 @@ import { isInteractive } from "../../shared/interactive.ts";
 import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
-} from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
+} from "#cli/connected-local-runtime";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
   trustOperatorConfiguredVeryfrontApiOrigins,
