@@ -354,7 +354,11 @@ describe("provider/veryfront-cloud", () => {
     });
     const model = resolver("veryfront-cloud/openai/gpt-test")!;
     active = false;
-    await assertRejects(() => model.doStream({ prompt: [] }), Error, "child authority unavailable");
+    await assertRejects(
+      async () => await model.doStream({ prompt: [] }),
+      Error,
+      "child authority unavailable",
+    );
     assertEquals(requests, 0);
   });
 
