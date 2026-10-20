@@ -70,6 +70,11 @@ describe("safe adapter failure metadata", () => {
     });
     const spoof = Object.create(DOMException.prototype);
     Object.defineProperties(spoof, { name: { get: getter }, message: { get: getter } });
+    const copiedSlots = Object.create(DOMException.prototype);
+    Object.defineProperties(
+      copiedSlots,
+      Object.getOwnPropertyDescriptors(new DOMException("private", "AbortError")),
+    );
     const revocable = Proxy.revocable(new DOMException("private", "AbortError"), {
       get: getter,
       getPrototypeOf: getter,
@@ -77,7 +82,13 @@ describe("safe adapter failure metadata", () => {
     });
     revocable.revoke();
     for (
-      const value of [error, spoof, revocable.proxy, new DOMException("private", "PrivateError")]
+      const value of [
+        error,
+        spoof,
+        copiedSlots,
+        revocable.proxy,
+        new DOMException("private", "PrivateError"),
+      ]
     ) {
       assertEquals(agentServiceFailureDiagnostic("request-fetch", value), {
         stage: "request-fetch",
@@ -86,6 +97,20 @@ describe("safe adapter failure metadata", () => {
       });
     }
     assertEquals(hooks, 0);
+  });
+
+  it("does not extend transport-code authority to non-native DOMExceptions", () => {
+    const error = new DOMException("private", "AbortError");
+    Object.defineProperty(error, "code", { value: "ECONNRESET" });
+    // Native Error hosts retain the existing code rule; Bun's separate host
+    // brand permits only the name, never direct or cause transport metadata.
+    const result = agentServiceFailureDiagnostic("request-fetch", error);
+    assertEquals(result.errorName, "AbortError");
+    const native = agentServiceFailureDiagnostic(
+      "request-fetch",
+      new Error("private", { cause: error }),
+    );
+    assertEquals(result.transportCode, native.transportCode);
   });
 
   it("does not invoke replaced or inherited host-symbol slot getters", () => {

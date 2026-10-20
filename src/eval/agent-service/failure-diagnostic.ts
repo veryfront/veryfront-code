@@ -4,6 +4,7 @@ import {
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 
 export type AgentServiceFailureStage =
   | "request-build"
@@ -24,6 +25,11 @@ const domExceptionName = typeof DOMException === "function"
 const domExceptionSlots = typeof DOMException === "function"
   ? Object.getOwnPropertySymbols(new DOMException())
   : [];
+// Bun does not give DOMException the native Error brand. Its host getter
+// instead checks inaccessible native slots; never use Deno's copyable slots
+// as a substitute for that runtime's native Error brand.
+const canBrandBunDomException = isBun && domExceptionSlots.length === 0 &&
+  domExceptionName !== undefined;
 
 function hasSafePrototypeChain(value: object): boolean {
   let prototype: object | null = value;
@@ -109,14 +115,20 @@ export function agentServiceFailureDiagnostic(stage: AgentServiceFailureStage, e
   const redacted = { stage, errorName: "redacted", transportCode: "redacted" } as const;
   if (
     !canIdentifyProxyWithoutHooks || isProxyWithoutHooks(error) ||
-    !isNativeErrorWithoutHooks(error)
+    typeof error !== "object" || error === null
   ) {
     return redacted;
   }
   try {
+    const nativeError = isNativeErrorWithoutHooks(error);
+    if (!nativeError && !canBrandBunDomException) return redacted;
     // The host WebIDL brand check may traverse the entire prototype chain.
     if (!hasSafePrototypeChain(error)) return redacted;
     const domName = nativeDomExceptionName(error);
+    if (!nativeError) {
+      if (typeof domName !== "string") return redacted;
+      return { stage, errorName: errorName(error, domName), transportCode: "redacted" };
+    }
     let code: ReturnType<typeof transportCode> = transportCode(ownData(error, "code"));
     if (code === "redacted") {
       const cause = ownData(error, "cause");
