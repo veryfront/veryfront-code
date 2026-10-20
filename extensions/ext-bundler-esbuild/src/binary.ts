@@ -32,9 +32,16 @@ function getEsbuildBinaryName(): string {
   return `@esbuild/${Deno.build.os}-${arch}`;
 }
 
-function getVFSBasePath(filePath: string, tempDir: string): string {
+export function getVFSBasePath(filePath: string, tempDir: string): string {
   const denoCompileMatch = filePath.match(/^(.*\/deno-compile-[^/]+)\//);
-  if (denoCompileMatch?.[1]) return denoCompileMatch[1];
+  if (denoCompileMatch?.[1]) {
+    // Deno can retain a project directory below the compile VFS root when
+    // embedded dependencies have a different common ancestor.
+    const moduleRoot = filePath.lastIndexOf("/extensions/ext-bundler-esbuild/src/");
+    return moduleRoot >= denoCompileMatch[1].length
+      ? filePath.slice(0, moduleRoot)
+      : denoCompileMatch[1];
+  }
   const parts = filePath.split("/");
   const srcIndex = parts.lastIndexOf("src");
   if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
