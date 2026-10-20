@@ -2,8 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { createAdapter as createSourceAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.test-helpers.ts";
-import { buildFileListCacheKey } from "#veryfront/platform/adapters/fs/veryfront/cache-keys.ts";
+import {
+  createAdapter as createSourceAdapter,
+  getAdapterTestTransport,
+  waitFor,
+} from "#veryfront/platform/adapters/fs/veryfront/adapter.test-helpers.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { createMockSSRService } from "#veryfront/server/handlers/request/ssr/ssr.handler.test-helpers.ts";
 import { SSRHandler } from "#veryfront/server/handlers/request/ssr/index.ts";
@@ -34,23 +37,20 @@ describe("cold preview source recovery over HTTP", () => {
         branch: "main",
       } satisfies Parameters<typeof sourceAdapter.setContentContext>[0];
       const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
-      // Exercise the same accepted-poke callbacks used by adapter.test.ts.
-      const source = sourceAdapter as unknown as {
-        sourceSnapshotFiles: typeof files | undefined;
-        sourceSnapshotIdentity: string | undefined;
-        wsManager: {
-          deps: {
-            clearMemoryCaches(): void;
-            replaceSourceSnapshot(
-              key: string,
-              replacementFiles: typeof files,
-            ): Promise<number | undefined>;
-          };
-        };
-      };
       sourceAdapter.setContentContext(context);
-      source.sourceSnapshotFiles = files;
-      source.sourceSnapshotIdentity = sourceAdapter.getSourceSnapshotIdentity();
+      const client = sourceAdapter.getClient() as unknown as {
+        initialize: () => Promise<void>;
+        getProjectSlug: () => string;
+        getProjectId: () => string;
+        getCachedProject: () => { provider: string; layout: string };
+        listAllFiles: () => Promise<typeof files>;
+      };
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve(files);
+      await sourceAdapter.initialize();
       const fingerprint = await sourceAdapter.getSourceSnapshotFingerprint();
       assertEquals(typeof fingerprint, "string");
       const originalHandle = SSRHandler.prototype.handle;
@@ -72,12 +72,14 @@ describe("cold preview source recovery over HTTP", () => {
           renderPage: async () => {
             renders++;
             if (renders <= scenario.pokes) {
-              source.wsManager.deps.clearMemoryCaches();
-              const published = await source.wsManager.deps.replaceSourceSnapshot(
-                buildFileListCacheKey(context),
-                files,
+              const transport = getAdapterTestTransport(sourceAdapter);
+              const socket = transport.sockets.at(-1)!;
+              const acknowledgements = socket.sentMessages.length;
+              transport.poke({ branchName: "main", changedPaths: ["pages/index.tsx"] });
+              await waitFor(
+                () => Promise.resolve(socket.sentMessages.length > acknowledgements),
+                2000,
               );
-              assertEquals(typeof published, "number");
               assertEquals(await sourceAdapter.getSourceSnapshotFingerprint(), fingerprint);
             }
             return {

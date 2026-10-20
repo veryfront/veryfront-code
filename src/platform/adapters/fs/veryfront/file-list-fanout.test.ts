@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { resetSourceContentStore } from "./source-content-store.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { addPendingInvalidation, removePendingInvalidation } from "./invalidation-state.ts";
-import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
+import { createAdapter, getAdapterTestTransport, waitFor } from "./adapter.test-helpers.ts";
 import { runWithRequestContext } from "./request-context.ts";
 
 interface StubFile {
@@ -87,14 +88,15 @@ function stubClient(
  * branch-miss snapshot recovery can actually run. Production previews always
  * have one, so leaving it off hides every listing refetch that recovery costs.
  */
-function createDraftAdapter(
+const draftCounts = new WeakMap<VeryfrontFSAdapter, ClientCallCounts>();
+async function createDraftAdapter(
   files: StubFile[],
   cacheEnabled = true,
   recoverableSnapshot = false,
-): {
+): Promise<{
   adapter: VeryfrontFSAdapter;
   counts: ClientCallCounts;
-} {
+}> {
   const adapter = createAdapter({
     veryfront: {
       apiBaseUrl: "https://api.example.com",
@@ -115,11 +117,75 @@ function createDraftAdapter(
     projectSlug: "test-project",
     branch: "main",
   });
-  // Simulate a warmed-up server whose file-list cache entry expired (the
-  // preview steady state after the 60s TTL): initialized, but no cached list.
-  (adapter as unknown as { initialized: boolean }).initialized = true;
+  const client = adapter.getClient() as unknown as {
+    initialize: () => Promise<void>;
+    getProjectSlug: () => string;
+    getProjectId: () => string | undefined;
+    getCachedProject: () => { provider: string; layout: string };
+  };
+  client.initialize = () => Promise.resolve();
+  client.getProjectSlug = () => "test-project";
+  client.getProjectId = () => "project-123";
+  client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+  await adapter.initialize();
+  const internalCache = adapter as unknown as {
+    clearMemoryCaches: () => void;
+    cache: { clear: () => void };
+  };
+  internalCache.clearMemoryCaches();
+  internalCache.cache.clear();
+  resetSourceContentStore();
+  if (!recoverableSnapshot) client.getProjectId = () => undefined;
+  counts.listAllFiles =
+    counts.listingRequests =
+    counts.listFiles =
+    counts.getFileContent =
+      0;
+  draftCounts.set(adapter, counts);
 
   return { adapter, counts };
+}
+
+const pokeListingStates = new WeakMap<VeryfrontFSAdapter, {
+  original: () => Promise<Array<{ path: string; content?: string }>>;
+  active: number;
+}>();
+
+async function pokeSourceSnapshot(
+  adapter: VeryfrontFSAdapter,
+  _cacheKey: string,
+  files: Array<{ path: string; content?: string }>,
+): Promise<number> {
+  const socket = getAdapterTestTransport(adapter).sockets.at(-1)!;
+  const client = adapter.getClient() as unknown as {
+    listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+  };
+  const state = pokeListingStates.get(adapter) ?? { original: client.listAllFiles, active: 0 };
+  state.active++;
+  pokeListingStates.set(adapter, state);
+  const acknowledgements = socket.sentMessages.length + state.active;
+  client.listAllFiles = () => {
+    const counts = draftCounts.get(adapter);
+    if (counts) {
+      counts.listAllFiles++;
+      counts.listingRequests++;
+    }
+    return Promise.resolve(files);
+  };
+  try {
+    getAdapterTestTransport(adapter).poke({
+      branchName: adapter.getContentContext()?.branch ?? "main",
+      changedPaths: files.map((file) => file.path),
+    });
+    await waitFor(() => Promise.resolve(socket.sentMessages.length >= acknowledgements), 3000);
+    return adapter.getSourceSnapshotVersion();
+  } finally {
+    state.active--;
+    if (state.active === 0) {
+      client.listAllFiles = state.original;
+      pokeListingStates.delete(adapter);
+    }
+  }
 }
 
 describe("file list fan-out (issue inbox#32)", () => {
@@ -143,13 +209,12 @@ describe("file list fan-out (issue inbox#32)", () => {
         getProjectId: () => string;
         getCachedProject: () => { provider: string; layout: string };
       };
-      wsManager: { connect: (_projectId: string) => void };
     };
     internals.client.initialize = () => Promise.resolve();
     internals.client.getProjectSlug = () => "test-project";
     internals.client.getProjectId = () => "project-123";
     internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
-    internals.wsManager.connect = () => {};
+
     adapter.setContentContext({
       sourceType: "branch",
       projectSlug: "test-project",
@@ -174,7 +239,7 @@ describe("file list fan-out (issue inbox#32)", () => {
       path: `components/mod${index}.tsx`,
       content: `export const mod${index} = ${index};`,
     }));
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     const contents = await Promise.all(
       files.map((file) => adapter.readTextFile(file.path)),
@@ -207,7 +272,7 @@ describe("file list fan-out (issue inbox#32)", () => {
       { path: "app/layout.tsx", content: "export default function Layout() {}" },
       { path: "components/app.tsx", content: "export const app = 1;" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     const resolvedLayout = await adapter.resolveFile("app/layout");
     const resolvedComponent = await adapter.resolveFile("components/app");
@@ -231,7 +296,7 @@ describe("file list fan-out (issue inbox#32)", () => {
   });
 
   it("reuses an authoritative empty listing across sequential resolutions", async () => {
-    const { adapter, counts } = createDraftAdapter([], false);
+    const { adapter, counts } = await createDraftAdapter([], false);
 
     assertEquals(await adapter.resolveFile("components/missing-one"), null);
     assertEquals(await adapter.resolveFile("components/missing-two"), null);
@@ -252,7 +317,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     const first = await adapter.readTextFile("pages/index.tsx");
     assertEquals(first, "export default 'v1';", "first read must see the initial draft");
@@ -262,13 +327,8 @@ describe("file list fan-out (issue inbox#32)", () => {
     files[0] = { path: "pages/index.tsx", content: "export default 'v2';" };
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
-    const internals = adapter as unknown as {
-      replaceSourceSnapshot: (
-        cacheKey: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
-    };
-    await internals.replaceSourceSnapshot(
+    await pokeSourceSnapshot(
+      adapter,
       buildFileListCacheKey(context),
       files.map((file) => ({ ...file })),
     );
@@ -290,7 +350,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     const first = await adapter.readTextFile("pages/index.tsx");
     assertEquals(first, "export default 'v1';", "first read must see the initial draft");
@@ -332,7 +392,7 @@ describe("file list fan-out (issue inbox#32)", () => {
       path: `components/mod${index}.tsx`,
       content: `export const mod${index} = ${index};`,
     }));
-    const { adapter, counts } = createDraftAdapter(files, false);
+    const { adapter, counts } = await createDraftAdapter(files, false);
 
     const contents: string[] = [];
     for (const file of files) {
@@ -360,7 +420,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files, false);
+    const { adapter, counts } = await createDraftAdapter(files, false);
 
     assertEquals(
       await adapter.readTextFile("pages/index.tsx"),
@@ -372,14 +432,11 @@ describe("file list fan-out (issue inbox#32)", () => {
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
     const internals = adapter as unknown as {
-      replaceSourceSnapshot: (
-        cacheKey: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
       clearMemoryCaches: () => void;
     };
 
-    await internals.replaceSourceSnapshot(
+    await pokeSourceSnapshot(
+      adapter,
       buildFileListCacheKey(context),
       files.map((file) => ({ ...file })),
     );
@@ -402,8 +459,8 @@ describe("file list fan-out (issue inbox#32)", () => {
     );
     assertEquals(
       counts.listAllFiles,
-      2,
-      "only the memory-cache invalidation may cost a refetch; the poked snapshot must not",
+      3,
+      "initial warmup, poke ingestion and later memory invalidation each list once",
     );
   });
 
@@ -411,7 +468,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     // Hold the listing fetch open so a WebSocket snapshot can land while it is
     // in flight. The fetch resolves with the listing as it was *before* the
@@ -442,13 +499,9 @@ describe("file list fan-out (issue inbox#32)", () => {
     if (!context) throw new Error("content context required");
     const cacheKey = buildFileListCacheKey(context);
     const internals = adapter as unknown as {
-      replaceSourceSnapshot: (
-        key: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
       cache: { getAsync: <T>(key: string) => Promise<T | undefined> };
     };
-    await internals.replaceSourceSnapshot(cacheKey, [
+    await pokeSourceSnapshot(adapter, cacheKey, [
       { path: "pages/index.tsx", content: "export default 'v2';" },
     ]);
 
@@ -474,7 +527,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     let releaseFetch: (() => void) | undefined;
     const fetchReleased = new Promise<void>((resolve) => {
@@ -516,7 +569,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter, counts } = createDraftAdapter(files);
+    const { adapter, counts } = await createDraftAdapter(files);
 
     let markSetStarted: (() => void) | undefined;
     const setStarted = new Promise<void>((resolve) => {
@@ -562,7 +615,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v2';" },
     ];
-    const { adapter } = createDraftAdapter(files);
+    const { adapter } = await createDraftAdapter(files);
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
 
@@ -579,10 +632,6 @@ describe("file list fan-out (issue inbox#32)", () => {
         setAsync: (key: string, value: unknown) => Promise<void>;
       };
       clearMemoryCaches: () => void;
-      replaceSourceSnapshot: (
-        key: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
     };
     const setAsync = internals.cache.setAsync.bind(internals.cache);
     internals.cache.setAsync = async (key, value) => {
@@ -591,10 +640,10 @@ describe("file list fan-out (issue inbox#32)", () => {
       await setAsync(key, value);
     };
 
-    const replacement = internals.replaceSourceSnapshot(
-      buildFileListCacheKey(context),
-      [{ path: "pages/index.tsx", content: "export default 'v1';" }],
-    );
+    const replacement = pokeSourceSnapshot(adapter, buildFileListCacheKey(context), [{
+      path: "pages/index.tsx",
+      content: "export default 'v1';",
+    }]);
     await setStarted;
 
     // A second poke clears memory immediately, then its selective refresh can
@@ -614,7 +663,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ];
-    const { adapter } = createDraftAdapter(files);
+    const { adapter } = await createDraftAdapter(files);
     (adapter.getClient() as unknown as { getProjectId: () => string | undefined }).getProjectId =
       () => undefined;
     let markSetStarted: (() => void) | undefined;
@@ -657,7 +706,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v2';" },
     ];
-    const { adapter } = createDraftAdapter(files);
+    const { adapter } = await createDraftAdapter(files);
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
     const cacheKey = buildFileListCacheKey(context);
@@ -674,10 +723,6 @@ describe("file list fan-out (issue inbox#32)", () => {
         setAsync: (key: string, value: unknown) => Promise<void>;
       };
       clearMemoryCaches: () => void;
-      replaceSourceSnapshot: (
-        key: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
     };
     const setAsync = internals.cache.setAsync.bind(internals.cache);
     let setCalls = 0;
@@ -690,14 +735,19 @@ describe("file list fan-out (issue inbox#32)", () => {
       await setAsync(key, value);
     };
 
-    const blockingReplacement = internals.replaceSourceSnapshot(cacheKey, [
+    const blockingReplacement = pokeSourceSnapshot(adapter, cacheKey, [
       { path: "pages/index.tsx", content: "export default 'v0';" },
     ]);
     await setStarted;
-    const queuedReplacement = internals.replaceSourceSnapshot(cacheKey, [
+    const listingsBeforeQueue = draftCounts.get(adapter)!.listAllFiles;
+    const queuedReplacement = pokeSourceSnapshot(adapter, cacheKey, [
       { path: "pages/index.tsx", content: "export default 'v1';" },
     ]);
 
+    await waitFor(() =>
+      Promise.resolve(
+        draftCounts.get(adapter)!.listAllFiles > listingsBeforeQueue,
+      ), 3000);
     internals.clearMemoryCaches();
     releaseSet?.();
     await Promise.all([blockingReplacement, queuedReplacement]);
@@ -724,7 +774,7 @@ describe("file list fan-out (issue inbox#32)", () => {
       path: `${modulePath}.tsx`,
       content: `export const source = "${modulePath}";`,
     }));
-    const { adapter, counts } = createDraftAdapter(files, true, true);
+    const { adapter, counts } = await createDraftAdapter(files, true, true);
 
     // `mdx.load_module_esm` -> `mdx.fetch_module` asks for every import
     // specifier once per candidate extension. None of these spellings exist,
@@ -756,7 +806,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default function Home() {}" },
     ];
-    const { adapter, counts } = createDraftAdapter(files, true, true);
+    const { adapter, counts } = await createDraftAdapter(files, true, true);
 
     assertEquals(
       await adapter.exists("components/Welcome.tsx"),
@@ -769,13 +819,8 @@ describe("file list fan-out (issue inbox#32)", () => {
     files.push({ path: "components/Welcome.tsx", content: "export const Welcome = 1;" });
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
-    const internals = adapter as unknown as {
-      replaceSourceSnapshot: (
-        cacheKey: string,
-        snapshotFiles: Array<{ path: string; content?: string }>,
-      ) => Promise<void>;
-    };
-    await internals.replaceSourceSnapshot(
+    await pokeSourceSnapshot(
+      adapter,
       buildFileListCacheKey(context),
       files.map((file) => ({ ...file })),
     );
@@ -793,7 +838,7 @@ describe("file list fan-out (issue inbox#32)", () => {
   });
 
   it("still falls back to the API when no listing is available at all", async () => {
-    const { adapter } = createDraftAdapter([], true, true);
+    const { adapter } = await createDraftAdapter([], true, true);
 
     // No listing can be fetched, so nothing is authoritative: a miss must fall
     // through to the API rather than being reported absent on no evidence.
@@ -824,7 +869,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     // The oracle is the recovered file itself: a request counter cannot tell a
     // snapshot refresh apart from the ordinary listing probe.
     const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
-    const { adapter } = createDraftAdapter(files, true, true);
+    const { adapter } = await createDraftAdapter(files, true, true);
 
     assertEquals(
       (await adapter.readdir("app")).map((entry) => entry.path),
@@ -855,7 +900,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     // that never arrives would otherwise leave the gate closed forever against
     // a listing that predates the edit.
     const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
-    const { adapter } = createDraftAdapter(files, true, true);
+    const { adapter } = await createDraftAdapter(files, true, true);
     await adapter.resolveFile("app/page");
 
     const statOps = (adapter as unknown as {
@@ -878,7 +923,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     // whose refresh keeps confirming "nothing changed" must not slide back
     // into the per-probe fan-out this whole change exists to remove.
     const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
-    const { adapter, counts } = createDraftAdapter(files, true, true);
+    const { adapter, counts } = await createDraftAdapter(files, true, true);
 
     // A preview that has been open a while: the listing is warm and a snapshot
     // has been recorded, so later refreshes have a baseline to compare against
@@ -920,7 +965,7 @@ describe("file list fan-out (issue inbox#32)", () => {
     // "never re-check again". Each renewal buys exactly one more window, and
     // an edit that arrives without a poke must be picked up when that lapses.
     const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
-    const { adapter } = createDraftAdapter(files, true, true);
+    const { adapter } = await createDraftAdapter(files, true, true);
 
     assertEquals(await adapter.exists("app/page.tsx"), true);
     await adapter.refreshSourceSnapshot("test-warmup");
@@ -999,13 +1044,12 @@ describe("file list fan-out (issue inbox#32)", () => {
               getProjectId: () => string;
               getCachedProject: () => { provider: string; layout: string };
             };
-            wsManager: { connect: (_projectId: string) => void };
           };
           internals.client.initialize = () => Promise.resolve();
           internals.client.getProjectSlug = () => "test-project";
           internals.client.getProjectId = () => "project-123";
           internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
-          internals.wsManager.connect = () => {};
+
           adapter.setContentContext({
             sourceType: "branch",
             projectSlug: "test-project",
@@ -1046,15 +1090,9 @@ describe("file list fan-out (issue inbox#32)", () => {
   }
 
   it("applies a branch poke delivered inside a credential-scoped request context", async () => {
-    const { adapter, counts } = createDraftAdapter([
+    const { adapter, counts } = await createDraftAdapter([
       { path: "pages/index.tsx", content: "export default 'before';" },
     ]);
-    const internals = adapter as unknown as {
-      replaceSourceSnapshot: (
-        cacheKey: string,
-        files: Array<{ path: string; content?: string }>,
-      ) => Promise<number | undefined>;
-    };
     const context = adapter.getContentContext()!;
 
     // Hosted adapters connect their WebSocket inside the initializing request,
@@ -1062,13 +1100,17 @@ describe("file list fan-out (issue inbox#32)", () => {
     await runWithRequestContext(
       { projectSlug: "test-project", token: "credential-a", branch: "main" },
       async () => {
-        const applied = await internals.replaceSourceSnapshot(buildFileListCacheKey(context), [
+        const applied = await pokeSourceSnapshot(adapter, buildFileListCacheKey(context), [
           { path: "pages/index.tsx", content: "export default 'after';" },
         ]);
         assertEquals(typeof applied, "number", "the poked snapshot must be applied");
         assertEquals(await adapter.readTextFile("pages/index.tsx"), "export default 'after';");
       },
     );
-    assertEquals(counts.listingRequests, 0, "the poked listing must answer the read");
+    assertEquals(
+      counts.listingRequests,
+      1,
+      "only poke ingestion lists; the read reuses that listing",
+    );
   });
 });

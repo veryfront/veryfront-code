@@ -117,7 +117,7 @@ it("reserved data writes remove every authority listing from the shared API cach
             wsManager: { connect: () => void };
             cache: { setAsync: (key: string, value: unknown) => Promise<void> };
           };
-          internals.wsManager.connect = () => {};
+
           try {
             await adapter.initialize();
             const context = adapter.getContentContext();
