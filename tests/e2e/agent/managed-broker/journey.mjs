@@ -5,10 +5,108 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { assert, assertEquals } from "veryfront/testing/assert";
-import { it } from "veryfront/testing/bdd";
-import { initializeExecutorRuntimeContracts } from "veryfront/agent/executor-runtime";
-import {
+import { after } from "node:test";
+import { deepStrictEqual } from "node:assert";
+
+if (process.env.GITHUB_ACTIONS !== "true" || process.env.RUNNER_OS !== "Linux") {
+  throw new Error("Managed broker native credential probes require Linux Actions");
+}
+
+// Configure a real loopback gateway before importing the SDK: inference origins
+// are pinned at broker boot and cannot be changed by a project or later env write.
+const inferenceRoutes = new Map();
+const gatewayErrors = [];
+const gateway = createServer(async (request, response) => {
+  const controller = new AbortController();
+  response.once("close", () => controller.abort());
+  try {
+    const route = inferenceRoutes.get(request.headers.authorization);
+    if (!route) {
+      response.writeHead(401).end();
+      return;
+    }
+    if (request.method === "GET" && request.url === "/ai/models") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({
+        models: [{
+          id: "synthetic",
+          modelId: "openai/synthetic",
+          provider: "openai",
+          surface: "openai",
+          operations: ["chat-completions"],
+          capabilities: { transport: "chat-completions" },
+        }],
+      }));
+      return;
+    }
+    if (
+      request.method !== "POST" ||
+      !["/ai/v1/chat/completions", "/ai/v1/openai/chat/completions"].includes(request.url)
+    ) {
+      throw new Error("Unexpected synthetic gateway request");
+    }
+    let raw = "";
+    for await (const chunk of request) {
+      raw += chunk;
+      if (raw.length > 1024 * 1024) throw new Error("Synthetic gateway body exceeded bound");
+    }
+    const result = await route(JSON.parse(raw), controller.signal, request.headers);
+    response.setHeader("content-type", "text/event-stream");
+    let toolIndex = 0;
+    for await (const part of result.stream) {
+      const delta = part.type === "text-delta"
+        ? { content: part.text }
+        : part.type === "tool-call"
+        ? {
+          tool_calls: [{
+            index: toolIndex++,
+            id: part.toolCallId,
+            type: "function",
+            function: { name: part.toolName, arguments: JSON.stringify(part.input) },
+          }],
+        }
+        : {};
+      response.write(`data: ${
+        JSON.stringify({
+          id: "synthetic-completion",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "synthetic",
+          choices: [{
+            index: 0,
+            delta,
+            finish_reason: part.type === "finish"
+              ? (part.finishReason === "tool-calls" ? "tool_calls" : "stop")
+              : null,
+          }],
+          ...(part.type === "finish"
+            ? { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } }
+            : {}),
+        })
+      }\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      gatewayErrors.push(error);
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    }
+  }
+});
+await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+gateway.unref();
+process.env.VERYFRONT_PUBLIC_API_BASE_URL = `http://127.0.0.1:${gateway.address().port}`;
+after(async () => {
+  gateway.closeAllConnections();
+  await new Promise((resolve) => gateway.close(resolve));
+  deepStrictEqual(gatewayErrors, []);
+});
+
+const { assert, assertEquals } = await import("veryfront/testing/assert");
+const { it } = await import("veryfront/testing/bdd");
+const { initializeExecutorRuntimeContracts } = await import("veryfront/agent/executor-runtime");
+const {
   connectExecutorTransport,
   createManagedAgUiBrokerHandler,
   createManagedBrokerHandler,
@@ -16,9 +114,9 @@ import {
   createManagedDurableBrokerHandler,
   createManagedExecutorBroker,
   startNodeManagedAgentBroker,
-} from "veryfront/agent/managed-broker";
+} = await import("veryfront/agent/managed-broker");
 
-import { createTrustedManagedExecutorBroker } from "veryfront/agent/trusted-broker";
+const { createTrustedManagedExecutorBroker } = await import("veryfront/agent/trusted-broker");
 
 await initializeExecutorRuntimeContracts();
 const modelId = "veryfront-cloud/openai/synthetic";
@@ -407,6 +505,29 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       });
     },
   };
+
+  let gatewayCalls = 0;
+  inferenceRoutes.set(`Bearer ${secrets.inference}`, (body, signal, headers) => {
+    gatewayCalls++;
+    assertEquals(body.stream, true);
+    assert(["synthetic", "openai/synthetic"].includes(body.model));
+    for (const canary of canaries) assert(!JSON.stringify(body).includes(canary));
+    if (steering || trusted) {
+      assert(
+        modelCaptureReceipts.some((receipt) =>
+          receipt.model_call_id === headers["x-veryfront-model-call-id"] &&
+          receipt.event_id === headers["x-veryfront-model-call-capture-event-id"]
+        ),
+      );
+    }
+    return model.doStream({
+      prompt: body.messages,
+      tools: (body.tools ?? []).map((tool) => ({
+        name: tool.function?.name ?? tool.name ?? tool.type,
+      })),
+      abortSignal: signal,
+    });
+  });
 
   try {
     const createHandler = directAgUi
@@ -888,6 +1009,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       steering ? ["host_probe", "update_file"] : ["host_probe"],
     );
     assertEquals(modelCalls.length, 2);
+    assertEquals(gatewayCalls, directAgUi ? 0 : 2);
     if (steering || trusted) {
       assertEquals(modelCaptureReceipts.length, modelCalls.length);
       assertEquals(
@@ -913,8 +1035,8 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     );
     assert(JSON.stringify(modelCalls[1].prompt).includes("host-ok"));
     if (steering) {
-      // The synthetic broker grants search but serves no model catalogue.
-      // A grant alone cannot expose a provider tool, including after steering refresh.
+      // The synthetic catalogue advertises no provider tools. A grant alone
+      // cannot expose one, including after steering refresh.
       assertEquals(steeringRefreshes, [["host_probe", "update_file"]]);
       for (const call of modelCalls) {
         assertEquals(
@@ -1021,6 +1143,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     api.closeAllConnections();
     await new Promise((resolve) => api.close(resolve));
     await rm(project, { recursive: true, force: true });
+    inferenceRoutes.delete(`Bearer ${secrets.inference}`);
   }
 }
 
