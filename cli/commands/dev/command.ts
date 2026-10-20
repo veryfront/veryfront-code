@@ -43,6 +43,7 @@ import {
   applyConnectedDevProjectSlug,
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
+  type ConnectedDevTarget,
   createConnectedDevControlPlane,
   prepareConnectedDev,
   resolveConnectedDevProject,
@@ -180,17 +181,20 @@ export async function loginForDevShortcut(
 }
 
 /** Startup sync updates the linked source with ordinary push conflict guards. */
-export function createConnectedDevPushOptions(
+export function createConnectedDevSourceSync(
   projectDir: string,
-  projectSlug: string,
-  apiBaseUrl: string,
-): PushOptions {
-  return {
-    projectDir,
-    projectSlug,
-    quiet: true,
-    noAdoptPins: true,
-    transport: createConnectedDevSyncTransport(apiBaseUrl),
+  getApiBaseUrl: () => string,
+  push: (options: PushOptions) => Promise<unknown> = pushCommand,
+): (target: Pick<ConnectedDevTarget, "projectSlug">) => Promise<void> {
+  return async (target) => {
+    console.log("  Syncing project source for local development...");
+    await push({
+      projectDir,
+      projectSlug: target.projectSlug,
+      quiet: true,
+      noAdoptPins: true,
+      transport: createConnectedDevSyncTransport(getApiBaseUrl()),
+    });
   };
 }
 
@@ -350,14 +354,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             );
             return Boolean(preflightIdentity);
           },
-          sync: async (target) => {
-            console.log("  Syncing project source for local development...");
-            await pushCommand(createConnectedDevPushOptions(
-              projectDir,
-              target.projectSlug,
-              connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
-            ));
-          },
+          sync: createConnectedDevSourceSync(
+            projectDir,
+            () => connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+          ),
           resolve: async (projectSlug, environmentName) => {
             runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
             runtimeAuth.apiBaseUrl = connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl);

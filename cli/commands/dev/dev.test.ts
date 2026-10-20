@@ -3,12 +3,13 @@ import {
   assert,
   assertEquals,
   assertMatch,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
 import {
-  createConnectedDevPushOptions,
+  createConnectedDevSourceSync,
   createSelectedProjectPushOptions,
   loginForDevShortcut,
   preloadDevAuth,
@@ -459,22 +460,49 @@ it("connected startup sync preserves guards and streams source responses", async
     signal = observeFetchRequestInit(init).signal;
     return Promise.resolve(new Response(new ReadableStream({ cancel() {} })));
   }, async () => {
-    const options = createConnectedDevPushOptions(
+    const sync = createConnectedDevSourceSync(
       "/tmp/project",
-      "demo",
-      "https://api.veryfront.com",
+      () => "https://api.veryfront.com",
+      async (options) => {
+        assertEquals(options.projectDir, "/tmp/project");
+        assertEquals(options.projectSlug, "demo");
+        assertEquals(options.force, undefined);
+        assertEquals(options.prune, undefined);
+        assertEquals(options.noAdoptPins, true);
+        assertEquals(options.quiet, true);
+        const response = await options.transport!("https://api.veryfront.com/projects/demo/files", {
+          signal: controller.signal,
+        });
+        assertEquals(signal, controller.signal, "source sync must not add an onboarding deadline");
+        await response.body?.cancel();
+        controller.abort();
+      },
     );
-    assertEquals(options.projectDir, "/tmp/project");
-    assertEquals(options.projectSlug, "demo");
-    assertEquals(options.force, undefined);
-    assertEquals(options.prune, undefined);
-    assertEquals(options.noAdoptPins, true);
-    assertEquals(options.quiet, true);
-    const response = await options.transport!("https://api.veryfront.com/projects/demo/files", {
-      signal: controller.signal,
-    });
-    assertEquals(signal, controller.signal, "source sync must not add an onboarding deadline");
-    await response.body?.cancel();
-    controller.abort();
+    await sync({ projectSlug: "demo" });
   });
+});
+
+it("connected startup sync waits for push and propagates failure", async () => {
+  const push = Promise.withResolvers<void>();
+  let finished = false;
+  let apiBaseUrl = "https://api.veryfront.com";
+  const start = createConnectedDevSourceSync("/tmp/project", () => {
+    assertEquals(apiBaseUrl, "https://api.veryfront.org", "resolve API only when sync executes");
+    return apiBaseUrl;
+  }, () => push.promise);
+  apiBaseUrl = "https://api.veryfront.org";
+  const sync = start({ projectSlug: "demo" }).then(() => {
+    finished = true;
+  });
+  await Promise.resolve();
+  assertEquals(finished, false);
+  push.resolve();
+  await sync;
+  assertEquals(finished, true);
+  const fail = createConnectedDevSourceSync(
+    "/tmp/project",
+    () => apiBaseUrl,
+    () => Promise.reject(new Error("sync conflict")),
+  );
+  await assertRejects(() => fail({ projectSlug: "demo" }), Error, "sync conflict");
 });
