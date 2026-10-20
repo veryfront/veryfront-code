@@ -1,4 +1,8 @@
-import { hostedInheritedRootRunId, hostedInheritedTaskInput } from "./terminal-credential.ts";
+import {
+  hostedInheritedInvocationCredentialReader,
+  hostedInheritedRootRunId,
+  hostedInheritedTaskInput,
+} from "./terminal-credential.ts";
 import type { HostedTaskInput } from "./task-input.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import {
@@ -395,8 +399,15 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     ) ?? {},
   );
 
+  const getAuthToken = durableChildRun
+    ? hostedInheritedInvocationCredentialReader(durableChildRun)
+    : undefined;
+  if (durableChildRun?.childCanonicalRunId && !getAuthToken) {
+    throw new Error("Inherited child invocation authority is required");
+  }
   return prepareDefaultHostedChildForkSandboxToolSources({
-    authToken: options.context.authToken,
+    authToken: getAuthToken ? getAuthToken() : options.context.authToken,
+    ...(getAuthToken ? { getAuthToken } : {}),
     apiUrl: config.apiUrl,
     apiMcpUrl: config.apiMcpUrl,
     studioMcpUrl: config.studioMcpUrl,

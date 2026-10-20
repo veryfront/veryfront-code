@@ -521,7 +521,7 @@ describe("src/skill/executor", () => {
         getSkillScriptExecutor().execute({
           scriptPath: "scripts/run.sh",
           scriptContent:
-            `printf '%s|%s|%s|%s|%s|%s|%s\n' "$VERYFRONT_API_TOKEN" "$VERYFRONT_API_URL" "$VERYFRONT_PROJECT_ID" "$SAFE_INPUT" "$VERYFRONT_DEFAULT_MODEL" "\${VERYFRONT_API_USER-unset}" "\${TENANT_PROJECT_ID-unset}"`,
+            `printf '%s|%s|%s|%s|%s|%s|%s\n' "$(cat \"$VERYFRONT_API_TOKEN_FILE\")" "$VERYFRONT_API_URL" "$VERYFRONT_PROJECT_ID" "$SAFE_INPUT" "$VERYFRONT_DEFAULT_MODEL" "\${VERYFRONT_API_USER-unset}" "\${TENANT_PROJECT_ID-unset}"`,
           timeoutMs: 60_000,
           env: {
             SAFE_INPUT: "preserved",
@@ -575,7 +575,6 @@ describe("src/skill/executor", () => {
       assertEquals(scriptCommandBody.env, {
         SAFE_INPUT: "preserved",
         VERYFRONT_DEFAULT_MODEL: "caller-selected-model",
-        VERYFRONT_API_TOKEN: "renewed-run-credential",
         VERYFRONT_API_TOKEN_FILE: tokenFile,
         VERYFRONT_API_URL: "https://api.test.com",
         VERYFRONT_API_BASE_URL: "https://api.test.com",
@@ -599,7 +598,7 @@ describe("src/skill/executor", () => {
       assertStringIncludes(command, "'-u' 'VERYFRONT_API_USER'");
       assertStringIncludes(command, "'-u' 'VERYFRONT_TASK_ENV_JSON'");
       assertStringIncludes(command, "'-u' 'TENANT_PROJECT_ID'");
-      assertEquals(command.includes("'-u' 'VERYFRONT_API_TOKEN'"), false);
+      assertEquals(command.includes("'-u' 'VERYFRONT_API_TOKEN'"), true);
       assertEquals(command.includes("'-u' 'VERYFRONT_API_URL'"), false);
       assertEquals(command.includes("'-u' 'VERYFRONT_PROJECT_ID'"), false);
     });
@@ -642,7 +641,8 @@ describe("src/skill/executor", () => {
       }, () =>
         getSkillScriptExecutor().execute({
           scriptPath: "scripts/run.sh",
-          scriptContent: `printf '%s|%s\n' "$VERYFRONT_API_TOKEN" "$VERYFRONT_PROJECT_ID"`,
+          scriptContent:
+            `printf '%s|%s\n' "$(cat \"$VERYFRONT_API_TOKEN_FILE\")" "$VERYFRONT_PROJECT_ID"`,
           timeoutMs: 50_000,
         }));
 
@@ -660,7 +660,7 @@ describe("src/skill/executor", () => {
         env: Record<string, string>;
       };
       assertEquals(body.command.includes("sync-run-credential"), false);
-      assertEquals(body.env.VERYFRONT_API_TOKEN, "sync-run-credential");
+      assertEquals(body.env.VERYFRONT_API_TOKEN, undefined);
       assertEquals(typeof body.env.VERYFRONT_API_TOKEN_FILE, "string");
       assertEquals(body.env.VERYFRONT_API_BASE_URL, "https://api.test.com");
     });
@@ -739,6 +739,8 @@ describe("src/skill/executor", () => {
       assertEquals(scriptCommand.command.includes("initial-run-credential"), false);
       assertEquals(scriptCommand.command.includes("renewed-run-credential"), false);
       assertEquals(typeof scriptCommand.env.VERYFRONT_API_TOKEN_FILE, "string");
+      assertEquals(scriptCommand.env.VERYFRONT_API_TOKEN, undefined);
+      assertStringIncludes(scriptCommand.command, "'-u' 'VERYFRONT_API_TOKEN'");
     });
 
     it("cancels and deletes the sandbox before an aborted execution settles", async () => {

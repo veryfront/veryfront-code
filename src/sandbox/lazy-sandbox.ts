@@ -204,7 +204,7 @@ export class LazySandbox {
       sandboxId: string;
     }) => string)
     | undefined;
-  private readonly provisioningSignal: AbortSignal | undefined;
+  private provisioningSignal: AbortSignal | undefined;
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
@@ -270,6 +270,7 @@ export class LazySandbox {
 
     try {
       await pending.promise;
+      this.provisioningSignal = undefined;
     } finally {
       if (this.ensurePromise === pending) {
         this.ensurePromise = null;

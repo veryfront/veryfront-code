@@ -62,7 +62,7 @@ export function createVeryfrontCloudInferenceModelResolver(
 
     return createVeryfrontCloudInferenceModel(
       modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
-      typeof credential === "function" ? credential() : credential,
+      credential,
       {
         ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
         assertInferenceCredentialActive() {

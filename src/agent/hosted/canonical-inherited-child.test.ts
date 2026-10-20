@@ -11,6 +11,7 @@ import {
   hostedBoundRunStatus,
   hostedInheritedEventWriter,
   hostedInheritedInferenceModelResolver,
+  hostedInheritedInvocationCredentialReader,
   hostedInheritedRunAdmitter,
   hostedTerminalRunFinalizer,
   registerHostedTerminalCredential,
@@ -428,98 +429,113 @@ it("keeps local work running across transient renewal failures while the lease i
   assertEquals(abortedBeforeRenewal, false);
 });
 
-it("rotates the full exact-child authority before work crosses its initial lease", async () => {
-  using time = new FakeTime();
-  const request = {
-    projectId: parentId,
-    authToken: "parent-invocation",
-    durableRootRun: { runId: "parent" },
-  } as ParsedHostedChatRequest;
-  registerHostedTerminalCredential(request, token("parent", parentId));
-  const heartbeatAuthorization: string[] = [];
-  const eventAuthorization: string[] = [];
-  let heartbeatCount = 0;
-  const twiceRenewed = Promise.withResolvers<void>();
-  const admit = hostedInheritedRunAdmitter(request, {
-    apiUrl: "https://api.example.test",
-    fetch: (input, init) => {
-      const url = String(input);
-      const authorization = new Headers(init?.headers).get("Authorization") ?? "";
-      if (url.endsWith("/heartbeats")) {
-        assertEquals(
-          new Headers(init?.headers).get("X-Veryfront-Run-Credential-Rotation"),
-          "v2",
-        );
-        heartbeatAuthorization.push(authorization);
-        heartbeatCount++;
-        if (heartbeatCount === 2) twiceRenewed.resolve();
+for (
+  const eventPadding of ["", "x".repeat(20 * 1024), "x".repeat(32 * 1024 - "child-event-2".length)]
+) {
+  it(`rotates full exact-child authority with ${eventPadding.length} event padding bytes`, async () => {
+    using time = new FakeTime();
+    const request = {
+      projectId: parentId,
+      authToken: "parent-invocation",
+      durableRootRun: { runId: "parent" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(request, token("parent", parentId));
+    const heartbeatAuthorization: string[] = [];
+    const eventAuthorization: string[] = [];
+    let heartbeatCount = 0;
+    const twiceRenewed = Promise.withResolvers<void>();
+    const admit = hostedInheritedRunAdmitter(request, {
+      apiUrl: "https://api.example.test",
+      fetch: (input, init) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("Authorization") ?? "";
+        if (url.endsWith("/heartbeats")) {
+          assertEquals(
+            new Headers(init?.headers).get("X-Veryfront-Run-Credential-Rotation"),
+            "v2",
+          );
+          heartbeatAuthorization.push(authorization);
+          heartbeatCount++;
+          if (heartbeatCount === 2) twiceRenewed.resolve();
+          return Promise.resolve(Response.json({
+            run_id: childId,
+            expires_at: new Date(Date.now() + 120).toISOString(),
+          }, {
+            headers: {
+              ...renewedAuthorityHeaders(String(heartbeatCount)),
+              "X-Veryfront-Run-Event-Token": `child-event-${heartbeatCount}${eventPadding}`,
+            },
+          }));
+        }
+        if (url.endsWith("/events")) {
+          eventAuthorization.push(authorization);
+          return Promise.resolve(Response.json({
+            run_id: childId,
+            latest_event_id: 1,
+            latest_external_event_sequence: 1,
+            appended_count: 1,
+          }));
+        }
+        if (url.endsWith(`/runs/${childId}`)) {
+          eventAuthorization.push(authorization);
+          return Promise.resolve(Response.json({ id: childId, status: "running" }));
+        }
         return Promise.resolve(Response.json({
-          run_id: childId,
-          expires_at: new Date(Date.now() + 120).toISOString(),
-        }, { headers: renewedAuthorityHeaders(String(heartbeatCount)) }));
-      }
-      if (url.endsWith("/events")) {
-        eventAuthorization.push(authorization);
-        return Promise.resolve(Response.json({
-          run_id: childId,
-          latest_event_id: 1,
-          latest_external_event_sequence: 1,
-          appended_count: 1,
+          id: childId,
+          conversation_id: parentId,
+          output_message_id: childId,
+          status: "running",
+        }, {
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Veryfront-Inference-Token": "child-inference",
+            "X-Veryfront-Run-Invocation-Token": "child-invocation",
+            "X-Veryfront-Run-Terminal-Token": token("child", childId),
+            "X-Veryfront-Run-Event-Token": "child-event",
+            "X-Veryfront-Run-Renewal-Token": "child-renewal",
+            "X-Veryfront-Run-Event-Sequence": "0",
+            "X-Veryfront-Run-External-Event-Sequence": "0",
+            "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 80).toISOString(),
+          },
         }));
-      }
-      if (url.endsWith(`/runs/${childId}`)) {
-        eventAuthorization.push(authorization);
-        return Promise.resolve(Response.json({ id: childId, status: "running" }));
-      }
-      return Promise.resolve(Response.json({
-        id: childId,
-        conversation_id: parentId,
-        output_message_id: childId,
-        status: "running",
-      }, {
-        headers: {
-          "Cache-Control": "no-store",
-          "X-Veryfront-Inference-Token": "child-inference",
-          "X-Veryfront-Run-Invocation-Token": "child-invocation",
-          "X-Veryfront-Run-Terminal-Token": token("child", childId),
-          "X-Veryfront-Run-Event-Token": "child-event",
-          "X-Veryfront-Run-Renewal-Token": "child-renewal",
-          "X-Veryfront-Run-Event-Sequence": "0",
-          "X-Veryfront-Run-External-Event-Sequence": "0",
-          "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 80).toISOString(),
-        },
-      }));
-    },
-  })!;
-  const run = await admit("tool-rotate", "prompt")({
-    authToken: "ignored",
-    apiUrl: "ignored",
-    conversationId: parentId,
-    parentRunId: "parent",
-    agentId: "agent",
-    projectId: parentId,
-  });
-  const writer = hostedInheritedEventWriter(run)!;
-  const mirror = createHostedConversationRunChunkMirrorFromCapability(writer, {
-    expectedRunId: run.runId,
-    conversationId: run.conversationId,
-    latestEventId: 0,
-    latestExternalEventSequence: 0,
-  })!;
-  const result = withHostedInheritedLease(run, async () => {
-    await twiceRenewed.promise;
-    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "late" }]);
-    await mirror.flush();
-    await hostedBoundRunStatus(run, run.runId)!();
-    return "completed";
-  });
+      },
+    })!;
+    const run = await admit("tool-rotate", "prompt")({
+      authToken: "ignored",
+      apiUrl: "ignored",
+      conversationId: parentId,
+      parentRunId: "parent",
+      agentId: "agent",
+      projectId: parentId,
+    });
+    const writer = hostedInheritedEventWriter(run)!;
+    const mirror = createHostedConversationRunChunkMirrorFromCapability(writer, {
+      expectedRunId: run.runId,
+      conversationId: run.conversationId,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    })!;
+    const getInvocation = hostedInheritedInvocationCredentialReader(run)!;
+    assertEquals(getInvocation(), "child-invocation");
+    const result = withHostedInheritedLease(run, async () => {
+      await twiceRenewed.promise;
+      await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "late" }]);
+      await mirror.flush();
+      await hostedBoundRunStatus(run, run.runId)!();
+      return "completed";
+    });
 
-  await time.tickAsync(40);
-  await time.tickAsync(60);
-  assertEquals(await result, "completed");
-  assertEquals(heartbeatAuthorization, ["Bearer child-renewal", "Bearer child-renewal-1"]);
-  assertEquals(eventAuthorization, ["Bearer child-event-2", "Bearer child-invocation-2"]);
-});
+    await time.tickAsync(40);
+    await time.tickAsync(60);
+    assertEquals(await result, "completed");
+    assertEquals(getInvocation(), "child-invocation-2");
+    assertEquals(heartbeatAuthorization, ["Bearer child-renewal", "Bearer child-renewal-1"]);
+    assertEquals(eventAuthorization, [
+      `Bearer child-event-2${eventPadding}`,
+      "Bearer child-invocation-2",
+    ]);
+  });
+}
 
 it("keeps current authority when a legacy heartbeat does not acknowledge credential rotation", async () => {
   using time = new FakeTime();
@@ -589,7 +605,15 @@ it("keeps current authority when a legacy heartbeat does not acknowledge credent
   assertEquals(statusAuthorization, ["Bearer child-invocation"]);
 });
 
-for (const invalidRotation of ["partial-v2", "partial-without-ack", "unknown-version"] as const) {
+for (
+  const invalidRotation of [
+    "partial-v2",
+    "partial-without-ack",
+    "unknown-version",
+    "oversized-events",
+    "oversized-invocation",
+  ] as const
+) {
   it(`fails closed for ${invalidRotation} heartbeat credential rotation`, async () => {
     using time = new FakeTime();
     const request = {
@@ -606,15 +630,25 @@ for (const invalidRotation of ["partial-v2", "partial-without-ack", "unknown-ver
             run_id: childId,
             expires_at: new Date(Date.now() + 120).toISOString(),
           }, {
-            headers: invalidRotation === "partial-v2"
-              ? {
-                "Cache-Control": "no-store",
-                "X-Veryfront-Run-Credential-Rotation": "v2",
-                "X-Veryfront-Run-Invocation-Token": "partial",
-              }
-              : invalidRotation === "partial-without-ack"
-              ? { "X-Veryfront-Run-Invocation-Token": "partial" }
-              : { "X-Veryfront-Run-Credential-Rotation": "v3" },
+            headers:
+              invalidRotation === "oversized-events" || invalidRotation === "oversized-invocation"
+                ? {
+                  ...renewedAuthorityHeaders("oversized"),
+                  [
+                    invalidRotation === "oversized-events"
+                      ? "X-Veryfront-Run-Event-Token"
+                      : "X-Veryfront-Run-Invocation-Token"
+                  ]: "x".repeat(invalidRotation === "oversized-events" ? 32769 : 16385),
+                }
+                : invalidRotation === "partial-v2"
+                ? {
+                  "Cache-Control": "no-store",
+                  "X-Veryfront-Run-Credential-Rotation": "v2",
+                  "X-Veryfront-Run-Invocation-Token": "partial",
+                }
+                : invalidRotation === "partial-without-ack"
+                ? { "X-Veryfront-Run-Invocation-Token": "partial" }
+                : { "X-Veryfront-Run-Credential-Rotation": "v3" },
           }));
         }
         return Promise.resolve(Response.json({
@@ -648,7 +682,10 @@ for (const invalidRotation of ["partial-v2", "partial-without-ack", "unknown-ver
     const rejected = assertRejects(
       () => withHostedInheritedLease(run, () => new Promise<void>(() => {})),
       Error,
-      invalidRotation === "partial-v2" ? "authority binding mismatch" : "acknowledgement mismatch",
+      invalidRotation === "partial-v2" || invalidRotation === "oversized-events" ||
+        invalidRotation === "oversized-invocation"
+        ? "authority binding mismatch"
+        : "acknowledgement mismatch",
     );
 
     await time.tickAsync(40);

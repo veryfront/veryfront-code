@@ -1,3 +1,4 @@
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import {
@@ -655,6 +656,18 @@ export async function acceptInheritedRunAdmission(
   return run;
 }
 
+/** Read invocation authority only from this exact child's private admission descriptor. */
+export function hostedInheritedInvocationCredentialReader(
+  descriptor: HostedTerminalDescriptor,
+): (() => string) | undefined {
+  if (!credentials.get(descriptor)) return undefined;
+  return () => {
+    const current = credentials.get(descriptor);
+    if (!current?.authToken) throw new Error("Inherited child invocation authority is required");
+    return current.authToken;
+  };
+}
+
 /** Create inference transport only from this inherited child's private admission authority. */
 export function hostedInheritedInferenceModelResolver(
   descriptor: HostedTerminalDescriptor,
@@ -735,7 +748,7 @@ function readRenewedInheritedAuthority(
     !authority.inference || authority.inference.length > 16384 ||
     !authority.terminal || authority.terminal.length > 16384 ||
     !authority.renewal || authority.renewal.length > 16384 ||
-    !authority.events || authority.events.length > 16384 ||
+    !authority.events || authority.events.length > MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES ||
     terminalRoutingRunId(authority.terminal) !== runId ||
     terminalRoute(authority.terminal, runId).id !== canonicalRunId
   ) {

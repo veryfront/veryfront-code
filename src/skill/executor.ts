@@ -433,8 +433,11 @@ function setVerifiedCredentialEnvironment(
   credential: VerifiedSkillScriptExecutionCredential,
   tokenFile?: string,
 ): void {
-  setEnvironmentValue(environment, "VERYFRONT_API_TOKEN", credential.authToken);
-  if (tokenFile) setEnvironmentValue(environment, "VERYFRONT_API_TOKEN_FILE", tokenFile);
+  if (tokenFile) {
+    setEnvironmentValue(environment, "VERYFRONT_API_TOKEN_FILE", tokenFile);
+  } else {
+    setEnvironmentValue(environment, "VERYFRONT_API_TOKEN", credential.authToken);
+  }
   setEnvironmentValue(environment, "VERYFRONT_API_URL", credential.apiUrl);
   setEnvironmentValue(environment, "VERYFRONT_API_BASE_URL", credential.apiUrl);
   setEnvironmentValue(environment, "VERYFRONT_PROJECT_API_URL", credential.apiUrl);

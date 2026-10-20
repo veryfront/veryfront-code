@@ -4367,7 +4367,8 @@ describe("Sandbox", () => {
       }
     });
 
-    it("reprovisions lazy exec after exhausted in-cluster transport failures", async () => {
+    it("reprovisions after exec failures when the completed creation signal is aborted", async () => {
+      const creation = new AbortController();
       const connectionRefusedError = () =>
         new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", syscall: "connect" } });
 
@@ -4409,11 +4410,14 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         execStartRetryDelayMs: 0,
+        signal: creation.signal,
         resolveRuntimeEndpoint: ({ sandboxId }) =>
           `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local`,
       });
 
       try {
+        await sandbox.ensure();
+        creation.abort(new Error("creation phase completed"));
         const result = await sandbox.runCommand("echo ok");
         assertEquals(result.stdout, "ok\n");
         assertEquals(
