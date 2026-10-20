@@ -122,6 +122,7 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
 
         return agentAsTool(target, toolInput.description, {
           toolName: CANONICAL_INVOKE_AGENT_TOOL_ID,
+          publishChildStream: true,
           toolInput,
         }).execute({
           input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),

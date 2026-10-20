@@ -240,6 +240,15 @@ Each list accepts up to 16 exact executable names. In Markdown, use
 `optional-bootstrap-tools`. Both startup selections apply to root runs;
 hosted child runs do not inherit them.
 
+### Child transcripts in chat
+
+`veryfront__invoke_agent` forwards child text and tool activity through the parent
+chat stream. The child card updates while the child runs and retains its visible
+transcript after completion. This uses the same event format with or without a
+Veryfront Cloud connection. Standalone execution requires model credentials;
+Cloud run history is optional. Reload replay depends on the application's chat
+storage.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -264,6 +273,7 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
+
 For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
 child response text once while preserving summary metadata and the original
 durable result envelope.

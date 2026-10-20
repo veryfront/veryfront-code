@@ -1051,7 +1051,7 @@ describe("agentAsTool", () => {
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
 
-  it("does not publish child stream events from generic invoke_agent calls", async () => {
+  it("publishes child stream events from generic invoke_agent calls", async () => {
     const childResponse: AgentResponse = {
       text: "streamed child result",
       messages: [],
@@ -1092,7 +1092,12 @@ describe("agentAsTool", () => {
       },
     );
 
-    assertEquals(events, []);
+    assertEquals(events.length, 2);
+    assertEquals(parseInvokeAgentStreamValue((events[1] as { value: unknown }).value)?.event, {
+      type: "text-delta",
+      id: "child-text",
+      delta: "Fetching cases",
+    });
   });
 
   it("attaches the child agent's name and avatar to every published event", async () => {
