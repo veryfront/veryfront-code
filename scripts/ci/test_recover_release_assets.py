@@ -38,6 +38,7 @@ class RecoveryAssetsTests(unittest.TestCase):
         self.calls = []
         self.release = {'id': 7, 'tag_name': 'v0.1.1283', 'draft': True, 'prerelease': False}
         self.assets = []
+        self.public_ref = {'ref': 'refs/tags/v0.1.1283', 'object': {'type': 'commit', 'sha': 'f8ac0969c8d874b7c3a891cf007a8a3351fa7011'}}
 
     def write_manifest(self):
         raw = json.dumps(self.manifest).encode()
@@ -57,6 +58,8 @@ class RecoveryAssetsTests(unittest.TestCase):
         elif publishing(args):
             self.release['draft'] = False
         elif args[0] == 'api':
+            if '/git/ref/tags/' in args[-1]:
+                return json.dumps(self.public_ref).encode()
             if '/releases/assets/' in args[-1]:
                 asset_id = int(args[-1].rsplit('/', 1)[1])
                 return json.dumps(next(asset for asset in self.assets if asset['id'] == asset_id)).encode()
@@ -99,6 +102,41 @@ class RecoveryAssetsTests(unittest.TestCase):
         self.assertEqual(upload[0][-1], 'https://uploads.github.com/repos/veryfront/veryfront/releases/7/assets?name=binary')
         self.assertIn('make_latest=true', next(a for a in self.calls if publishing(a)))
         self.assertTrue(any('/assets?' in a[-1] for a in self.calls[self.calls.index(upload[0]) + 1:]))
+
+    def test_wrong_missing_or_annotated_public_tag_blocks_all_mutations(self):
+        recover = module().recover
+        for value in (None, {'ref': 'refs/tags/other', 'object': self.public_ref['object']},
+                      {'ref': 'refs/tags/v0.1.1283', 'object': {'type': 'tag', 'sha': self.public_ref['object']['sha']}},
+                      {'ref': 'refs/tags/v0.1.1283', 'object': {'type': 'commit', 'sha': '0' * 40}}):
+            self.public_ref = value
+            with self.assertRaises(ValueError):
+                recover(self.manifest_path, self.digest, self.directory, self.transport)
+            self.assertTrue(all('GET' in args for args in self.calls))
+
+    def test_public_tag_changed_immediately_before_publication_is_rejected(self):
+        recover = module().recover
+        original = self.transport
+        def moved(args):
+            result = original(args)
+            if args[-1].endswith('/releases/latest'):
+                self.public_ref['object']['sha'] = '0' * 40
+            return result
+        with self.assertRaises(ValueError):
+            recover(self.manifest_path, self.digest, self.directory, moved)
+        self.assertFalse(any(publishing(args) for args in self.calls))
+        self.assertTrue(self.release['draft'])
+
+    def test_public_tag_changed_during_publication_is_not_reported_successful(self):
+        recover = module().recover
+        original = self.transport
+        def moved(args):
+            result = original(args)
+            if publishing(args):
+                self.public_ref['object']['sha'] = '0' * 40
+            return result
+        with self.assertRaises(ValueError):
+            recover(self.manifest_path, self.digest, self.directory, moved)
+        self.assertFalse(self.release['draft'])
 
     def test_preserves_uploaded_and_identical_published_release(self):
         self.assets = [self.uploaded()]
@@ -260,16 +298,13 @@ class RecoveryAssetsTests(unittest.TestCase):
     def test_absent_public_tag_failure_does_not_upload_or_publish(self):
         def missing_tag(args):
             self.calls.append(args)
-            if args[0] == 'api':
-                return b'[]'
-            self.assertEqual(args[:2], ['release', 'create'])
-            self.assertIn('--verify-tag', args)
-            raise subprocess.CalledProcessError(1, args, output=b'tag does not exist')
+            self.assertIn('/git/ref/tags/v0.1.1283', args[-1])
+            raise subprocess.CalledProcessError(1, args, output=b'{"status":"404","message":"Not Found"}')
         recover = module().recover
         with self.assertRaises(subprocess.CalledProcessError):
             recover(self.manifest_path, self.digest, self.directory, missing_tag)
-        self.assertEqual(len(self.calls), 2)
-        self.assertFalse(any((uploading(a) or publishing(a)) for a in self.calls))
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(all('GET' in args for args in self.calls))
 
     def test_missing_final_upload_never_publishes(self):
         original = self.transport

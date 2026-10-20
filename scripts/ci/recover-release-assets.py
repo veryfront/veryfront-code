@@ -7,6 +7,7 @@ checks transport integrity and release conflicts, not that upstream authority.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -17,6 +18,9 @@ SOURCE = '8b9eb53979953e4a934014232982cca02eff63b0'
 TAG = 'v' + VERSION
 REPOSITORY = 'veryfront/veryfront'
 API = 'repos/' + REPOSITORY
+spec = importlib.util.spec_from_file_location('release_tags', Path(__file__).with_name('recover-release-tags-1283.py'))
+release_tags = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release_tags)
 
 
 def require(condition, message):
@@ -167,8 +171,14 @@ def verify_latest(release, transport):
     require(latest['id'] == release['id'] and not latest['draft'], 'Recovered release is not latest')
 
 
+def verify_public_tag(transport):
+    value = read_api(API + '/git/ref/tags/' + TAG, transport)
+    release_tags.verify_ref(value, release_tags.TARGETS[REPOSITORY])
+
+
 def recover(manifest, expected_sha256, directory, transport=gh):
     expected = load_manifest(manifest, expected_sha256, directory)
+    verify_public_tag(transport)
     release = discover_release(transport)
     if release is None:
         transport(['release', 'create', TAG, '--repo', REPOSITORY, '--title', TAG,
@@ -183,6 +193,7 @@ def recover(manifest, expected_sha256, directory, transport=gh):
     found, starters = inventory(release, expected, transport, complete=not release['draft'], allow_starters=True)
     if not release['draft']:
         verify_latest(release, transport)
+        verify_public_tag(transport)
         return release
     if starters:
         clear_starters(release, starters, transport)
@@ -199,6 +210,7 @@ def recover(manifest, expected_sha256, directory, transport=gh):
     require(current['id'] == release['id'] and current['draft'], 'Draft changed during recovery')
     inventory(current, expected, transport, complete=True)
     prevent_latest_downgrade(current, transport)
+    verify_public_tag(transport)
     transport(['api', '--method', 'PATCH', '-F', 'draft=false', '-F', 'prerelease=false',
                '-f', 'make_latest=true', path])
     final = read_api(path, transport)
@@ -206,6 +218,7 @@ def recover(manifest, expected_sha256, directory, transport=gh):
     require(final['id'] == release['id'] and not final['draft'], 'Publication was not confirmed')
     inventory(final, expected, transport, complete=True)
     verify_latest(final, transport)
+    verify_public_tag(transport)
     return final
 
 
