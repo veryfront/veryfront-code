@@ -1,3 +1,6 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { observeCachedSource, registerCachedSourceObserver } from "../cached-source-observation.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { throwIfAborted } from "#veryfront/utils/abort.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
@@ -199,7 +202,37 @@ export class MultiProjectFSAdapter implements FSAdapter {
   >();
   private nextSourceSnapshotAdapterGeneration = 1;
 
+  readonly #observedSourceAdapters = createPrivateWeakStore<
+    object,
+    { adapter: VeryfrontFSAdapter; selection: string }
+  >();
+  #sourceObservationSelection(): string | undefined {
+    const context = getCurrentRequestContext();
+    return context
+      ? privateJsonStringify([
+        context.projectSlug,
+        context.projectId,
+        context.token,
+        context.productionMode,
+        context.releaseId,
+        context.environmentName,
+        context.branch,
+      ])
+      : undefined;
+  }
   constructor(config: FSAdapterConfig, manager?: ProxyFSAdapterManager) {
+    registerCachedSourceObserver(this, async () => {
+      const context = getCurrentRequestContext();
+      const selected = context && this.#observedSourceAdapters.get(context);
+      if (!context || !selected || selected.selection !== this.#sourceObservationSelection()) {
+        return undefined;
+      }
+      const observation = await observeCachedSource(selected.adapter);
+      return this.#observedSourceAdapters.get(context) === selected &&
+          selected.selection === this.#sourceObservationSelection()
+        ? observation
+        : undefined;
+    });
     this.#manager = manager ??
       new ProxyFSAdapterManager({
         baseConfig: config,
@@ -356,6 +389,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
       args,
     ) as VeryfrontFSAdapter;
 
+    const selection = this.#sourceObservationSelection();
+    if (selection !== undefined) this.#observedSourceAdapters.set(context, { adapter, selection });
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
       duration: formatDuration(performanceNow() - startTime),

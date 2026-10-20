@@ -1,3 +1,4 @@
+import { registerCachedSourceObserver } from "#veryfront/platform/adapters/fs/cached-source-observation.ts";
 import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -6902,3 +6903,86 @@ for (const verification of ["valid", "rejected", "throws"] as const) {
     assertEquals(streamed, true);
   });
 }
+
+Deno.test("signed preview ingress binds both active-stage source captures before model execution", async () => {
+  const runId = "run_1";
+  const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+  const encoded = btoa(
+    JSON.stringify({
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      runId,
+      canonicalRunId,
+      dispatchNonce: "dispatch-source",
+    }),
+  );
+  const token = `header.${encoded}.signature`;
+  let captures = 0;
+  let modelCalls = 0;
+  const handler = createTestAgentStreamHandler({
+    ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+    getAgent: () =>
+      createAgentWithConfig("assistant-1", {
+        toolLoading: "deferred",
+        toolResultContext: { maxInlineBytes: 1024, previewBytes: 256, maxSectionBytes: 65536 },
+      }),
+    getAllAgentIds: () => ["assistant-1"],
+    sessionManager: new AgentRunSessionManager(),
+    verifyRunTerminalToken: () => Promise.resolve(true),
+    createRuntime: () => ({
+      stream: () => {
+        assertEquals(captures, 2, "both adapter snapshots precede model execution");
+        modelCalls++;
+        return Promise.resolve(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+        );
+      },
+    }),
+  });
+  const body = createAgentStreamRequestBody();
+  const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+    requestId: runId,
+    projectId: "10000000-1000-4000-8000-100000000005",
+  });
+  const ctx = { ...createCtx(publicKeyPem), projectId: "10000000-1000-4000-8000-100000000005" };
+  registerCachedSourceObserver(ctx.adapter.fs, () => {
+    captures++;
+    return Promise.resolve({
+      identity: "branch:test-project:main",
+      version: captures,
+      fingerprint: { algorithm: "veryfront-source-snapshot-multiset-v1", value: "a".repeat(64) },
+      members: Array.from(
+        { length: 46 },
+        (_, i) => ({ path: `source-${String(i).padStart(2, "0")}.ts`, sha256: "b".repeat(64) }),
+      ),
+    });
+  });
+  const result = await handler.handle(
+    sealIngressCredentials(
+      new Request(`https://example.com/api/control-plane/runs/${runId}/stream`, {
+        method: "POST",
+        headers: {
+          "x-veryfront-control-plane-jws": jws,
+          [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+        },
+        body,
+      }),
+    ),
+    ctx,
+  );
+  assertExists(result.response);
+  const text = await result.response.text();
+  assertEquals(result.response.status, 200, text);
+  const observations = text.split("\n\n").filter((frame) =>
+    frame.startsWith("event: AgentRunSourceSnapshot\n")
+  ).map((frame) => JSON.parse(frame.split("\ndata: ")[1]!));
+  assertEquals(modelCalls, 1);
+  assertEquals(observations.map((frame) => frame.stage), ["config_loaded", "discovery_completed"]);
+  assertEquals(observations[1].identity.canonicalRunId, canonicalRunId);
+  assertEquals(observations[1].snapshot.members.length, 46);
+  assertEquals(observations[1].resolvedConfig.toolResultContext.maxStoredResults, 256);
+});

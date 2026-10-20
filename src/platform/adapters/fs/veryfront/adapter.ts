@@ -1,3 +1,7 @@
+import { Buffer } from "node:buffer";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { registerCachedSourceObserver } from "../cached-source-observation.ts";
 import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
@@ -88,6 +92,9 @@ const MAX_RESERVED_DATA_POKE_PATHS = 16;
 const RESERVED_DATA_PATCH_RETENTION_MS = 10 * 60 * 1_000;
 const DateNow = Date.now;
 const IntrinsicArrayIsArray = Array.isArray;
+const SourceObservationArraySort = Array.prototype.sort;
+const SourceObservationBufferCompare = Buffer.compare;
+const SourceObservationBufferFrom = Buffer.from;
 const ArrayPrototypeSome = Array.prototype.some;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicPerformance = performance;
@@ -161,6 +168,29 @@ interface SourceSnapshotFile {
   type?: string;
   size?: number;
   updated_at?: string;
+}
+
+function captureCachedReceiptFiles(files: SourceSnapshotFile[]): SourceSnapshotFile[] | undefined {
+  const captured: SourceSnapshotFile[] = [];
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index]!;
+    const path = getOwnSourceSnapshotValue(file, "path");
+    if (typeof path !== "string") return undefined;
+    const record: SourceSnapshotFile = { path };
+    for (const key of ["id", "version_id", "content", "type", "updated_at"] as const) {
+      const value = getOwnSourceSnapshotValue(file, key);
+      if (value === null) continue;
+      if (typeof value !== "string") return undefined;
+      record[key] = value;
+    }
+    const size = getOwnSourceSnapshotValue(file, "size");
+    if (size !== null) {
+      if (typeof size !== "number") return undefined;
+      record.size = size;
+    }
+    captured[captured.length] = record;
+  }
+  return captured;
 }
 
 type SourceSnapshotFileKey = keyof SourceSnapshotFile;
@@ -1177,6 +1207,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   constructor(config: FSAdapterConfig) {
+    registerCachedSourceObserver(this, () => this.#observeCachedSource());
     this.invalidationCallbacks = config.invalidationCallbacks ?? {};
     this.styleCallbacks = config.styleCallbacks ?? {};
     const vf = config.veryfront;
@@ -2621,6 +2652,74 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     await this.#refreshSourceSnapshot(reason);
+  }
+
+  async #observeCachedSource() {
+    const files = this.sourceSnapshotFiles;
+    const identity = this.#getCurrentSourceSnapshotIdentity();
+    const snapshotVersion = this.sourceSnapshotVersion;
+    if (
+      !files || !identity || this.sourceSnapshotIdentity !== identity ||
+      this.getEffectiveContentContext()?.sourceType !== "branch"
+    ) return undefined;
+
+    // Copy own data before yielding. No initialization, exact read, freshness
+    // establishment or distributed cache operation is allowed on this path.
+    if (files.length === 0 || files.length > 256) return undefined;
+    const captured = captureCachedReceiptFiles(files);
+    if (!captured) return undefined;
+    const members: { path: string; sha256: string }[] = [];
+    for (let index = 0; index < captured.length; index++) {
+      const file = captured[index]!;
+      const path = IntrinsicReflectApply(StringPrototypeStartsWith, file.path, ["/"])
+        ? IntrinsicReflectApply(StringPrototypeSlice, file.path, [1]) as string
+        : file.path;
+      if (
+        typeof file.content !== "string" || !path ||
+        privateByteLength(encodePrivateText(path)) > 1024
+      ) return undefined;
+      for (let offset = 0; offset < path.length; offset++) {
+        const code = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [offset]) as number;
+        if (code < 32 || (code >= 127 && code <= 159) || code === 92) return undefined;
+      }
+      const parts = IntrinsicReflectApply(StringPrototypeSplit, path, ["/"]) as string[];
+      for (let part = 0; part < parts.length; part++) {
+        if (!parts[part] || parts[part] === "." || parts[part] === "..") return undefined;
+      }
+      const hash = createHash("sha256");
+      IntrinsicReflectApply(HashPrototypeUpdate, hash, [file.content, "utf8"]);
+      members[members.length] = {
+        path,
+        sha256: IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string,
+      };
+    }
+    IntrinsicReflectApply(SourceObservationArraySort, members, [
+      (a: { path: string }, b: { path: string }) =>
+        SourceObservationBufferCompare(
+          SourceObservationBufferFrom(a.path, "utf8"),
+          SourceObservationBufferFrom(b.path, "utf8"),
+        ),
+    ]);
+    for (let index = 1; index < members.length; index++) {
+      if (members[index - 1]!.path === members[index]!.path) return undefined;
+    }
+    const fingerprint = await computeSourceSnapshotFingerprint(captured, "complete");
+    if (
+      !fingerprint || this.sourceSnapshotFiles !== files ||
+      this.sourceSnapshotVersion !== snapshotVersion ||
+      this.sourceSnapshotIdentity !== identity ||
+      this.#getCurrentSourceSnapshotIdentity() !== identity ||
+      !sourceSnapshotsEqual(captured, files)
+    ) return undefined;
+    return {
+      identity,
+      version: snapshotVersion,
+      fingerprint: {
+        algorithm: "veryfront-source-snapshot-multiset-v1" as const,
+        value: fingerprint,
+      },
+      members,
+    };
   }
 
   getSourceSnapshotVersion(): number {
