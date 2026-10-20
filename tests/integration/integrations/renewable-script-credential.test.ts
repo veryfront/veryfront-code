@@ -1,13 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getRemoteIntegrationToolDiscovery } from "../../../src/integrations/remote-tools.ts";
 
 it("reads the renewable script credential file for each first-party API request", async () => {
-  const directory = await Deno.makeTempDir({ prefix: "vf-sdk-renewable-token-" });
+  const directory = await makeTempDir({ prefix: "vf-sdk-renewable-token-" });
   const path = `${directory}/token`;
   const keys = [
     "VERYFRONT_API_BASE_URL",
