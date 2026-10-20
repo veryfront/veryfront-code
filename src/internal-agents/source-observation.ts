@@ -22,6 +22,7 @@ type SourceStages = {
   discovery: CachedSourceObservation;
 };
 const parseJson = JSON.parse;
+const defineOwn = Object.defineProperty;
 const getIdentitySchema = defineSchema((v) =>
   v.object({
     projectId: v.string().uuid(),
@@ -80,15 +81,24 @@ export function prepareSourceObservationFrames(
       )
       : false,
   };
-  const frames = [
-    { stage: "config_loaded", snapshot: first, resolvedConfig: null },
-    { stage: "discovery_completed", snapshot: second, resolvedConfig },
-  ].map((value) => {
-    const encoded = privateJsonStringify({ version: 1, identity: captured.identity, ...value });
-    if (privateByteLength(encodePrivateText(encoded)) > 65536) {
-      return "";
-    }
-    return encoded;
-  });
-  return frames.every((frame) => frame.length > 0) ? frames : [];
+  const frames: string[] = [];
+  for (let index = 0; index < 2; index++) {
+    const encoded = privateJsonStringify({
+      version: 1,
+      identity: captured.identity,
+      stage: index === 0 ? "config_loaded" : "discovery_completed",
+      snapshot: index === 0 ? first : second,
+      resolvedConfig: index === 0 ? null : resolvedConfig,
+    });
+    if (privateByteLength(encodePrivateText(encoded)) > 65536) return [];
+    const descriptor = {
+      __proto__: null,
+      value: encoded,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    };
+    defineOwn(frames, index, descriptor);
+  }
+  return frames;
 }

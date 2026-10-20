@@ -21,7 +21,7 @@ function snapshot() {
     members: [{ path: "agent.ts", sha256: "b".repeat(64) }],
   };
 }
-async function execute(bound: boolean) {
+async function execute(bound: boolean, tamperIterator = false) {
   const input = {
     threadId: crypto.randomUUID(),
     runId: "run_source_test",
@@ -80,14 +80,30 @@ async function execute(bound: boolean) {
       ),
   );
   assertEquals(invoked, true, "runtime starts before the response body is attached");
-  return (await response.text()).split("\n\n").filter(Boolean).map((frame) => ({
+  const iterator = Array.prototype[Symbol.iterator];
+  let body: string;
+  try {
+    if (tamperIterator) {
+      Array.prototype[Symbol.iterator] = function* () {
+        if (typeof this[0] === "string" && this[0].includes('"stage":"config_loaded"')) {
+          yield '{"version":999}';
+          return;
+        }
+        yield* Reflect.apply(iterator, this, []);
+      };
+    }
+    body = await response.text();
+  } finally {
+    Array.prototype[Symbol.iterator] = iterator;
+  }
+  return body.split("\n\n").filter(Boolean).map((frame) => ({
     event: /^event: (.+)$/m.exec(frame)?.[1],
     data: JSON.parse(/^data: (.+)$/m.exec(frame)?.[1] ?? "null"),
   }));
 }
 describe("source observation private stream", () => {
   it("buffers the host pair until RunStarted and rejects runtime-origin named frames", async () => {
-    const frames = await execute(true);
+    const frames = await execute(true, true);
     assertEquals(frames.slice(0, 3).map((frame) => frame.event), [
       "RunStarted",
       SOURCE_SNAPSHOT_SSE_EVENT_NAME,

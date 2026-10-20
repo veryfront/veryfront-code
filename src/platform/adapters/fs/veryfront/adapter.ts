@@ -93,6 +93,10 @@ const RESERVED_DATA_PATCH_RETENTION_MS = 10 * 60 * 1_000;
 const DateNow = Date.now;
 const IntrinsicArrayIsArray = Array.isArray;
 const SourceObservationArraySort = Array.prototype.sort;
+const SourceObservationDefineProperty = Object.defineProperty;
+function sourceObservationDescriptor(value: unknown) {
+  return { __proto__: null, value, enumerable: true, configurable: true, writable: true };
+}
 const SourceObservationBufferCompare = Buffer.compare;
 const SourceObservationBufferFrom = Buffer.from;
 const ArrayPrototypeSome = Array.prototype.some;
@@ -177,18 +181,20 @@ function captureCachedReceiptFiles(files: SourceSnapshotFile[]): SourceSnapshotF
     const path = getOwnSourceSnapshotValue(file, "path");
     if (typeof path !== "string") return undefined;
     const record: SourceSnapshotFile = { path };
-    for (const key of ["id", "version_id", "content", "type", "updated_at"] as const) {
+    const keys = ["id", "version_id", "content", "type", "updated_at"] as const;
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const key = keys[keyIndex]!;
       const value = getOwnSourceSnapshotValue(file, key);
       if (value === null) continue;
       if (typeof value !== "string") return undefined;
-      record[key] = value;
+      SourceObservationDefineProperty(record, key, sourceObservationDescriptor(value));
     }
     const size = getOwnSourceSnapshotValue(file, "size");
     if (size !== null) {
       if (typeof size !== "number") return undefined;
-      record.size = size;
+      SourceObservationDefineProperty(record, "size", sourceObservationDescriptor(size));
     }
-    captured[captured.length] = record;
+    SourceObservationDefineProperty(captured, captured.length, sourceObservationDescriptor(record));
   }
   return captured;
 }
@@ -2688,10 +2694,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
       const hash = createHash("sha256");
       IntrinsicReflectApply(HashPrototypeUpdate, hash, [file.content, "utf8"]);
-      members[members.length] = {
-        path,
-        sha256: IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string,
-      };
+      SourceObservationDefineProperty(
+        members,
+        members.length,
+        sourceObservationDescriptor({
+          path,
+          sha256: IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string,
+        }),
+      );
     }
     IntrinsicReflectApply(SourceObservationArraySort, members, [
       (a: { path: string }, b: { path: string }) =>

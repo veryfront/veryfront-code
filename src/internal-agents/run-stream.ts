@@ -2047,7 +2047,8 @@ export async function createRuntimeAgentStreamResponse(
             });
             // Replays whatever the first model call already produced, then
             // forwards later steps as they happen. RunStarted stays first.
-            for (const frame of sourceObservationFrames) {
+            for (let frameIndex = 0; frameIndex < sourceObservationFrames.length; frameIndex++) {
+              const frame = sourceObservationFrames[frameIndex];
               controller.enqueue(
                 IntrinsicReflectApply(IntrinsicTextEncoderEncode, providerReplayEncoder, [
                   `event: ${SOURCE_SNAPSHOT_SSE_EVENT_NAME}\ndata: ${frame}\n\n`,
