@@ -155,7 +155,7 @@ def prevent_latest_downgrade(release, transport):
     if latest.get('id') == release['id'] and latest.get('tag_name') == TAG:
         return
     tag = latest.get('tag_name')
-    match = re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag) if type(tag) is str else None
+    match = re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag, flags=re.ASCII) if type(tag) is str else None
     require(match is not None and latest.get('draft') is False and latest.get('prerelease') is False
             and tuple(map(int, match.groups())) < tuple(map(int, VERSION.split('.'))),
             'Latest release is newer or unrecognized; refusing to replace it')

@@ -1,9 +1,11 @@
+import contextlib
 import hashlib
 import importlib.util
 import io
 import json
 from pathlib import Path
 import stat
+from unittest import mock
 import tempfile
 import unittest
 import warnings
@@ -85,6 +87,29 @@ class PreparedDataTests(unittest.TestCase):
                 r.extraction_target(destination, name)
         self.assertEqual(r.extraction_target(destination, 'manifest.json'), destination.resolve() / 'manifest.json')
         self.assertEqual(list(outside.iterdir()), [])
+
+    def test_runner_destination_is_fixed_and_requires_owned_unused_directory(self):
+        with mock.patch.dict(r.os.environ, {'RUNNER_TEMP': str(self.root)}):
+            self.assertEqual(r.runner_destination(), self.root.resolve() / 'authenticated')
+            (self.root / 'authenticated').symlink_to(self.root / 'missing')
+            with self.assertRaises(ValueError):
+                r.runner_destination()
+        linked = self.root / 'linked'
+        linked.symlink_to(self.root, target_is_directory=True)
+        for value in ('relative', str(self.root / 'absent'), str(linked)):
+            with mock.patch.dict(r.os.environ, {'RUNNER_TEMP': value}):
+                with self.assertRaises(ValueError):
+                    r.runner_destination()
+
+    def test_cli_rejects_caller_selected_destination_before_network_or_writes(self):
+        arguments = ['recover', '--artifact-id', '1', '--archive-sha256', 'a' * 64,
+                     '--manifest-sha256', 'b' * 64, '--destination', str(self.root / 'outside')]
+        with mock.patch('sys.argv', arguments), mock.patch.object(r.subprocess, 'check_output') as api, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as failure:
+                r.main()
+        self.assertEqual(failure.exception.code, 2)
+        api.assert_not_called()
+        self.assertFalse((self.root / 'outside').exists())
 
     def test_preserves_existing_destination(self):
         destination = self.root / 'verified'

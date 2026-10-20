@@ -81,13 +81,22 @@ def verify_archive(path, archive_digest, manifest_digest, destination):
     publisher.load_manifest(destination / MANIFEST_NAME, manifest_digest, destination / 'assets')
 
 
+def runner_destination():
+    runner_temp = Path(os.environ['RUNNER_TEMP'])
+    publisher.require(runner_temp.is_absolute() and runner_temp.is_dir() and not runner_temp.is_symlink(),
+                      'Runner temporary directory must be an existing absolute directory')
+    destination = runner_temp.resolve() / 'authenticated'
+    publisher.require(not destination.exists() and not destination.is_symlink(), 'Destination already exists')
+    return destination
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifact-id', type=int, required=True)
     parser.add_argument('--archive-sha256', required=True)
     parser.add_argument('--manifest-sha256', required=True)
-    parser.add_argument('--destination', required=True)
     args = parser.parse_args()
+    destination = runner_destination()
     publisher.require(args.artifact_id > 0, 'Invalid prepared artifact ID')
     prefix = 'repos/veryfront/veryfront-code/actions/artifacts/' + str(args.artifact_id)
     metadata = json.loads(subprocess.check_output(['gh', 'api', prefix], timeout=45))
@@ -104,7 +113,7 @@ def main():
             subprocess.run(['gh', 'api', prefix + '/zip'], stdout=output, check=True, timeout=600)
         publisher.require(archive.stat().st_size == metadata.get('size_in_bytes'),
                           'Prepared archive size differs')
-        verify_archive(archive, args.archive_sha256, args.manifest_sha256, args.destination)
+        verify_archive(archive, args.archive_sha256, args.manifest_sha256, destination)
     print('Prepared release data authenticated. No write credentials used.')
 
 

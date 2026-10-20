@@ -93,7 +93,7 @@ jobs:
           ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
           ARCHIVE_SHA256: ${{ needs.prepare.outputs.archive_sha256 }}
           MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
-        run: python3 -B scripts/ci/recover-release-prepared-1283.py --artifact-id "$ARTIFACT_ID" --archive-sha256 "$ARCHIVE_SHA256" --manifest-sha256 "$MANIFEST_SHA256" --destination "$RUNNER_TEMP/authenticated"
+        run: python3 -B scripts/ci/recover-release-prepared-1283.py --artifact-id "$ARTIFACT_ID" --archive-sha256 "$ARCHIVE_SHA256" --manifest-sha256 "$MANIFEST_SHA256"
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         id: release-token
         with:
