@@ -417,3 +417,97 @@ it("keeps local work running across transient renewal failures while the lease i
   assertEquals(heartbeatOutcomes, ["network", "503", "renewed"]);
   assertEquals(abortedBeforeRenewal, false);
 });
+
+it("persists structured child text even when provider deltas already match it", async () => {
+  const { runInheritedLocalAgent } = await import("../composition/inherited-local-agent.ts");
+  for (
+    const [text, data] of [
+      ['{\n  "count": 1\n}', { count: 1 }],
+      ['{"count":"1"}', { count: 1, enabled: true }],
+    ] as const
+  ) {
+    const parent = {
+      projectId: parentId,
+      authToken: "parent-invocation",
+      durableRootRun: { runId: "parent" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(parent, token("parent", parentId));
+    let finalBody: Record<string, unknown> | undefined;
+    let cursor = 0;
+    const transport: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (req.url.endsWith("/finalize")) {
+        finalBody = await req.json();
+        return Response.json({ id: childId, status: "completed" });
+      }
+      if (req.url.includes("/events")) {
+        const body = await req.json();
+        cursor += body.events.length;
+        return Response.json({
+          run_id: childId,
+          appended_count: body.events.length,
+          latest_event_id: cursor,
+          latest_external_event_sequence: cursor,
+        });
+      }
+      return Response.json({
+        id: childId,
+        conversation_id: parentId,
+        output_message_id: childId,
+        status: "running",
+      }, {
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60_000).toISOString(),
+          "X-Veryfront-Inference-Token": "child-inference",
+          "X-Veryfront-Run-Invocation-Token": "child-invocation",
+          "X-Veryfront-Run-Terminal-Token": token("child", childId),
+          "X-Veryfront-Run-Renewal-Token": "child-renewal",
+          "X-Veryfront-Run-Event-Token": "child-event",
+          "X-Veryfront-Run-Event-Sequence": "0",
+          "X-Veryfront-Run-External-Event-Sequence": "0",
+        },
+      });
+    };
+    const admit = hostedInheritedRunAdmitter(parent, {
+      apiUrl: "https://api.example.test",
+      fetch: transport,
+    })!;
+    const child = await admit("structured", "prompt")({
+      authToken: "",
+      apiUrl: "https://api.example.test",
+      parentRunId: "parent",
+      projectId: parentId,
+      agentId: "agent",
+    });
+    const result = await runInheritedLocalAgent(child, {
+      projectId: parentId,
+      apiUrl: "https://api.example.test",
+      fetch: transport,
+    }, async (_signal, onEvent) => {
+      await onEvent?.({ type: "text-delta", id: "text", delta: text });
+      return {
+        success: true,
+        output: { text, data, object: data, status: "completed", toolCalls: 0 },
+        executionTime: 0,
+      };
+    });
+    assertEquals(result.success, true, result.error);
+    assertEquals(finalBody?.final_text, text);
+    assertEquals(finalBody?.output, data);
+    const replay = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          outputFormat: "text-data-v1",
+          output: { text: finalBody?.final_text, data: finalBody?.output },
+        },
+      },
+      { projectId: parentId, apiUrl: "https://api.example.test", fetch: transport },
+      () => {
+        throw new Error("Stored replay must not execute the child");
+      },
+    );
+    assertEquals(replay.output, { text, data, object: data, status: "completed" });
+  }
+});

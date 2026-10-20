@@ -255,7 +255,8 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
     throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
   }
   if (
-    (value.type === "message-finish" || value.type === "finish") && Object.hasOwn(value, "data")
+    (value.type === "message-finish" || value.type === "finish") &&
+    (Object.hasOwn(value, "data") || Object.hasOwn(value, "object"))
   ) {
     try {
       const structured = readStructuredAgentOutput(value);
@@ -264,8 +265,8 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
       }
       return {
         ...value,
-        data: value.data,
-        object: value.data,
+        data: structured.data,
+        object: structured.data,
         type: value.type,
       } as JsonValue & { type: string };
     } catch {

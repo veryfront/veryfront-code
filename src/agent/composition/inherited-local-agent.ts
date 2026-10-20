@@ -323,8 +323,7 @@ export async function runInheritedLocalAgent(
       status: terminalState.status,
       output: terminalAgentOutput(terminalState.output),
       ...(terminalState.status === "completed" &&
-          terminalAgentText(terminalState.output) !== undefined &&
-          terminalAgentText(terminalState.output) !== observedText
+          terminalAgentText(terminalState.output) !== undefined
         ? { finalText: terminalAgentText(terminalState.output) }
         : {}),
       model: "",
