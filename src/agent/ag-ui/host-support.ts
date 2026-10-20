@@ -355,7 +355,8 @@ function normalizeAssistantMessage(
           type: "tool-result",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          result: part.state === "output-error" && typeof part.errorText === "string"
+          result: part.output === undefined && part.state === "output-error" &&
+              typeof part.errorText === "string"
             ? { error: part.errorText }
             : part.output,
         }],

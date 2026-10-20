@@ -560,6 +560,30 @@ describe("agent/ag-ui-host-support", () => {
     }]);
   });
 
+  it("preserves recorded error output even when a display error is present", () => {
+    for (const output of [{ code: "RATE_LIMIT", retryable: true }, null, false, 0, ""]) {
+      const messages = normalizeAgUiMessages([{
+        id: "assistant",
+        role: "assistant",
+        parts: [{
+          type: "tool-inspect",
+          toolName: "inspect",
+          toolCallId: "inspect",
+          state: "output-error",
+          input: {},
+          output,
+          errorText: "Display error",
+        }],
+      }]);
+      assertEquals(messages[1]?.parts, [{
+        type: "tool-result",
+        toolCallId: "inspect",
+        toolName: "inspect",
+        result: output,
+      }]);
+    }
+  });
+
   it("preserves tool outputs stored on assistant tool parts as tool messages", () => {
     const messages = normalizeAgUiMessages([
       {

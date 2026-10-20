@@ -196,6 +196,17 @@ export function shouldContinueAfterStreamStep(
     !hasFinalizedClientToolCall &&
     !hasProviderExecutedToolCall;
 
+  // Do not execute local side effects while a provider-owned sibling is unresolved.
+  // Preliminary results do not complete that sibling's work.
+  if (
+    somePrivateArray(
+      streamedToolCalls,
+      (call) => call.providerExecuted === true && !finalToolResults.has(call.id),
+    )
+  ) {
+    return false;
+  }
+
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteToolCall) {
       return canRecoverInterruptedClientToolCall;
