@@ -2,38 +2,41 @@ import { buildFileListCacheKey } from "./cache-keys.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import type { FSAdapterConfig } from "./types.ts";
 
+class AdapterTestSocket extends EventTarget implements WebSocket {
+  readonly CONNECTING = WebSocket.CONNECTING;
+  readonly OPEN = WebSocket.OPEN;
+  readonly CLOSING = WebSocket.CLOSING;
+  readonly CLOSED = WebSocket.CLOSED;
+  readonly bufferedAmount = 0;
+  readonly extensions = "";
+  readonly protocol: string;
+  binaryType: BinaryType = "blob";
+  readyState: WebSocket["readyState"] = WebSocket.OPEN;
+  onmessage: WebSocket["onmessage"] = null;
+  onopen: WebSocket["onopen"] = null;
+  onclose: WebSocket["onclose"] = null;
+  onerror: WebSocket["onerror"] = null;
+  readonly sentMessages: string[] = [];
+
+  constructor(readonly url: string, readonly protocols?: string | string[]) {
+    super();
+    this.protocol = typeof protocols === "string" ? protocols : protocols?.[0] ?? "";
+  }
+  send(data: Parameters<WebSocket["send"]>[0]): void {
+    if (typeof data !== "string") throw new Error("Test transport expects text messages");
+    this.sentMessages.push(data);
+  }
+  close(): void {
+    this.readyState = WebSocket.CLOSED;
+  }
+}
+
 export class AdapterTestTransport {
-  readonly sockets: Array<{
-    url: string;
-    protocols?: string | string[];
-    readyState: number;
-    onmessage: ((event: MessageEvent) => unknown) | null;
-    onopen: ((event: Event) => unknown) | null;
-    onclose: ((event: CloseEvent) => unknown) | null;
-    onerror: ((event: Event) => unknown) | null;
-    sentMessages: string[];
-    send: (data: string) => void;
-    close: () => void;
-  }> = [];
+  readonly sockets: AdapterTestSocket[] = [];
   readonly createWebSocket = (url: string, protocols?: string | string[]): WebSocket => {
-    const socket: AdapterTestTransport["sockets"][number] = {
-      url,
-      protocols,
-      readyState: WebSocket.OPEN,
-      onmessage: null,
-      onopen: null,
-      onclose: null,
-      onerror: null,
-      sentMessages: [],
-      send: (data: string) => {
-        socket.sentMessages.push(data);
-      },
-      close: () => {
-        socket.readyState = WebSocket.CLOSED;
-      },
-    };
+    const socket = new AdapterTestSocket(url, protocols);
     this.sockets.push(socket);
-    return socket as unknown as WebSocket;
+    return socket;
   };
   poke(data: Record<string, unknown>): void {
     const socket = this.sockets.at(-1);

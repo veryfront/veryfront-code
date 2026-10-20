@@ -46,9 +46,15 @@ const getSnapshotSchema = defineSchema((v) =>
     ).min(1).max(256),
   }).strict()
 );
-const stages = createPrivateWeakStore<object, SourceStages>();
+/** Invocation identity is an opaque WeakMap key, never a structural request property. */
+type SourceObservationInvocation = object;
+
+const stages = createPrivateWeakStore<SourceObservationInvocation, SourceStages>();
 /** Called only by signed ingress after both concrete adapter captures. */
-export function bindSourceObservationStages(input: object, value: SourceStages): void {
+export function bindSourceObservationStages(
+  input: SourceObservationInvocation,
+  value: SourceStages,
+): void {
   if (stages.get(input) !== undefined) return;
   // Retain own immutable values before project execution can mutate shared objects.
   const identity = getIdentitySchema().safeParse(parseJson(privateJsonStringify(value.identity)));
@@ -60,7 +66,7 @@ export function bindSourceObservationStages(input: object, value: SourceStages):
 }
 /** Capture the effective selected configuration before dispatch, without request overrides. */
 export function prepareSourceObservationFrames(
-  input: object,
+  input: SourceObservationInvocation,
   config: AgentConfig,
 ): readonly string[] {
   const captured = stages.get(input);
