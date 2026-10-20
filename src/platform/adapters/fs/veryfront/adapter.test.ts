@@ -1617,11 +1617,23 @@ describe("VeryfrontFSAdapter", () => {
       let changedHash: string | undefined;
       Object.defineProperty(Array.prototype, "0", {
         configurable: true,
-        set: () => {
-          setterCalls += 1;
+        set(this: unknown[], value: unknown) {
+          // Node's asynchronous runtime also writes ordinary arrays here. Only
+          // a captured fingerprint path would expose the source record.
+          if (value === "pages/index.tsx") setterCalls += 1;
+          Object.defineProperty(this, "0", {
+            value,
+            writable: true,
+            configurable: true,
+            enumerable: true,
+          });
         },
       });
       try {
+        const vulnerableRecord: unknown[] = [];
+        vulnerableRecord[0] = "pages/index.tsx";
+        assertEquals(setterCalls, 1, "the detector must catch source-record index assignment");
+        setterCalls = 0;
         firstHash = await firstAdapter.getSourceSnapshotFingerprint();
         changedHash = await changedAdapter.getSourceSnapshotFingerprint();
       } finally {
