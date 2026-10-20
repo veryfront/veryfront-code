@@ -1237,6 +1237,22 @@ export function createHostedServiceAuth(
 export const createAgentServiceAuth = createHostedServiceAuth;
 export const isAgentServiceAuthError = isHostedServiceAuthError;
 
+/** Verify a terminal capability only against operator values captured outside project env scopes. */
+export async function verifyOperatorRunTerminalToken(
+  input: { token: string; projectId: string; runId: string },
+): Promise<boolean> {
+  const auth = createHostedServiceAuth({
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: getHostBootEnv("OAUTH_PUBLIC_KEY"),
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: getHostBootEnv(
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+      ),
+      VERYFRONT_API_URL: getHostBootEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
+    }),
+  });
+  return await auth.verifyRunTerminalToken?.(input) === true;
+}
+
 /** Verify a connected worker's writer using the configured API's public signing keys. */
 export function createConnectedLocalWriterVerifier(
   apiUrl: string,
