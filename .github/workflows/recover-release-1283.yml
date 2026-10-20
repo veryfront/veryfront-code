@@ -1,19 +1,23 @@
-# Read-only preparation checks. Publication remains unavailable until canonical
-# artifacts, all registry bytes, signatures and installed behavior are qualified.
-name: Check original 0.1.1283 recovery evidence
+name: Recover original 0.1.1283 release assets
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/recover-release-1283.yml
-      - scripts/ci/recover-release-1283*
-      - scripts/ci/recover-release-assets.py
+      - scripts/ci/recover-release*.py
+      - scripts/ci/recover-release-1283.json
+      - scripts/ci/prepare-release-1283.py
       - scripts/ci/test_recover_release*.py
+      - scripts/ci/test_prepare_release_1283.py
 
 permissions:
   contents: read
   actions: read
+
+concurrency:
+  group: recover-original-sdk-1283
+  cancel-in-progress: false
 
 jobs:
   tests:
@@ -23,19 +27,96 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Test recovery identity and asset preservation
-        run: python3 -B -m unittest discover -s scripts/ci -p 'test_recover_release*.py' -v
+      - name: Test recovery boundaries
+        run: |
+          python3 -B -m unittest discover -s scripts/ci -p 'test_recover_release*.py' -v
+          python3 -B -m unittest discover -s scripts/ci -p 'test_prepare_release_1283.py' -v
 
-  readiness:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'veryfront/veryfront-code'
     needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      manifest_sha256: ${{ steps.prepare.outputs.manifest_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      archive_sha256: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 8b9eb53979953e4a934014232982cca02eff63b0
+          path: original
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+      - name: Qualify original artifacts and actual registry consumers
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/prepare-release-1283.py --source-dir "$GITHUB_WORKSPACE/original" --output-dir "$RUNNER_TEMP/prepared"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        id: upload
+        with:
+          name: qualified-original-1283-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/prepared/manifest.json
+            ${{ runner.temp }}/prepared/assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Authenticate prepared data before obtaining write credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          ARCHIVE_SHA256: ${{ needs.prepare.outputs.archive_sha256 }}
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: python3 -B scripts/ci/recover-release-prepared-1283.py --artifact-id "$ARTIFACT_ID" --archive-sha256 "$ARCHIVE_SHA256" --manifest-sha256 "$MANIFEST_SHA256" --destination "$RUNNER_TEMP/authenticated"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        id: release-token
+        with:
+          app-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: veryfront
+          permission-contents: write
+      - name: Preserve the original public tag target
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        run: python3 -B scripts/ci/recover-release-tags-1283.py --repository veryfront/veryfront
+      - name: Publish only missing verified assets
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: python3 -B scripts/ci/recover-release-assets.py --manifest "$RUNNER_TEMP/authenticated/manifest.json" --manifest-sha256 "$MANIFEST_SHA256" --assets-dir "$RUNNER_TEMP/authenticated/assets"
+
+  source-tag:
+    needs: publish
+    environment: production
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Check original producer and root registry availability
+      - name: Preserve original source release identity
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/recover-release-1283-preflight.py
+        run: python3 -B scripts/ci/recover-release-tags-1283.py --repository veryfront/veryfront-code --source-release
