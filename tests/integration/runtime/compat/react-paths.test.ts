@@ -1388,6 +1388,10 @@ describe("react-paths", () => {
     );
     const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
     const { runWithCacheDir } = await import("#veryfront/utils/cache-dir.ts");
+    const { setModulePathCacheSaveForTesting, drainModulePathCacheSaves } = await import(
+      "#veryfront/rendering/orchestrator/module-loader/module-persistence.ts"
+    );
+    await drainModulePathCacheSaves();
     const directory = mkdtempSync(join(tmpdir(), "orchestrator-peer-"));
     const output = join(directory, "output");
     fs.mkdirSync(output);
@@ -1421,6 +1425,16 @@ describe("react-paths", () => {
         ? join(tmpdir(), `orchestrator-${generation}`, resolved.split("/").pop()!)
         : resolved;
     });
+    let releaseSave: () => void = () => {};
+    const saveReleased = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    let saveCompleted = false;
+    const restoreSave = setModulePathCacheSaveForTesting(async (cacheDir) => {
+      await saveReleased;
+      await fs.promises.writeFile(join(cacheDir, "cleanup-save-marker"), "complete");
+      saveCompleted = true;
+    });
     try {
       await runWithCacheDir(directory, async () => {
         await transformModuleWithDeps(parent, output, actual, {
@@ -1449,7 +1463,14 @@ describe("react-paths", () => {
     } finally {
       Reflect.set(Module, "_resolveFilename", original);
       clearReactPathsCache();
-      rmSync(directory, { recursive: true, force: true });
+      releaseSave();
+      try {
+        await drainModulePathCacheSaves();
+        assertEquals(saveCompleted, true);
+      } finally {
+        restoreSave();
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   });
 

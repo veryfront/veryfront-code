@@ -525,7 +525,7 @@ function createAugmentedSystem(input: {
 /**
  * Agent helper.
  *
- * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * `TOutput` is inferred from `config.outputSchema`, so `response.data` (also available as `response.object`) is
  * typed without an annotation. Agents without one keep no `object`.
  */
 export function agent<TOutputSchema extends AgentOutputSchema>(

@@ -17,8 +17,10 @@ import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 
 export interface LocalChildResult {
   text: string;
+  data?: unknown;
   object?: unknown;
-  toolCalls: number;
+  /** Absent when a canonical replay receipt does not include historical metadata. */
+  toolCalls?: number;
   status: string;
 }
 

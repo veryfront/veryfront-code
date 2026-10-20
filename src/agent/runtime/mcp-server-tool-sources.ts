@@ -409,7 +409,8 @@ function createVeryfrontApiMcpServerToolSource(
     server,
     authToken,
     apiMcpUrl: `${stripTrailingSlashes(bootstrap.apiBaseUrl)}/mcp`,
-    getProjectId: () => projectId,
+    // Bootstrap identity is a slug, while hosted admission pins the canonical UUID.
+    // Use the owning API endpoint; the catalog below still binds the project.
     defaultSourceId: VERYFRONT_API_MCP_SOURCE_ID,
   });
   if (!remoteConfig) {

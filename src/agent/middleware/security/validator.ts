@@ -31,7 +31,10 @@ import type {
   MessagePart,
 } from "#veryfront/agent/types.ts";
 import { createError, toError } from "#veryfront/errors";
-import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
+import {
+  getOutputSchemaParser,
+  readStructuredAgentOutput,
+} from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
 import {
   buildAttachmentContextFromParts,
@@ -2000,18 +2003,27 @@ export function securityMiddleware(
     const outputFiltering = await outputFilter.filter(result.text);
     reportViolations(outputFiltering.violations, config.onViolation);
 
-    if (!("object" in result) || result.object === undefined) {
+    const structured = readStructuredAgentOutput(result);
+    if (!structured) {
       return { ...result, text: outputFiltering.filtered };
     }
+    if (structured.data === undefined) {
+      return { ...result, text: outputFiltering.filtered, ...structured };
+    }
 
-    const objectFiltering = await filterStructuredOutputValue(result.object, outputFilter);
+    const objectFiltering = await filterStructuredOutputValue(structured.data, outputFilter);
     reportViolations(objectFiltering.violations, config.onViolation);
     const parseOutput = getOutputSchemaParser(result);
     if (parseOutput) {
       const object = await parseOutput(outputFiltering.filtered);
-      return { ...result, text: outputFiltering.filtered, object };
+      return { ...result, text: outputFiltering.filtered, data: object, object };
     }
 
-    return { ...result, text: outputFiltering.filtered, object: objectFiltering.value };
+    return {
+      ...result,
+      text: outputFiltering.filtered,
+      data: objectFiltering.value,
+      object: objectFiltering.value,
+    };
   };
 }

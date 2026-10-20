@@ -283,7 +283,7 @@ export interface AgentConfig<TOutput = any> {
    * (or any `SchemaValidator`-backed builder), or a raw JSON Schema object.
    *
    * The schema is mapped to the selected provider's native structured-output
-   * field, and the model's text is parsed back into `response.object`. A model
+   * field, and the model's text is parsed back into `response.data` (also available as `response.object`). A model
    * runtime that does not support structured output rejects the request rather
    * than dropping the schema. Raw JSON Schema is validated locally only when
    * the registered validator extension can compile JSON Schema.
@@ -537,8 +537,9 @@ export interface AgentStreamInput {
   onToolCall?: (toolCall: ToolCall) => void;
   onChunk?: (chunk: string) => void;
   /**
-   * Receives the completed response, including the parsed `object` when an
-   * `outputSchema` applies. The payload is the erased response type; use
+   * Receives the completed response, including parsed `data` when an
+   * `outputSchema` applies (`object` is its compatibility alias). The payload is
+   * the erased response type; use
    * `generate()` when the parsed value needs to arrive typed.
    */
   onFinish?: (response: AgentResponse) => void;

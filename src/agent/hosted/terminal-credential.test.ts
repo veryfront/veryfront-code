@@ -620,6 +620,15 @@ describe("inherited execution input and receipt authority", () => {
       Error,
       "binding mismatch",
     );
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(
+          inheritedExecutionResponse({ outputFormat: "text-data-v1" }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
   });
 
   it("retains terminal receipts without restoring execution authority", async () => {
@@ -649,6 +658,43 @@ describe("inherited execution input and receipt authority", () => {
       inheritedBinding(),
     );
     assertEquals("runId" in running && running.runId, "child-run");
+  });
+
+  it("carries canonical output provenance only from the authenticated execution receipt", async () => {
+    const response = () =>
+      inheritedExecutionResponse({
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      });
+    const workflow = await acceptWorkflowInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(workflow, {
+      terminalReceipt: {
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      },
+    });
+    const run = await acceptInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(hostedInheritedTerminalReceipt(run), {
+      status: "completed",
+      output: { data: { text: "business" } },
+      outputFormat: "text-data-v1",
+    });
+
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(
+          inheritedExecutionResponse({
+            status: "completed",
+            output: null,
+            outputFormat: "future-format",
+          }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
   });
 });
 
@@ -938,4 +984,64 @@ it("retains the verified agent binding when inherited evidence authority transfe
   );
   assertEquals(verifications, 2);
   assertEquals(terminalVerifications, 1);
+});
+
+it("reads the current exact-owner bearer for existing first-party MCP sources", async () => {
+  const value = request();
+  registerHostedTerminalCredential(value, "test-terminal", "test-events");
+  let current: string | undefined = "child-invocation-admission";
+  const sent: string[] = [];
+  const fallback = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    const send = async (context?: ToolExecutionContext) => {
+      const headers = new Headers(
+        typeof config.headers === "function" ? await config.headers(context) : config.headers,
+      );
+      sent.push(headers.get("Authorization") ?? "");
+    };
+    return {
+      id: "test-platform",
+      listTools: async (context) => {
+        await send(context);
+        return [];
+      },
+      executeTool: async (_name, _args, context) => {
+        await send(context);
+        return {};
+      },
+    };
+  };
+  const factory = hostedTerminalToolSourceFactory(
+    value,
+    "https://api.example/mcp",
+    fallback,
+    () => current,
+  );
+  const config = {
+    endpoint: "https://api.example/mcp",
+    headers: { Authorization: "Bearer stale" },
+  };
+  const source = factory(config, { kind: "veryfront-api" });
+  current = "child-invocation-1";
+  await source.listTools();
+  current = "child-invocation-2";
+  await source.executeTool("ordinary", {}, rootContext());
+  await source.executeTool("update_file", {}, rootContext());
+  await source.executeTool("finalize", {}, rootContext());
+  assertEquals(sent, [
+    "Bearer child-invocation-1",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+  ]);
+  current = undefined;
+  await assertRejects(() => source.listTools(), Error, "authority is unavailable");
+  await assertRejects(
+    () => source.executeTool("ordinary", {}, rootContext()),
+    Error,
+    "authority is unavailable",
+  );
+  assertEquals(sent.length, 4);
+  const thirdParty = factory(config);
+  await thirdParty.executeTool("ordinary", {}, rootContext());
+  assertEquals(sent.at(-1), "Bearer stale");
 });

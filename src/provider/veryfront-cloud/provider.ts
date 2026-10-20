@@ -21,6 +21,7 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  forwardVeryfrontCloudModelFacts,
   isVeryfrontCloudCatalogLoadedForScope,
   readServedVeryfrontCloudCatalogModel,
   registerVeryfrontCloudModelFacts,
@@ -221,6 +222,7 @@ function withServedCatalog(
 }
 
 type VeryfrontCloudModelOptions = {
+  getInferenceCredential?: () => string;
   apiBaseUrl?: string;
   assertInferenceCredentialActive?: () => void;
   credentialSource?: "application";
@@ -433,6 +435,9 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
   );
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
+    ...(options.getInferenceCredential
+      ? { getInferenceCredential: options.getInferenceCredential }
+      : {}),
     ...(neutral ? { neutralRoute: true } : {}),
     ...(wireModelProvider ? { wireModelProvider } : {}),
     ...(options.assertCredentialActive || options.assertInferenceCredentialActive
@@ -704,8 +709,40 @@ export function createVeryfrontCloudModel(
 /** @internal Build a first-party gateway model with explicit run-scoped authority. */
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
-  inferenceCredential: string,
+  inferenceCredential: string | (() => string),
   options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
-  return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
+  if (typeof inferenceCredential === "string") {
+    return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
+  }
+  const getInferenceCredential = inferenceCredential;
+  let credential = getInferenceCredential();
+  let model = createVeryfrontCloudModelInternal(modelId, credential, {
+    ...options,
+    getInferenceCredential,
+  });
+  const current = (): ModelRuntime => {
+    options.assertInferenceCredentialActive?.();
+    const next = getInferenceCredential();
+    if (next !== credential) {
+      model = createVeryfrontCloudModelInternal(modelId, next, {
+        ...options,
+        getInferenceCredential,
+      });
+      credential = next;
+      forwardVeryfrontCloudModelFacts(model, wrapped);
+    }
+    return model;
+  };
+  const wrapped = withServedCatalog(
+    model,
+    current,
+    current,
+    () => Promise.resolve(current()),
+    () => {
+      current();
+    },
+  );
+  forwardVeryfrontCloudModelFacts(model, wrapped);
+  return wrapped;
 }

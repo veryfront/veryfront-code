@@ -4,8 +4,8 @@
   "archiveSha256": "1c6b884892bc1ccc93f50323ba00863f94f386c1e5a96296a41302559604e865",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "6e26281aa9d581f751679add3954ad80a27c95719de9f2891a088b998dc19656",
-    "openapi.target.json": "9aa7334551ca27842da60a7cb26dd183c3b33eec58551ab002b86f013d8b6bd3",
+    "runs-api.generated.ts": "7714cef6a72249b96b780b14d976307d8a4ecef4d10b36230d730c3ff1eab9a6",
+    "openapi.target.json": "6cfa62c7fc5a6b9497c4ea700b1dba68dc994d98cba038b5020d3869f29b26c1",
     "runs-fixtures.generated.ts": "367013897103f0a9c0321c386cbed81d61f1ec4bed36e42129f662fd51245676"
   },
   "fixturesGeneratedBy": "deno task contracts:runs:fixtures",
@@ -15,5 +15,14 @@
     "path": "src/api/contracts/execution/pinned/openapi.target.json",
     "sourceSha256": "35248683671ee1864d2fa5abe76135e0e552bca4fb24b31e6c7a54646c669a5c",
     "generatedBy": "scripts/generate-runs-task-input-contract.ts, then veryfront-api renderRunsTargetArtifacts (openapi-typescript 7.13.0)"
+  },
+  "agentFinalization": {
+    "repository": "veryfront/veryfront-api",
+    "pullRequest": 6952,
+    "commit": "37baf78b21ac71904e9193715db2572c16948fea",
+    "path": "src/api/contracts/execution/pinned/openapi.target.json",
+    "sourceSha256": "811a250bbae5e9ec609c6e519e569ff0887967ac2a8696b73394d133220a88eb",
+    "change": "Completed agent runtime finalization accepts optional output and authoritative final_text, including empty text; failed finalization remains strict.",
+    "generatedBy": "veryfront-api renderRunsTargetArtifacts against this maintained 0.8.9 OpenAPI document"
   }
 }

@@ -1,10 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "#veryfront/agent/factory.ts";
+import {
+  readStructuredAgentOutput,
+  structuredAgentOutputForWire,
+} from "#veryfront/agent/output-schema.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+  terminalAgentOutput,
+} from "#veryfront/agent/composition/inherited-local-agent.ts";
+import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 
 const noopTool = tool({
   id: "snapshot_noop_tool",
@@ -90,13 +100,134 @@ describe("structured output snapshot intrinsics", () => {
         .filter((line) => line.startsWith("data: {"))
         .map((line) => JSON.parse(line.slice(6)))
         .find((event) => event.type === "message-finish");
-      assertEquals(finish?.object, {
+      assertEquals(finish?.data, {
         captureStatus: "unsupported",
         reasons: ["unsupported_number"],
         value: "[unsupported number]",
       });
+      assertEquals(Object.hasOwn(finish, "object"), false);
     } finally {
       Number.isFinite = originalIsFinite;
+    }
+  });
+});
+
+// These regressions intentionally mutate host intrinsics and belong at the integration boundary.
+describe("structured output reflection boundary", () => {
+  it("preserves inherited child output after project code replaces reflection", async () => {
+    const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const ownKeys = Reflect.ownKeys;
+    const isArray = Array.isArray;
+    const some = Array.prototype.some;
+    const data = { selected_count: 1 };
+    const live = {
+      text: JSON.stringify(data),
+      data,
+      object: data,
+      messages: [{ role: "assistant", content: "private" }],
+      toolCalls: [{ toolCallId: "call-1" }],
+      status: "completed",
+    };
+    const stored = { text: JSON.stringify(data), data };
+    const targets = new WeakSet<object>([live, stored]);
+    try {
+      Object.getOwnPropertyDescriptor = (target, key) =>
+        targets.has(target) ? undefined : getOwnPropertyDescriptor(target, key);
+      Reflect.ownKeys = (target) => targets.has(target) ? [] : ownKeys(target);
+      Array.isArray = (value: unknown): value is unknown[] =>
+        value === stored || (value !== live.toolCalls && isArray(value));
+      Array.prototype.some = function (predicate, thisArg) {
+        if (this.length === 2 && this[0] === "text" && this[1] === "data") return true;
+        return Reflect.apply(some, this, [predicate, thisArg]);
+      };
+
+      assertEquals(terminalAgentOutput(live), { selected_count: 1 });
+      assertEquals(readInheritedLocalChildResult(live), {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        toolCalls: 1,
+        status: "completed",
+      });
+      assertEquals(
+        await runInheritedLocalAgent(
+          {
+            terminalReceipt: {
+              status: "completed",
+              output: stored,
+              outputFormat: "text-data-v1",
+            },
+          },
+          { projectId: "project", apiUrl: "https://api.example.test", fetch },
+          () => {
+            throw new Error("must not execute");
+          },
+        ),
+        {
+          success: true,
+          output: {
+            text: JSON.stringify(data),
+            data,
+            object: data,
+            status: "completed",
+          },
+          executionTime: 0,
+        },
+      );
+    } finally {
+      Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
+      Reflect.ownKeys = ownKeys;
+      Array.isArray = isArray;
+      Array.prototype.some = some;
+    }
+  });
+
+  it("retains alias validation and wire canonicalization after reflection replacement", () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const same = Object.is;
+    const data = { contact: "private" };
+    try {
+      Object.getOwnPropertyDescriptor = () => undefined;
+      Object.is = () => true;
+      assertEquals(readStructuredAgentOutput({ data }), { data, object: data });
+      assertThrows(() => readStructuredAgentOutput({ data: false, object: true }));
+      assertEquals<unknown>(structuredAgentOutputForWire({ type: "finish", data, object: data }), {
+        type: "finish",
+        data,
+      });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
+      Object.is = same;
+    }
+  });
+
+  it("filters structured PII after project code replaces reflection", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const middleware = securityMiddleware({ output: { filterPII: true } });
+    const data = { email: "john@example.com" };
+    try {
+      const result = await middleware({
+        agentId: "reflection-test",
+        input: "Return contact details.",
+        model: "test",
+        data: {},
+        platform: {},
+      }, () => {
+        Object.getOwnPropertyDescriptor = (target, key) =>
+          key === "data" || key === "object" ? undefined : descriptor(target, key);
+        return Promise.resolve({
+          text: "Contact details",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          data,
+          object: data,
+        });
+      });
+      assertEquals(result.data, { email: "[EMAIL]" });
+      assertEquals(result.object, { email: "[EMAIL]" });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
     }
   });
 });

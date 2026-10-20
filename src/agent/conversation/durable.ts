@@ -1051,6 +1051,8 @@ function formatConversationRunBatchRecovery(
 /** Flush conversation run event batches. */
 export async function flushConversationRunEventBatches(input: {
   authToken: string;
+  /** Resolve the current exact-run writer credential before each append request. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1134,7 +1136,7 @@ export async function flushConversationRunEventBatches(input: {
     try {
       input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
-        authToken: input.authToken,
+        authToken: input.getAuthToken?.() ?? input.authToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
@@ -1232,6 +1234,8 @@ function formatConversationRunQueueFailure(
 /** Flush conversation run event queue. */
 export async function flushConversationRunEventQueue(input: {
   authToken: string;
+  /** Resolve the current exact-run writer credential before each append request. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1293,6 +1297,7 @@ export async function flushConversationRunEventQueue(input: {
 
     const flushed = await flushConversationRunEventBatches({
       authToken: input.authToken,
+      getAuthToken: input.getAuthToken,
       apiUrl: input.apiUrl,
       conversationId: input.conversationId,
       runId: input.runId,
@@ -1347,6 +1352,8 @@ export async function flushConversationRunEventQueue(input: {
 /** Create conversation run event queue controller. */
 export function createConversationRunEventQueueController(input: {
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -1453,6 +1460,7 @@ export function createConversationRunEventQueueController(input: {
     try {
       flushed = await flushConversationRunEventQueue({
         authToken: input.authToken,
+        getAuthToken: input.getAuthToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
@@ -2109,7 +2117,11 @@ function conversationAgentRunTerminalBody(
 ) {
   if (cancelled) return undefined;
   if (input.status === "completed") {
-    return { status: "completed", output: input.output ?? null };
+    return {
+      status: "completed",
+      ...(input.output !== undefined ? { output: input.output } : {}),
+      ...(input.finalText !== undefined ? { final_text: input.finalText } : {}),
+    };
   }
   return {
     status: "failed",

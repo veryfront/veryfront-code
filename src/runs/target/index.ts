@@ -64,4 +64,25 @@ export {
   CanonicalEventsV1StreamError,
   createCanonicalEventsV1Facade,
 } from "./canonical-v1.ts";
-export * from "#veryfront/events/canonical-v1/index.ts";
+export {
+  type CanonicalEventV1,
+  type CanonicalMemberV1,
+  decodeDescendantCursorV1,
+  type DescendantCursorV1,
+  type DescendantRunReadPageV1,
+  type EventDiscoveryV1,
+  type EventViewV1,
+  type LegacyMemberV1,
+  type LegacyReasonV1,
+  parseDescendantRunReadPageV1,
+  parseEventDiscoveryV1,
+  parseEventErrorV1,
+  parseRunReadMemberV1,
+  parseRunReadPageV1,
+  parseStreamMemberV1,
+  type RunReadMemberV1,
+  type RunReadMetadataV1,
+  type RunReadPageV1,
+  type StreamMemberV1,
+  type TransientMemberV1,
+} from "#veryfront/events/canonical-v1/index.ts";

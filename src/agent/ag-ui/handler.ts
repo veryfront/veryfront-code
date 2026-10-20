@@ -19,6 +19,7 @@ import {
   shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
+import { readStructuredAgentOutput } from "../output-schema.ts";
 import { fromError } from "#veryfront/errors";
 import {
   AgentRuntime,
@@ -229,6 +230,7 @@ function prepareAgUiStreamInput(options: {
     context: {
       // beforeStream may return a fresh context, dropping the generated-run marker.
       ...(options.beforeStreamResult?.context ?? options.context),
+      ...options.localRun?.context,
       runId: effectiveRunId,
       runIdBindsToolAuthorization,
     },
@@ -261,7 +263,7 @@ function hasFinalizedAssistantOutput(response: AgentResponse | null): boolean {
   if (response.text.length > 0) return true;
   if (response.messages.length > 0) return true;
   if (response.toolCalls.length > 0) return true;
-  return response.object !== undefined;
+  return readStructuredAgentOutput(response) !== undefined;
 }
 
 function createAgUiRequestErrorResponse(error: unknown): Response {

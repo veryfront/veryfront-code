@@ -181,7 +181,7 @@ describe("agent/conversation-hosted-terminal", () => {
         metadata: { usageCaptureStatus: "missing" },
       });
 
-      assertEquals(calls[0]?.body, { status: "completed", output: null });
+      assertEquals(calls[0]?.body, { status: "completed" });
       assertEquals(finalizedInput.model, "fallback-model");
       assertEquals(finalizedInput.provider, "provider:fallback-model");
     } finally {

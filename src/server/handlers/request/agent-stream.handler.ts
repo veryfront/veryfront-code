@@ -1,3 +1,8 @@
+import {
+  bindProjectEventWriter,
+  createProjectEventWriter,
+  getProjectEventPersistenceSchema,
+} from "#veryfront/internal-agents/project-event-writer.ts";
 import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
 import {
   assertManagedRecoveryExecutionBinding,
@@ -658,6 +663,8 @@ function includeRequestedPlatformAliases(
 }
 
 export async function withVeryfrontPlatformRemoteTools(input: {
+  /** Canonical identity supplied by the host runtime, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -722,6 +729,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const platformCatalog = createPlatformMcpCatalogSource(
     platformRemoteToolSource,
     platformToolDefinitions,
+    { runId: input.currentRunId, runIdBindsToolAuthorization: true },
   );
   platformToolDefinitions = platformCatalog.definitions;
   includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);
@@ -1543,6 +1551,30 @@ export class AgentStreamHandler extends BaseHandler {
         ? payload.credentials?.sourceAuthToken || ""
         : apiAuthToken;
       const executionProject = payload.executionProject;
+      const projectEventPersistence = platformDependencies !== undefined
+        ? getProjectEventPersistenceSchema().optional().parse(
+          IntrinsicReflectApply(JsonParse, JSON, [rawBody]).projectEventPersistence,
+        )
+        : undefined;
+      const projectEventWriter = projectEventPersistence
+        ? (() => {
+          if (payload.managedRecoveryAdmission || !runEventAppendToken) {
+            throw new Error("Invalid project event writer admission");
+          }
+          const projectId = executionProject?.projectId ?? ctx.projectId;
+          if (!projectId) throw new Error("Project writer requires an exact project");
+          return createProjectEventWriter({
+            apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+            runId: payload.runId,
+            canonicalRunId: projectEventPersistence.canonicalRunId,
+            projectId,
+            threadId: payload.threadId,
+            token: runEventAppendToken,
+            latestEventId: projectEventPersistence.latestEventId,
+            latestExternalEventSequence: projectEventPersistence.latestExternalEventSequence,
+          });
+        })()
+        : undefined;
       if (payload.agentSource.type === "environment" && !apiAuthToken) {
         throw AUTHENTICATION_REQUIRED.create({
           detail: "Named agent source environment requires a request-scoped API token",
@@ -1649,6 +1681,7 @@ export class AgentStreamHandler extends BaseHandler {
           runtimeBaseAgent as Agent,
         );
         bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+        if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
         if (reservedRecovery) {
           bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
             pendingRecovery = undefined;
@@ -1679,6 +1712,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+          currentRunId: runtimeInput.runId,
           agent: runtimeBaseAgent as Agent,
           token: apiAuthToken || null,
           projectId: executionProject?.projectId ??
