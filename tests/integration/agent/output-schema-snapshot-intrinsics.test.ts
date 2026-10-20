@@ -1,10 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "#veryfront/agent/factory.ts";
+import {
+  readStructuredAgentOutput,
+  structuredAgentOutputForWire,
+} from "#veryfront/agent/output-schema.ts";
+import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 
 const noopTool = tool({
   id: "snapshot_noop_tool",
@@ -98,6 +103,58 @@ describe("structured output snapshot intrinsics", () => {
       assertEquals(Object.hasOwn(finish, "object"), false);
     } finally {
       Number.isFinite = originalIsFinite;
+    }
+  });
+});
+
+// These regressions intentionally mutate host intrinsics and belong at the integration boundary.
+describe("structured output reflection boundary", () => {
+  it("retains alias validation and wire canonicalization after reflection replacement", () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const same = Object.is;
+    const data = { contact: "private" };
+    try {
+      Object.getOwnPropertyDescriptor = () => undefined;
+      Object.is = () => true;
+      assertEquals(readStructuredAgentOutput({ data }), { data, object: data });
+      assertThrows(() => readStructuredAgentOutput({ data: false, object: true }));
+      assertEquals<unknown>(structuredAgentOutputForWire({ type: "finish", data, object: data }), {
+        type: "finish",
+        data,
+      });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
+      Object.is = same;
+    }
+  });
+
+  it("filters structured PII after project code replaces reflection", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const middleware = securityMiddleware({ output: { filterPII: true } });
+    const data = { email: "john@example.com" };
+    try {
+      const result = await middleware({
+        agentId: "reflection-test",
+        input: "Return contact details.",
+        model: "test",
+        data: {},
+        platform: {},
+      }, () => {
+        Object.getOwnPropertyDescriptor = (target, key) =>
+          key === "data" || key === "object" ? undefined : descriptor(target, key);
+        return Promise.resolve({
+          text: "Contact details",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          data,
+          object: data,
+        });
+      });
+      assertEquals(result.data, { email: "[EMAIL]" });
+      assertEquals(result.object, { email: "[EMAIL]" });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
     }
   });
 });
