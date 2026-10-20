@@ -14,8 +14,41 @@ export type AgentServiceFailureStage =
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const hasOwn = Object.hasOwn;
+const apply = Reflect.apply;
+// Capture the host's branded accessor during trusted framework bootstrap.
+const domExceptionName = typeof DOMException === "function"
+  ? getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
+  : undefined;
+// Deno's host accessor reads symbol-backed WebIDL slots, unlike Node's
+// internal-slot accessor. Require those captured keys to remain own data.
+const domExceptionSlots = typeof DOMException === "function"
+  ? Object.getOwnPropertySymbols(new DOMException())
+  : [];
 
-function ownData(value: Error, key: string): unknown {
+function hasSafePrototypeChain(value: object): boolean {
+  let prototype: object | null = value;
+  for (let depth = 0; depth < 32; depth++) {
+    if (prototype === null) return true;
+    if (isProxyWithoutHooks(prototype)) return false;
+    prototype = getPrototypeOf(prototype);
+  }
+  return false;
+}
+
+function nativeDomExceptionName(value: object): unknown {
+  if (!domExceptionName) return undefined;
+  try {
+    for (const key of domExceptionSlots) {
+      const descriptor = getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
+    }
+    return apply(domExceptionName, value, []);
+  } catch {
+    return undefined;
+  }
+}
+
+function ownData(value: object, key: string): unknown {
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
@@ -40,16 +73,19 @@ function transportCode(value: unknown) {
   }
 }
 
-function errorName(error: Error) {
+function errorName(error: object, domName: unknown) {
   const descriptor = getOwnPropertyDescriptor(error, "name");
   if (descriptor && !hasOwn(descriptor, "value")) return "redacted";
   if (!descriptor) {
     const prototype = getPrototypeOf(error);
     if (prototype === null || isProxyWithoutHooks(prototype)) return "redacted";
     const inherited = getOwnPropertyDescriptor(prototype, "name");
-    if (inherited && !hasOwn(inherited, "value")) return "redacted";
+    if (inherited && !hasOwn(inherited, "value") && domName === undefined) return "redacted";
   }
-  const name = readNativeErrorNameWithoutHooks(error);
+  const nativeName = isNativeErrorWithoutHooks(error)
+    ? readNativeErrorNameWithoutHooks(error)
+    : undefined;
+  const name = descriptor ? nativeName : domName ?? nativeName;
   switch (name) {
     case "Error":
     case "TypeError":
@@ -64,7 +100,7 @@ function errorName(error: Error) {
   }
 }
 
-/** Fixed failure metadata only; never reads messages, stacks or accessors. */
+/** Fixed metadata only; no messages, stacks or project-owned accessors. */
 export function agentServiceFailureDiagnostic(stage: AgentServiceFailureStage, error: unknown): {
   stage: AgentServiceFailureStage;
   errorName: ReturnType<typeof errorName>;
@@ -72,11 +108,15 @@ export function agentServiceFailureDiagnostic(stage: AgentServiceFailureStage, e
 } {
   const redacted = { stage, errorName: "redacted", transportCode: "redacted" } as const;
   if (
-    !canIdentifyProxyWithoutHooks || isProxyWithoutHooks(error) || !isNativeErrorWithoutHooks(error)
+    !canIdentifyProxyWithoutHooks || isProxyWithoutHooks(error) ||
+    !isNativeErrorWithoutHooks(error)
   ) {
     return redacted;
   }
   try {
+    // The host WebIDL brand check may traverse the entire prototype chain.
+    if (!hasSafePrototypeChain(error)) return redacted;
+    const domName = nativeDomExceptionName(error);
     let code: ReturnType<typeof transportCode> = transportCode(ownData(error, "code"));
     if (code === "redacted") {
       const cause = ownData(error, "cause");
@@ -84,7 +124,7 @@ export function agentServiceFailureDiagnostic(stage: AgentServiceFailureStage, e
         code = transportCode(ownData(cause, "code"));
       }
     }
-    return { stage, errorName: errorName(error), transportCode: code };
+    return { stage, errorName: errorName(error, domName), transportCode: code };
   } catch {
     return redacted;
   }

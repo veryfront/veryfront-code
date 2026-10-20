@@ -3,6 +3,140 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentServiceFailureDiagnostic } from "./failure-diagnostic.ts";
 
 describe("safe adapter failure metadata", () => {
+  it("rejects deep proxy prototype chains without invoking their traps", () => {
+    let hooks = 0;
+    const proxy = new Proxy({}, {
+      getPrototypeOf() {
+        hooks++;
+        throw new Error("private");
+      },
+    });
+    const error = new DOMException("private", "AbortError");
+    Object.setPrototypeOf(error, Object.create(proxy));
+    assertEquals(agentServiceFailureDiagnostic("request-fetch", error), {
+      stage: "request-fetch",
+      errorName: "redacted",
+      transportCode: "redacted",
+    });
+    assertEquals(hooks, 0);
+  });
+
+  it("fails closed when the prototype chain exceeds the bounded walk", () => {
+    const error = new DOMException("private", "AbortError");
+    let prototype = DOMException.prototype;
+    for (let depth = 0; depth < 40; depth++) prototype = Object.create(prototype);
+    Object.setPrototypeOf(error, prototype);
+    assertEquals(agentServiceFailureDiagnostic("request-fetch", error), {
+      stage: "request-fetch",
+      errorName: "redacted",
+      transportCode: "redacted",
+    });
+  });
+  it("recognizes real DOMException abort and timeout reasons", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const signal = AbortSignal.timeout(1);
+    await new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true })
+    );
+    for (
+      const [error, name] of [
+        [new DOMException("private abort", "AbortError"), "AbortError"],
+        [new DOMException("private timeout", "TimeoutError"), "TimeoutError"],
+        [controller.signal.reason, "AbortError"],
+        [signal.reason, "TimeoutError"],
+      ] as const
+    ) {
+      assertEquals(agentServiceFailureDiagnostic("request-fetch", error), {
+        stage: "request-fetch",
+        errorName: name,
+        transportCode: "redacted",
+      });
+    }
+  });
+
+  it("keeps DOMException overrides and unknown names redacted without invoking hooks", () => {
+    let hooks = 0;
+    const getter = () => {
+      hooks++;
+      throw new Error("private");
+    };
+    const error = new DOMException("private", "AbortError");
+    Object.defineProperties(error, {
+      name: { get: getter },
+      message: { get: getter },
+      code: { get: getter },
+      cause: { get: getter },
+    });
+    const spoof = Object.create(DOMException.prototype);
+    Object.defineProperties(spoof, { name: { get: getter }, message: { get: getter } });
+    const revocable = Proxy.revocable(new DOMException("private", "AbortError"), {
+      get: getter,
+      getPrototypeOf: getter,
+      getOwnPropertyDescriptor: getter,
+    });
+    revocable.revoke();
+    for (
+      const value of [error, spoof, revocable.proxy, new DOMException("private", "PrivateError")]
+    ) {
+      assertEquals(agentServiceFailureDiagnostic("request-fetch", value), {
+        stage: "request-fetch",
+        errorName: "redacted",
+        transportCode: "redacted",
+      });
+    }
+    assertEquals(hooks, 0);
+  });
+
+  it("uses the captured DOMException accessor even if the prototype is later replaced", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(DOMException.prototype, "name");
+    if (!descriptor) throw new Error("Missing native DOMException name");
+    let hooks = 0;
+    Object.defineProperty(DOMException.prototype, "name", {
+      configurable: true,
+      get() {
+        hooks++;
+        return "PrivateError";
+      },
+    });
+    try {
+      assertEquals(
+        agentServiceFailureDiagnostic("request-fetch", new DOMException("private", "AbortError"))
+          .errorName,
+        "AbortError",
+      );
+      assertEquals(
+        agentServiceFailureDiagnostic("request-fetch", new Error("private")).errorName,
+        "Error",
+      );
+      assertEquals(hooks, 0);
+    } finally {
+      Object.defineProperty(DOMException.prototype, "name", descriptor);
+    }
+  });
+
+  it("does not invoke replaced or inherited host-symbol slot getters", () => {
+    let hooks = 0;
+    const getter = () => {
+      hooks++;
+      throw new Error("private");
+    };
+    for (const key of Object.getOwnPropertySymbols(new DOMException())) {
+      const error = new DOMException("private", "AbortError");
+      const descriptor = Object.getOwnPropertyDescriptor(error, key);
+      if (!descriptor?.configurable) continue;
+      Object.defineProperty(error, key, { get: getter });
+      assertEquals(agentServiceFailureDiagnostic("request-fetch", error).errorName, "redacted");
+      const inherited = new DOMException("private", "AbortError");
+      Reflect.deleteProperty(inherited, key);
+      const prototype = Object.create(DOMException.prototype);
+      Object.defineProperty(prototype, key, { get: getter });
+      Object.defineProperty(prototype, "name", { get: getter });
+      Object.setPrototypeOf(inherited, prototype);
+      assertEquals(agentServiceFailureDiagnostic("request-fetch", inherited).errorName, "redacted");
+    }
+    assertEquals(hooks, 0);
+  });
   it("prefers a direct allowlisted code and permits one native cause", () => {
     const cause = new Error("private cause");
     Object.defineProperty(cause, "code", { value: "ECONNRESET" });
