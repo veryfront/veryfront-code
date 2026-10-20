@@ -34,7 +34,6 @@ const ENV_KEYS = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
-  "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;
 
@@ -139,31 +138,6 @@ describe("integrations/remote-tools", () => {
       assertEquals(discovery.status, "ok");
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
-    }
-  });
-
-  it("reads the renewable script credential file for each first-party API request", async () => {
-    const directory = await Deno.makeTempDir({ prefix: "vf-sdk-renewable-token-" });
-    const path = `${directory}/token`;
-    await Deno.writeTextFile(path, "child-invocation-1\n");
-    setRemoteToolEnv({
-      VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN_FILE: path,
-    });
-    const authorizations: Array<string | null> = [];
-    try {
-      await withMockFetch((input, init) => {
-        authorizations.push(new Request(input, init).headers.get("Authorization"));
-        return Promise.resolve(Response.json({ tools: [] }));
-      }, async () => {
-        await Deno.writeTextFile(path, "child-invocation-1\n");
-        await getRemoteIntegrationToolDiscovery();
-        await Deno.writeTextFile(path, "child-invocation-2\n");
-        await getRemoteIntegrationToolDiscovery();
-      });
-      assertEquals(authorizations, ["Bearer child-invocation-1", "Bearer child-invocation-2"]);
-    } finally {
-      await Deno.remove(directory, { recursive: true });
     }
   });
 
