@@ -14,7 +14,6 @@ import pathlib
 import shutil
 import stat
 import subprocess
-import sys
 import tarfile
 import urllib.parse
 import urllib.request
@@ -150,6 +149,7 @@ def registry_fetch(url,destination=None,max_bytes=32*1024*1024):
                 count+=len(block)
                 require(count<=max_bytes,'Registry tarball exceeds bound')
                 target.write(block)
+    return None
 
 
 def download_artifact(plan_item,output,run_id):

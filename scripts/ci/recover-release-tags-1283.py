@@ -39,7 +39,9 @@ def read_api(path, transport, allow_absent=False):
                 value = decode(error.output)
                 if type(value) is dict and str(value.get('status')) == '404' and value.get('message') == 'Not Found':
                     return None
-            except (ValueError, TypeError): pass
+            except (ValueError, TypeError):
+                # Malformed error bodies cannot establish absence; re-raise the API failure.
+                pass
         raise
 
 
