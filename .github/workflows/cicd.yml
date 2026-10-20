@@ -2450,6 +2450,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
@@ -2586,6 +2588,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace

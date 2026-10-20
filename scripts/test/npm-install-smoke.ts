@@ -1840,6 +1840,8 @@ async function checkManagedBroker(workDir: string): Promise<void> {
       PATH: Deno.env.get("PATH") ?? "",
       NODE_ENV: "production",
       VF_DISABLE_LRU_INTERVAL: "1",
+      GITHUB_ACTIONS: Deno.env.get("GITHUB_ACTIONS") ?? "",
+      RUNNER_OS: Deno.env.get("RUNNER_OS") ?? "",
     },
     timeoutMs: 480_000,
   });
