@@ -512,6 +512,54 @@ describe("agent/ag-ui-host-support", () => {
     }]);
   });
 
+  it("pairs a stopped or failed tool with its error result before the next user turn", () => {
+    for (const errorText of ["Stopped by user", "Tool failed"]) {
+      const messages = normalizeAgUiMessages([
+        {
+          id: "assistant",
+          role: "assistant",
+          parts: [{
+            type: "tool-veryfront__invoke_agent",
+            toolName: "veryfront__invoke_agent",
+            toolCallId: "child",
+            input: { agent_id: "writer" },
+            state: "output-error",
+            errorText,
+          }],
+        },
+        { id: "next", role: "user", parts: [{ type: "text", text: "Try again" }] },
+      ]);
+      assertEquals(messages.map((message) => message.role), ["assistant", "tool", "user"]);
+      assertEquals(messages[1]?.parts, [{
+        type: "tool-result",
+        toolCallId: "child",
+        toolName: "veryfront__invoke_agent",
+        result: { error: errorText },
+      }]);
+    }
+  });
+
+  it("preserves a recorded error output when errorText is absent", () => {
+    const messages = normalizeAgUiMessages([{
+      id: "assistant",
+      role: "assistant",
+      parts: [{
+        type: "tool-inspect",
+        toolName: "inspect",
+        toolCallId: "inspect",
+        state: "output-error",
+        input: {},
+        output: { error: "Recorded failure" },
+      }],
+    }]);
+    assertEquals(messages[1]?.parts, [{
+      type: "tool-result",
+      toolCallId: "inspect",
+      toolName: "inspect",
+      result: { error: "Recorded failure" },
+    }]);
+  });
+
   it("preserves tool outputs stored on assistant tool parts as tool messages", () => {
     const messages = normalizeAgUiMessages([
       {
