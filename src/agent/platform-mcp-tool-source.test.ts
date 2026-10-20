@@ -321,3 +321,30 @@ it("live current-run binding follows each execution context without retaining an
   assertEquals((await source.listTools())[0]?.parameters.required, ["run_id"]);
   assertEquals(calls, [{ run_id: first }, { run_id: second }, {}]);
 });
+
+it("a verified run-scoped live source binds discovery and dispatch without caller context", async () => {
+  const runId = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "get_run",
+      description: "Read run",
+      parameters: {
+        type: "object",
+        properties: { run_id: { type: "string" } },
+        required: ["run_id"],
+      },
+    }],
+    executeTool: async (_name, args) => {
+      calls.push(args);
+      return args;
+    },
+  }, { runId });
+  assertEquals((await source.listTools())[0]?.parameters.required, []);
+  await source.executeTool("veryfront__get_run", {});
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: "10000000-1000-4000-8000-100000000001",
+  });
+  assertEquals(calls, [{ run_id: runId }, { run_id: runId }]);
+});

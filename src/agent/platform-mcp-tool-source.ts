@@ -128,8 +128,11 @@ export function platformMcpLegacyName(name: string): string {
 }
 
 /** Adapt a live platform catalog without retaining project or credential state. */
-export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToolSource {
-  if (hasAdaptedPlatformSource(source)) return source;
+export function createLivePlatformMcpSource(
+  source: RemoteToolSource,
+  currentRun?: Pick<ToolExecutionContext, "runId" | "runIdBindsToolAuthorization">,
+): RemoteToolSource {
+  if (hasAdaptedPlatformSource(source) && currentRun === undefined) return source;
   // Keep only wire-name translations. The wrapped source still checks the
   // current project, credentials, access profile, and policy during execution.
   let wireNames = createPrivateMap<string, string>();
@@ -137,7 +140,7 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
     const catalog = createPlatformMcpCatalogSource(
       source,
       await source.listTools(context),
-      context,
+      currentRun ?? context,
     );
     wireNames = createPrivateMap<string, string>();
     for (const { name } of catalog.definitions) {
@@ -156,7 +159,7 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
       }
       return source.executeTool(
         wireName,
-        bindCurrentRun(name, args, trustedCurrentRunId(context)),
+        bindCurrentRun(name, args, trustedCurrentRunId(currentRun ?? context)),
         context,
       );
     },

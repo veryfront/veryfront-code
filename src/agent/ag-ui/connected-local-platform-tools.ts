@@ -166,21 +166,23 @@ export function createConnectedLocalPlatformTools(
               });
               credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
-              let source = createLivePlatformMcpSource(factory({
-                id: VERYFRONT_API_MCP_SOURCE_ID,
-                endpoint,
-                headers: () => {
-                  const current = childScope.runId === scope.runId
-                    ? currentAuthority?.()
-                    : undefined;
-                  return {
-                    Authorization: `Bearer ${credential()}`,
-                    ...(childScope.runId === scope.runId
-                      ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
-                      : {}),
-                  };
-                },
-              }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }));
+              let source = createLivePlatformMcpSource(
+                factory({
+                  id: VERYFRONT_API_MCP_SOURCE_ID,
+                  endpoint,
+                  headers: () => {
+                    const current = childScope.runId === scope.runId
+                      ? currentAuthority?.()
+                      : undefined;
+                    return {
+                      Authorization: `Bearer ${credential()}`,
+                      ...(childScope.runId === scope.runId
+                        ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
+                        : {}),
+                    };
+                  },
+                }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }),
+              );
               // The API issues this scope only for this child's sealed sandbox selection.
               let allowSandbox = false;
               try {
@@ -287,7 +289,12 @@ export function createConnectedLocalPlatformTools(
         projectId: input.scope.projectId,
       });
       bindToolCallAdmissionOwner(admit, { ...input.scope, canonicalRunId: input.canonicalRunId });
-      const source = sources.get(input.owner);
+      const registeredSource = sources.get(input.owner);
+      // Worker event scopes may use a public ID. Run queries use the admitted
+      // canonical UUID, scoped to this execution rather than retained globally.
+      const source = registeredSource
+        ? createLivePlatformMcpSource(registeredSource, { runId: input.canonicalRunId })
+        : undefined;
       const credential = credentials.get(input.owner);
       if (!credential) throw new Error("Connected run credential is unavailable");
       const projectContext = dependencies.projectContext;

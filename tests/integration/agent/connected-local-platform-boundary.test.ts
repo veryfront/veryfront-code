@@ -66,7 +66,14 @@ async function fixture(
       authorization: headers.get("authorization"),
       eventToken: headers.get("x-veryfront-run-event-token"),
     });
-    const body = JSON.parse(String(init?.body)) as { id: string; method: string };
+    const body = JSON.parse(String(init?.body)) as {
+      id: string;
+      method: string;
+      params?: { arguments?: Record<string, unknown> };
+    };
+    if (body.method === "tools/call") {
+      assertEquals(body.params?.arguments?.run_id, canonicalRunId);
+    }
     return Response.json({
       jsonrpc: "2.0",
       id: body.id,
@@ -75,7 +82,11 @@ async function fixture(
           tools: [{
             name: "get_run",
             description: "Read the admitted run",
-            inputSchema: { type: "object", properties: {} },
+            inputSchema: {
+              type: "object",
+              properties: { run_id: { type: "string" } },
+              required: ["run_id"],
+            },
           }],
         }
         : { content: [{ type: "text", text: canonicalRunId }] },
@@ -154,9 +165,11 @@ it("executes a legacy writer without a platform dependency claim", async () => {
         admit: () => {
           throw new Error("No tools execute");
         },
-      }, () => {
+      }, async () => {
         const source = getActiveRuntimeRemoteToolSources()?.[0];
         assertEquals(source?.id, "veryfront-platform-mcp");
+        const definitions = await source!.listTools();
+        assertEquals(definitions[0]?.parameters.required, []);
         return source!.executeTool("veryfront__get_run", {}, scope);
       }),
       canonicalRunId,
