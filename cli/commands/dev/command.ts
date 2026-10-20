@@ -185,12 +185,13 @@ export function createConnectedDevSourceSync(
   projectDir: string,
   getApiBaseUrl: () => string,
   push: (options: PushOptions) => Promise<unknown> = pushCommand,
-): (target: Pick<ConnectedDevTarget, "projectSlug">) => Promise<void> {
+): (target: Pick<ConnectedDevTarget, "projectId" | "projectSlug">) => Promise<void> {
   return async (target) => {
     console.log("  Syncing project source for local development...");
     await push({
       projectDir,
       projectSlug: target.projectSlug,
+      projectId: target.projectId,
       quiet: true,
       noAdoptPins: true,
       transport: createConnectedDevSyncTransport(getApiBaseUrl()),

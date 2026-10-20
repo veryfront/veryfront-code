@@ -116,7 +116,7 @@ interface ConfigFileResolution {
 }
 
 export type ProjectReferenceSource =
-  | { kind: "argument"; name: "--project" }
+  | { kind: "argument"; name: "--project" | "resolved project ID" }
   | { kind: "environment"; name: "environment configuration" }
   | { kind: "module-config"; name: string }
   | { kind: "json-config"; name: "veryfront.json" }

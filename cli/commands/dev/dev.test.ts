@@ -466,6 +466,7 @@ it("connected startup sync preserves guards and streams source responses", async
       async (options) => {
         assertEquals(options.projectDir, "/tmp/project");
         assertEquals(options.projectSlug, "demo");
+        assertEquals(options.projectId, "resolved-project-id");
         assertEquals(options.force, undefined);
         assertEquals(options.prune, undefined);
         assertEquals(options.noAdoptPins, true);
@@ -478,7 +479,7 @@ it("connected startup sync preserves guards and streams source responses", async
         controller.abort();
       },
     );
-    await sync({ projectSlug: "demo" });
+    await sync({ projectSlug: "demo", projectId: "resolved-project-id" });
   });
 });
 
@@ -491,7 +492,7 @@ it("connected startup sync waits for push and propagates failure", async () => {
     return apiBaseUrl;
   }, () => push.promise);
   apiBaseUrl = "https://api.veryfront.org";
-  const sync = start({ projectSlug: "demo" }).then(() => {
+  const sync = start({ projectSlug: "demo", projectId: "resolved-project-id" }).then(() => {
     finished = true;
   });
   await Promise.resolve();
@@ -504,5 +505,9 @@ it("connected startup sync waits for push and propagates failure", async () => {
     () => apiBaseUrl,
     () => Promise.reject(new Error("sync conflict")),
   );
-  await assertRejects(() => fail({ projectSlug: "demo" }), Error, "sync conflict");
+  await assertRejects(
+    () => fail({ projectSlug: "demo", projectId: "resolved-project-id" }),
+    Error,
+    "sync conflict",
+  );
 });
