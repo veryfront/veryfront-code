@@ -148,7 +148,7 @@ function isToolPartWithOutput(
   errorText?: string;
 } {
   return typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
+    (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
     part.type !== "tool-result" &&
     typeof part.toolCallId === "string" &&
     typeof part.toolName === "string" &&
@@ -243,13 +243,13 @@ function normalizeMessagePart(
 
   if (
     typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
+    (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
     part.type !== "tool-result" &&
     typeof part.toolCallId === "string" &&
     typeof part.toolName === "string"
   ) {
     return {
-      type: part.type,
+      type: part.type === "dynamic-tool" ? "tool-call" : part.type,
       toolCallId: part.toolCallId,
       toolName: part.toolName,
       args: normalizeToolArgs(part),

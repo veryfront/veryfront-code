@@ -512,6 +512,90 @@ describe("agent/ag-ui-host-support", () => {
     }]);
   });
 
+  it("replays dynamic tool calls and their terminal results without losing output", () => {
+    for (
+      const terminal of [
+        { state: "output-available", output: { matches: 2 } },
+        { state: "output-error", errorText: "Stopped by user" },
+        { state: "output-error", errorText: "Display error", output: { code: "RATE_LIMIT" } },
+        ...[null, false, 0, ""].map((output) => ({
+          state: "output-error",
+          errorText: "Display error",
+          output,
+        })),
+      ]
+    ) {
+      const expectedOutput = "output" in terminal ? terminal.output : { error: terminal.errorText };
+      const normalized = normalizeAgUiMessages([{
+        id: "assistant",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: "dynamic-call",
+          toolName: "search_docs",
+          input: { query: "docs" },
+          ...terminal,
+        }],
+      }, { id: "next", role: "user", parts: [{ type: "text", text: "Continue" }] }]);
+      assertEquals(normalized.map((message) => message.role), ["assistant", "tool", "user"]);
+      assertEquals(normalized[0]?.parts, [{
+        type: "tool-call",
+        toolCallId: "dynamic-call",
+        toolName: "search_docs",
+        args: { query: "docs" },
+      }]);
+      assertEquals(normalized[1]?.parts, [{
+        type: "tool-result",
+        toolCallId: "dynamic-call",
+        toolName: "search_docs",
+        result: expectedOutput,
+      }]);
+      const wire = convertToTextGenerationRuntimeMessages(normalized as Message[]);
+      assertEquals(wire[0]?.content, [{
+        type: "tool-call",
+        toolCallId: "dynamic-call",
+        toolName: "search_docs",
+        input: { query: "docs" },
+      }]);
+      assertStringIncludes(JSON.stringify(wire[1]), JSON.stringify(expectedOutput));
+    }
+  });
+
+  it("does not duplicate an explicit dynamic tool result or invent a missing name", () => {
+    const normalized = normalizeAgUiMessages([{
+      id: "assistant",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "dynamic-call",
+          toolName: "search_docs",
+          input: {},
+          state: "output-error",
+          errorText: "Stopped by user",
+        },
+        {
+          type: "tool-result",
+          toolCallId: "dynamic-call",
+          toolName: "search_docs",
+          result: { error: "Recorded error" },
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "nameless",
+          state: "output-error",
+          errorText: "Stopped by user",
+        },
+      ],
+    }]);
+    assertEquals(
+      normalized.flatMap((message) => message.parts).filter((part) => part.type === "tool-result")
+        .length,
+      1,
+    );
+    assertEquals(JSON.stringify(normalized).includes("nameless"), false);
+  });
+
   it("pairs a stopped or failed tool with its error result before the next user turn", () => {
     for (const errorText of ["Stopped by user", "Tool failed"]) {
       const messages = normalizeAgUiMessages([
