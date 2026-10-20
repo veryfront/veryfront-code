@@ -663,6 +663,8 @@ function includeRequestedPlatformAliases(
 }
 
 export async function withVeryfrontPlatformRemoteTools(input: {
+  /** Canonical identity supplied by the host runtime, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -727,6 +729,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const platformCatalog = createPlatformMcpCatalogSource(
     platformRemoteToolSource,
     platformToolDefinitions,
+    { runId: input.currentRunId },
   );
   platformToolDefinitions = platformCatalog.definitions;
   includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);
@@ -1709,6 +1712,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+          currentRunId: runtimeInput.runId,
           agent: runtimeBaseAgent as Agent,
           token: apiAuthToken || null,
           projectId: executionProject?.projectId ??

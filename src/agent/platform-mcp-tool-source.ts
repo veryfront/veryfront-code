@@ -13,11 +13,13 @@ import type { AgentMcpToolPolicy } from "./types.ts";
 export function createPlatformMcpCatalogSource(
   source: RemoteToolSource,
   definitions: readonly ToolDefinition[],
+  currentRun?: Pick<ToolExecutionContext, "runId" | "runIdBindsToolAuthorization">,
 ): {
   source: RemoteToolSource;
   definitions: ToolDefinition[];
   aliases: ReadonlyMap<string, string>;
 } {
+  const currentRunId = trustedCurrentRunId(currentRun);
   const aliases = createPrivateMap<string, string>();
   const catalog: ToolDefinition[] = [];
   const names = createPrivateSet<string>();
@@ -31,7 +33,20 @@ export function createPlatformMcpCatalogSource(
     if (names.has(name)) continue;
     names.add(name);
     if (name !== definition.name) aliases.set(name, definition.name);
-    catalog.push({ ...definition, name });
+    catalog.push({
+      ...definition,
+      name,
+      ...(name === "veryfront__get_run" && currentRunId
+        ? {
+          parameters: {
+            ...definition.parameters,
+            ...(definition.parameters.required
+              ? { required: definition.parameters.required.filter((key) => key !== "run_id") }
+              : {}),
+          },
+        }
+        : {}),
+    });
   }
   return {
     definitions: catalog,
@@ -45,10 +60,35 @@ export function createPlatformMcpCatalogSource(
             detail: `Tool "${name}" is not in the platform catalog`,
           });
         }
-        return source.executeTool(aliases.get(name) ?? name, args, context);
+        return source.executeTool(
+          aliases.get(name) ?? name,
+          bindCurrentRun(name, args, currentRunId),
+          context,
+        );
       },
     }),
   };
+}
+
+/** Only canonical control-plane run identities can default get_run arguments. */
+function trustedCurrentRunId(
+  context?: Pick<ToolExecutionContext, "runId" | "runIdBindsToolAuthorization">,
+): string | undefined {
+  const id = context?.runId;
+  return context?.runIdBindsToolAuthorization !== false && typeof id === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : undefined;
+}
+
+function bindCurrentRun(
+  name: string,
+  args: Record<string, unknown>,
+  runId?: string,
+): Record<string, unknown> {
+  return name === "veryfront__get_run" && runId && !Object.hasOwn(args, "run_id")
+    ? { ...args, run_id: runId }
+    : args;
 }
 
 /** Apply platform MCP policy entries to both catalog spellings. */
@@ -94,7 +134,11 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
   // current project, credentials, access profile, and policy during execution.
   let wireNames = createPrivateMap<string, string>();
   const listTools = async (context?: ToolExecutionContext): Promise<ToolDefinition[]> => {
-    const catalog = createPlatformMcpCatalogSource(source, await source.listTools(context));
+    const catalog = createPlatformMcpCatalogSource(
+      source,
+      await source.listTools(context),
+      context,
+    );
     wireNames = createPrivateMap<string, string>();
     for (const { name } of catalog.definitions) {
       wireNames.set(name, catalog.aliases.get(name) ?? name);
@@ -110,7 +154,11 @@ export function createLivePlatformMcpSource(source: RemoteToolSource): RemoteToo
       if (!wireName) {
         throw PERMISSION_DENIED.create({ detail: `Tool "${name}" is not in the platform catalog` });
       }
-      return source.executeTool(wireName, args, context);
+      return source.executeTool(
+        wireName,
+        bindCurrentRun(name, args, trustedCurrentRunId(context)),
+        context,
+      );
     },
   });
 }

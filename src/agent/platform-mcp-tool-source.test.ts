@@ -230,3 +230,94 @@ it("does not restore aliases removed by an outer policy when adapted again", asy
   await runtime.executeTool("veryfront__get_file", {});
   assertEquals(calls, ["veryfront__get_file"]);
 });
+
+describe("current-run platform lookup", () => {
+  const runId = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const definitions = ["get_run", "get_file"].map((name) => ({
+    name,
+    description: name,
+    parameters: {
+      type: "object" as const,
+      properties: { run_id: { type: "string" as const } },
+      required: ["run_id"],
+    },
+  }));
+  function fixture(binding?: { runId?: string; runIdBindsToolAuthorization?: boolean }) {
+    const calls: unknown[] = [];
+    const catalog = createPlatformMcpCatalogSource(
+      {
+        id: "platform",
+        listTools: async () => definitions,
+        executeTool: async (_name, args) => {
+          calls.push(args);
+          return args;
+        },
+      },
+      definitions,
+      binding,
+    );
+    return { ...catalog, calls };
+  }
+  it("projects only get_run and dispatches the authoritative ID when omitted", async () => {
+    const bound = fixture({ runId });
+    assertEquals(bound.definitions[0]?.parameters.required, []);
+    assertEquals(bound.definitions[1]?.parameters.required, ["run_id"]);
+    assertEquals(definitions[0]?.parameters.required, ["run_id"]);
+    await bound.source.executeTool("veryfront__get_run", {});
+    assertEquals(bound.calls, [{ run_id: runId }]);
+  });
+  it("preserves every explicit run_id for API validation and authorization", async () => {
+    const bound = fixture({ runId });
+    for (const value of ["10000000-1000-4000-8000-100000000001", "invalid", null, undefined]) {
+      const args = { run_id: value };
+      await bound.source.executeTool("veryfront__get_run", args);
+      assertEquals(bound.calls.at(-1), args);
+    }
+    await bound.source.executeTool("veryfront__get_file", {});
+    assertEquals(bound.calls.at(-1), {});
+  });
+  it("requires explicit IDs without valid binding authority", async () => {
+    for (
+      const binding of [undefined, {}, { runId: "invalid" }, {
+        runId,
+        runIdBindsToolAuthorization: false,
+      }]
+    ) {
+      const unbound = fixture(binding);
+      assertEquals(unbound.definitions[0]?.parameters.required, ["run_id"]);
+      await unbound.source.executeTool("veryfront__get_run", {});
+      assertEquals(unbound.calls, [{}]);
+    }
+  });
+});
+
+it("live current-run binding follows each execution context without retaining another run", async () => {
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "get_run",
+      description: "Read run",
+      parameters: {
+        type: "object",
+        properties: { run_id: { type: "string" } },
+        required: ["run_id"],
+      },
+    }],
+    executeTool: async (_name, args) => {
+      calls.push(args);
+      return args;
+    },
+  });
+  const first = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const second = "10000000-1000-4000-8000-100000000001";
+  assertEquals((await source.listTools({ runId: first }))[0]?.parameters.required, []);
+  await source.executeTool("veryfront__get_run", {}, { runId: first });
+  await source.executeTool("veryfront__get_run", {}, { runId: second });
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: second,
+    runIdBindsToolAuthorization: false,
+  });
+  assertEquals((await source.listTools())[0]?.parameters.required, ["run_id"]);
+  assertEquals(calls, [{ run_id: first }, { run_id: second }, {}]);
+});

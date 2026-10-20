@@ -751,6 +751,13 @@ replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
 event named `veryfront.runtime_context` for durable replay and diagnostics.
 
+When the platform tool source has a trusted canonical run identity,
+`veryfront__get_run({})` reads the current run. Veryfront supplies `run_id` before
+sending the request to the API. An explicit `run_id` reads that run instead and
+still requires normal API authorization. Without a binding runtime identity,
+`run_id` remains required. This default applies to the native platform tool,
+not project-defined tools with the same name.
+
 Runtime context does not count as assistant output.
 A detached stream that ends without cancellation, assistant output, or a reported
 stream error fails with `EMPTY_RESPONSE`.
