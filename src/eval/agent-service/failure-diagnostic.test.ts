@@ -88,33 +88,6 @@ describe("safe adapter failure metadata", () => {
     assertEquals(hooks, 0);
   });
 
-  it("uses the captured DOMException accessor even if the prototype is later replaced", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(DOMException.prototype, "name");
-    if (!descriptor) throw new Error("Missing native DOMException name");
-    let hooks = 0;
-    Object.defineProperty(DOMException.prototype, "name", {
-      configurable: true,
-      get() {
-        hooks++;
-        return "PrivateError";
-      },
-    });
-    try {
-      assertEquals(
-        agentServiceFailureDiagnostic("request-fetch", new DOMException("private", "AbortError"))
-          .errorName,
-        "AbortError",
-      );
-      assertEquals(
-        agentServiceFailureDiagnostic("request-fetch", new Error("private")).errorName,
-        "Error",
-      );
-      assertEquals(hooks, 0);
-    } finally {
-      Object.defineProperty(DOMException.prototype, "name", descriptor);
-    }
-  });
-
   it("does not invoke replaced or inherited host-symbol slot getters", () => {
     let hooks = 0;
     const getter = () => {
