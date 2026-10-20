@@ -587,6 +587,7 @@ describe("connected local execution", () => {
         assertEquals(finalized[0]!.headers.get("X-Veryfront-Run-Terminal-Token"), childToken);
         assertEquals(finalized[0]!.body, {
           status: "completed",
+          final_text: output.text,
           ...(structured ? { output: output.data } : {}),
         });
         assertEquals(f.completed, []);
