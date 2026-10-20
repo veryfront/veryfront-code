@@ -109,6 +109,67 @@ function persistMessages(messages: UseChatResult["messages"]): UseChatResult["me
 }
 
 describe("react/agent/useChat status lifecycle", () => {
+  it("terminalizes a stopped tool before the next request", async () => {
+    const restoreDom = installDom();
+    let request = 0;
+    let nextBody: Record<string, unknown> | undefined;
+    installMockFetch((_url, init) => {
+      if (++request > 1) {
+        nextBody = JSON.parse(String(init?.body));
+        return Promise.resolve(sseResponse());
+      }
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(
+                'event: ToolCallStart\ndata: {"toolCallId":"child","toolCallName":"veryfront__invoke_agent","parentMessageId":"parent"}\n\n' +
+                  'event: ToolCallArgs\ndata: {"toolCallId":"child","delta":"{\\"agent_id\\":\\"writer\\"}"}\n\n' +
+                  'event: ToolCallEnd\ndata: {"toolCallId":"child"}\n\n',
+              ));
+              init?.signal?.addEventListener(
+                "abort",
+                () => controller.error(new DOMException("Stopped", "AbortError")),
+                { once: true },
+              );
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    });
+    let latest: UseChatResult | null = null;
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui" });
+      return null;
+    }
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      const running = latest!.sendMessage({ text: "Run child" });
+      await settle();
+      assertEquals(latest!.streamingMessageId, latest!.messages.at(-1)?.id);
+      flushSync(() => latest!.stop());
+      await running;
+      await settle();
+      const stopped = latest!.messages.find((message) => message.role === "assistant");
+      assert(stopped);
+      const part = stopped.parts.find((part) => part.type === "tool-veryfront__invoke_agent");
+      assertEquals(part && "state" in part ? part.state : undefined, "output-error");
+      await latest!.sendMessage({ text: "Try another turn" });
+      await settle();
+      assert(nextBody);
+      const messages = nextBody.messages as UseChatResult["messages"];
+      const old = messages.find((message) => message.id === stopped.id);
+      assertEquals(old?.parts, stopped.parts);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreMockFetch();
+      restoreDom();
+    }
+  });
+
   it("transitions submitted -> streaming -> ready and publishes the streaming id", async () => {
     const restoreDom = installDom();
     // A small network gap lets the `submitted` render commit before the stream

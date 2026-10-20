@@ -26,6 +26,7 @@ import type {
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/types.ts";
 import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+import { markIncompleteToolPartsAsStopped } from "#veryfront/chat/conversation.ts";
 import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 type UseChatStreamHandler = typeof handleAgUiStreamingResponse;
@@ -488,10 +489,17 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
     // Abort cannot retract a chunk that was already decoded. Advancing the
     // request id also fences callbacks and state updaters queued by that chunk.
     invalidateActiveRequest();
+    const stoppedMessages = messagesRef.current.map((message) =>
+      message.id === streamingMessageId
+        ? markIncompleteToolPartsAsStopped(message, { includePendingProviderTools: true })
+        : message
+    );
+    messagesRef.current = stoppedMessages;
+    setMessages(stoppedMessages);
     setIsLoading(false);
     setStatus("ready");
     setStreamingMessageId(null);
-  }, [invalidateActiveRequest]);
+  }, [invalidateActiveRequest, streamingMessageId]);
 
   /**
    * Reset state that belongs to one conversation while preserving the hook

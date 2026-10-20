@@ -4558,13 +4558,14 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     assertEquals(state.finishReason, "tool-calls");
   });
 
-  it("still classifies a held-open timeout as tool-calls so committed local tools run", async () => {
+  it("keeps timeout classification but blocks local side effects with an unresolved provider call", async () => {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
 
     // The reported shape: a provider web_fetch that never resolves plus a
-    // committed local tool. Holding the stream open must not turn the eventual
-    // timeout into "stop", which strands the local tool unexecuted.
+    // committed local tool. Keep the timeout classification, but do not execute
+    // local side effects while the provider sibling has no final result.
+    // The UI error below terminalizes display only; it is not a provider result.
     const result = createDelayedResult([
       {
         chunk: {
@@ -4590,7 +4591,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     result.cleanup();
 
     assertEquals(state.finishReason, "tool-calls");
-    assertEquals(shouldContinueAfterStreamStep(state), true);
+    assertEquals(shouldContinueAfterStreamStep(state), false);
     assertEquals(
       events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
       ["srvtoolu_07"],

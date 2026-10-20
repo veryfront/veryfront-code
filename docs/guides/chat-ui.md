@@ -49,6 +49,27 @@ not already have it. See
 [Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
 this page the same way.
 
+## Choose the level of control
+
+All three forms use the same message renderer and streaming contracts:
+
+| Need            | Interface                                                    |
+| --------------- | ------------------------------------------------------------ |
+| Default layout  | `<Chat agentId="assistant" />`                               |
+| Own the session | `<Chat chat={chat} />` with `useChat({ api: "/api/ag-ui" })` |
+| Own the layout  | `<Chat.Root chat={chat}>` with the composed parts below      |
+
+Chat does not require a Cloud project, Studio, or a Cloud account. The browser
+sends messages to the AG-UI route you configure. That route owns agent execution,
+provider credentials and authorization. Use a provider configured on your server
+for standalone execution; Cloud inference and integrations are optional server
+capabilities. Never put provider keys in browser props.
+
+Keep application navigation and run links outside the transcript renderer.
+Conversation persistence is optional: use an ephemeral session, a memory or local
+store, or your own `ConversationStore` adapter. Connecting Cloud must not require
+a different message renderer or a second child-stream implementation.
+
 ## Add request preprocessing
 
 Use `beforeStream` when the route needs to add context, enforce authorization,
@@ -165,14 +186,7 @@ export default function CustomLayout() {
   const chat = useChat();
 
   return (
-    <Chat.Root
-      messages={chat.messages}
-      input={chat.input}
-      setInput={chat.setInput}
-      onSubmit={chat.handleSubmit}
-      onStop={chat.stop}
-      onReload={chat.reload}
-    >
+    <Chat.Root chat={chat}>
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
@@ -183,23 +197,30 @@ export default function CustomLayout() {
           onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
         />
       </Chat.If>
-      <Chat.MessageList messages={chat.messages} />
-      <Chat.Input.Root
-        input={chat.input}
-        onChange={chat.handleInputChange}
-        onSubmit={chat.handleSubmit}
-        stop={chat.stop}
-      >
+      <Chat.MessageList messages={chat.messages} isLoading={chat.isLoading} />
+      {chat.error && <Chat.ErrorBanner error={chat.error} onRetry={chat.reload} />}
+      <Chat.Input.Root>
         <Chat.Input.Field placeholder="Ask me anything..." />
         <Chat.Input.Toolbar>
           <Chat.Input.Export messages={chat.messages} />
-          <Chat.Input.Send />
+          <Chat.Input.Submit />
         </Chat.Input.Toolbar>
       </Chat.Input.Root>
     </Chat.Root>
   );
 }
 ```
+
+`Chat.Root` shares the session with nested parts. The composer inherits input,
+submission and Stop from that context. `Chat.Input.Submit` switches between Send
+and Stop. Pass messages and loading state to `Chat.MessageList`; keep the same
+session on the root so message parts receive the current streaming status and
+message ID. Explicit props override the inherited state when needed.
+
+Child transcripts render through the same message parts as parent transcripts.
+The renderer consumes child-stream events and snapshots; it does not fetch
+transcripts from Studio or Cloud. Keep the default `Message.Content` in custom
+message layouts to retain tool and child-agent rendering.
 
 `<Chat.Empty>` renders whatever it is given; it does not hide itself. The preset
 `<Chat>` decides when to show its empty state for you, but a custom layout owns

@@ -509,10 +509,11 @@ function InvokeAgentToolCall(
   const rawOutput = jsonRecord(tool.output);
   const output = jsonRecord(rawOutput?.structuredContent) ?? rawOutput;
   const status = stringValue(output, "status")?.toLowerCase();
-  const failed = tool.state === "output-error" || status === "failed" || status === "error" ||
-    output?.ok === false;
   const explicitStopped = status === "cancelled" || status === "canceled" ||
-    status === "stopped";
+    status === "stopped" || tool.errorText === "Stopped by user";
+  const failed = !explicitStopped &&
+    (tool.state === "output-error" || status === "failed" || status === "error" ||
+      output?.ok === false);
   const completed = tool.state === "output-available" || status === "completed" ||
     output?.ok === true;
   // The turn ended before this child produced a terminal result. Freeze the

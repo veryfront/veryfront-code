@@ -21,7 +21,7 @@ import {
   runWithApplicationInferenceAdmission,
 } from "../runtime/application-inference-admission.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
+import { type Agent, type AgentResponse, type AgentStreamResult } from "../types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
@@ -169,6 +169,150 @@ function createMinimalAgent(id: string): Agent {
 }
 
 describe("agentAsTool", () => {
+  it("streams a local tool result and final child text after a stop-finished preamble", async () => {
+    const { createEphemeralAgent } = await import("../factory.ts");
+    const { tool } = await import("#veryfront/tool");
+    let executions = 0;
+    const model = scriptedModel([
+      {
+        parts: [
+          { type: "text-delta", text: "Checking the demo record." },
+          { type: "tool-call", toolCallId: "inspect", toolName: "inspect_record", input: {} },
+          { type: "finish", finishReason: "stop" },
+        ],
+      },
+      { text: "The demo record is valid.", finishReason: "stop" },
+    ], { only: "stream", provider: "custom", modelId: "custom/child-stop" });
+    const child = createEphemeralAgent({
+      id: "child-stop",
+      system: "Inspect the synthetic demo record.",
+      model: "custom/child-stop",
+      resolveModelTransport: () => ({ model }),
+      maxSteps: 3,
+      tools: {
+        inspect_record: tool({
+          id: "inspect_record",
+          description: "Inspect a synthetic record",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({ valid: true });
+          },
+        }),
+      },
+    });
+    const events: Array<Record<string, unknown>> = [];
+    const result = await agentAsTool(child, "Inspect", { publishChildStream: true }).execute(
+      { input: "Check the record" },
+      {
+        toolCallId: "parent",
+        publishDataEvent: (event) => {
+          const value = parseInvokeAgentStreamValue(event.value);
+          if (value) events.push(value.event);
+        },
+      },
+    );
+    assertEquals(executions, 1);
+    assertEquals(result.status, "completed");
+    assertStringIncludes(result.text, "The demo record is valid.");
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-available").map((event) => event.output),
+      [{ valid: true }],
+    );
+    assertStringIncludes(
+      events.filter((event) => event.type === "text-delta").map((event) => event.delta).join(""),
+      "The demo record is valid.",
+    );
+  });
+
+  for (const sibling of ["provider", "incomplete"] as const) {
+    it(`terminalizes a committed local call blocked by an unresolved ${sibling} sibling`, async () => {
+      const { createEphemeralAgent } = await import("../factory.ts");
+      const { tool } = await import("#veryfront/tool");
+      let executions = 0;
+      const model = scriptedModel([{
+        parts: [
+          ...(sibling === "provider"
+            ? [{
+              type: "tool-call" as const,
+              toolCallId: "search",
+              toolName: `blocked_${sibling}_search`,
+              input: {},
+              providerExecuted: true,
+            }]
+            : [
+              {
+                type: "tool-input-start" as const,
+                id: "search",
+                toolName: `blocked_${sibling}_search`,
+              },
+              { type: "tool-input-delta" as const, id: "search", delta: '{"query":' },
+            ]),
+          {
+            type: "tool-call",
+            toolCallId: "inspect",
+            toolName: `inspect_blocked_${sibling}_record`,
+            input: { record: "demo" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ],
+      }], { only: "stream", provider: "custom", modelId: "custom/blocked-child" });
+      const child = createEphemeralAgent({
+        id: "blocked-child",
+        system: "Inspect the demo record.",
+        model: "custom/blocked-child",
+        resolveModelTransport: () => ({ model }),
+        maxSteps: 1,
+        tools: {
+          [`blocked_${sibling}_search`]: tool({
+            id: `blocked_${sibling}_search`,
+            description: "Provider search",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              throw new Error("Provider call must not execute locally");
+            },
+          }),
+          [`inspect_blocked_${sibling}_record`]: tool({
+            id: `inspect_blocked_${sibling}_record`,
+            description: "Inspect a record",
+            inputSchema: defineSchema((v) => v.object({ record: v.string() }))(),
+            execute: () => {
+              executions++;
+              return { valid: true };
+            },
+          }),
+        },
+      });
+      let response: AgentResponse | undefined;
+      const stream = await child.stream({
+        input: "Inspect the record",
+        onFinish: (value) => {
+          response = value;
+        },
+      });
+      const wire = await stream.toDataStreamResponse().text();
+      assertEquals(executions, 0);
+      assertEquals(model.callCount, 1);
+      assertStringIncludes(wire, '"type":"tool-output-error","toolCallId":"inspect"');
+      const parts = response!.messages.flatMap((message) => message.parts);
+      const call = parts.find((part) => "toolCallId" in part && part.toolCallId === "inspect");
+      assertEquals(call && "args" in call ? call.args : undefined, {
+        record: "demo",
+      });
+      const result = parts.find((part) =>
+        part.type === "tool-result" && part.toolCallId === "inspect"
+      );
+      assertEquals(result !== undefined, true);
+      assertStringIncludes(JSON.stringify(result), "Tool execution skipped");
+      if (sibling === "provider") {
+        assertEquals(
+          parts.some((part) => part.type === "tool-result" && part.toolCallId === "search"),
+          false,
+        );
+      }
+    });
+  }
+
   for (const selection of ["all tools", "delegates"] as const) {
     it(`preserves connected child ${selection} when binding its model runtime`, async () => {
       const child = createMinimalAgent(`connected-${selection.replaceAll(" ", "-")}`);
@@ -1051,7 +1195,7 @@ describe("agentAsTool", () => {
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
 
-  it("does not publish child stream events from generic invoke_agent calls", async () => {
+  it("publishes child stream events from generic invoke_agent calls", async () => {
     const childResponse: AgentResponse = {
       text: "streamed child result",
       messages: [],
@@ -1092,7 +1236,12 @@ describe("agentAsTool", () => {
       },
     );
 
-    assertEquals(events, []);
+    assertEquals(events.length, 2);
+    assertEquals(parseInvokeAgentStreamValue((events[1] as { value: unknown }).value)?.event, {
+      type: "text-delta",
+      id: "child-text",
+      delta: "Fetching cases",
+    });
   });
 
   it("attaches the child agent's name and avatar to every published event", async () => {

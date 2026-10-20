@@ -7041,8 +7041,31 @@ export class AgentRuntime {
           await persistToolResult(toolResult);
         }
         for (let toolCallIndex = 0; toolCallIndex < streamedToolCalls.length; toolCallIndex++) {
+          // A rejected batch must close committed local calls too, without running
+          // side effects or inventing a result for a provider-owned sibling.
           if (!ObjectHasOwn(streamedToolCalls, toolCallIndex)) continue;
           const toolCall = streamedToolCalls[toolCallIndex]!;
+          if (
+            toolCall.providerExecuted !== true && toolCall.inputAvailable === true &&
+            !finalToolResults.has(toolCall.id) && !currentStepToolResults.has(toolCall.id)
+          ) {
+            const capturedInput = captureStreamedToolCallInput(toolCall);
+            await this.recordToolError(
+              persistMessage,
+              {
+                id: toolCall.id,
+                name: toolCall.name,
+                args: capturedInput.args,
+                ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+                status: "pending",
+              },
+              "Tool execution skipped because the model turn ended before local execution could continue.",
+              { controller, encoder },
+              currentMessages,
+              toolCalls,
+            );
+            continue;
+          }
           // Terminal. Every incomplete local call recorded here is also
           // terminalized into history, so announce unconditionally and let the
           // wire carry the same failure. `recordIncompleteLocalToolError`

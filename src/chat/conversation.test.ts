@@ -330,6 +330,34 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
+  it("can stop pending server-executed tools without changing the default provider policy", () => {
+    const message: ChatUiMessage = {
+      id: "pending-server-tool",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "invoke_agent",
+        toolCallId: "child",
+        state: "input-available",
+        providerExecuted: true,
+        input: {},
+      }],
+    };
+    assertEquals(markIncompleteToolPartsAsStopped(message), message);
+    const stopped = markIncompleteToolPartsAsStopped(message, {
+      includePendingProviderTools: true,
+    });
+    assertEquals(stopped.parts[0], {
+      type: "dynamic-tool",
+      toolName: "invoke_agent",
+      toolCallId: "child",
+      input: {},
+      providerExecuted: true,
+      state: "output-error",
+      errorText: "Stopped by user",
+    });
+  });
+
   it("treats provider-owned input-available tools as complete", () => {
     const message: ChatUiMessage = {
       id: "assistant-provider-owned-tool",
