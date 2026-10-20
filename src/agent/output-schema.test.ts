@@ -1,5 +1,5 @@
 import { parseExecutorDataEvent } from "./streaming/executor-data-schema.ts";
-import { readStructuredAgentOutput } from "./output-schema.ts";
+import { readStructuredAgentOutput, structuredAgentOutputForWire } from "./output-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -408,6 +408,25 @@ describe("structured output aliases", () => {
   it("rejects conflicting aliases", () => {
     assertThrows(() => readStructuredAgentOutput({ data: false, object: true }));
   });
+  it("retains alias validation and wire canonicalization after reflection replacement", () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const same = Object.is;
+    const data = { contact: "private" };
+    try {
+      Object.getOwnPropertyDescriptor = () => undefined;
+      Object.is = () => true;
+      assertEquals(readStructuredAgentOutput({ data }), { data, object: data });
+      assertThrows(() => readStructuredAgentOutput({ data: false, object: true }));
+      assertEquals<unknown>(structuredAgentOutputForWire({ type: "finish", data, object: data }), {
+        type: "finish",
+        data,
+      });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
+      Object.is = same;
+    }
+  });
+
   it("does not invoke getters or inherit aliases", () => {
     assertThrows(() =>
       readStructuredAgentOutput({

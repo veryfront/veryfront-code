@@ -2655,6 +2655,23 @@ describe("securityMiddleware", () => {
     });
   });
 
+  it("filters structured PII after project code replaces reflection", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor;
+    const middleware = securityMiddleware({ output: { filterPII: true } });
+    const data = { email: "john@example.com" };
+    try {
+      const result = await middleware(createContext({ input: "Return contact details." }), () => {
+        Object.getOwnPropertyDescriptor = (target, key) =>
+          key === "data" || key === "object" ? undefined : descriptor(target, key);
+        return Promise.resolve({ ...createResponse("Contact details"), data, object: data });
+      });
+      assertEquals(result.data, { email: "[EMAIL]" });
+      assertEquals(result.object, { email: "[EMAIL]" });
+    } finally {
+      Object.getOwnPropertyDescriptor = descriptor;
+    }
+  });
+
   it("rejects a filtered structured object that no longer matches its output schema", async () => {
     const middleware = securityMiddleware({
       output: { filterPII: true },

@@ -4,8 +4,8 @@
   "archiveSha256": "1c6b884892bc1ccc93f50323ba00863f94f386c1e5a96296a41302559604e865",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "79d4dea278e334cc81205c1743506e0fadbc80306c288ac726e981b066fb8eb0",
-    "openapi.target.json": "17bf5ed9a668f1ab2330da04e9290bea5661f1a59d55b54ae59236071c91c910",
+    "runs-api.generated.ts": "7714cef6a72249b96b780b14d976307d8a4ecef4d10b36230d730c3ff1eab9a6",
+    "openapi.target.json": "6cfa62c7fc5a6b9497c4ea700b1dba68dc994d98cba038b5020d3869f29b26c1",
     "runs-fixtures.generated.ts": "367013897103f0a9c0321c386cbed81d61f1ec4bed36e42129f662fd51245676"
   },
   "fixturesGeneratedBy": "deno task contracts:runs:fixtures",
@@ -18,11 +18,11 @@
   },
   "agentFinalization": {
     "repository": "veryfront/veryfront-api",
-    "pullRequest": 6924,
-    "commit": "3eca9da5b2e6b0452f940419bc786d884c28452e",
+    "pullRequest": 6952,
+    "commit": "37baf78b21ac71904e9193715db2572c16948fea",
     "path": "src/api/contracts/execution/pinned/openapi.target.json",
-    "sourceSha256": "64f645e25c29e93db02fdf8934282ed6c323351b46581dbf672eacb885049d08",
-    "change": "FinalizeRunRequest completed output is optional for text-only agent runtime completion; explicit null remains valid.",
+    "sourceSha256": "811a250bbae5e9ec609c6e519e569ff0887967ac2a8696b73394d133220a88eb",
+    "change": "Completed agent runtime finalization accepts optional output and authoritative final_text, including empty text; failed finalization remains strict.",
     "generatedBy": "veryfront-api renderRunsTargetArtifacts against this maintained 0.8.9 OpenAPI document"
   }
 }

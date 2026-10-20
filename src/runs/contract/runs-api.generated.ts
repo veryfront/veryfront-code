@@ -2021,6 +2021,8 @@ export interface components {
         };
         /** @description Finalizes a run with output or an error. */
         FinalizeRunRequest: {
+            /** @description Authoritative final text from the current run runtime, including an empty filtered answer. Not accepted for owner finalization. */
+            final_text?: string;
             /** @description Any JSON value. A text-only agent runtime may omit this to use its durable final text. */
             output?: unknown;
             /** @enum {string} */

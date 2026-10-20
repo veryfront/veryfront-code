@@ -16965,6 +16965,10 @@
               },
               "output": {
                 "description": "Any JSON value. A text-only agent runtime may omit this to use its durable final text."
+              },
+              "final_text": {
+                "type": "string",
+                "description": "Authoritative final text from the current run runtime, including an empty filtered answer. Not accepted for owner finalization."
               }
             },
             "required": [

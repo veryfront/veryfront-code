@@ -30,6 +30,9 @@ import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("agent-output-schema");
 
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isSameValue = Object.is;
+
 /**
  * Response-format name sent to providers that require one.
  *
@@ -196,13 +199,13 @@ export function readStructuredAgentOutput(
   response: unknown,
 ): { data: unknown; object: unknown } | undefined {
   if (typeof response !== "object" || response === null) return undefined;
-  const data = Object.getOwnPropertyDescriptor(response, "data");
-  const object = Object.getOwnPropertyDescriptor(response, "object");
+  const data = getOwnPropertyDescriptor(response, "data");
+  const object = getOwnPropertyDescriptor(response, "object");
   if ((data && !("value" in data)) || (object && !("value" in object))) {
     throw AGENT_ERROR.create({ detail: "Agent result aliases must be own data properties." });
   }
   if (!data && !object) return undefined;
-  if (data && object && !Object.is(data.value, object.value)) {
+  if (data && object && !isSameValue(data.value, object.value)) {
     const left = snapshotBoundedJsonValue(data.value);
     const right = snapshotBoundedJsonValue(object.value);
     if (!left.success || !right.success || !isDeepStrictEqual(left.value, right.value)) {
@@ -216,15 +219,15 @@ export function readStructuredAgentOutput(
 /** Keep one canonical structured result on JSON wire boundaries; readers restore `object`. */
 export function structuredAgentOutputForWire<T>(value: T): T {
   if (typeof value !== "object" || value === null) return value;
-  const type = Object.getOwnPropertyDescriptor(value, "type");
+  const type = getOwnPropertyDescriptor(value, "type");
   if (!type || !("value" in type) || (type.value !== "message-finish" && type.value !== "finish")) {
     return value;
   }
-  const data = Object.getOwnPropertyDescriptor(value, "data");
-  const object = Object.getOwnPropertyDescriptor(value, "object");
+  const data = getOwnPropertyDescriptor(value, "data");
+  const object = getOwnPropertyDescriptor(value, "object");
   if (
     !data || !("value" in data) || !object || !("value" in object) ||
-    !Object.is(data.value, object.value)
+    !isSameValue(data.value, object.value)
   ) {
     return value;
   }
