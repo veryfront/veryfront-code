@@ -33,6 +33,11 @@ import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+  terminalAgentOutput,
+} from "./inherited-local-agent.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -394,6 +399,7 @@ describe("agentAsTool", () => {
 
     assertEquals(result, {
       text: JSON.stringify(object),
+      data: object,
       object,
       toolCalls: 0,
       status: "completed",
@@ -423,7 +429,13 @@ describe("agentAsTool", () => {
       {} as ToolExecutionContext,
     );
 
-    assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
+    assertEquals(result, {
+      text: "null",
+      data: null,
+      object: null,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("keeps a parsed undefined object from a schema transform", async () => {
@@ -452,6 +464,7 @@ describe("agentAsTool", () => {
     assertEquals(Object.hasOwn(result, "object"), true);
     assertEquals(result, {
       text: '{"city":"Berlin"}',
+      data: undefined,
       object: undefined,
       toolCalls: 0,
       status: "completed",
@@ -466,6 +479,183 @@ describe("agentAsTool", () => {
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
+
+  it("snapshots an explicit undefined structured result for inherited persistence", () => {
+    assertEquals(
+      terminalAgentOutput({
+        text: '{"city":"Berlin"}',
+        data: undefined,
+        object: undefined,
+        toolCalls: 0,
+        status: "completed",
+      }),
+      {
+        captureStatus: "unsupported",
+        reasons: ["unsupported_undefined"],
+        value: "[unsupported undefined]",
+      },
+    );
+  });
+
+  for (
+    const data of [
+      false,
+      { category: "billing" },
+      { text: "business" },
+      { data: { id: 1 } },
+      { object: 42 },
+    ]
+  ) {
+    it(`restores canonical structured replay ${JSON.stringify(data)}`, async () => {
+      const result = await runInheritedLocalAgent(
+        {
+          terminalReceipt: {
+            status: "completed",
+            output: { data },
+            outputFormat: "text-data-v1",
+          },
+        },
+        { projectId: "project", apiUrl: "https://api.example.test", fetch },
+        () => {
+          throw new Error("must not execute");
+        },
+      );
+
+      assertEquals(result, {
+        success: true,
+        output: {
+          text: JSON.stringify(data),
+          data,
+          object: data,
+          status: "completed",
+        },
+        executionTime: 0,
+      });
+    });
+  }
+
+  it("restores a canonical text-only replay without inventing structured data", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: { text: "done" },
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "done", status: "completed" },
+      executionTime: 0,
+    });
+    assertEquals(Object.hasOwn(result.output as object, "toolCalls"), false);
+  });
+
+  it("restores an explicit canonical no-value replay without structured aliases", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: null,
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "", status: "completed" },
+      executionTime: 0,
+    });
+  });
+
+  it("rejects unknown fields in a marked canonical output envelope", async () => {
+    await assertRejects(
+      () =>
+        runInheritedLocalAgent(
+          {
+            terminalReceipt: {
+              status: "completed",
+              output: { text: "done", status: "completed" },
+              outputFormat: "text-data-v1",
+            },
+          },
+          { projectId: "project", apiUrl: "https://api.example.test", fetch },
+          () => {
+            throw new Error("must not execute");
+          },
+        ),
+      Error,
+      "Stored local child result is invalid",
+    );
+  });
+
+  it("restores an unmarked legacy agent response without interpreting business keys", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: {
+            text: "stored",
+            data: { selected_count: 1 },
+            object: { selected_count: 1 },
+            toolCalls: 2,
+            status: "completed",
+          },
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: {
+        text: "stored",
+        data: { selected_count: 1 },
+        object: { selected_count: 1 },
+        toolCalls: 2,
+        status: "completed",
+      },
+      executionTime: 0,
+    });
+  });
+
+  for (const stored of [{ text: "stored" }, { data: { id: 1 } }, { object: 42 }]) {
+    it(`returns unmarked legacy output unchanged ${JSON.stringify(stored)}`, async () => {
+      const result = await runInheritedLocalAgent(
+        { terminalReceipt: { status: "completed", output: stored } },
+        { projectId: "project", apiUrl: "https://api.example.test", fetch },
+        () => {
+          throw new Error("must not execute");
+        },
+      );
+
+      assertEquals(result, { success: true, output: stored, executionTime: 0 });
+    });
+  }
+
+  for (const stored of [{ text: "stored" }, { data: { id: 1 } }, { object: 42 }]) {
+    it(`rejects bare business output at the SDK result boundary ${JSON.stringify(stored)}`, () => {
+      assertThrows(
+        () => readInheritedLocalChildResult(stored),
+        Error,
+        "Stored local child result is invalid",
+      );
+    });
+  }
 
   it("ignores an object value the child response only inherits", async () => {
     const childAgent = createMinimalAgent("writer");
@@ -488,6 +678,51 @@ describe("agentAsTool", () => {
     );
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
+  for (const data of [false, 0, "", null, { selected_count: 1 }]) {
+    it(`preserves structured child output ${JSON.stringify(data)}`, async () => {
+      const child = createMinimalAgent("structured-child");
+      child.stream = (input) => {
+        input.onFinish?.({
+          text: JSON.stringify(data),
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          object: data,
+        });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+      };
+      const result = await agentAsTool(child, "Read structured output").execute({ input: "Read" });
+      assertEquals(result, {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        status: "completed",
+        toolCalls: 0,
+      });
+    });
+  }
+
+  it("preserves a data-only child response", async () => {
+    const child = createMinimalAgent("data-only");
+    child.stream = (input) => {
+      input.onFinish?.({
+        text: "false",
+        data: false,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+    };
+    assertEquals(await agentAsTool(child, "Read").execute({ input: "Read" }), {
+      text: "false",
+      data: false,
+      object: false,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("preserves the child stream error when no final response is produced", async () => {

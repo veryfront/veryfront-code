@@ -1,5 +1,6 @@
 import {
   executeLocalChild,
+  type LocalChildResult,
   observeAdmittedAgentToolCalls,
 } from "../composition/local-child-execution.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -12,6 +13,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorkerClient,
 } from "../service/external-worker-client.ts";
+import { RUN_TERMINAL_TOKEN_HEADER } from "../hosted/terminal-credential.ts";
 import type { createConnectedLocalPlatformTools } from "./connected-local-platform-tools.ts";
 
 function fixture(
@@ -40,6 +42,8 @@ function fixture(
     complete?: (input: { runId: string; status: string }) => Promise<void>;
     claimConversationMismatch?: boolean;
     workerDisplayName?: string;
+    claimedRunId?: string;
+    acceptedRunId?: string;
     platformRevoke?: () => Promise<void>;
   } = {},
 ) {
@@ -116,8 +120,9 @@ function fixture(
             run_event_token: "claim-event",
             run_terminal_token: `header.${
               btoa(JSON.stringify({
-                runId: `run-${id}`,
-                canonicalRunId: "77777777-7777-4777-8777-777777777777",
+                runId: options.claimedRunId ?? `run-${id}`,
+                canonicalRunId: options.acceptedRunId ??
+                  "77777777-7777-4777-8777-777777777777",
                 tokenUse: "run_event_writer",
                 writerPurpose: "current_run_terminal",
                 dispatchNonce: "generation",
@@ -125,7 +130,7 @@ function fixture(
             }.signature`,
           },
           run: {
-            run_id: `run-${id}`,
+            run_id: options.claimedRunId ?? `run-${id}`,
             conversation_id: "33333333-3333-4333-8333-333333333333",
             message_id: "44444444-4444-4444-8444-444444444444",
             project_id: "11111111-1111-4111-8111-111111111111",
@@ -213,7 +218,9 @@ function fixture(
           }),
         );
       }
-      return Promise.resolve(Response.json({ id: `run-${id}` }));
+      return Promise.resolve(Response.json({
+        id: path === "/runs" && options.acceptedRunId ? options.acceptedRunId : `run-${id}`,
+      }));
     }) as typeof fetch,
     log: (message) => logs.push(message),
     ...(options.platformRevoke
@@ -293,30 +300,137 @@ describe("connected local execution", () => {
     }
   });
 
-  it("replays child admission after a lost response without executing a terminal child again", async () => {
-    let attempts = 0;
-    let renewals = 0;
-    const output = { text: "stored", toolCalls: 0, status: "completed" };
+  for (
+    const stored of [
+      { text: "stored", toolCalls: 2, status: "completed" },
+      {
+        text: "stored",
+        data: { selected_count: 1 },
+        object: { selected_count: 1 },
+        toolCalls: 2,
+        status: "completed",
+      },
+    ]
+  ) {
+    it(`replays canonical or legacy child output ${JSON.stringify(stored)} without reexecution`, async () => {
+      let attempts = 0;
+      let renewals = 0;
+      const output: LocalChildResult = {
+        text: stored.text,
+        toolCalls: stored.toolCalls,
+        status: stored.status,
+        ...("data" in stored ? { data: stored.data, object: stored.data } : {}),
+      };
+      const f = fixture({
+        trustedClaim: true,
+        renew: () => {
+          renewals++;
+          return Promise.resolve({});
+        },
+        childAdmission: async () => {
+          assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
+          if (++attempts === 1) throw new TypeError("child response lost");
+          return Response.json({
+            id: "22222222-2222-4222-8222-222222222222",
+            status: "completed",
+            output: stored,
+            project_id: "11111111-1111-4111-8111-111111111111",
+            parent_run_id: "run-1",
+            target: { type: "agent", id: "child" },
+            conversation_id: "33333333-3333-4333-8333-333333333333",
+            output_message_id: "44444444-4444-4444-8444-444444444444",
+          }, { status: 202, headers: { "Cache-Control": "no-store" } });
+        },
+      });
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      let executions = 0;
+      try {
+        await run.execute(async () => {
+          await observeAdmittedAgentToolCalls({
+            id: "message",
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCallId: "child-call",
+              toolName: "invoke_agent",
+              args: { agent_id: "child" },
+            }],
+          });
+          const invoke = () =>
+            executeLocalChild({
+              agentId: "child",
+              input: "task",
+              toolName: "invoke_agent",
+              toolInput: { agent_id: "child" },
+              context: { toolCallId: "child-call" },
+              execute: async () => {
+                executions++;
+                return output;
+              },
+            });
+          await assertRejects(invoke, TypeError, "child response lost");
+          assertEquals(await invoke(), output);
+        });
+        const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
+        assertEquals(requests.length, 2);
+        assertEquals(requests.map((request) => request.body.input), [{ text: "task" }, {
+          text: "task",
+        }]);
+        assert(requests[0] && requests[1]);
+        assertEquals(
+          requests[0].headers.get("Idempotency-Key"),
+          requests[1].headers.get("Idempotency-Key"),
+        );
+        assertEquals(requests[1].headers.get("Authorization"), "Bearer claim-invocation");
+        assertEquals(executions, 0);
+      } finally {
+        await run.finish("completed");
+      }
+    });
+  }
+
+  it("preserves marked canonical business data without inventing tool calls", async () => {
+    const parentRunId = "77777777-7777-4777-8777-777777777777";
+    const childRunId = "22222222-2222-4222-8222-222222222222";
+    const childToken = `header.${
+      btoa(JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId: "child-run",
+        canonicalRunId: childRunId,
+        dispatchNonce: "child-dispatch",
+      }))
+    }.signature`;
     const f = fixture({
       trustedClaim: true,
-      renew: () => {
-        renewals++;
-        return Promise.resolve({});
-      },
-      childAdmission: async () => {
-        assertEquals(renewals, attempts + 1, "Renew the parent before each admission attempt");
-        if (++attempts === 1) throw new TypeError("child response lost");
-        return Response.json({
-          id: "22222222-2222-4222-8222-222222222222",
+      claimedRunId: parentRunId,
+      acceptedRunId: parentRunId,
+      childAdmission: () =>
+        Promise.resolve(Response.json({
+          version: 1,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          parentRunId,
+          agentId: "child",
+          canonicalRunId: childRunId,
+          dispatchNonce: "child-dispatch",
+          conversationId: "33333333-3333-4333-8333-333333333333",
+          outputMessageId: "44444444-4444-4444-8444-444444444444",
           status: "completed",
-          output,
-          project_id: "11111111-1111-4111-8111-111111111111",
-          parent_run_id: "run-1",
-          target: { type: "agent", id: "child" },
-          conversation_id: "33333333-3333-4333-8333-333333333333",
-          output_message_id: "44444444-4444-4444-8444-444444444444",
-        }, { status: 202, headers: { "Cache-Control": "no-store" } });
-      },
+          output: { data: { text: "business" } },
+          outputFormat: "text-data-v1",
+        }, {
+          status: 202,
+          headers: {
+            "Content-Type": "application/vnd.veryfront.inherited-run+json",
+            "Cache-Control": "no-store",
+            [RUN_TERMINAL_TOKEN_HEADER]: childToken,
+          },
+        })),
     });
     const run = await f.runtime.admit({
       agentId: "assistant",
@@ -324,7 +438,6 @@ describe("connected local execution", () => {
       messages: [],
       signal: new AbortController().signal,
     });
-    let executions = 0;
     try {
       await run.execute(async () => {
         await observeAdmittedAgentToolCalls({
@@ -337,146 +450,153 @@ describe("connected local execution", () => {
             args: { agent_id: "child" },
           }],
         });
-        const invoke = () =>
-          executeLocalChild({
-            agentId: "child",
-            input: "task",
-            toolName: "invoke_agent",
-            toolInput: { agent_id: "child" },
-            context: { toolCallId: "child-call" },
-            execute: async () => {
-              executions++;
-              return output;
-            },
-          });
-        await assertRejects(invoke, TypeError, "child response lost");
-        assertEquals(await invoke(), output);
+        const output = await executeLocalChild({
+          agentId: "child",
+          input: "task",
+          toolName: "invoke_agent",
+          toolInput: { agent_id: "child" },
+          context: { toolCallId: "child-call" },
+          execute: () => Promise.reject(new Error("must not execute")),
+        });
+        assertEquals(output, {
+          text: '{"text":"business"}',
+          data: { text: "business" },
+          object: { text: "business" },
+          status: "completed",
+        });
+        assertEquals(Object.hasOwn(output, "toolCalls"), false);
       });
-      const requests = f.requests.filter((r) => r.body.parent_run_id === "run-1");
-      assertEquals(requests.length, 2);
-      assert(requests[0] && requests[1]);
-      assertEquals(
-        requests[0].headers.get("Idempotency-Key"),
-        requests[1].headers.get("Idempotency-Key"),
-      );
-      assertEquals(requests[1].headers.get("Authorization"), "Bearer claim-invocation");
-      assertEquals(executions, 0);
     } finally {
       await run.finish("completed");
     }
   });
 
-  it("executes an admitted child once with its own event and terminal credentials", async () => {
-    const childId = "22222222-2222-4222-8222-222222222222";
-    const childToken = `test.${
-      btoa(JSON.stringify({
-        tokenUse: "run_event_writer",
-        writerPurpose: "current_run_terminal",
-        runId: "run_child",
-        canonicalRunId: childId,
-        dispatchNonce: "child-generation",
-        projectId: "11111111-1111-4111-8111-111111111111",
-      }))
-    }.signature`;
-    let cursor = 0;
-    const f = fixture({
-      trustedClaim: true,
-      childAdmission: () =>
-        Promise.resolve(Response.json({
-          id: childId,
-          status: "running",
-          project_id: "11111111-1111-4111-8111-111111111111",
-          parent_run_id: "run-1",
-          target: { type: "agent", id: "child" },
-          conversation_id: "33333333-3333-4333-8333-333333333333",
-          output_message_id: "44444444-4444-4444-8444-444444444444",
-        }, {
-          status: 202,
-          headers: {
-            "Cache-Control": "no-store",
-            "X-Veryfront-Run-Terminal-Token": childToken,
-            "X-Veryfront-Run-Invocation-Token": "child-invocation",
-            "X-Veryfront-Run-Event-Token": "child-event",
-            "X-Veryfront-Run-Renewal-Token": "child-renewal",
-            "X-Veryfront-Inference-Token": "child-inference",
-            "X-Veryfront-Run-Event-Sequence": "0",
-            "X-Veryfront-Run-External-Event-Sequence": "0",
-            "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
-          },
-        })),
-      childRequest: (path, body) => {
-        if (path.endsWith("/events")) {
-          assert(Array.isArray(body.events));
-          cursor += body.events.length;
-          return Response.json({
-            run_id: childId,
-            latest_event_id: cursor,
-            latest_external_event_sequence: cursor,
-            appended_count: body.events.length,
-          });
-        }
-        assertEquals(path, `/runs/${childId}/finalize`);
-        return Response.json({ id: childId, status: "completed" });
-      },
-    });
-    const run = await f.runtime.admit({
-      agentId: "assistant",
-      threadId: "thread",
-      messages: [],
-      signal: new AbortController().signal,
-    });
-    const output = { text: "child output", toolCalls: 0, status: "completed" };
-    let executions = 0;
-    try {
-      await run.execute(async () => {
-        await observeAdmittedAgentToolCalls({
-          id: "message",
-          role: "assistant",
-          parts: [{
-            type: "tool-call",
-            toolCallId: "child-call",
-            toolName: "invoke_agent",
-            args: { agent_id: "child" },
-          }],
-        });
-        const invoke = () =>
-          executeLocalChild({
-            agentId: "child",
-            input: "task",
-            toolName: "invoke_agent",
-            toolInput: { agent_id: "child" },
-            context: { toolCallId: "child-call" },
-            execute: async ({ signal, runId, onEvent } = {}) => {
-              executions++;
-              assertEquals(runId, "run_child");
-              assertEquals(signal?.aborted, false);
-              assert(onEvent);
-              await onEvent({ type: "text-delta", id: "child-text", delta: output.text });
-              return output;
+  for (
+    const [structured, observed] of [[false, false], [false, true], [true, false], [true, true]]
+  ) {
+    it(`finalizes ${structured ? "structured" : "text-only"} ${observed ? "observed" : "middleware-cached"} child output without a wrapper`, async () => {
+      const childId = "22222222-2222-4222-8222-222222222222";
+      const childToken = `test.${
+        btoa(JSON.stringify({
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          runId: "run_child",
+          canonicalRunId: childId,
+          dispatchNonce: "child-generation",
+          projectId: "11111111-1111-4111-8111-111111111111",
+        }))
+      }.signature`;
+      let cursor = 0;
+      const f = fixture({
+        trustedClaim: true,
+        childAdmission: () =>
+          Promise.resolve(Response.json({
+            id: childId,
+            status: "running",
+            project_id: "11111111-1111-4111-8111-111111111111",
+            parent_run_id: "run-1",
+            target: { type: "agent", id: "child" },
+            conversation_id: "33333333-3333-4333-8333-333333333333",
+            output_message_id: "44444444-4444-4444-8444-444444444444",
+          }, {
+            status: 202,
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Veryfront-Run-Terminal-Token": childToken,
+              "X-Veryfront-Run-Invocation-Token": "child-invocation",
+              "X-Veryfront-Run-Event-Token": "child-event",
+              "X-Veryfront-Run-Renewal-Token": "child-renewal",
+              "X-Veryfront-Inference-Token": "child-inference",
+              "X-Veryfront-Run-Event-Sequence": "0",
+              "X-Veryfront-Run-External-Event-Sequence": "0",
+              "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
             },
-          });
-        assertEquals(await invoke(), output);
-        assertEquals(await invoke(), output);
+          })),
+        childRequest: (path, body) => {
+          if (path.endsWith("/events")) {
+            assert(Array.isArray(body.events));
+            cursor += body.events.length;
+            return Response.json({
+              run_id: childId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            });
+          }
+          assertEquals(path, `/runs/${childId}/finalize`);
+          return Response.json({ id: childId, status: "completed" });
+        },
       });
-      assertEquals(executions, 1);
-      const admitted = f.requests.filter((r) => r.body.parent_run_id === "run-1");
-      assertEquals(admitted.length, 1);
-      assertEquals(admitted[0]!.headers.get("Authorization"), "Bearer claim-invocation");
-      const events = f.requests.filter((r) => r.path === `/runs/${childId}/events`);
-      assert(events.length > 0);
-      assert(events.every((r) => r.headers.get("Authorization") === "Bearer child-event"));
-      assert(events.some((r) => JSON.stringify(r.body).includes(output.text)));
-      const finalized = f.requests.filter((r) => r.path === `/runs/${childId}/finalize`);
-      assertEquals(finalized.length, 1);
-      assertEquals(finalized[0]!.headers.get("Authorization"), "Bearer child-invocation");
-      assertEquals(finalized[0]!.headers.get("X-Veryfront-Run-Terminal-Token"), childToken);
-      assertEquals(finalized[0]!.body, { status: "completed", output });
-      assertEquals(f.completed, []);
-    } finally {
-      await run.finish("completed");
-    }
-    assertEquals(f.completed, ["completed"]);
-  });
+      const run = await f.runtime.admit({
+        agentId: "assistant",
+        threadId: "thread",
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      const output = {
+        text: "child output",
+        ...(structured ? { data: { selected_count: 1 }, object: { selected_count: 1 } } : {}),
+        toolCalls: 0,
+        status: "completed",
+      };
+      let executions = 0;
+      try {
+        await run.execute(async () => {
+          await observeAdmittedAgentToolCalls({
+            id: "message",
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCallId: "child-call",
+              toolName: "invoke_agent",
+              args: { agent_id: "child" },
+            }],
+          });
+          const invoke = () =>
+            executeLocalChild({
+              agentId: "child",
+              input: "task",
+              toolName: "invoke_agent",
+              toolInput: { agent_id: "child" },
+              context: { toolCallId: "child-call" },
+              execute: async ({ signal, runId, onEvent } = {}) => {
+                executions++;
+                assertEquals(runId, "run_child");
+                assertEquals(signal?.aborted, false);
+                assert(onEvent);
+                if (observed) {
+                  await onEvent({ type: "text-delta", id: "child-text", delta: output.text });
+                }
+                return output;
+              },
+            });
+          assertEquals(await invoke(), output);
+          assertEquals(await invoke(), output);
+        });
+        assertEquals(executions, 1);
+        const admitted = f.requests.filter((r) => r.body.parent_run_id === "run-1");
+        assertEquals(admitted.length, 1);
+        assertEquals(admitted[0]!.headers.get("Authorization"), "Bearer claim-invocation");
+        const events = f.requests.filter((r) => r.path === `/runs/${childId}/events`);
+        assert(events.length > 0);
+        assert(events.every((r) => r.headers.get("Authorization") === "Bearer child-event"));
+        assert(events.some((r) => JSON.stringify(r.body).includes(output.text)));
+        const finalized = f.requests.filter((r) => r.path === `/runs/${childId}/finalize`);
+        assertEquals(finalized.length, 1);
+        assertEquals(finalized[0]!.headers.get("Authorization"), "Bearer child-invocation");
+        assertEquals(finalized[0]!.headers.get("X-Veryfront-Run-Terminal-Token"), childToken);
+        assertEquals(finalized[0]!.body, {
+          status: "completed",
+          final_text: output.text,
+          ...(structured ? { output: output.data } : {}),
+        });
+        assertEquals(f.completed, []);
+      } finally {
+        await run.finish("completed");
+      }
+      assertEquals(f.completed, ["completed"]);
+    });
+  }
 
   it("registers the configured worker name without changing its implementation or unique key", async () => {
     const f = fixture({ workerDisplayName: "Kentaro laptop" });
@@ -542,7 +662,34 @@ describe("connected local execution", () => {
       assertEquals(f.completed, ["completed"]);
     });
   }
-  for (const object of [{ normalized: 42 }, null, false, 0]) {
+  it("omits a structured result for a text-only root", async () => {
+    let completion: unknown;
+    const f = fixture({
+      complete: (input) => {
+        completion = input;
+        return Promise.resolve();
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (
+          const event of [{ type: "text-delta", delta: "Readable text" }, {
+            type: "message-finish",
+          }]
+        ) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        c.close();
+      },
+    });
+    await new Response(run.wrapStream(body)).text();
+    assertEquals(Object.hasOwn(completion as object, "output"), false);
+  });
+  for (const object of [{ normalized: 42 }, null, false, 0, "structured string"]) {
     it(`preserves parsed terminal structured output ${JSON.stringify(object)}`, async () => {
       let completedOutput: unknown = "not completed";
       const f = fixture({
@@ -572,6 +719,35 @@ describe("connected local execution", () => {
       assertEquals(completedOutput, object);
     });
   }
+  it("finalizes canonical data-only structured output from the local wire", async () => {
+    let completedOutput: unknown = "not completed";
+    const f = fixture({
+      complete: (input) => {
+        completedOutput = (input as { output?: unknown }).output;
+        return Promise.resolve();
+      },
+    });
+    const run = await f.runtime.admit({
+      agentId: "assistant",
+      threadId: "thread",
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"message-finish","data":{"answer":42}}\n\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    await new Response(run.wrapStream(body)).text();
+
+    assertEquals(completedOutput, { answer: 42 });
+  });
   it("completes object-only output without text", async () => {
     const f = fixture();
     const run = await f.runtime.admit({

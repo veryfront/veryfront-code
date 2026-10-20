@@ -7,6 +7,7 @@ import {
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
   type LocalChildInvocation,
+  type LocalChildResult,
   withLocalChildExecution,
 } from "../composition/local-child-execution.ts";
 import {
@@ -640,9 +641,9 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               await client.completeRun({
                 runId: claim!.run_id,
                 status: terminalStatus,
-                output: streamState.finishObject !== undefined
-                  ? streamState.finishObject.value
-                  : output,
+                ...(streamState.finishObject !== undefined
+                  ? { output: streamState.finishObject.value }
+                  : {}),
                 ...(terminalStatus === "failed"
                   ? {
                     terminalErrorCode: "LOCAL_EXECUTION_FAILED",
@@ -714,7 +715,7 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
                 target: { type: "agent", id: invocation.agentId },
                 parent_run_id: accepted.id,
                 tool_call_id: toolCallId,
-                input: { prompt: invocation.input },
+                input: { text: invocation.input },
               }),
               signal: AbortSignal.any([controller.signal, timeoutSignal(15_000)]),
             });
@@ -741,7 +742,10 @@ export function createConnectedLocalRuntime(options: ConnectedLocalRuntimeOption
               platformTools ? { tools: platformTools, agentId: invocation.agentId } : undefined,
             );
             if (!result.success) throw new Error(result.error ?? "Local child failed.");
-            return readInheritedLocalChildResult(result.output);
+            return "terminalReceipt" in delegated &&
+                delegated.terminalReceipt.outputFormat === "text-data-v1"
+              ? result.output as LocalChildResult
+              : readInheritedLocalChildResult(result.output);
           })().finally(() => {
             if (!admissionAccepted && childExecutions.get(toolCallId) === execute) {
               childExecutions.delete(toolCallId);

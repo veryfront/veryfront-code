@@ -620,6 +620,15 @@ describe("inherited execution input and receipt authority", () => {
       Error,
       "binding mismatch",
     );
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(
+          inheritedExecutionResponse({ outputFormat: "text-data-v1" }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
   });
 
   it("retains terminal receipts without restoring execution authority", async () => {
@@ -649,6 +658,43 @@ describe("inherited execution input and receipt authority", () => {
       inheritedBinding(),
     );
     assertEquals("runId" in running && running.runId, "child-run");
+  });
+
+  it("carries canonical output provenance only from the authenticated execution receipt", async () => {
+    const response = () =>
+      inheritedExecutionResponse({
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      });
+    const workflow = await acceptWorkflowInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(workflow, {
+      terminalReceipt: {
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      },
+    });
+    const run = await acceptInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(hostedInheritedTerminalReceipt(run), {
+      status: "completed",
+      output: { data: { text: "business" } },
+      outputFormat: "text-data-v1",
+    });
+
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(
+          inheritedExecutionResponse({
+            status: "completed",
+            output: null,
+            outputFormat: "future-format",
+          }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
   });
 });
 

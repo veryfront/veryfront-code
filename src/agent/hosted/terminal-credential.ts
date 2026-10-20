@@ -115,9 +115,11 @@ const credentials = createPrivateWeakStore<
 type InheritedTerminalReceipt = {
   status: "completed" | "failed" | "cancelled";
   output: unknown;
+  outputFormat?: "text-data-v1";
   error?: { code: string; message: string };
 };
 const terminalReceipts = createPrivateWeakStore<object, InheritedTerminalReceipt>();
+const inheritedOutputFormats = createPrivateWeakStore<Response, "text-data-v1">();
 
 /** Read the original terminal outcome returned by authenticated child admission. */
 export function hostedInheritedTerminalReceipt(
@@ -363,7 +365,10 @@ export function hostedInheritedRunAdmitter(
         parent_run_id: parentId,
         tool_call_id: toolCallId,
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
-        input: { prompt, ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}) },
+        input: {
+          text: prompt,
+          ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}),
+        },
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -418,6 +423,8 @@ async function normalizeInheritedExecutionResponse(
     (binding.conversationId !== undefined && value.conversationId !== binding.conversationId) ||
     !["pending", "running", "waiting", "completed", "failed", "cancelled"].includes(value.status) ||
     (terminal && !Object.hasOwn(value, "output")) ||
+    (value.outputFormat !== undefined &&
+      (value.status !== "completed" || value.outputFormat !== "text-data-v1")) ||
     (value.error != null &&
       (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
   ) throw mismatch();
@@ -438,6 +445,9 @@ async function normalizeInheritedExecutionResponse(
     }),
     { status: response.status, headers },
   );
+  if (value.outputFormat === "text-data-v1") {
+    inheritedOutputFormats.set(normalized, value.outputFormat);
+  }
   if (value.taskInput !== undefined) {
     const taskInput = resolveHostedTaskInput(value.taskInput, {
       projectId: binding.projectId,
@@ -527,10 +537,12 @@ export async function acceptWorkflowInheritedRunAdmission(
     eventToken,
     terminalToken ? terminalRoutingRunId(terminalToken) : row.id,
   );
+  const outputFormat = inheritedOutputFormats.get(response);
   return {
     terminalReceipt: {
       status: row.status,
       output: row.output,
+      ...(outputFormat ? { outputFormat } : {}),
       ...(row.error ? { error: { code: row.error.code, message: row.error.message } } : {}),
     },
   };
@@ -615,10 +627,12 @@ export async function acceptInheritedRunAdmission(
     status: row.status === "waiting" ? "waiting_for_tool" as const : row.status,
     streamProtocolVersion: 2 as const,
   };
+  const outputFormat = inheritedOutputFormats.get(response);
   if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
     terminalReceipts.set(run, {
       status: row.status,
       output: row.output ?? null,
+      ...(outputFormat ? { outputFormat } : {}),
       ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
         ? { error: { code: row.error.code, message: row.error.message } }
         : {}),

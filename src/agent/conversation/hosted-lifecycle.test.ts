@@ -357,7 +357,6 @@ describe("agent/conversation-hosted-lifecycle", () => {
 
     assertEquals(JSON.parse(String(fetchCalls[0]?.[1]?.body)), {
       status: "completed",
-      output: null,
     });
     assertEquals(fetchCalls[1]?.[1]?.body, undefined);
 

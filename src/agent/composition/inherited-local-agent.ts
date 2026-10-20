@@ -1,8 +1,40 @@
+import { readStructuredAgentOutput } from "../output-schema.ts";
 import type { createConnectedLocalPlatformTools } from "../ag-ui/connected-local-platform-tools.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createLocalToolStream } from "../ag-ui/local-tool-stream.ts";
 import { bindToolCallStartOccurrence } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ownKeys = Reflect.ownKeys;
+const isArray = Array.isArray;
+const arraySome = Array.prototype.some;
+const apply = Reflect.apply;
+
+/** Read only a completed framework response, not arbitrary workflow business data. */
+function terminalAgentText(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const text = getOwnPropertyDescriptor(output, "text");
+  const status = getOwnPropertyDescriptor(output, "status");
+  const calls = getOwnPropertyDescriptor(output, "toolCalls");
+  // Only unwrap the framework-produced agent response, not arbitrary workflow data.
+  if (
+    !text || !("value" in text) || typeof text.value !== "string" ||
+    !status || !("value" in status) || status.value !== "completed" ||
+    !calls || !("value" in calls) ||
+    (typeof calls.value !== "number" && !isArray(calls.value))
+  ) return undefined;
+  return text.value;
+}
+
+/** @internal Resolve the durable output stored for an inherited child run. */
+export function terminalAgentOutput(output: unknown): unknown {
+  if (terminalAgentText(output) === undefined) return output;
+  const structured = readStructuredAgentOutput(output);
+  return structured ? createMessageFinishObjectObservation(structured.data) : undefined;
+}
+
 const localToolAdmissions = createPrivateWeakStore<
   object,
   ((
@@ -52,6 +84,7 @@ import {
 import {
   type AgUiRuntimeStreamEvent,
   createAgUiEncoderState,
+  createMessageFinishObjectObservation,
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
@@ -63,7 +96,6 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 
-const apply = Reflect.apply;
 const AbortSignalTimeout = AbortSignal.timeout;
 const retryDrainSignal = (signal?: AbortSignal) =>
   signal && !signal.aborted
@@ -71,25 +103,62 @@ const retryDrainSignal = (signal?: AbortSignal) =>
     : apply(AbortSignalTimeout, AbortSignal, [30_000]) as AbortSignal;
 
 /** @internal Validate the result returned by durable local child execution. */
-export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+function restoreCanonicalAgentResponse(value: unknown): Record<string, unknown> {
+  const invalid = () =>
+    ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+  if (value === undefined) throw invalid();
+  if (value === null) return { text: "", status: "completed" };
+  if (typeof value !== "object" || isArray(value)) throw invalid();
+  const keys = ownKeys(value);
   if (
-    !value || typeof value !== "object" || !("text" in value) ||
-    typeof value.text !== "string" || !("toolCalls" in value) ||
-    typeof value.toolCalls !== "number" || !("status" in value) ||
-    typeof value.status !== "string"
-  ) throw ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+    keys.length === 0 ||
+    apply(arraySome, keys, [(key: PropertyKey) => key !== "text" && key !== "data"])
+  ) throw invalid();
+  const text = getOwnPropertyDescriptor(value, "text");
+  const data = getOwnPropertyDescriptor(value, "data");
+  if (
+    (text && (!("value" in text) || typeof text.value !== "string")) ||
+    (data && !("value" in data))
+  ) throw invalid();
   return {
-    text: value.text,
-    toolCalls: value.toolCalls,
-    status: value.status,
-    ...(Object.hasOwn(value, "object") && "object" in value ? { object: value.object } : {}),
+    text: text && "value" in text ? text.value : privateJsonStringify(data!.value),
+    ...(data && "value" in data ? { data: data.value, object: data.value } : {}),
+    status: "completed",
+  };
+}
+
+/** Restore the tool protocol while preserving known legacy call counts. */
+export function readInheritedLocalChildResult(value: unknown): LocalChildResult {
+  const invalid = () =>
+    ORCHESTRATION_ERROR.create({ detail: "Stored local child result is invalid" });
+  if (typeof value !== "object" || value === null) throw invalid();
+  const text = getOwnPropertyDescriptor(value, "text");
+  const calls = getOwnPropertyDescriptor(value, "toolCalls");
+  const status = getOwnPropertyDescriptor(value, "status");
+  if (!text || !("value" in text) || typeof text.value !== "string") throw invalid();
+  if (
+    !calls || !("value" in calls) ||
+    (typeof calls.value !== "number" && !isArray(calls.value))
+  ) throw invalid();
+  if (!status || !("value" in status) || typeof status.value !== "string") throw invalid();
+  const structured = readStructuredAgentOutput(value);
+  return {
+    text: text.value,
+    toolCalls: isArray(calls.value) ? calls.value.length : calls.value,
+    status: status.value,
+    ...structured,
   };
 }
 
 /** Bind existing local execution and delegation to the authentic inherited child owners. */
 export async function runInheritedLocalAgent(
   child: ConversationRunProjection | InheritedRunResult,
-  transport: { projectId: string; apiUrl: string; fetch: typeof globalThis.fetch },
+  transport: {
+    projectId: string;
+    apiUrl: string;
+    fetch: typeof globalThis.fetch;
+    restoreAgentResponse?: boolean;
+  },
   execute: (
     signal?: AbortSignal,
     onEvent?: (event: AgUiRuntimeStreamEvent) => Promise<void>,
@@ -107,7 +176,13 @@ export async function runInheritedLocalAgent(
     : hostedInheritedTerminalReceipt(child);
   if (receipt) {
     return receipt.status === "completed"
-      ? { success: true, output: receipt.output, executionTime: 0 }
+      ? {
+        success: true,
+        output: receipt.outputFormat === "text-data-v1"
+          ? restoreCanonicalAgentResponse(receipt.output)
+          : receipt.output,
+        executionTime: 0,
+      }
       : {
         success: false,
         error: receipt.error?.message ?? `Child ${receipt.status}`,
@@ -131,7 +206,19 @@ export async function runInheritedLocalAgent(
   }
   const canonicalRunId = hostedRunCanonicalId(writer, child.runId);
   if (!canonicalRunId) throw new Error("Inherited child canonical identity is unavailable");
-  const modelSink = createDurableRunEventSink({ mirror, abortSignal: parentSignal });
+  let observedText = "";
+  const appendObservedEvents: typeof mirror.appendEvents = async (events) => {
+    for (const event of events) {
+      if (event.type === "TEXT_MESSAGE_CONTENT" && typeof event.delta === "string") {
+        observedText += event.delta;
+      }
+    }
+    await mirror.appendEvents(events);
+  };
+  const modelSink = createDurableRunEventSink({
+    mirror: { ...mirror, appendEvents: appendObservedEvents },
+    abortSignal: parentSignal,
+  });
   const observationWriter = createRuntimeObservationWriterCapability({
     scope: { runId: child.runId, canonicalRunId, projectId: transport.projectId },
   });
@@ -164,7 +251,7 @@ export async function runInheritedLocalAgent(
       }
       return true;
     });
-    await mirror.appendEvents(toolStream ? toolStream.encode(filtered) : filtered);
+    await appendObservedEvents(toolStream ? toolStream.encode(filtered) : filtered);
   };
   const admitTool = async (id: string, name: string, input: unknown) => {
     toolInputs.set(
@@ -207,6 +294,11 @@ export async function runInheritedLocalAgent(
   const persistTerminal = async (state: HostedChildLifecycleTerminalState) => {
     let drainFailure: { error: unknown } | undefined;
     try {
+      const text = state.status === "completed" ? terminalAgentText(state.output) : undefined;
+      // A generate middleware can return a cached response without observing a provider turn.
+      if (!observedText && text) {
+        await onEvent({ type: "text-delta", id: `${child.messageId}:returned-text`, delta: text });
+      }
       await mirror.appendEvents(toolStream?.finish() ?? []);
       await mirror.flush({
         abortSignal: retryDrainSignal(parentSignal),
@@ -235,7 +327,11 @@ export async function runInheritedLocalAgent(
       conversationId: child.conversationId,
       runId: child.runId,
       status: terminalState.status,
-      output: terminalState.output ?? null,
+      output: terminalAgentOutput(terminalState.output),
+      ...(terminalState.status === "completed" &&
+          terminalAgentText(terminalState.output) !== undefined
+        ? { finalText: terminalAgentText(terminalState.output) }
+        : {}),
       model: "",
       provider: "",
       terminalErrorCode: terminalState.terminalErrorCode ?? undefined,
@@ -319,7 +415,10 @@ export async function runInheritedLocalAgent(
                     if (!delegatedResult.success) {
                       throw new Error(delegatedResult.error ?? "Delegated agent failed");
                     }
-                    const output = readInheritedLocalChildResult(delegatedResult.output);
+                    const output = "terminalReceipt" in delegated &&
+                        delegated.terminalReceipt.outputFormat === "text-data-v1"
+                      ? delegatedResult.output as LocalChildResult
+                      : readInheritedLocalChildResult(delegatedResult.output);
                     if (!completedTools.has(toolCallId)) {
                       completedTools.add(toolCallId);
                       await mirror.handleChunk({

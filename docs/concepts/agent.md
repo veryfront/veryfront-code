@@ -57,3 +57,14 @@ single database write, or a multi-step process that needs durable state. Use an
 app route, task, tool, or workflow for those boundaries.
 
 For implementation steps, see [Agents](../guides/agents.md).
+
+## Text and structured results
+
+An agent response keeps readable output in `text`. When you configure
+`outputSchema`, the response also exposes the parsed value in `data`.
+`object` remains a compatibility alias for the same value. Without a schema,
+JSON-looking text remains text.
+
+The local trigger runner and agent-as-tool responses preserve both fields.
+Streaming exposes them when the final response completes. Schema validation
+failures use the existing agent error path rather than returning successful data.
