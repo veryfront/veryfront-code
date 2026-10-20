@@ -49,15 +49,7 @@ def read_api(path, transport):
 
 
 def discover_release(transport):
-    matches = []
-    for page in range(1, 11):
-        rows = read_api(f'{API}/releases?per_page=100&page={page}', transport)
-        require(type(rows) is list and all(type(row) is dict for row in rows), 'Invalid release listing')
-        matches.extend(row for row in rows if row.get('tag_name') == TAG)
-        require(len(matches) <= 1, 'Duplicate release tags')
-        if len(rows) < 100:
-            return matches[0] if matches else None
-    raise ValueError('Release listing exceeds bounded inventory')
+    return release_tags.find_release(REPOSITORY, transport)
 
 
 def verify_local_asset(directory, row):

@@ -32,6 +32,39 @@ class RecoveryTagTests(unittest.TestCase):
         return json.dumps({'ref': 'refs/tags/v0.1.1283',
                            'object': {'type': self.kind, 'sha': self.readback or self.target}}).encode()
 
+    def test_exact_release_query_rejects_errors_and_malformed_identity(self):
+        find = load().find_release
+        row = {'databaseId': 7, 'tagName': 'v0.1.1283', 'isDraft': True, 'isPrerelease': False}
+        for response in ({'errors': [{'message': 'denied'}], 'data': {'repository': {'release': None}}},
+                         {'data': {'repository': None}}, {'data': {'repository': {}}},
+                         {'data': {'repository': {'release': dict(row, databaseId=True)}}},
+                         {'data': {'repository': {'release': dict(row, tagName='other')}}}):
+            calls = []
+            def query(args):
+                calls.append(args)
+                return json.dumps(response).encode()
+            with self.assertRaises(ValueError):
+                find('veryfront/veryfront', query)
+            self.assertEqual(len(calls), 1)
+
+    def test_exact_draft_query_requires_matching_rest_readback(self):
+        find = load().find_release
+        row = {'id': 7, 'tag_name': 'v0.1.1283', 'draft': True, 'prerelease': False}
+        queried = {'databaseId': 7, 'tagName': 'v0.1.1283', 'isDraft': True, 'isPrerelease': False}
+        def transport(args):
+            if args[:2] == ['api', 'graphql']:
+                return json.dumps({'data': {'repository': {'release': queried}}}).encode()
+            self.assertEqual(args[-1], 'repos/veryfront/veryfront/releases/7')
+            return json.dumps(row).encode()
+        self.assertEqual(find('veryfront/veryfront', transport), row)
+        for change in ({'id': 8}, {'tag_name': 'other'}, {'draft': False}, {'prerelease': True}):
+            original = dict(row)
+            row.update(change)
+            with self.assertRaises(ValueError):
+                find('veryfront/veryfront', transport)
+            row.clear()
+            row.update(original)
+
     def test_creates_absent_and_reads_back_exact_commit(self):
         result = load().recover('veryfront/veryfront', self.transport)
         self.assertEqual(result['object']['sha'], self.target)
@@ -49,7 +82,7 @@ class RecoveryTagTests(unittest.TestCase):
             self.present = True
             self.target = target
             load().recover(repo, self.transport)
-            self.assertTrue(all('GET' in args for args in self.calls))
+            self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_wrong_ref_target_or_annotated_tag_never_mutates(self):
         recover = load().recover
@@ -57,7 +90,7 @@ class RecoveryTagTests(unittest.TestCase):
         for kind, target in [('tag', self.target), ('commit', '0' * 40)]:
             self.kind, self.readback = kind, target
             with self.assertRaises(ValueError): recover('veryfront/veryfront', self.transport)
-        self.assertTrue(all('GET' in args for args in self.calls))
+        self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_auth_network_and_malformed_404_do_not_create(self):
         recover = load().recover
@@ -69,7 +102,7 @@ class RecoveryTagTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args, output=output)
             with self.assertRaises(subprocess.CalledProcessError):
                 recover('veryfront/veryfront', failing)
-            self.assertTrue(all('GET' in args for args in self.calls))
+            self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_absent_target_commit_never_attempts_ref(self):
         recover = load().recover
@@ -113,6 +146,12 @@ class RecoveryTagTests(unittest.TestCase):
         self.present = True
         original = self.transport
         def transport(args):
+            if args[:2] == ['api', 'graphql']:
+                self.calls.append(args)
+                row = next((row for row in rows if row.get('tag_name') == 'v0.1.1283'), None)
+                value = None if row is None else {'databaseId': row['id'], 'tagName': row['tag_name'],
+                    'isDraft': row['draft'], 'isPrerelease': row['prerelease']}
+                return json.dumps({'data': {'repository': {'release': value}}}).encode()
             if '/releases' in args[-1] or args[:2] == ['release', 'create']:
                 self.calls.append(args)
                 if args[:2] == ['release', 'create']:
@@ -134,7 +173,7 @@ class RecoveryTagTests(unittest.TestCase):
         self.assertEqual(sum(args[:2] == ['release', 'create'] for args in self.calls), 1)
         self.calls = []
         load().recover('veryfront/veryfront-code', self.source_transport(rows), source_release=True)
-        self.assertTrue(all('GET' in args for args in self.calls))
+        self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
 
     def test_source_tag_readback_after_release_rejects_concurrent_change(self):
         recover = load().recover
@@ -149,27 +188,26 @@ class RecoveryTagTests(unittest.TestCase):
         self.assertIn('/git/ref/tags/v0.1.1283', self.calls[-1][-1])
         self.assertFalse(any('PATCH' in args or 'DELETE' in args for args in self.calls))
 
-    def test_optional_source_release_rejects_wrong_source_draft_duplicate_and_list_failure(self):
+    def test_optional_source_release_rejects_draft_prerelease_and_query_failure(self):
         recover = load().recover
         correct = {'id': 3, 'tag_name': 'v0.1.1283', 'target_commitish': '8b9eb53979953e4a934014232982cca02eff63b0',
                    'draft': False, 'prerelease': False}
-        for rows in [[dict(correct, prerelease=True)], [dict(correct, draft=True)],
-                     [correct, dict(correct, id=4)], [{'tag_name': 'other'}] * 100]:
+        for rows in [[dict(correct, prerelease=True)], [dict(correct, draft=True)]]:
             self.calls = []
             transport = self.source_transport(rows)
             with self.assertRaises(ValueError):
                 recover('veryfront/veryfront-code', transport, source_release=True)
-            self.assertTrue(all('GET' in args for args in self.calls))
+            self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
         self.calls = []
         original = self.source_transport([])
         def failed(args):
-            if '/releases?' in args[-1]:
+            if args[:2] == ['api', 'graphql']:
                 self.calls.append(args)
                 raise subprocess.CalledProcessError(1, args, output=b'{"status":"403"}')
             return original(args)
         with self.assertRaises(subprocess.CalledProcessError):
             recover('veryfront/veryfront-code', failed, source_release=True)
-        self.assertTrue(all('GET' in args for args in self.calls))
+        self.assertTrue(all('GET' in args or args[:2] == ['api', 'graphql'] for args in self.calls))
         self.calls = []
         with self.assertRaises(ValueError):
             recover('veryfront/veryfront', self.transport, source_release=True)
