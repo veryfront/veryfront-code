@@ -689,6 +689,32 @@ type RenewedInheritedAuthority = Readonly<{
   events: string;
 }>;
 
+const RUN_CREDENTIAL_ROTATION_HEADER = "X-Veryfront-Run-Credential-Rotation";
+const RUN_CREDENTIAL_ROTATION_VERSION = "v2";
+const RENEWED_INHERITED_AUTHORITY_HEADERS = [
+  "X-Veryfront-Run-Invocation-Token",
+  "X-Veryfront-Inference-Token",
+  RUN_TERMINAL_TOKEN_HEADER,
+  "X-Veryfront-Run-Renewal-Token",
+  "X-Veryfront-Run-Event-Token",
+] as const;
+
+function acknowledgesInheritedAuthorityRotation(response: Response): boolean {
+  // Mixed-version rollout contract: an old API returns neither the acknowledgement
+  // nor credentials, while a v2 API acknowledges and returns the complete bundle.
+  // Any partial or unrecognised response fails closed instead of mixing generations.
+  const acknowledgement = response.headers.get(RUN_CREDENTIAL_ROTATION_HEADER);
+  if (acknowledgement === RUN_CREDENTIAL_ROTATION_VERSION) return true;
+  let hasCredentialHeader = false;
+  forEachPrivateArray(RENEWED_INHERITED_AUTHORITY_HEADERS, (header) => {
+    if (response.headers.has(header)) hasCredentialHeader = true;
+  });
+  if (acknowledgement !== null || hasCredentialHeader) {
+    throw new Error("Inherited child lease credential rotation acknowledgement mismatch");
+  }
+  return false;
+}
+
 function readRenewedInheritedAuthority(
   response: Response,
   runId: string,
@@ -822,6 +848,7 @@ export async function withHostedInheritedLease<T>(
             headers: {
               Authorization: `Bearer ${authority.renewalToken}`,
               "Content-Type": "application/json",
+              [RUN_CREDENTIAL_ROTATION_HEADER]: RUN_CREDENTIAL_ROTATION_VERSION,
             },
             body: JSON.stringify({ lease_duration_seconds: 60 }),
             signal: controller.signal,
@@ -846,7 +873,9 @@ export async function withHostedInheritedLease<T>(
       ) {
         throw new Error("Inherited child lease response binding mismatch");
       }
-      rotateInheritedChildAuthority(descriptor, response);
+      if (acknowledgesInheritedAuthorityRotation(response)) {
+        rotateInheritedChildAuthority(descriptor, response);
+      }
       armExpiry();
     }
     return await new Promise<never>(() => {});

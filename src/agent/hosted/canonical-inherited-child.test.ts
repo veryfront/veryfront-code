@@ -34,6 +34,7 @@ const token = (runId: string, canonicalRunId: string, signature = "signature") =
   }.${signature}`;
 const renewedAuthorityHeaders = (generation: string) => ({
   "Cache-Control": "no-store",
+  "X-Veryfront-Run-Credential-Rotation": "v2",
   "X-Veryfront-Inference-Token": `child-inference-${generation}`,
   "X-Veryfront-Run-Invocation-Token": `child-invocation-${generation}`,
   "X-Veryfront-Run-Terminal-Token": token("child", childId, generation),
@@ -445,6 +446,10 @@ it("rotates the full exact-child authority before work crosses its initial lease
       const url = String(input);
       const authorization = new Headers(init?.headers).get("Authorization") ?? "";
       if (url.endsWith("/heartbeats")) {
+        assertEquals(
+          new Headers(init?.headers).get("X-Veryfront-Run-Credential-Rotation"),
+          "v2",
+        );
         heartbeatAuthorization.push(authorization);
         heartbeatCount++;
         if (heartbeatCount === 2) twiceRenewed.resolve();
@@ -515,3 +520,138 @@ it("rotates the full exact-child authority before work crosses its initial lease
   assertEquals(heartbeatAuthorization, ["Bearer child-renewal", "Bearer child-renewal-1"]);
   assertEquals(eventAuthorization, ["Bearer child-event-2", "Bearer child-invocation-2"]);
 });
+
+it("keeps current authority when a legacy heartbeat does not acknowledge credential rotation", async () => {
+  using time = new FakeTime();
+  const request = {
+    projectId: parentId,
+    authToken: "parent-invocation",
+    durableRootRun: { runId: "parent" },
+  } as ParsedHostedChatRequest;
+  registerHostedTerminalCredential(request, token("parent", parentId));
+  const heartbeatSeen = Promise.withResolvers<void>();
+  const statusAuthorization: string[] = [];
+  const admit = hostedInheritedRunAdmitter(request, {
+    apiUrl: "https://api.example.test",
+    fetch: (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/heartbeats")) {
+        assertEquals(
+          new Headers(init?.headers).get("X-Veryfront-Run-Credential-Rotation"),
+          "v2",
+        );
+        heartbeatSeen.resolve();
+        return Promise.resolve(Response.json({
+          run_id: childId,
+          expires_at: new Date(Date.now() + 120).toISOString(),
+        }));
+      }
+      if (url.endsWith(`/runs/${childId}`)) {
+        statusAuthorization.push(new Headers(init?.headers).get("Authorization") ?? "");
+        return Promise.resolve(Response.json({ id: childId, status: "running" }));
+      }
+      return Promise.resolve(Response.json({
+        id: childId,
+        conversation_id: parentId,
+        output_message_id: childId,
+        status: "running",
+      }, {
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Veryfront-Inference-Token": "child-inference",
+          "X-Veryfront-Run-Invocation-Token": "child-invocation",
+          "X-Veryfront-Run-Terminal-Token": token("child", childId),
+          "X-Veryfront-Run-Event-Token": "child-event",
+          "X-Veryfront-Run-Renewal-Token": "child-renewal",
+          "X-Veryfront-Run-Event-Sequence": "0",
+          "X-Veryfront-Run-External-Event-Sequence": "0",
+          "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 80).toISOString(),
+        },
+      }));
+    },
+  })!;
+  const run = await admit("tool-legacy-heartbeat", "prompt")({
+    authToken: "ignored",
+    apiUrl: "ignored",
+    conversationId: parentId,
+    parentRunId: "parent",
+    agentId: "agent",
+    projectId: parentId,
+  });
+  const result = withHostedInheritedLease(run, async () => {
+    await heartbeatSeen.promise;
+    await hostedBoundRunStatus(run, run.runId)!();
+    return "completed";
+  });
+
+  await time.tickAsync(40);
+  assertEquals(await result, "completed");
+  assertEquals(statusAuthorization, ["Bearer child-invocation"]);
+});
+
+for (const invalidRotation of ["partial-v2", "partial-without-ack", "unknown-version"] as const) {
+  it(`fails closed for ${invalidRotation} heartbeat credential rotation`, async () => {
+    using time = new FakeTime();
+    const request = {
+      projectId: parentId,
+      authToken: "parent-invocation",
+      durableRootRun: { runId: "parent" },
+    } as ParsedHostedChatRequest;
+    registerHostedTerminalCredential(request, token("parent", parentId));
+    const admit = hostedInheritedRunAdmitter(request, {
+      apiUrl: "https://api.example.test",
+      fetch: (input) => {
+        if (String(input).endsWith("/heartbeats")) {
+          return Promise.resolve(Response.json({
+            run_id: childId,
+            expires_at: new Date(Date.now() + 120).toISOString(),
+          }, {
+            headers: invalidRotation === "partial-v2"
+              ? {
+                "Cache-Control": "no-store",
+                "X-Veryfront-Run-Credential-Rotation": "v2",
+                "X-Veryfront-Run-Invocation-Token": "partial",
+              }
+              : invalidRotation === "partial-without-ack"
+              ? { "X-Veryfront-Run-Invocation-Token": "partial" }
+              : { "X-Veryfront-Run-Credential-Rotation": "v3" },
+          }));
+        }
+        return Promise.resolve(Response.json({
+          id: childId,
+          conversation_id: parentId,
+          output_message_id: childId,
+          status: "running",
+        }, {
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Veryfront-Inference-Token": "child-inference",
+            "X-Veryfront-Run-Invocation-Token": "child-invocation",
+            "X-Veryfront-Run-Terminal-Token": token("child", childId),
+            "X-Veryfront-Run-Event-Token": "child-event",
+            "X-Veryfront-Run-Renewal-Token": "child-renewal",
+            "X-Veryfront-Run-Event-Sequence": "0",
+            "X-Veryfront-Run-External-Event-Sequence": "0",
+            "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 80).toISOString(),
+          },
+        }));
+      },
+    })!;
+    const run = await admit(`tool-${invalidRotation}`, "prompt")({
+      authToken: "ignored",
+      apiUrl: "ignored",
+      conversationId: parentId,
+      parentRunId: "parent",
+      agentId: "agent",
+      projectId: parentId,
+    });
+    const rejected = assertRejects(
+      () => withHostedInheritedLease(run, () => new Promise<void>(() => {})),
+      Error,
+      invalidRotation === "partial-v2" ? "authority binding mismatch" : "acknowledgement mismatch",
+    );
+
+    await time.tickAsync(40);
+    await rejected;
+  });
+}
