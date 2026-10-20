@@ -985,3 +985,63 @@ it("retains the verified agent binding when inherited evidence authority transfe
   assertEquals(verifications, 2);
   assertEquals(terminalVerifications, 1);
 });
+
+it("reads the current exact-owner bearer for existing first-party MCP sources", async () => {
+  const value = request();
+  registerHostedTerminalCredential(value, "test-terminal", "test-events");
+  let current: string | undefined = "child-invocation-admission";
+  const sent: string[] = [];
+  const fallback = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    const send = async (context?: ToolExecutionContext) => {
+      const headers = new Headers(
+        typeof config.headers === "function" ? await config.headers(context) : config.headers,
+      );
+      sent.push(headers.get("Authorization") ?? "");
+    };
+    return {
+      id: "test-platform",
+      listTools: async (context) => {
+        await send(context);
+        return [];
+      },
+      executeTool: async (_name, _args, context) => {
+        await send(context);
+        return {};
+      },
+    };
+  };
+  const factory = hostedTerminalToolSourceFactory(
+    value,
+    "https://api.example/mcp",
+    fallback,
+    () => current,
+  );
+  const config = {
+    endpoint: "https://api.example/mcp",
+    headers: { Authorization: "Bearer stale" },
+  };
+  const source = factory(config, { kind: "veryfront-api" });
+  current = "child-invocation-1";
+  await source.listTools();
+  current = "child-invocation-2";
+  await source.executeTool("ordinary", {}, rootContext());
+  await source.executeTool("update_file", {}, rootContext());
+  await source.executeTool("finalize", {}, rootContext());
+  assertEquals(sent, [
+    "Bearer child-invocation-1",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+  ]);
+  current = undefined;
+  await assertRejects(() => source.listTools(), Error, "authority is unavailable");
+  await assertRejects(
+    () => source.executeTool("ordinary", {}, rootContext()),
+    Error,
+    "authority is unavailable",
+  );
+  assertEquals(sent.length, 4);
+  const thirdParty = factory(config);
+  await thirdParty.executeTool("ordinary", {}, rootContext());
+  assertEquals(sent.at(-1), "Bearer stale");
+});

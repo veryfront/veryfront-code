@@ -17,6 +17,7 @@ import {
 import { privateTextSplit } from "#veryfront/security/private-text.ts";
 import {
   configureHostedPlatformDependencySource,
+  hostedPlatformDependencyCredential,
   type HostedPlatformDependencyOwner,
   registerHostedPlatformDependencyRequest,
   revokeHostedPlatformDependencies,
@@ -45,6 +46,7 @@ import {
   runWithToolCallAdmissionReceipt,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
+import { runWithVerifiedSkillScriptExecutionCredential } from "#veryfront/skill/execution-credential.ts";
 
 type Scope = { projectId: string; runId: string; agentId: string };
 const execution = createPrivateAsyncLocalStorage<object>();
@@ -57,13 +59,15 @@ const isArray = Array.isArray;
 const entries = Object.entries;
 const replace = String.prototype.replace;
 const allSettled = Promise.allSettled;
-const throwIfAborted = AbortSignal.prototype.throwIfAborted;
 
 /** CLI-owned transport and signed grants; no project setting can install this boundary. */
 export function createConnectedLocalPlatformTools(
   apiUrl: string,
   transport: typeof fetch,
-  dependencies: { createSandboxTools?: typeof createAgentServiceSandboxTools } = {},
+  dependencies: {
+    createSandboxTools?: typeof createAgentServiceSandboxTools;
+    projectContext?: { projectSlug: string; branch: string | null };
+  } = {},
 ) {
   const verify = createConnectedLocalWriterVerifier(apiUrl);
   const endpoint = `${apply(replace, apiUrl, [/\/$/, ""])}/mcp`;
@@ -72,8 +76,19 @@ export function createConnectedLocalPlatformTools(
     requestFetch: transport,
   });
   const sources = createPrivateWeakStore<object, RemoteToolSource>();
+  const credentials = createPrivateWeakStore<object, () => string>();
+  const freezeCredentials = createPrivateWeakStore<object, () => void>();
+  const childOwners = createPrivateWeakStore<object, HostedPlatformDependencyOwner[]>();
+  const credentialLifetimes = createPrivateWeakStore<object, { active: boolean }>();
   const cleanups = createPrivateWeakStore<object, Array<() => Promise<void>>>();
+  const freezeCredentialTree = (owner: HostedPlatformDependencyOwner) => {
+    freezeCredentials.get(owner)?.();
+    forEachPrivateArray(childOwners.get(owner) ?? [], freezeCredentialTree);
+  };
   const revoke = async (owner: HostedPlatformDependencyOwner) => {
+    // Snapshot the newest exact-owner credential before revoking execution
+    // authority so retained cleanup never falls back to its admission token.
+    freezeCredentialTree(owner);
     revokeHostedPlatformDependencies(owner);
     const pending = cleanups.get(owner) ?? [];
     cleanups.set(owner, []);
@@ -94,6 +109,8 @@ export function createConnectedLocalPlatformTools(
       cleanups.set(owner, current);
       throw failure;
     }
+    const credentialLifetime = credentialLifetimes.get(owner);
+    if (credentialLifetime) credentialLifetime.active = false;
   };
   return {
     verify,
@@ -119,7 +136,11 @@ export function createConnectedLocalPlatformTools(
               ownerCleanup = [];
               cleanups.set(childOwner, ownerCleanup);
               if (childOwner !== owner) {
-                const parentCleanup = cleanups.get(parentOwner ?? owner);
+                const parent = parentOwner ?? owner;
+                const descendants = childOwners.get(parent) ?? [];
+                pushPrivateArray(descendants, childOwner);
+                childOwners.set(parent, descendants);
+                const parentCleanup = cleanups.get(parent);
                 if (!parentCleanup) {
                   throw new Error("Connected platform sandbox parent is unavailable");
                 }
@@ -127,6 +148,23 @@ export function createConnectedLocalPlatformTools(
               }
             }
             try {
+              credentialLifetimes.set(childOwner, { active: true });
+              let lastCredential = token;
+              let credentialFrozen = false;
+              const credential = () => {
+                if (credentialFrozen) return lastCredential;
+                const current = childScope.runId === scope.runId
+                  ? currentAuthority?.().auth_token
+                  : hostedPlatformDependencyCredential(childOwner);
+                if (current) lastCredential = current;
+                return lastCredential;
+              };
+              freezeCredentials.set(childOwner, () => {
+                if (credentialFrozen) return;
+                credential();
+                credentialFrozen = true;
+              });
+              credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
               let source = createLivePlatformMcpSource(factory({
                 id: VERYFRONT_API_MCP_SOURCE_ID,
@@ -136,7 +174,7 @@ export function createConnectedLocalPlatformTools(
                     ? currentAuthority?.()
                     : undefined;
                   return {
-                    Authorization: `Bearer ${current?.auth_token ?? token}`,
+                    Authorization: `Bearer ${credential()}`,
                     ...(childScope.runId === scope.runId
                       ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
                       : {}),
@@ -172,10 +210,7 @@ export function createConnectedLocalPlatformTools(
                   await (dependencies.createSandboxTools ?? createAgentServiceSandboxTools)({
                     apiUrl,
                     authToken: token,
-                    getAuthToken: () =>
-                      childScope.runId === scope.runId
-                        ? currentAuthority?.().auth_token ?? token
-                        : token,
+                    getAuthToken: credential,
                     getProjectId: () => childScope.projectId,
                     createBashTool: createBashSandboxShellToolsProvider,
                   });
@@ -231,7 +266,15 @@ export function createConnectedLocalPlatformTools(
       ) => Promise<AgentRunToolCallAdmissionReceipt>;
     }, operation: () => Promise<T>): Promise<T> {
       const identity = {};
-      const assertActive = () => apply(throwIfAborted, input.signal, []);
+      const assertCredentialActive = () => {
+        if (credentialLifetimes.get(input.owner)?.active !== true) {
+          throw new Error("Connected run credential is no longer active");
+        }
+      };
+      const assertToolActive = () => {
+        input.signal.throwIfAborted();
+        assertCredentialActive();
+      };
       const calls = createPrivateMap<string, { name: string; args: Record<string, unknown> }>();
       const admit: AdmitExecutorToolCall = (call) => {
         const tool = calls.get(call.occurrenceId);
@@ -245,32 +288,55 @@ export function createConnectedLocalPlatformTools(
       });
       bindToolCallAdmissionOwner(admit, { ...input.scope, canonicalRunId: input.canonicalRunId });
       const source = sources.get(input.owner);
+      const credential = credentials.get(input.owner);
+      if (!credential) throw new Error("Connected run credential is unavailable");
+      const projectContext = dependencies.projectContext;
       // Legacy writers have no delegated dependency runner, but still retain their
       // directly authenticated first-party platform source.
       return runWithHostedPlatformDependencies(
         input.owner,
         () =>
-          runWithExactRuntimeRemoteToolSources(
-            source ? [source] : [],
+          runWithVerifiedSkillScriptExecutionCredential(
+            {
+              assertActive: assertCredentialActive,
+              read: () => ({
+                apiUrl,
+                authToken: credential(),
+                projectId: input.scope.projectId,
+                ...(projectContext ? { projectSlug: projectContext.projectSlug } : {}),
+                ...(projectContext ? { branch: projectContext.branch } : {}),
+                runId: input.scope.runId,
+                agentId: input.scope.agentId,
+              }),
+            },
             () =>
-              execution.run(identity, () =>
-                runWithToolCallOccurrences(() =>
-                  runWithRecoveryToolExecutionPolicy(async (tool, execute) => {
-                    // A nested child owns its own receipt, never its parent's.
-                    if (execution.getStore() !== identity) {
-                      return execute();
-                    }
-                    assertActive();
-                    const call = getCurrentToolCallOccurrenceIdentity();
-                    if (!call) {
-                      throw new Error("Connected tool has no private occurrence");
-                    }
-                    calls.set(call.occurrenceId, { name: tool.toolName, args: tool.input });
-                    const receipt = await admit(call, input.signal);
-                    calls.delete(call.occurrenceId);
-                    return runWithToolCallAdmissionReceipt(receipt, assertActive, execute, admit);
-                  }, operation)
-                )),
+              runWithExactRuntimeRemoteToolSources(
+                source ? [source] : [],
+                () =>
+                  execution.run(identity, () =>
+                    runWithToolCallOccurrences(() =>
+                      runWithRecoveryToolExecutionPolicy(async (tool, execute) => {
+                        // A nested child owns its own receipt, never its parent's.
+                        if (execution.getStore() !== identity) {
+                          return execute();
+                        }
+                        assertToolActive();
+                        const call = getCurrentToolCallOccurrenceIdentity();
+                        if (!call) {
+                          throw new Error("Connected tool has no private occurrence");
+                        }
+                        calls.set(call.occurrenceId, { name: tool.toolName, args: tool.input });
+                        const receipt = await admit(call, input.signal);
+                        calls.delete(call.occurrenceId);
+                        return runWithToolCallAdmissionReceipt(
+                          receipt,
+                          assertToolActive,
+                          execute,
+                          admit,
+                        );
+                      }, operation)
+                    )),
+              ),
           ),
       );
     },

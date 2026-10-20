@@ -432,6 +432,7 @@
     "#cli/production-error-reporting": "./src/server/production-error-reporting.ts",
     "#cli/environment-config": "./src/config/environment-config.ts",
     "#cli/host-api-base": "./src/config/host-api-base.ts",
+    "#cli/connected-local-runtime": "./src/agent/ag-ui/connected-local-runtime.ts",
     "#cli/host-runtime": "./src/platform/compat/process/host-runtime.ts",
     "#cli/platform-runtime": "./src/platform/compat/runtime.ts",
     "#cli/process-env": "./src/platform/compat/process/env.ts",

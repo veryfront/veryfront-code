@@ -1,4 +1,4 @@
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
+import { getHostEnvExcludingEnvFile } from "#cli/process-env";
 import { getEnvSource } from "veryfront/utils/env-loader";
 
 /** Capture operator display choices before importing the local project. */

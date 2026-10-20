@@ -6,15 +6,25 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { createConnectedLocalPlatformTools } from "../../../src/agent/ag-ui/connected-local-platform-tools.ts";
 import {
+  createHostedRunEventWriterCapability,
+} from "../../../src/agent/hosted/child-run-event-writer-token.ts";
+import {
   registerHostedChildPlatformDependencies,
+  rotateHostedPlatformDependencyCredential,
   runWithHostedPlatformDependencies,
 } from "../../../src/agent/hosted/platform-dependency-credential.ts";
+import { getVerifiedSkillScriptExecutionCredential } from "../../../src/skill/execution-credential.ts";
+import { applyRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 
 async function fixture(
   operation: (input: {
     transport: typeof fetch;
     scope: { projectId: string; runId: string; agentId: string };
-    eventToken: (runId: string) => string;
+    eventToken: (runId: string, agentId?: string) => string;
     authToken: string;
   }) => Promise<void>,
 ) {
@@ -31,10 +41,11 @@ async function fixture(
       sign("RSA-SHA256", Buffer.from(unsigned), privateKey).toString("base64url")
     }`;
   };
-  const eventToken = (runId: string) =>
+  const eventToken = (runId: string, agentId = scope.agentId) =>
     signed({
       ...scope,
       runId,
+      agentId,
       userId: "server",
       serviceAccountId: "server",
       actorType: "service_account",
@@ -255,22 +266,41 @@ it("attempts all descendant closes and retries a failed close", async () => {
   });
 });
 
-it("renews only the root sandbox credential and keeps child credentials isolated", async () => {
+it("renews root and exact-child sandbox credentials without crossing run identity", async () => {
   await fixture(async ({ transport, scope, eventToken, authToken }) => {
     const credentials: Array<() => string> = [];
+    const cleanupCredentials: string[] = [];
     let currentToken = authToken;
+    let currentAuthorityAvailable = true;
+    let rootCloseAttempts = 0;
+    let created = 0;
     const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport, {
       async createSandboxTools(input) {
-        credentials.push(input.getAuthToken ?? (() => input.authToken!));
-        return await createAgentServiceSandboxTools(input);
+        const id = created++;
+        const credential = input.getAuthToken ?? (() => input.authToken!);
+        credentials.push(credential);
+        const sandbox = await createAgentServiceSandboxTools(input);
+        return {
+          ...sandbox,
+          async closeSandbox() {
+            cleanupCredentials.push(credential());
+            if (id === 0 && rootCloseAttempts++ === 0) {
+              throw new Error("root close failed");
+            }
+            await sandbox.closeSandbox();
+          },
+        };
       },
     });
     const root = { runId: scope.runId };
     const child = { childRunId: "credential-child" };
-    await tools.register(root, scope, eventToken(scope.runId), authToken, () => ({
-      auth_token: currentToken,
-      run_event_token: eventToken(scope.runId),
-    }));
+    await tools.register(root, scope, eventToken(scope.runId), authToken, () => {
+      if (!currentAuthorityAvailable) throw new Error("Current worker claim authority is required");
+      return {
+        auth_token: currentToken,
+        run_event_token: eventToken(scope.runId),
+      };
+    });
     await registerHostedChildPlatformDependencies(
       root,
       child,
@@ -283,6 +313,169 @@ it("renews only the root sandbox credential and keeps child credentials isolated
     currentToken = "renewed-root-credential";
     assertEquals(credentials[0]!(), currentToken);
     assertEquals(credentials[1]!(), authToken);
+    rotateHostedPlatformDependencyCredential(child, "renewed-child-credential");
+    assertEquals(credentials[0]!(), currentToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    await tools.run({
+      owner: root,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: new AbortController().signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      assertEquals(
+        getVerifiedSkillScriptExecutionCredential()?.authToken,
+        "renewed-root-credential",
+      );
+      return Promise.resolve();
+    });
+    await assertRejects(() => tools.revoke(root), Error, "root close failed");
+    currentAuthorityAvailable = false;
+    await tools.revoke(root);
+    assertEquals(
+      cleanupCredentials.sort(),
+      [
+        "renewed-child-credential",
+        "renewed-root-credential",
+        "renewed-root-credential",
+      ].sort(),
+    );
+  });
+});
+
+it("keeps cleanup credential authority active after execution cancellation", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const owner = { runId: scope.runId };
+    await tools.register(owner, scope, eventToken(scope.runId), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    const controller = new AbortController();
+    await tools.run({
+      owner,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: controller.signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      controller.abort(new Error("run canceled"));
+      assertEquals(getVerifiedSkillScriptExecutionCredential()?.authToken, authToken);
+      return Promise.resolve();
+    });
+    await tools.revoke(owner);
+  });
+});
+
+it("rejects an admitted tool after cancellation while retaining cleanup authority", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const owner = { runId: scope.runId };
+    await tools.register(owner, scope, eventToken(scope.runId), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    const controller = new AbortController();
+    let releaseAdmission!: () => void;
+    const admissionGate = new Promise<void>((resolve) => releaseAdmission = resolve);
+    let executed = false;
+    const operation = tools.run({
+      owner,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: controller.signal,
+      admit: async (call) => {
+        await admissionGate;
+        return {
+          occurrenceId: call.occurrenceId,
+          admissionEventId: "admission",
+          startEventId: "start",
+          toolCallId: call.toolCallId,
+          publicToolCallId: call.toolCallId,
+          projectId: scope.projectId,
+          runId: scope.runId,
+        };
+      },
+    }, async () => {
+      const call = { id: "cancelled-call" };
+      introduceToolCallOccurrence(call);
+      return await runWithToolCallOccurrenceDispatch(call, () =>
+        applyRecoveryToolExecutionPolicy(
+          { toolName: "mutating-tool", input: {} },
+          () => {
+            executed = true;
+            return Promise.resolve("executed");
+          },
+        ));
+    });
+
+    await Promise.resolve();
+    controller.abort(new Error("run cancelled"));
+    releaseAdmission();
+    await assertRejects(() => operation, Error, "run cancelled");
+    assertEquals(executed, false);
+    await tools.revoke(owner);
+  });
+});
+
+it("binds each delegated child script to its own run and role credential", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", transport);
+    const root = { runId: scope.runId };
+    const child = { childRunId: "credential-child" };
+    const childScope = { ...scope, runId: child.childRunId, agentId: "ingestion-agent" };
+    const childCredential = "child-run-role-credential";
+    await tools.register(root, scope, eventToken(scope.runId), authToken);
+    await registerHostedChildPlatformDependencies(
+      root,
+      child,
+      childScope,
+      eventToken(child.childRunId, childScope.agentId),
+      childCredential,
+    );
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: child.childRunId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(child.childRunId, childScope.agentId),
+    });
+    await tools.run({
+      owner: child,
+      scope: childScope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: new AbortController().signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, () => {
+      assertEquals(getVerifiedSkillScriptExecutionCredential(), {
+        apiUrl: "https://api.veryfront.com",
+        authToken: childCredential,
+        projectId: scope.projectId,
+        runId: child.childRunId,
+        agentId: childScope.agentId,
+      });
+      return Promise.resolve();
+    });
     await tools.revoke(root);
   });
 });

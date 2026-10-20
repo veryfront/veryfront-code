@@ -731,6 +731,7 @@ export function createVeryfrontCloudFetch(
   projectSlug?: string,
   options?: {
     inferenceCredential?: boolean;
+    getInferenceCredential?: () => string;
     assertInferenceCredentialActive?: () => void;
     /**
      * The route's {@link VeryfrontCloudGatewayRoute.wireModelProvider}. When
@@ -785,8 +786,14 @@ export function createVeryfrontCloudFetch(
     const neutralRoute = options?.neutralRoute;
 
     // Setting the bearer pushes it onto the header list's internal array.
+    const currentToken = options?.getInferenceCredential
+      ? requireInferenceProviderCredential(
+        options.getInferenceCredential(),
+        "Veryfront Cloud API token",
+      )
+      : trustedApiToken;
     assertNativeRequestProcessing();
-    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
+    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${currentToken}`]);
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }
