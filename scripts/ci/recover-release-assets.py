@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Publish only preverified original 1283 release assets; never publish npm.
+
+The trusted caller must authenticate canonical artifacts, registry provenance and
+qualification before supplying this manifest's expected digest. This helper
+checks transport integrity and release conflicts, not that upstream authority.
+"""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+
+VERSION = '0.1.1283'
+SOURCE = '8b9eb53979953e4a934014232982cca02eff63b0'
+TAG = 'v' + VERSION
+REPOSITORY = 'veryfront/veryfront'
+API = 'repos/' + REPOSITORY
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def unique(pairs):
+    value = {}
+    for key, item in pairs:
+        require(key not in value, 'Duplicate JSON field')
+        value[key] = item
+    return value
+
+
+def decode(raw):
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def gh(args):
+    return subprocess.check_output(['gh', *args], stderr=subprocess.PIPE)
+
+
+def read_api(path, transport, allow_absent=False):
+    try:
+        return decode(transport(['api', '--method', 'GET', path]))
+    except subprocess.CalledProcessError as error:
+        # Only an explicit API 404 is absence; auth/network failures must stop.
+        if allow_absent:
+            try:
+                absent = decode(error.output)
+                if type(absent) is dict and str(absent.get('status')) == '404':
+                    return None
+            except (ValueError, TypeError):
+                pass
+        raise
+
+
+def verify_local_asset(directory, row):
+    file = Path(directory) / row['name']
+    require(not file.is_symlink() and file.is_file(), 'Missing or symbolic asset')
+    with file.open('rb') as stream:
+        actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+    require(file.stat().st_size == row['size'] and actual == row['sha256'], 'Local asset differs')
+
+
+def load_manifest(path, expected_sha256, directory):
+    require(type(expected_sha256) is str and re.fullmatch('[a-f0-9]{64}', expected_sha256), 'Invalid manifest digest')
+    raw = Path(path).read_bytes()
+    require(hashlib.sha256(raw).hexdigest() == expected_sha256, 'Manifest digest differs')
+    value = decode(raw)
+    require(type(value) is dict and set(value) == {'schema_version', 'version', 'source_revision', 'assets'}, 'Invalid manifest fields')
+    require(type(value['schema_version']) is int and value['schema_version'] == 1
+            and value['version'] == VERSION and value['source_revision'] == SOURCE, 'Original release identity differs')
+    rows = value['assets']
+    require(type(rows) is list and 0 < len(rows) <= 100, 'Invalid asset inventory')
+    assets = {}
+    for row in rows:
+        require(type(row) is dict and set(row) == {'name', 'size', 'sha256'}, 'Invalid asset fields')
+        name = row['name']
+        require(type(name) is str and re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]{0,199}', name)
+                and name not in assets, 'Unsafe or duplicate asset name')
+        require(type(row['size']) is int and row['size'] > 0
+                and type(row['sha256']) is str and re.fullmatch('[a-f0-9]{64}', row['sha256']), 'Invalid asset digest or size')
+        verify_local_asset(directory, row)
+        assets[name] = row
+    return assets
+
+
+def verify_release(release):
+    require(type(release) is dict and type(release.get('id')) is int and release['id'] > 0
+            and release.get('tag_name') == TAG and type(release.get('draft')) is bool
+            and release.get('prerelease') is False, 'Release identity or mode differs')
+
+
+def inventory(release, expected, transport, complete=False):
+    assets = []
+    for page in range(1, 3):
+        rows = read_api(f'{API}/releases/{release["id"]}/assets?per_page=100&page={page}', transport)
+        require(type(rows) is list, 'Invalid remote asset inventory')
+        assets.extend(rows)
+        if len(rows) < 100:
+            break
+    require(len(assets) <= len(expected), 'Unexpected remote assets')
+    found = set()
+    for asset in assets:
+        require(type(asset) is dict, 'Invalid remote asset')
+        name = asset.get('name')
+        require(type(name) is str and name in expected and name not in found, 'Unexpected or duplicate remote asset')
+        row = expected[name]
+        require(asset.get('state') == 'uploaded' and type(asset.get('size')) is int
+                and asset['size'] == row['size'] and asset.get('digest') == 'sha256:' + row['sha256'], 'Remote asset is incomplete or differs')
+        found.add(name)
+    require(not complete or found == set(expected), 'Release asset inventory incomplete')
+    return found
+
+
+def recover(manifest, expected_sha256, directory, transport=gh):
+    expected = load_manifest(manifest, expected_sha256, directory)
+    path = f'{API}/releases/tags/{TAG}'
+    release = read_api(path, transport, allow_absent=True)
+    if release is None:
+        transport(['release', 'create', TAG, '--repo', REPOSITORY, '--title', TAG,
+                   '--verify-tag', '--draft', '--notes', f'Original tested {VERSION} artifacts from {SOURCE}; no npm republish.'])
+        release = read_api(path, transport)
+    verify_release(release)
+    found = inventory(release, expected, transport, complete=not release['draft'])
+    if not release['draft']:
+        return release
+    for name in sorted(set(expected) - found):
+        # Recheck bytes immediately before upload; --clobber is intentionally absent.
+        verify_local_asset(directory, expected[name])
+        transport(['release', 'upload', TAG, str((Path(directory) / name).resolve()), '--repo', REPOSITORY])
+    current = read_api(path, transport)
+    verify_release(current)
+    require(current['id'] == release['id'] and current['draft'], 'Draft changed during recovery')
+    inventory(current, expected, transport, complete=True)
+    transport(['release', 'edit', TAG, '--repo', REPOSITORY, '--draft=false', '--prerelease=false', '--latest=false'])
+    final = read_api(path, transport)
+    verify_release(final)
+    require(final['id'] == release['id'] and not final['draft'], 'Publication was not confirmed')
+    inventory(final, expected, transport, complete=True)
+    return final
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--manifest', required=True)
+    parser.add_argument('--manifest-sha256', required=True)
+    parser.add_argument('--assets-dir', required=True)
+    args = parser.parse_args()
+    result = recover(args.manifest, args.manifest_sha256, args.assets_dir)
+    print(json.dumps({'release_id': result['id'], 'tag': TAG, 'source_revision': SOURCE, 'draft': result['draft']}))
+
+
+if __name__ == '__main__':
+    main()
