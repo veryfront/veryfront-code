@@ -511,6 +511,15 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(socket);
       assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
       adapter.dispose();
+
+      const clearedAdapter = createAdapter();
+      clearedAdapter.setRequestToken("fresh-request-token");
+      clearedAdapter.clearRequestToken();
+      await ingestSnapshot(clearedAdapter, [{ path: "pages/index.tsx", content: "source" }]);
+      const restoredSocket = getAdapterTestTransport(clearedAdapter).sockets.at(-1);
+      assertExists(restoredSocket);
+      assertEquals(restoredSocket.protocols, ["bearer-test-token"]);
+      clearedAdapter.dispose();
     });
 
     it("invalidates snapshots and cached file lists across request-authority changes", async () => {
