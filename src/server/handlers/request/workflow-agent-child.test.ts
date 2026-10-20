@@ -214,6 +214,7 @@ describe("workflow agent child protocol", () => {
       assertEquals(persistedText, ["brief"]);
       assertEquals(finalized, {
         status: "completed",
+        final_text: "brief",
         ...(structured ? { output: { category: "billing" } } : {}),
       });
     });
