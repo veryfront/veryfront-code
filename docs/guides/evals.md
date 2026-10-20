@@ -707,6 +707,18 @@ calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
 
+If request construction, transport, response reading, or result processing throws,
+the agent-service adapter adds `record.output.agUi.failure`. Its `stage` is
+`request-build`, `request-fetch`, `response-read`, or `result-processing`.
+`errorName` contains an allowlisted native error name, and `transportCode`
+contains an allowlisted code from the error or its immediate native error cause.
+Unknown values are `redacted`. This metadata excludes error messages, URLs,
+stacks, request bodies, and model content. Existing `record.error` and
+`record.output.agUi.runError` retain their existing behavior and can contain
+sensitive error details. Use the fixed failure metadata when you need a safe
+diagnostic projection. Successful results and ordinary HTTP or AG-UI failures
+do not add this field.
+
 Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
 filters cannot opt into mutation: a requested write case still requires
 `AG_UI_EVAL_WRITE=1`, and an experimental write case requires both
