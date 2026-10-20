@@ -1624,6 +1624,52 @@ describe("push receipt source snapshot", () => {
     }
   });
 
+  it("keeps a resolved dev project ID when its shared-association slug disappears", async () => {
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const saved = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      for (const key of envKeys.slice(2)) Deno.env.delete(key);
+      _resetEnvironmentConfig();
+      await withGitProject(async ({ projectDir }) => {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "stale-slug" }),
+        );
+        await withMockFetch((input, init) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Promise.resolve(Response.json({ error: "not found" }, { status: 404 }));
+        }, async () => {
+          await assertRejects(
+            () =>
+              pushCommand({
+                projectDir,
+                projectSlug: "stale-slug",
+                projectId: "resolved-project-id",
+                quiet: true,
+              }),
+            Error,
+            'Project "resolved-project-id" was not found',
+          );
+        });
+      });
+      assertEquals(requests, ["GET /projects/resolved-project-id"]);
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, saved[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("fails closed when an explicit project ID is missing", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [

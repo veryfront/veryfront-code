@@ -166,6 +166,8 @@ export function parsePushArgs(
 export interface PushOptions {
   /** Internal host transport supplied by an embedding command after project configuration. */
   transport?: typeof fetch;
+  /** Internal immutable target resolved by an embedding command; missing IDs fail closed. */
+  projectId?: string;
   /** Project slug to push to (overrides config) */
   projectSlug?: string;
   /** Project directory (defaults to cwd) */
@@ -1523,6 +1525,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       if (slugOverride) {
         config = { ...config, projectSlug: slugOverride };
         projectReferenceSource = { kind: "argument", name: "--project" };
+      }
+
+      if (options.projectId) {
+        config = { ...config, projectId: options.projectId };
+        projectReferenceSource = { kind: "argument", name: "resolved project ID" };
       }
 
       await preflightSyncState(projectDir);
