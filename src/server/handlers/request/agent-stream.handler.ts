@@ -1721,7 +1721,8 @@ export class AgentStreamHandler extends BaseHandler {
 
         // veryfront-api is the trusted control-plane caller; it resolves
         // authorization before attaching request-scoped project-agent config.
-        const discoverySourceObservation = configSourceObservation
+        const discoverySourceObservation = configSourceObservation &&
+            projectScopedContext.projectId && projectScopedContext.branchId
           ? await observeCachedSource(projectScopedContext.adapter.fs)
           : undefined;
         const runtimeBaseAgent = resolveRuntimeBaseAgent(payload, agent);
@@ -1954,7 +1955,8 @@ export class AgentStreamHandler extends BaseHandler {
               await assertRecoveryActive();
               const configSourceObservation =
                 payload.agentSource.type === "branch" && !payload.sourceProject &&
-                  !payload.managedRecoveryAdmission && currentRunId
+                  !payload.managedRecoveryAdmission && currentRunId &&
+                  requestScopedContext.projectId && requestScopedContext.branchId
                   ? await observeCachedSource(requestScopedContext.adapter.fs)
                   : undefined;
               const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);

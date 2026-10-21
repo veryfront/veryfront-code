@@ -6932,7 +6932,11 @@ for (const target of ["preview_branch", "main_branch"] as const) {
       verifyRunTerminalToken: () => Promise.resolve(true),
       createRuntime: () => ({
         stream: () => {
-          assertEquals(captures, 2, "both adapter snapshots precede model execution");
+          assertEquals(
+            captures,
+            target === "preview_branch" ? 2 : 0,
+            "only qualifying preview snapshots precede model execution",
+          );
           modelCalls++;
           return Promise.resolve(
             new ReadableStream<Uint8Array>({
@@ -6982,6 +6986,7 @@ for (const target of ["preview_branch", "main_branch"] as const) {
         : { defaultBranchName: "main" }),
     };
     registerCachedSourceObserver(ctx.adapter.fs, () => {
+      if (target === "main_branch") throw new Error("ordinary main runs must not hash source");
       captures++;
       return Promise.resolve({
         identity: `branch:test-project:${target === "preview_branch" ? "proof-branch" : "main"}`,
