@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
-import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
+import { observeCachedSource } from "../cached-source-observation.ts";
+import type { VeryfrontFSAdapter } from "./adapter.ts";
+import { createAdapter, getAdapterTestTransport, waitFor } from "./adapter.test-helpers.ts";
 import { clearAllPendingInvalidations } from "./invalidation-state.ts";
 import { runWithRequestContext } from "./request-context.ts";
 
@@ -23,8 +24,6 @@ interface AdapterHarness {
   setRemoteFile: (path: string, file: FetchedFile | null | Error) => void;
   poke: (changedPaths: string[]) => void;
   internals: {
-    sourceSnapshotFiles: ListedFile[] | undefined;
-    sourceSnapshotIdentity: string | undefined;
     clearMemoryCalls: number;
   };
   dispose: () => void;
@@ -92,18 +91,10 @@ async function createHarness(
     return Promise.resolve(remote ?? { path, content: "" });
   };
 
-  const wsManager = (adapter as unknown as {
-    wsManager: {
-      connect: (_projectId: string) => void;
-      handlePokeMessage: (event: MessageEvent) => void;
-      deps: { clearMemoryCaches: () => void };
-    };
-  }).wsManager;
-  wsManager.connect = () => {};
-  const internals = adapter as unknown as AdapterHarness["internals"];
-  internals.clearMemoryCalls = 0;
-  const clearMemoryCaches = wsManager.deps.clearMemoryCaches;
-  wsManager.deps.clearMemoryCaches = () => {
+  const cacheInvalidation = adapter as unknown as { clearMemoryCaches: () => void };
+  const internals = { clearMemoryCalls: 0 };
+  const clearMemoryCaches = cacheInvalidation.clearMemoryCaches.bind(adapter);
+  cacheInvalidation.clearMemoryCaches = () => {
     internals.clearMemoryCalls++;
     clearMemoryCaches();
   };
@@ -127,39 +118,33 @@ async function createHarness(
       remoteFiles.set(path, file);
     },
     poke: (changedPaths) => {
-      wsManager.handlePokeMessage(
-        new MessageEvent("message", {
-          data: JSON.stringify({ type: "poke", data: { changedPaths, branchName: "main" } }),
-        }),
-      );
+      getAdapterTestTransport(adapter).poke({ changedPaths, branchName: "main" });
     },
     internals,
     dispose: () => adapter.dispose(),
   };
 }
 
-type ListingStart = { dataGeneration: number; readSequence: number };
-type PushedListingInternals = {
-  replaceSourceSnapshot: (
-    cacheKey: string,
-    files: ListedFile[],
-    expectedSnapshotVersion?: number,
-    listingStart?: ListingStart,
-  ) => Promise<number | undefined>;
-  wsManager: { deps: { beginSourceListing: () => ListingStart } };
-};
-
-function snapshotPaths(harness: AdapterHarness): string[] {
-  return (harness.internals.sourceSnapshotFiles ?? []).map((file) => file.path).sort();
+async function snapshotPaths(harness: AdapterHarness): Promise<string[]> {
+  return (await observeCachedSource(harness.adapter))?.members.map((file) => file.path).sort() ??
+    [];
 }
 
-function snapshotContent(harness: AdapterHarness, path: string): string | undefined {
-  return harness.internals.sourceSnapshotFiles?.find((file) => file.path === path)?.content;
+async function snapshotHasContent(
+  harness: AdapterHarness,
+  path: string,
+  content: string,
+): Promise<boolean> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  const expected = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return (await observeCachedSource(harness.adapter))?.members.find((file) => file.path === path)
+    ?.sha256 === expected;
 }
 
 /** Wait until every remote file request the pokes scheduled has been patched in. */
 async function waitForPatch(harness: AdapterHarness, path: string, content: string) {
-  await waitFor(() => Promise.resolve(snapshotContent(harness, path) === content), 2_000);
+  await waitFor(async () => await snapshotHasContent(harness, path, content), 2_000);
 }
 
 describe("reserved data pokes", () => {
@@ -191,8 +176,8 @@ describe("reserved data pokes", () => {
       await startup;
 
       assertEquals(harness.listCalls(), 2, "the startup refresh must apply on its first listing");
-      assertEquals(harness.internals.sourceSnapshotIdentity, adapter.getSourceSnapshotIdentity());
-      assertEquals(snapshotContent(harness, NOTE_PATH), "5");
+      assertExists(adapter.getSourceSnapshotIdentity());
+      assertEquals(await snapshotHasContent(harness, NOTE_PATH, "5"), true);
       assertEquals(await adapter.readFile(NOTE_PATH), "5");
       assertExists(await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }));
     } finally {
@@ -222,7 +207,7 @@ describe("reserved data pokes", () => {
       await startup;
 
       assertEquals(harness.listCalls() >= 3, true, "the superseded refresh must list again");
-      assertEquals(snapshotContent(harness, AGENT_SOURCE.path), "export default 2;");
+      assertEquals(await snapshotHasContent(harness, AGENT_SOURCE.path, "export default 2;"), true);
       assertEquals(harness.getFileCalls(), []);
     } finally {
       harness.dispose();
@@ -236,15 +221,15 @@ describe("reserved data pokes", () => {
       harness.setRemoteFile(created, { path: created, content: "new", size: 3, type: "file" });
       harness.poke([created]);
       await waitForPatch(harness, created, "new");
-      assertEquals(snapshotPaths(harness), [AGENT_SOURCE.path, created, NOTE_PATH].sort());
+      assertEquals(await snapshotPaths(harness), [AGENT_SOURCE.path, created, NOTE_PATH].sort());
       assertEquals(await harness.adapter.exists(created), true);
       const createdStat = await harness.adapter.stat(created);
       assertEquals(Number.isNaN(createdStat.mtime?.getTime()), false);
 
       harness.setRemoteFile(NOTE_PATH, null);
       harness.poke([NOTE_PATH]);
-      await waitFor(() => Promise.resolve(!snapshotPaths(harness).includes(NOTE_PATH)), 2_000);
-      assertEquals(snapshotPaths(harness), [AGENT_SOURCE.path, created].sort());
+      await waitFor(async () => !(await snapshotPaths(harness)).includes(NOTE_PATH), 2_000);
+      assertEquals(await snapshotPaths(harness), [AGENT_SOURCE.path, created].sort());
       assertEquals(harness.listCalls(), 1, "only the initial listing may run");
       assertEquals(harness.internals.clearMemoryCalls, 0);
 
@@ -300,24 +285,17 @@ describe("reserved data pokes", () => {
     const harness = await createHarness();
     try {
       const { adapter } = harness;
-      const context = adapter.getContentContext();
-      assertExists(context);
-      const internals = adapter as unknown as PushedListingInternals;
-      const version = adapter.getSourceSnapshotVersion();
-      const listingStart = internals.wsManager.deps.beginSourceListing();
+      const listing = harness.blockNextListing();
+      const refresh = adapter.refreshSourceSnapshot("pushed-listing-test");
+      await listing.started;
 
       harness.setRemoteFile(NOTE_PATH, { path: NOTE_PATH, content: "patched" });
       harness.poke([NOTE_PATH]);
       await waitForPatch(harness, NOTE_PATH, "patched");
 
-      const applied = await internals.replaceSourceSnapshot(
-        buildFileListCacheKey(context),
-        [AGENT_SOURCE, note("listed-before-write")],
-        version,
-        listingStart,
-      );
-      assertExists(applied);
-      assertEquals(snapshotContent(harness, NOTE_PATH), "patched");
+      listing.release([AGENT_SOURCE, note("listed-before-write")]);
+      await refresh;
+      assertEquals(await snapshotHasContent(harness, NOTE_PATH, "patched"), true);
     } finally {
       harness.dispose();
     }
@@ -329,24 +307,19 @@ describe("reserved data pokes", () => {
       const { adapter } = harness;
       const context = adapter.getContentContext();
       assertExists(context);
-      const internals = adapter as unknown as PushedListingInternals & {
+      const internals = adapter as unknown as {
         client: { getFile: (path: string) => Promise<FetchedFile> };
       };
       const reply = Promise.withResolvers<FetchedFile>();
       internals.client.getFile = () => reply.promise;
 
       const lateReply = adapter.refreshReservedDataPaths([NOTE_PATH]);
-      const listingStart = internals.wsManager.deps.beginSourceListing();
-      await internals.replaceSourceSnapshot(
-        buildFileListCacheKey(context),
-        [AGENT_SOURCE, note("v2")],
-        adapter.getSourceSnapshotVersion(),
-        listingStart,
-      );
+      harness.setListing([AGENT_SOURCE, note("v2")]);
+      await adapter.refreshSourceSnapshot("newer-listing-test");
       reply.resolve({ path: NOTE_PATH, content: "v1" });
       await lateReply;
 
-      assertEquals(snapshotContent(harness, NOTE_PATH), "v2");
+      assertEquals(await snapshotHasContent(harness, NOTE_PATH, "v2"), true);
     } finally {
       harness.dispose();
     }
@@ -410,7 +383,7 @@ describe("reserved data pokes", () => {
       older.resolve({ path: NOTE_PATH, content: "older" });
       await first;
 
-      assertEquals(snapshotContent(harness, NOTE_PATH), "newer");
+      assertEquals(await snapshotHasContent(harness, NOTE_PATH, "newer"), true);
     } finally {
       harness.dispose();
     }
@@ -450,7 +423,7 @@ describe("reserved data pokes", () => {
 
       assertEquals(await harness.adapter.refreshReservedDataPaths([NOTE_PATH]), "definition");
       assertEquals(internals.retainedFileList, null);
-      assertEquals(snapshotContent(harness, NOTE_PATH), "patched");
+      assertEquals(await snapshotHasContent(harness, NOTE_PATH, "patched"), true);
     } finally {
       harness.dispose();
     }

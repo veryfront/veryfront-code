@@ -1,4 +1,9 @@
 import {
+  type CachedSourceObservation,
+  observeCachedSource,
+} from "#veryfront/platform/adapters/fs/cached-source-observation.ts";
+import { bindSourceObservationStages } from "#veryfront/internal-agents/source-observation.ts";
+import {
   bindProjectEventWriter,
   createProjectEventWriter,
   getProjectEventPersistenceSchema,
@@ -1687,6 +1692,7 @@ export class AgentStreamHandler extends BaseHandler {
         envVarsForAgent: Record<string, string>,
         requestSourceFingerprint: string | undefined,
         sourceFingerprintOptions: SourceSnapshotFingerprintOptions,
+        configSourceObservation: CachedSourceObservation | undefined,
       ) =>
       async () => {
         await assertRecoveryActive();
@@ -1715,11 +1721,36 @@ export class AgentStreamHandler extends BaseHandler {
 
         // veryfront-api is the trusted control-plane caller; it resolves
         // authorization before attaching request-scoped project-agent config.
+        const discoverySourceObservation = configSourceObservation &&
+            projectScopedContext.projectId && projectScopedContext.branchId
+          ? await observeCachedSource(projectScopedContext.adapter.fs)
+          : undefined;
         const runtimeBaseAgent = resolveRuntimeBaseAgent(payload, agent);
         const runtimeInput = sanitizeRuntimeRunAgentInput(
           toRuntimeRunAgentInput(payload),
           runtimeBaseAgent as Agent,
         );
+        // Preview qualification requires a concrete branch UUID. Main-branch runs
+        // execute normally without private proof and cannot qualify this protocol.
+        if (
+          configSourceObservation && discoverySourceObservation && currentRunId &&
+          projectScopedContext.projectId &&
+          projectScopedContext.branchId && payload.agentSource.type === "branch" &&
+          !payload.sourceProject &&
+          !payload.managedRecoveryAdmission
+        ) {
+          bindSourceObservationStages(runtimeInput, {
+            identity: {
+              projectId: projectScopedContext.projectId,
+              branchId: projectScopedContext.branchId,
+              canonicalRunId: currentRunId,
+              publicRunId: payload.runId,
+              agentId: runtimeBaseAgent.id,
+            },
+            config: configSourceObservation,
+            discovery: discoverySourceObservation,
+          });
+        }
         bindManagedRecoveryInput(runtimeInput, verifiedClaims);
         if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
         if (reservedRecovery) {
@@ -1922,6 +1953,12 @@ export class AgentStreamHandler extends BaseHandler {
                 assertRecoveryActive,
               );
               await assertRecoveryActive();
+              const configSourceObservation =
+                payload.agentSource.type === "branch" && !payload.sourceProject &&
+                  !payload.managedRecoveryAdmission && currentRunId &&
+                  requestScopedContext.projectId && requestScopedContext.branchId
+                  ? await observeCachedSource(requestScopedContext.adapter.fs)
+                  : undefined;
               const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);
               const requestSourceFingerprint = payload.agentSource.type === "branch"
                 ? await requireAgentSourceSnapshotFingerprint(
@@ -1987,6 +2024,7 @@ export class AgentStreamHandler extends BaseHandler {
                     envVarsForAgent,
                     requestSourceFingerprint,
                     sourceFingerprintOptions,
+                    configSourceObservation,
                   ),
                 );
               };

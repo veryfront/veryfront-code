@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -827,33 +828,87 @@ Do work.`,
     assertEquals(settled, true);
   });
 
-  it("execute_skill_script applies its deadline through executor setup and cleanup", async () => {
+  it("execute_skill_script waits for admitted executor cleanup after its deadline", async () => {
+    using time = new FakeTime();
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/run.sh": "sleep 30",
     });
     registerSkill("my-skill", createTestSkill(fsAdapter));
+    let reportStarted!: () => void;
+    const started = new Promise<void>((resolve) => reportStarted = resolve);
+    let reportCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => reportCleanupStarted = resolve);
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => releaseCleanup = resolve);
     let cleanupComplete = false;
     const scriptTool = createExecuteSkillScriptTool({
       executor: {
         execute(input) {
+          assert(input.timeoutMs !== undefined && input.timeoutMs > 0);
+          reportStarted();
           return new Promise((_resolve, reject) => {
             input.abortSignal?.addEventListener("abort", () => {
-              setTimeout(() => {
+              reportCleanupStarted();
+              void cleanup.then(() => {
                 cleanupComplete = true;
                 reject(input.abortSignal?.reason);
-              }, 5);
+              });
             }, { once: true });
           });
         },
       },
     });
+    let settled = false;
+    const execution = scriptTool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+      timeoutMs: 60_000,
+    }, {
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      },
+    }).finally(() => settled = true);
+    const rejection = assertRejects(() => execution, Error, "timed out");
+    await started;
+    time.tick(60_000);
+    await cleanupStarted;
+    await time.runMicrotasks();
+    assertEquals(settled, false);
+    assertEquals(cleanupComplete, false);
+    releaseCleanup();
+    await rejection;
+    assertEquals(cleanupComplete, true);
+    assertEquals(settled, true);
+  });
 
+  it("execute_skill_script denies executor admission when setup exhausts the deadline", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    let boundedReads = 0;
+    fsAdapter.readFileBytesWithinLimit = () => {
+      boundedReads++;
+      return new Promise<Uint8Array>(() => {});
+    };
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let executorCalls = 0;
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          executorCalls++;
+          throw new Error("timed-out setup must not reach the executor");
+        },
+      },
+    });
     await assertRejects(
       () =>
         scriptTool.execute({
           skillId: "my-skill",
           script: "scripts/run.sh",
-          timeoutMs: 20,
+          timeoutMs: 1000,
         }, {
           activeSkillId: "my-skill",
           activeSkillToolAvailability: {
@@ -865,7 +920,8 @@ Do work.`,
       Error,
       "timed out",
     );
-    assertEquals(cleanupComplete, true);
+    assertEquals(boundedReads, 1);
+    assertEquals(executorCalls, 0);
   });
 
   it("execute_skill_script reuses its authoritative script listing", async () => {

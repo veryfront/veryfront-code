@@ -1,3 +1,7 @@
+import {
+  prepareSourceObservationFrames,
+  SOURCE_SNAPSHOT_SSE_EVENT_NAME,
+} from "./source-observation.ts";
 import { getProjectEventWriter } from "./project-event-writer.ts";
 import {
   chainPrivatePromise,
@@ -1519,6 +1523,7 @@ export async function createRuntimeAgentStreamResponse(
     managedRecovery?.writer?.persistRunEvent ?? projectWriter?.persistRunEvent,
   );
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
+  let sourceObservationFrames: readonly string[] = [];
   let shouldEmitProviderReplayCheckpoints = false;
   let childRunToolNames = new Set<string>();
   let controlPlaneInvokeAgentToolNames = new Set<ProviderReplayInvokeAgentToolName>();
@@ -1765,6 +1770,7 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
       },
     };
+    sourceObservationFrames = prepareSourceObservationFrames(input, runtimeAgent.config);
     const inferenceAuthToken = getRuntimeInferenceCredential(input);
     const runtimeOverride = deps.createRuntime?.(runtimeAgent, mergedTools);
     const runtimeDispatch = runtimeOverride
@@ -2041,6 +2047,14 @@ export async function createRuntimeAgentStreamResponse(
             });
             // Replays whatever the first model call already produced, then
             // forwards later steps as they happen. RunStarted stays first.
+            for (let frameIndex = 0; frameIndex < sourceObservationFrames.length; frameIndex++) {
+              const frame = sourceObservationFrames[frameIndex];
+              controller.enqueue(
+                IntrinsicReflectApply(IntrinsicTextEncoderEncode, providerReplayEncoder, [
+                  `event: ${SOURCE_SNAPSHOT_SSE_EVENT_NAME}\ndata: ${frame}\n\n`,
+                ]),
+              );
+            }
             modelCallContextRelay.attach((event) =>
               enqueueIfAttached(MODEL_CALL_CONTEXT_SSE_EVENT_NAME, event)
             );
