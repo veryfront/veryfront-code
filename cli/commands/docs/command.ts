@@ -46,7 +46,7 @@ export async function runDocsCommand(
   let output: string | undefined;
   const remaining: string[] = [];
   for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
+    const arg = args[index]!;
     if (arg === "--output" || arg === "-o") {
       const value = args[++index];
       if (!value || value.startsWith("-")) remaining.push(arg);
