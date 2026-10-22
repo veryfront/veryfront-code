@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { join } from "veryfront/platform/path";
@@ -26,6 +27,11 @@ const ENV_KEYS = [
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "XDG_CONFIG_HOME",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "MISTRAL_API_KEY",
 ] as const;
 let tempDirs: string[] = [];
 
@@ -62,6 +68,8 @@ async function useTempConfigHome(): Promise<string> {
 }
 
 describe("cli/shared/runtime-auth", () => {
+  // A developer's shell may export a provider key; these cases set their own.
+  beforeEach(clearEnv);
   afterEach(async () => {
     _resetEnvironmentConfig();
     __resetEnvLoaderForTests();
@@ -403,6 +411,93 @@ describe("cli/shared/runtime-auth", () => {
 
     assertEquals(await resolveLinkedProjectSlug(linkedDir), "persisted-project");
     assertEquals(await resolveLinkedProjectSlug(unlinkedDir), undefined);
+  });
+
+  describe("with a direct provider key and a stored login", () => {
+    /** Answers the login check with `status`, recording each request path. */
+    function installLoginCheck(status: number): string[] {
+      const paths: string[] = [];
+      installMockFetch(
+        ((input: URL | Request | string, init?: RequestInit) => {
+          const request = new Request(input, init);
+          paths.push(new URL(request.url).pathname);
+          return Promise.resolve(
+            status === 200
+              ? Response.json({ id: "user-1", email: "dev@example.test" })
+              : new Response(null, { status }),
+          );
+        }) as typeof fetch,
+      );
+      return paths;
+    }
+
+    async function storedLoginProject(): Promise<string> {
+      await useTempConfigHome();
+      await saveToken("stored-token");
+      const projectDir = await makeTempDir({ prefix: "vf-runtime-auth-direct-" });
+      tempDirs.push(projectDir);
+      return projectDir;
+    }
+
+    afterEach(restoreMockFetch);
+
+    it("drops a login the API rejects, so runs use the provider key", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context, {});
+      assertEquals(paths, ["/me"]);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
+      // The login stays stored; only this run stops using it.
+      assertEquals(await readToken(), "stored-token");
+    });
+
+    it("keeps a login the API accepts", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installLoginCheck(200);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, "stored-token");
+      assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
+    });
+
+    it("keeps a login it cannot check", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installLoginCheck(503);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, "stored-token");
+    });
+
+    it("keeps a rejected login, unchecked, when no provider key can serve runs", async () => {
+      const projectDir = await storedLoginProject();
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, "stored-token");
+      assertEquals(paths, []);
+    });
+
+    it("keeps a login when the service layer is chosen explicitly", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, "stored-token");
+      assertEquals(paths, []);
+    });
   });
 
   it("does not inject project or service-layer auth without a token", async () => {

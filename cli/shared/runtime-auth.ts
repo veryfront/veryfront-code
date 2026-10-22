@@ -9,8 +9,14 @@ import {
   markProcessEnvSource,
 } from "veryfront/utils/env-loader";
 import { join } from "veryfront/platform/path";
-import { DEFAULT_API_URL, isSameApiEndpoint, resolveRestApiBaseUrl } from "./constants.ts";
 import {
+  DEFAULT_API_URL,
+  getApiUrl,
+  isSameApiEndpoint,
+  resolveRestApiBaseUrl,
+} from "./constants.ts";
+import {
+  type ApiCredentialCandidate,
   type ApiTokenSource,
   assertApiUrlAcceptsNewCredential,
   readConfigFile,
@@ -18,6 +24,8 @@ import {
   resolveApiUrlTrust,
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
+import { createCloudOnboardingTransport } from "./cloud-onboarding-transport.ts";
+import { validateCredential } from "../auth/login.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -173,26 +181,67 @@ export async function applyQualifiedRuntimeAuth(
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
   clearStaleRuntimeAuth(staleConfigBase, staleConfigToken);
-  const candidateApiBaseUrl = runtimeApiBaseUrl(candidate?.validationEnv.apiBaseUrl);
+  const runtimeCandidate = await dropRejectedStoredLogin(candidate);
+  const candidateApiBaseUrl = runtimeApiBaseUrl(runtimeCandidate?.validationEnv.apiBaseUrl);
   const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
     isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
     (apiBaseSource.source === "unset" || staleConfigBase) && env.apiUrl === undefined;
   const context = await applyRuntimeAuthContext({
-    apiToken: candidate?.apiToken ?? null,
-    apiTokenSource: candidate?.apiTokenSource,
+    apiToken: runtimeCandidate?.apiToken ?? null,
+    apiTokenSource: runtimeCandidate?.apiTokenSource,
     apiBaseUrl: preservesImplicitDefault ? undefined : candidateApiBaseUrl,
     linkedProjectSlug,
   });
-  markTrustedRuntimeEndpoint(context, trust, candidate?.apiTokenSource, projectDir);
+  markTrustedRuntimeEndpoint(context, trust, runtimeCandidate?.apiTokenSource, projectDir);
   updateRuntimeAuthProvenance(
     apiBaseSource.source,
-    candidate?.apiTokenSource,
+    runtimeCandidate?.apiTokenSource,
     configFile?.apiUrl,
     configPath,
-    candidate !== undefined,
+    runtimeCandidate !== undefined,
   );
   refreshEnvironmentConfig();
   return context;
+}
+
+const DIRECT_PROVIDER_KEYS = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "MISTRAL_API_KEY",
+] as const;
+
+/** Upper bound on the stored-login check, so a slow API cannot stall startup. */
+const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
+
+/**
+ * Drop a stored login the API rejects when a direct provider key can serve
+ * inference instead. Cloud would refuse every run anyway, and keeping the
+ * login routes runs with no model through it. A login that is valid, cannot
+ * be checked, or was chosen explicitly (an exported token or service layer)
+ * is kept, and so is any login when no direct key exists.
+ */
+async function dropRejectedStoredLogin(
+  candidate: ApiCredentialCandidate | undefined,
+): Promise<ApiCredentialCandidate | undefined> {
+  if (
+    candidate?.apiTokenSource !== "token-store" ||
+    normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER")) ||
+    !DIRECT_PROVIDER_KEYS.some((key) => normalizeEnvValue(getEnv(key)))
+  ) {
+    return candidate;
+  }
+  try {
+    const identity = await validateCredential(candidate.apiToken, candidate.validationEnv, {
+      throwOnCredentialValidationUnavailable: true,
+      timeoutMs: STORED_LOGIN_CHECK_TIMEOUT_MS,
+      transport: createCloudOnboardingTransport(getApiUrl(candidate.validationEnv)),
+    });
+    return identity ? candidate : undefined;
+  } catch {
+    return candidate;
+  }
 }
 
 function updateRuntimeAuthProvenance(
