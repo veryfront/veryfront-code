@@ -18,13 +18,15 @@ export default function WorkflowDetail(): React.JSX.Element {
   const runId = params.id ?? ''
   const { run, pendingApprovals, isLoading, refresh } = useWorkflow({ runId })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
   const pendingApproval = pendingApprovals[0]
 
   async function handleApproval(approvalId: string, approved: boolean) {
     setIsSubmitting(true)
+    setApprovalError(null)
     try {
       const endpoint = `/api/workflows/runs/${runId}/approvals/${approvalId}`
-      await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         // CSRF is enforced in every environment, so this POST has to echo the
         // configured CSRF cookie back or the server answers 403.
@@ -33,6 +35,10 @@ export default function WorkflowDetail(): React.JSX.Element {
         }),
         body: JSON.stringify({ approved, approver: 'user' }),
       })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { message?: string }
+        setApprovalError(body.message ?? `Approval failed with HTTP ${response.status}`)
+      }
       await refresh()
     } finally {
       setIsSubmitting(false)
@@ -100,6 +106,9 @@ export default function WorkflowDetail(): React.JSX.Element {
                 Reject
               </button>
             </div>
+            {approvalError && (
+              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{approvalError}</p>
+            )}
           </div>
         )}
       </div>

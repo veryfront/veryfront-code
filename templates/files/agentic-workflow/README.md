@@ -30,4 +30,5 @@ project to Veryfront Cloud. Runs are kept in memory and reset when the server
 restarts.
 
 This starter is not production-ready. Every request acts as one local user, so
-add authentication in `app/api/workflows/[...path]/route.ts` before deploying.
+anyone who can reach the app can start and approve runs. Add authentication in
+`app/api/workflows/[...path]/route.ts` before deploying.

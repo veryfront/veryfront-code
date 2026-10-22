@@ -163,6 +163,26 @@ describe("agentic-workflow template integration", {
         assertEquals(completed.status, "completed");
         assertEquals(completed.pendingApprovals, []);
         assertEquals(completed.nodeStates.publish?.status, "completed");
+
+        const rejectStart = await postJson(baseUrl, "/api/workflows/content-pipeline/start", {
+          input: { topic: "Kelp" },
+        });
+        const { runId: rejectedRunId } = await rejectStart.json() as { runId: string };
+        const gated = await waitForRun(baseUrl, rejectedRunId, (run) => run.status !== "running");
+        const rejectResponse = await postJson(
+          baseUrl,
+          `/api/workflows/runs/${rejectedRunId}/approvals/${gated.pendingApprovals[0]!.id}`,
+          { approved: false, approver: "user" },
+        );
+        assertEquals(rejectResponse.status, 200);
+
+        const rejected = await waitForRun(
+          baseUrl,
+          rejectedRunId,
+          (run) => run.status !== "waiting",
+        );
+        assertEquals(rejected.status, "failed");
+        assertEquals(rejected.nodeStates.publish, undefined);
       });
     } finally {
       unregister();
