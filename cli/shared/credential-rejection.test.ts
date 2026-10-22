@@ -39,10 +39,10 @@ describe("cli/shared/credential-rejection", () => {
     assertEquals(urls, [`${API_URL}/projects?limit=1`]);
   });
 
-  it("joins an API URL that ends in a slash without doubling it", async () => {
+  it("joins an API URL that ends in slashes without doubling them", async () => {
     const { transport, urls } = answer(401);
 
-    await isCredentialRejected("login-token", `${API_URL}/`, transport, 5_000);
+    await isCredentialRejected("login-token", `${API_URL}//`, transport, 5_000);
 
     assertEquals(urls, [`${API_URL}/me`]);
   });

@@ -26,9 +26,10 @@ export async function isCredentialRejected(
   transport: typeof fetch,
   timeoutMs: number,
 ): Promise<boolean> {
-  const base = applyIntrinsic(stringEndsWith, apiUrl, ["/"])
-    ? applyIntrinsic(stringSlice, apiUrl, [0, -1]) as string
-    : apiUrl;
+  let base = apiUrl;
+  while (applyIntrinsic(stringEndsWith, base, ["/"])) {
+    base = applyIntrinsic(stringSlice, base, [0, -1]) as string;
+  }
   const path = isApiKeyToken(apiToken) ? "/projects?limit=1" : "/me";
   const headers = objectCreate(null) as Record<string, string>;
   headers.Authorization = `Bearer ${apiToken}`;
