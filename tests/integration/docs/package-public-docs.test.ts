@@ -1,3 +1,4 @@
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import path from "node:path";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
 import {
@@ -9,7 +10,7 @@ import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
 async function fixture(
   run: (root: string, repository: string, revision: string) => Promise<void>,
 ) {
-  const root = await Deno.makeTempDir({ prefix: "docs-package-test-" });
+  const root = await makeTempDirWithOptions({ prefix: "docs-package-test-" });
   const repository = path.join(root, "repo");
   async function command(args: string[]) {
     const result = await new Deno.Command("git", {

@@ -1,10 +1,11 @@
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { assertRejects, assertThrows } from "#std/assert";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { releaseDocsInputs } from "../../../scripts/docs/release-inputs.ts";
 
 Deno.test("generated release inputs require an exact fingerprint and cannot authorize neighboring files", async () => {
-  const repository = await Deno.realPath(await Deno.makeTempDir());
+  const repository = await Deno.realPath(await makeTempDirWithOptions());
   try {
     const git = async (...args: string[]) => {
       const result = await new Deno.Command("git", {

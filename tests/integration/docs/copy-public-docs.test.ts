@@ -1,11 +1,15 @@
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { join } from "node:path";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import { copyPublicDocs, PUBLIC_DOC_ROOTS } from "../../../scripts/build/copy-public-docs.ts";
+import {
+  copyPublicDocs,
+  PUBLIC_DOC_ROOTS,
+} from "../../../scripts/build/copy-public-docs.ts";
 
 async function fixture(
   run: (root: string, pkg: string) => Promise<void>,
 ): Promise<void> {
-  const root = await Deno.makeTempDir({ prefix: "public-docs-test-" });
+  const root = await makeTempDirWithOptions({ prefix: "public-docs-test-" });
   try {
     for (const directory of [...PUBLIC_DOC_ROOTS, "architecture"]) {
       await Deno.mkdir(join(root, "docs", directory), { recursive: true });
@@ -68,7 +72,9 @@ Deno.test("packages public pages with a versioned task index and excludes privat
     assertEquals(manifest.sources[0].product, "code");
     assertEquals(manifest.sources[0].dirty, true);
     assertEquals(
-      manifest.files.some((file: { path: string }) => file.path === "config.json"),
+      manifest.files.some((file: { path: string }) =>
+        file.path === "config.json"
+      ),
       true,
     );
     assertEquals(

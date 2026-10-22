@@ -1,6 +1,13 @@
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals } from "#std/assert";
-import { DOCUMENTATION_URL, runDocsCommand } from "../../../cli/commands/docs/command.ts";
-import { earlyDocsArguments, parsedDocsArguments } from "../../../cli/commands/docs/arguments.ts";
+import {
+  DOCUMENTATION_URL,
+  runDocsCommand,
+} from "../../../cli/commands/docs/command.ts";
+import {
+  earlyDocsArguments,
+  parsedDocsArguments,
+} from "../../../cli/commands/docs/arguments.ts";
 
 function capture(
   open: (url: string) => Promise<void> = () => Promise.resolve(),
@@ -43,7 +50,9 @@ Deno.test("docs keeps global prefixes and router options available for validatio
 });
 
 Deno.test("global-prefixed docs runs without reading broken application configuration", async () => {
-  const directory = await Deno.makeTempDir({ prefix: "docs-prefixed-cli-" });
+  const directory = await makeTempDirWithOptions({
+    prefix: "docs-prefixed-cli-",
+  });
   try {
     await Deno.writeTextFile(
       `${directory}/veryfront.config.ts`,
@@ -147,7 +156,9 @@ Deno.test("docs prints its destination and opens the fixed public URL", async ()
 });
 
 Deno.test("docs keeps a usable URL and reports failed browser launches", async () => {
-  const { deps, printed, warnings } = capture(() => Promise.reject(new Error("missing opener")));
+  const { deps, printed, warnings } = capture(() =>
+    Promise.reject(new Error("missing opener"))
+  );
   assertEquals(await runDocsCommand([], deps), 0);
   assertEquals(printed, [DOCUMENTATION_URL]);
   assertEquals(warnings.length, 1);
@@ -166,7 +177,7 @@ Deno.test("docs JSON returns the existing success envelope without opening a bro
 });
 
 Deno.test("docs supports the global JSON alias and output destination", async () => {
-  const root = await Deno.makeTempDir();
+  const root = await makeTempDirWithOptions();
   try {
     const { deps, printed } = capture(() => {
       throw new Error("must not launch");
@@ -183,7 +194,7 @@ Deno.test("docs supports the global JSON alias and output destination", async ()
 });
 
 Deno.test("docs writes its plain URL when an output destination is requested", async () => {
-  const root = await Deno.makeTempDir({ prefix: "docs-url-output-" });
+  const root = await makeTempDirWithOptions({ prefix: "docs-url-output-" });
   try {
     const { deps } = capture();
     assertEquals(
@@ -213,7 +224,7 @@ Deno.test("docs preserves global noninteractive flags and version reporting", as
 });
 
 Deno.test("docs reports output-file failures as JSON without retrying the destination", async () => {
-  const root = await Deno.makeTempDir();
+  const root = await makeTempDirWithOptions();
   try {
     await Deno.writeTextFile(`${root}/occupied`, "file");
     const { deps, printed } = capture(() => {
