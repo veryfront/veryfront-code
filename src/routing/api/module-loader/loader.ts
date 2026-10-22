@@ -119,9 +119,10 @@ export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRo
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
+        // The reason, not the error: its stack names host-absolute paths.
         logger.error(
           `Failed to load API handler ${projectModuleLabel(modulePath, projectDir)}:`,
-          error,
+          { reason: redactAbsolutePaths(errorMsg, projectDir) },
         );
         throw toError(
           createError({
@@ -178,7 +179,7 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(
           `Failed to prepare isolated API handler ${projectModuleLabel(modulePath, projectDir)}:`,
-          error,
+          { reason: redactAbsolutePaths(errorMsg, projectDir) },
         );
         throw toError(
           createError({
@@ -1902,7 +1903,7 @@ function redactAbsolutePaths(text: string, projectDir: string): string {
 
 /** A remote module by its origin and path, without credentials or query. */
 function buildLocationLabel(file: string, projectDir: string, workingDir: string): string {
-  if (/^https?:\/\//.test(file)) {
+  if (/^https?:\/\//i.test(file)) {
     try {
       const url = new URL(file);
       return `${url.origin}${url.pathname}`;

@@ -36,7 +36,7 @@ import {
 import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { cwd, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -2829,7 +2829,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       }
       assertMatch(error.message, /(^|\s)lib\/lookup\.ts:1:66 reads `c\[k\]`/);
       assertEquals(error.message.includes(tmpDir), false, error.message);
-      assertEquals(logged.filter((line) => line.includes(tmpDir)), []);
+      // Nor a stack frame naming the host checkout.
+      assertEquals(
+        logged.filter((line) => line.includes(tmpDir) || line.includes(cwd())),
+        [],
+      );
     });
   }
 
@@ -2872,6 +2876,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
     assertEquals(
       failure("http-url:https://user:secret@cdn.example/lib/mod.ts?token=<TOKEN>"),
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+    );
+    assertEquals(
+      failure("http-url:HTTPS://cdn.example/lib/mod.ts?token=<TOKEN>"),
       "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
     );
     assertEquals(
