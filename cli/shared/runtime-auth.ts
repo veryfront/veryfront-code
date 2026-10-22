@@ -181,7 +181,7 @@ export async function applyQualifiedRuntimeAuth(
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
   clearStaleRuntimeAuth(staleConfigBase, staleConfigToken);
-  const runtimeCandidate = await dropRejectedStoredLogin(candidate);
+  const runtimeCandidate = await dropRejectedStoredLogin(candidate, linkedProjectSlug);
   const candidateApiBaseUrl = runtimeApiBaseUrl(runtimeCandidate?.validationEnv.apiBaseUrl);
   const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
     isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
@@ -220,13 +220,17 @@ const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
  * inference instead. Cloud would refuse every run anyway, and keeping the
  * login routes runs with no model through it. A login that is valid, cannot
  * be checked, or was chosen explicitly (an exported token or service layer)
- * is kept, and so is any login when no direct key exists.
+ * is kept, and so is any login when no direct key exists or the project is
+ * linked: a linked project runs through Cloud and must prompt a fresh login.
  */
 async function dropRejectedStoredLogin(
   candidate: ApiCredentialCandidate | undefined,
+  linkedProjectSlug: string | undefined,
 ): Promise<ApiCredentialCandidate | undefined> {
   if (
     candidate?.apiTokenSource !== "token-store" ||
+    normalizeEnvValue(linkedProjectSlug) ||
+    normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG")) ||
     normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER")) ||
     !DIRECT_PROVIDER_KEYS.some((key) => normalizeEnvValue(getEnv(key)))
   ) {

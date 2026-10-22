@@ -441,19 +441,46 @@ describe("cli/shared/runtime-auth", () => {
 
     afterEach(restoreMockFetch);
 
-    it("drops a login the API rejects, so runs use the provider key", async () => {
-      const projectDir = await storedLoginProject();
+    for (const key of ["OPENAI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]) {
+      it(`drops a login the API rejects, so runs use ${key}`, async () => {
+        const projectDir = await storedLoginProject();
+        setEnv(key, "<API_KEY>");
+        const paths = installLoginCheck(401);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+
+        assertEquals(context, {});
+        assertEquals(paths, ["/me"]);
+        assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
+        assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
+        // The login stays stored; only this run stops using it.
+        assertEquals(await readToken(), "stored-token");
+      });
+    }
+
+    it("keeps an exported token, unchecked, even when the API would reject it", async () => {
+      await useTempConfigHome();
+      const projectDir = await makeTempDir({ prefix: "vf-runtime-auth-direct-" });
+      tempDirs.push(projectDir);
+      setEnv("VERYFRONT_API_TOKEN", "exported-token");
       setEnv("OPENAI_API_KEY", "<API_KEY>");
       const paths = installLoginCheck(401);
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context, {});
-      assertEquals(paths, ["/me"]);
-      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
-      assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
-      // The login stays stored; only this run stops using it.
-      assertEquals(await readToken(), "stored-token");
+      assertEquals(context.apiToken, "exported-token");
+      assertEquals(paths, []);
+    });
+
+    it("keeps the login of a linked project, which runs through Cloud", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir, "linked-project");
+
+      assertEquals(context.apiToken, "stored-token");
+      assertEquals(paths, []);
     });
 
     it("keeps a login the API accepts", async () => {
