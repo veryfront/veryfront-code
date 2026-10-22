@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "#std/yaml/parse";
+import { prepareRcBuildVersion } from "../ci/prepare-rc-build.ts";
 
 const PUBLIC_ROOTS: Record<string, string[]> = {
   code: ["getting-started", "guides", "concepts", "api-reference"],
@@ -23,7 +24,7 @@ interface PackageDocsOptions {
   revision?: string;
 }
 
-async function git(root: string, args: string[]) {
+async function git(root: string, args: string[], trim = true) {
   const result = await new Deno.Command("git", {
     args: ["-C", root, ...args],
     stdout: "piped",
@@ -32,18 +33,81 @@ async function git(root: string, args: string[]) {
   if (!result.success) {
     throw new Error("Unable to establish documentation source identity");
   }
-  return new TextDecoder().decode(result.stdout).trim();
+  const value = new TextDecoder().decode(result.stdout);
+  return trim ? value.trim() : value;
 }
 
-export async function docsSourceIdentity(repository: string) {
+/** Permit only the existing deterministic RC version preparation, never arbitrary source edits. */
+export async function docsSourceIdentity(
+  repository: string,
+  buildVersion?: string,
+) {
   const root = await Deno.realPath(repository);
   const revision = await git(root, ["rev-parse", "HEAD"]);
-  const dirty = Boolean(
-    await git(root, ["status", "--porcelain", "--untracked-files=all"]),
-  );
+  const status = await git(root, [
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ], false);
+  let dirty = Boolean(status.trim());
+  let versionPreparation: "ci-rc" | undefined;
+  const versionFiles = [
+    "deno.json",
+    "src/utils/version-constant.ts",
+    "scripts/deno.lock",
+  ];
+  const changed = status.trimEnd().split("\n").filter(Boolean);
+  if (
+    dirty && buildVersion &&
+    changed.every((line) =>
+      !line.startsWith("??") && versionFiles.includes(line.slice(3))
+    )
+  ) {
+    const base = new Map<string, string>();
+    for (const file of versionFiles) {
+      base.set(file, await git(root, ["show", `HEAD:${file}`], false));
+    }
+    const manifest = JSON.parse(base.get("deno.json")!);
+    const suffix = typeof manifest.version === "string" &&
+        buildVersion.startsWith(`${manifest.version}.`)
+      ? buildVersion.slice(manifest.version.length + 1)
+      : "";
+    if (/^[1-9]\d*$/.test(suffix) && /^\d+\.\d+\.\d+-/.test(manifest.version)) {
+      const temporary = await Deno.makeTempDir({ prefix: "docs-rc-identity-" });
+      try {
+        for (const [file, source] of base) {
+          await Deno.mkdir(path.dirname(path.join(temporary, file)), {
+            recursive: true,
+          });
+          await Deno.writeTextFile(path.join(temporary, file), source);
+        }
+        await prepareRcBuildVersion({
+          rootDir: temporary,
+          version: buildVersion,
+        });
+        const matches = await Promise.all(
+          versionFiles.map(async (file) =>
+            await Deno.readTextFile(path.join(root, file)) ===
+              await Deno.readTextFile(path.join(temporary, file))
+          ),
+        );
+        if (matches.every(Boolean)) {
+          dirty = false;
+          versionPreparation = "ci-rc";
+        }
+      } finally {
+        await Deno.remove(temporary, { recursive: true });
+      }
+    }
+  }
   const remote = (await git(root, ["remote", "get-url", "origin"]))
     .replace(/^(https?:\/\/)[^/@]+@/, "$1").replace(/\.git$/, "");
-  return { revision, dirty, repository: remote };
+  return {
+    revision,
+    dirty,
+    repository: remote,
+    ...(versionPreparation ? { versionPreparation } : {}),
+  };
 }
 
 /** Publishable content only; the owning product's source and dependencies never enter this package. */

@@ -8,7 +8,9 @@ An agent is a file in `agents/` that exports a system prompt, optional tools,
 optional memory, and optional skills. The runtime auto-discovers it on startup
 and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
-Omit `model` to use `openai/gpt-5.4-nano`, or set `model: "auto"` for runtime selection. Configure the inference credentials described in [Providers](/code/guides/providers).
+For the normal path, omit `model` and let runtime conventions choose: local
+inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project
+context are set.
 
 ## Prerequisites
 
@@ -53,7 +55,9 @@ The file path provides the agent id. For example, `agents/support.md` registers
 `support` and can be invoked through the same project runtime and control-plane
 surfaces as `agents/support.ts`.
 
-## Verify it worked
+A markdown agent can own its skills and tools by using a directory instead of a
+single file. Put the agent definition in `AGENT.md` and colocate its
+capabilities beside it:
 
 ```
 agents/
@@ -924,12 +928,16 @@ claiming trusted replay acceptance.
 
 ## Verify it worked
 
-## Next
+Save the agent file and restart `veryfront dev`. The quickest server-side
+check is a throwaway debug route:
 
-- [Build a chat UI](/code/guides/chat-ui): Connect an interface to the agent route.
-- [Define evals](/code/guides/evals): Test the agent against saved examples.
+```ts
+// app/api/debug/agent/route.ts
+import { getAgent } from "veryfront/agent";
 
-## Related
+export async function GET() {
+  const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
 
   const result = await agent.generate({ input: "Hello" });
   return Response.json({ text: result.text });
@@ -947,3 +955,8 @@ If generation fails, check the dev-server log for agent registration or provider
 errors. If AG-UI routing fails, use the route verification in
 [Create agent](../getting-started/create-agent.md). A healthy AG-UI stream ends
 with a `RunFinished` event.
+
+## Next
+
+- [Build a chat UI](/code/guides/chat-ui): Connect an interface to the agent route.
+- [Define evals](/code/guides/evals): Test the agent against saved examples.

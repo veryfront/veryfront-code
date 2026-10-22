@@ -1,6 +1,10 @@
 import path from "node:path";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import { packagePublicDocs } from "./package-public-docs.ts";
+import {
+  docsSourceIdentity,
+  packagePublicDocs,
+} from "./package-public-docs.ts";
+import { prepareRcBuildVersion } from "../ci/prepare-rc-build.ts";
 
 async function fixture(
   run: (root: string, repository: string, revision: string) => Promise<void>,
@@ -169,6 +173,79 @@ Deno.test("release packaging rejects dirty/unpinned sources, symlinks, and outpu
       () => packagePublicDocs({ ...options, mode: "local" }),
       Error,
       "symlinks",
+    );
+  });
+});
+
+Deno.test("Code docs accept only the exact existing RC metadata transformation", async () => {
+  await fixture(async (_root, repository) => {
+    await Deno.mkdir(path.join(repository, "src/utils"), { recursive: true });
+    await Deno.mkdir(path.join(repository, "scripts"));
+    await Deno.writeTextFile(
+      path.join(repository, "deno.json"),
+      JSON.stringify({ name: "@fixture/core", version: "0.1.0-rc" }, null, 2) +
+        "\n",
+    );
+    await Deno.writeTextFile(
+      path.join(repository, "src/utils/version-constant.ts"),
+      'export const VERSION = "0.1.0-rc";\n',
+    );
+    await Deno.writeTextFile(
+      path.join(repository, "scripts/deno.lock"),
+      JSON.stringify(
+        {
+          version: "5",
+          workspace: { links: { "jsr:@fixture/core@0.1.0-rc": "." } },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    for (
+      const args of [["add", "."], [
+        "-c",
+        "user.name=Docs fixture",
+        "-c",
+        "user.email=docs@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "version fixture",
+      ]]
+    ) {
+      const result = await new Deno.Command("git", {
+        args: ["-C", repository, ...args],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.success, true);
+    }
+    await prepareRcBuildVersion({
+      rootDir: repository,
+      version: "0.1.0-rc.42",
+    });
+    const identity = await docsSourceIdentity(repository, "0.1.0-rc.42");
+    assertEquals(identity.dirty, false);
+    assertEquals(identity.versionPreparation, "ci-rc");
+    const manifest = path.join(repository, "deno.json");
+    const source = await Deno.readTextFile(manifest);
+    await Deno.writeTextFile(
+      manifest,
+      source.replace('"name": "@fixture/core"', '"name": "@fixture/other"'),
+    );
+    assertEquals(
+      (await docsSourceIdentity(repository, "0.1.0-rc.42")).dirty,
+      true,
+    );
+    await Deno.writeTextFile(manifest, source);
+    await Deno.writeTextFile(
+      path.join(repository, "src/changed.ts"),
+      "export const changed = true;\n",
+    );
+    assertEquals(
+      (await docsSourceIdentity(repository, "0.1.0-rc.42")).dirty,
+      true,
     );
   });
 });

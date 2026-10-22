@@ -204,7 +204,6 @@ The `allowed-tools` field (also accepted as `allowed_tools`) records tool pre-ap
 # Exact tool IDs
 allowed_tools: veryfront__load_skill veryfront__load_skill_reference veryfront__execute_skill_script
 
-When an agent uses a skill, the flow is:
 
 # Omit this optional metadata when it is not needed
 ```

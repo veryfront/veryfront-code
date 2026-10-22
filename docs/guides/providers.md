@@ -15,7 +15,8 @@ is developed or deployed.
 | Run inference inside the app      | Embedded ONNX inference    | [Embedded ONNX inference](#embedded-onnx-inference)        |
 
 An agent's `model` is a `"provider/model"` string. Omit it to use the default
-`openai/gpt-5.4-nano` model with the inference credentials available at runtime.
+`mistral/mistral-small-2503` through Veryfront Cloud. Without Cloud context,
+the default remains `openai/gpt-5-nano` with your direct provider key.
 
 ## Prerequisites
 
@@ -45,7 +46,7 @@ unchanged, and application-registered direct providers retain their own route.
 
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
 | -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
-| Omitted                                | Routes the default model through the AI Gateway     | Uses the direct provider                                 |
+| Omitted                                | Uses the Cloud default through the AI Gateway       | Uses the direct default only without Cloud context       |
 | `"auto"`                               | Prefers the AI Gateway                              | Uses the AI Gateway when Cloud context is also available |
 | `"veryfront-cloud/<provider>/<model>"` | Uses the AI Gateway                                 | Uses the AI Gateway                                      |
 | `"<provider>/<model>"`                 | Uses the AI Gateway when no direct key is available | Uses the direct provider                                 |
@@ -62,8 +63,8 @@ export default agent({
 });
 ```
 
-With `model: "auto"`, `VERYFRONT_DEFAULT_MODEL` can select another gateway
-default. It is optional.
+`VERYFRONT_DEFAULT_MODEL` can select another gateway default for omitted
+models and `model: "auto"`. It is optional.
 
 ### Call the AI Gateway from other clients
 
@@ -174,7 +175,7 @@ selected provider and model.
 
 ## Runtime conventions (recommended)
 
-For most projects, omit `model` entirely to use `openai/gpt-5.4-nano`. Set
+For most projects, omit `model` to use the default for your inference path. Set
 `model: "auto"` only when you want runtime conventions to choose the backend:
 
 ```ts
@@ -261,7 +262,7 @@ export default agent({
   model: "openai/gpt-5.5", // OpenAI
   // model: "anthropic/claude-sonnet-4-6", // Anthropic
   // model: "google/gemini-3.5-flash",     // Google
-  // model: "veryfront-cloud/mistral/mistral-large-2512", // Mistral through AI Gateway
+  // model: "veryfront-cloud/mistral/mistral-small-2503", // Mistral through AI Gateway
   system: "You are a helpful assistant.",
 });
 ```
@@ -357,7 +358,7 @@ Agents reference models as `"provider/model"`. The framework splits on the first
 ```ts
 // Veryfront Cloud explicit override
 agent({ model: "veryfront-cloud/openai/gpt-5.5" });
-agent({ model: "veryfront-cloud/mistral/mistral-large-2512" });
+agent({ model: "veryfront-cloud/mistral/mistral-small-2503" });
 
 // Direct provider override
 agent({ model: "openai/gpt-5.5" });

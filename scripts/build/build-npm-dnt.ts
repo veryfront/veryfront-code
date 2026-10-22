@@ -365,7 +365,7 @@ await build({
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 		await Deno.copyFile("./NOTICE", "./npm/NOTICE");
 		await Deno.copyFile("./README.md", "./npm/README.md");
-		await copyPublicDocs(Deno.cwd(), "./npm", version, await docsSourceIdentity(Deno.cwd()));
+		await copyPublicDocs(Deno.cwd(), "./npm", version, await docsSourceIdentity(Deno.cwd(), version));
 
 		// Copy base tsconfig for user projects to extend
 		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
