@@ -38,9 +38,7 @@ export async function runDocsCommand(
   });
   args = [
     ...args,
-    ...[...booleanFlags].filter(([, enabled]) => enabled).map(([name]) =>
-      `--${name}`
-    ),
+    ...[...booleanFlags].filter(([, enabled]) => enabled).map(([name]) => `--${name}`),
   ];
   const json = args.includes("--json") || args.includes("-j");
   let output: string | undefined;
@@ -84,9 +82,7 @@ export async function runDocsCommand(
     return true;
   }
   const invalid = remaining.find((arg) => {
-    const flag = arg.startsWith("--")
-      ? arg.slice(2)
-      : CLI_FLAG_ALIASES[arg.slice(1)];
+    const flag = arg.startsWith("--") ? arg.slice(2) : CLI_FLAG_ALIASES[arg.slice(1)];
     return !flag || !GLOBAL_BOOLEAN_FLAGS.has(flag);
   });
   if (invalid) {

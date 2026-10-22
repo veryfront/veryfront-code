@@ -147,9 +147,7 @@ Deno.test("docs prints its destination and opens the fixed public URL", async ()
 });
 
 Deno.test("docs keeps a usable URL and reports failed browser launches", async () => {
-  const { deps, printed, warnings } = capture(() =>
-    Promise.reject(new Error("missing opener"))
-  );
+  const { deps, printed, warnings } = capture(() => Promise.reject(new Error("missing opener")));
   assertEquals(await runDocsCommand([], deps), 0);
   assertEquals(printed, [DOCUMENTATION_URL]);
   assertEquals(warnings.length, 1);
