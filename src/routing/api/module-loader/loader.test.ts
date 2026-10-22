@@ -2785,6 +2785,35 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("names an imported module's unresolved computed read by its project-relative path", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "app", "api", "route.ts");
+    await fs.mkdir(join(tmpDir, "app", "api"), { recursive: true });
+    await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "lookup.ts"),
+      `export const lookup = (c: Record<string, unknown>, k: string) => c[k];\n`,
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { lookup } from "../../lib/lookup.ts";`,
+        `export const GET = () => new Response(String(lookup({}, "a")));`,
+      ].join("\n"),
+    );
+
+    const error = await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "lib/lookup.ts:1:66 reads `c[k]`",
+    );
+    assertEquals(
+      error.message.includes(tmpDir),
+      false,
+      "an absolute path must not reach the error",
+    );
+  });
+
   it("rejects Function-created imports before direct module evaluation", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "function-remote-route.ts");

@@ -74,7 +74,7 @@ async function validateRemoteModuleSource(
   // A fetched module is ESM; a top-level `return` must not parse as CommonJS.
   const scan = await validateHTTPImports(contents, allowedHosts, {
     commonJS: false,
-    path: moduleUrl,
+    path: describeRemoteModuleUrl(moduleUrl),
   });
   if (scan.localWorkerSpecifiers.length > 0) {
     throw new TypeError(
