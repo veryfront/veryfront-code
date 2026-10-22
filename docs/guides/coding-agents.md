@@ -1,7 +1,7 @@
 ---
 title: "Coding agents"
 description: "Connect Claude Code, Cursor, Codex, and other MCP-aware coding agents to the Veryfront dev server."
-order: 34
+order: 470
 ---
 
 Connect Claude Code, Cursor, Codex, or any MCP-aware coding agent to your Veryfront dev server. The agent gets a focused dev toolset: live errors and logs, route listing, route preview, scaffolding, test and lint runners.

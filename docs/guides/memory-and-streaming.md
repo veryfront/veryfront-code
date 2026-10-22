@@ -1,7 +1,7 @@
 ---
 title: "Memory and streaming"
 description: "Conversation memory strategies and streaming responses."
-order: 22
+order: 180
 ---
 
 Agents are stateless by default: each `stream()` / `generate()` call gets the

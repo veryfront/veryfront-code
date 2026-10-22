@@ -1,17 +1,55 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename } from "#veryfront/compat/path";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  deleteEnv,
+  getHostEnv,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
 import {
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
-import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
+import {
+  MINIMUM_DENO_VERSION,
+  MINIMUM_NODE_VERSION,
+} from "../../scripts/build/runtime-support.ts";
 
 const repoRoot = new URL("../../", import.meta.url);
 
 describe("guide content contracts", () => {
+  it("keeps the guide index reading sequence aligned with sidebar order", async () => {
+    const index = await Deno.readTextFile(
+      new URL("docs/guides/index.md", repoRoot),
+    );
+    const seen = new Set<string>();
+    let previous = Number.NEGATIVE_INFINITY;
+    for (const link of index.matchAll(/\]\(\.\/([^#)]+\.md)(?:#[^)]*)?\)/g)) {
+      const target = link[1]!;
+      assert(!target.split("/").includes(".."));
+      // Goal-based sections may link a guide again; its first occurrence sets the sequence.
+      if (seen.has(target)) continue;
+      seen.add(target);
+      const guide = await Deno.readTextFile(
+        new URL(`docs/guides/${target}`, repoRoot),
+      );
+      const order = /^order: (\d+)$/m.exec(guide);
+      assert(order, `${target} must declare its sidebar order`);
+      const current = Number(order[1]);
+      assert(
+        current > previous,
+        `${target} must follow the preceding index entry in the sidebar`,
+      );
+      previous = current;
+    }
+    assert(seen.size > 0, "the guide index must list its reading sequence");
+  });
+
   it("uses canonical model tool names in run and delegation guidance", async () => {
     const expected = {
       "docs/guides/multi-agent.md": ["invoke_agent"],
@@ -1586,7 +1624,9 @@ function productionCacheTriggerEnvKeys(source: string): string[] {
   }
 
   const body = source.slice(open, end);
-  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) =>
+    m[1]!
+  );
   assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
   return [...new Set(keys)];
 }

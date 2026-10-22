@@ -1,7 +1,7 @@
 ---
 title: "Build a chat UI"
 description: "Add a preset or custom chat interface with the Veryfront chat components."
-order: 23
+order: 270
 ---
 
 Use this guide to add a chat interface to an AG-UI route. Start with the preset

@@ -1,7 +1,7 @@
 ---
 title: "Recover integration connections"
 description: "Handle denied consent, expired handoffs, expired or revoked connections, and changed connection generations without replaying writes."
-order: 55
+order: 440
 ---
 
 Use this guide when an integration call or connect operation does not succeed.

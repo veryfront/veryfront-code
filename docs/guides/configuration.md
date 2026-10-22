@@ -1,7 +1,7 @@
 ---
 title: "Configuration"
 description: "Override Veryfront conventions with config and environment variables."
-order: 9
+order: 20
 ---
 
 Veryfront follows convention over configuration. Start with the default

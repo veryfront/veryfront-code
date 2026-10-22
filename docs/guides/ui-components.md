@@ -1,7 +1,7 @@
 ---
 title: "UI components"
 description: "Use veryfront/ui - accessible, themeable primitives with a bring-your-own-engine adapter system."
-order: 50
+order: 260
 ---
 
 # UI components

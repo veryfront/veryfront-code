@@ -1,7 +1,7 @@
 ---
 title: "Evals"
 description: "Define and run quality checks for agents and datasets."
-order: 41
+order: 160
 ---
 
 Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to

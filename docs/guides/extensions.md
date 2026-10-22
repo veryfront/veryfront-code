@@ -1,7 +1,7 @@
 ---
 title: "Extensions"
 description: "Understand how extensions add focused capabilities to Veryfront."
-order: 39
+order: 560
 ---
 
 Extensions are factories that add focused capabilities to a Veryfront project:

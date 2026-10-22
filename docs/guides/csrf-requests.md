@@ -1,7 +1,7 @@
 ---
 title: "Send authenticated browser mutations"
 description: "Include CSRF headers in custom browser requests and configure route-specific CSRF behavior."
-order: 17
+order: 110
 ---
 
 Use the CSRF helper when your application sends a custom request that changes server state. Authentication identifies the caller; the CSRF check validates the browser request token.

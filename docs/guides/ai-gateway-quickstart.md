@@ -1,7 +1,7 @@
 ---
 title: "AI Gateway quickstart"
 description: "Connect a coding harness or an AI SDK to the Veryfront Cloud AI Gateway with one snippet."
-order: 58
+order: 140
 ---
 
 Point a coding harness or an AI SDK at the Veryfront Cloud AI Gateway with a

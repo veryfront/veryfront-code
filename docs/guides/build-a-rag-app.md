@@ -1,7 +1,7 @@
 ---
 title: "Build a RAG app"
 description: "Create a document Q&A app with uploads, embeddings, retrieval, and streamed answers."
-order: 24
+order: 200
 ---
 
 Use RAG when an agent needs to answer from your documents instead of only from

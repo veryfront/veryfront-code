@@ -1,7 +1,7 @@
 ---
 title: "Project knowledge"
 description: "Search source-controlled knowledge by manifest metadata or semantic similarity."
-order: 26
+order: 210
 ---
 
 Use `veryfront/knowledge` when an agent, tool, or route needs files from the

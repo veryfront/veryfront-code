@@ -1,7 +1,7 @@
 ---
 title: "Repeat workflow steps"
 description: "Choose a conditional loop, fixed repetition, or per-item workflow step."
-order: 61
+order: 360
 ---
 
 Add repetition to a [working workflow](./workflows.md) when a task must retry a refinement, poll for a result, or process a collection.

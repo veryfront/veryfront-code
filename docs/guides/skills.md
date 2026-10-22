@@ -1,7 +1,7 @@
 ---
 title: "Skills"
 description: "Define project skills with reusable instructions, references, and scripts."
-order: 30
+order: 230
 ---
 
 A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, optional tool pre-approval metadata, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.

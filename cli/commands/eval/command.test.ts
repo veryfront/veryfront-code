@@ -3214,6 +3214,21 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("accepts every policy metric advertised by the model comparison guide", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../../docs/guides/eval-comparison.md", import.meta.url),
+    );
+    const paragraph = /Policy metrics can reference([\s\S]*?)\.\n/.exec(guide)?.[1] ?? "";
+    const metrics = [...paragraph.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+    assertEquals(metrics.length > 0, true, "the guide must list its supported policy metrics");
+    const constraints = Object.fromEntries(metrics.map((metric) => [metric, { max: 1 }]));
+    await withTempDir(async (projectDir) => {
+      await Deno.writeTextFile(`${projectDir}/policy.json`, JSON.stringify({ constraints }));
+      const policy = await loadEvalModelComparisonPolicy(projectDir, "policy.json");
+      assertEquals(policy.constraints, constraints);
+    });
+  });
+
   it("loads model comparison policy files relative to the project directory", async () => {
     const projectDir = await Deno.makeTempDir();
     try {

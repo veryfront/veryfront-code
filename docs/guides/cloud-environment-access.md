@@ -1,7 +1,7 @@
 ---
 title: "Manage Cloud environment access"
 description: "Verify protected environments and make an environment public."
-order: 46
+order: 510
 ---
 
 Veryfront Cloud creates `preview`, `staging`, and `production` environments.

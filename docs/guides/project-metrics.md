@@ -1,7 +1,7 @@
 ---
 title: "Project metrics"
 description: "Emit project-scoped counters, histograms, and gauges from app and eval code."
-order: 42
+order: 170
 ---
 
 Project metrics are custom application and eval measurements that show up in

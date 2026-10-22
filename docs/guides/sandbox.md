@@ -1,7 +1,7 @@
 ---
 title: "Sandbox"
 description: "Run commands and manage files in isolated workspaces."
-order: 37
+order: 480
 ---
 
 A sandbox is an isolated workspace for commands and files. Private always-on sandboxes retain workspace files across runtime restarts. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.

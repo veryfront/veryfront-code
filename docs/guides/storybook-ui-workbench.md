@@ -1,7 +1,7 @@
 ---
 title: "Storybook UI workbench"
 description: "Run and verify the dev-only Storybook workbench for shipped Veryfront UI source."
-order: 43
+order: 540
 ---
 
 This page is for framework contributors working in a `veryfront-code` repository checkout. Run these commands from that checkout, not from an application created with `veryfront init`.

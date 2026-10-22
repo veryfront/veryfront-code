@@ -1,7 +1,7 @@
 ---
 title: "Compare eval runs and models"
 description: "Detect regressions against a saved eval baseline and compare candidate model quality, cost, and latency."
-order: 64
+order: 240
 ---
 
 Compare the same evaluation across a change or model choice. Start with a [working eval](./evals.md) and a reviewed baseline report. Use stable dataset IDs so changed results can be matched to the same examples.
@@ -108,9 +108,7 @@ veryfront eval deep-research \
 ```
 
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
-`groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
-`billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
-`veryfrontChargeUsd`, `veryfrontBilledUsd`, `costCredits`, and `p95Ms`.
+`groundednessScore`, `totalTokens`, `costUsd`, `costCredits`, and `p95Ms`.
 `costUsd` remains a backward-compatible cost objective and prefers gateway
 Veryfront charge when it is available. Use `min`, `max`, and
 `maxRegressionPct` for constraints. Use `weight` with `direction` set to

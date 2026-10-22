@@ -1,7 +1,7 @@
 ---
 title: "Providers"
 description: "Choose and configure model inference for a Veryfront project."
-order: 18
+order: 130
 ---
 
 Every agent needs one inference path. Choose it independently from where the app

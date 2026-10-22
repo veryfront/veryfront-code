@@ -1,7 +1,7 @@
 ---
 title: "Agent service runtime"
 description: "Run Veryfront agents as separately deployed services."
-order: 20
+order: 550
 ---
 
 An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or deployment-owned service telemetry. Use a normal in-app route for everything else.

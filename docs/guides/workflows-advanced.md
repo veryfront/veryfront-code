@@ -1,7 +1,7 @@
 ---
 title: "Extend a workflow"
 description: "Find the guide for repeated steps, large artifacts, and workflow progress interfaces."
-order: 28
+order: 310
 ---
 
 Three patterns that reach past a single-pass DAG: looping until a condition is

@@ -1,7 +1,7 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 19
+order: 120
 ---
 
 An agent is a file in `agents/` that exports a system prompt, optional tools,

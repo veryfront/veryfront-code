@@ -1,7 +1,7 @@
 ---
 title: "Data fetching"
 description: "Server data, static generation, and client-side fetching."
-order: 13
+order: 50
 ---
 
 Veryfront pages can load data three ways: `getServerData` on every request,

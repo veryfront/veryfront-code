@@ -1,7 +1,7 @@
 ---
 title: "Security headers and CSP"
 description: "Configure Content-Security-Policy sources and verify the security headers served by your application."
-order: 11
+order: 90
 ---
 
 Every hosted Veryfront project is served with a Content-Security-Policy and a set of hardening headers. You do not switch them on; they apply in production whether or not you configure anything. What you do configure is the extra origins your own site needs.
