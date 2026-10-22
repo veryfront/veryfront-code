@@ -2931,6 +2931,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         .message.includes("server"),
       false,
     );
+    assertEquals(
+      buildFailure([{ text: "At file://server/share/app/x.ts" }], "/project", "/srv/work")
+        .message,
+      "[API] handler build failed: At x.ts",
+    );
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {

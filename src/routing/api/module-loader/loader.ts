@@ -1905,10 +1905,7 @@ function redactAbsolutePaths(text: string, projectDir: string): string {
   // is caught whole, and only where a path starts: a web URL may contain it.
   const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text
-    .replace(
-      /file:\/\/(\/[^\s'"`(),;]+)/gi,
-      (_url, path: string) => projectModuleLabel(path, projectDir),
-    )
+    .replace(/file:\/\/[^\s'"`(),;]+/gi, (url) => fileUrlLabel(url, projectDir))
     .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
       /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;]+/g,
       // A path another platform calls absolute (a drive or UNC path on POSIX)
@@ -1918,6 +1915,20 @@ function redactAbsolutePaths(text: string, projectDir: string): string {
           ? projectModuleLabel(path, projectDir)
           : path.split(/[\\/]/).pop() ?? "",
     );
+}
+
+/**
+ * A `file:` URL by its project label, whatever its authority: a UNC path
+ * converts to `file://server/share/...`, which must not leak either.
+ */
+function fileUrlLabel(url: string, projectDir: string): string {
+  try {
+    const path = pathHelper.fromFileUrl(url);
+    if (pathHelper.isAbsolute(path)) return projectModuleLabel(path, projectDir);
+  } catch {
+    // Not a path this platform can convert; fall back to the file name.
+  }
+  return url.split(/[\\/]/).pop() ?? "";
 }
 
 /** A remote module by its origin and path, without credentials or query. */
