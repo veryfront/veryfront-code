@@ -1,19 +1,13 @@
-import { readGlobalBooleanFlag } from "../../shared/global-flags.ts";
+import { parseCliArgs } from "../../shared/args.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
 /** Preserve the complete docs command before project/config initialization. */
 export function earlyDocsArguments(args: readonly string[]): string[] | undefined {
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]!;
-    if (arg === "docs") return [...args.slice(0, index), ...args.slice(index + 1)];
-    if (arg === "--output" || arg === "-o") {
-      index++;
-      continue;
-    }
-    if (arg.startsWith("--output=")) continue;
-    if (!readGlobalBooleanFlag(arg) && !arg.startsWith("-")) return undefined;
-  }
-  return undefined;
+  if (parseCliArgs([...args])._[0] !== "docs") return undefined;
+  const index = args.findIndex((argument, position) =>
+    argument === "docs" && parseCliArgs(args.slice(0, position + 1))._[0] === "docs"
+  );
+  return index < 0 ? undefined : [...args.slice(0, index), ...args.slice(index + 1)];
 }
 
 /** The router must forward unknown/malformed options so the command can reject them. */

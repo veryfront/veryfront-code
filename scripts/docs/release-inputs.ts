@@ -9,14 +9,22 @@ export async function releaseDocsInputs(
 ) {
   const root = await Deno.realPath(repository);
   const result = await new Deno.Command("git", {
-    args: ["-C", root, "ls-tree", "-r", "--name-only", "-z", revision],
+    args: ["-C", root, "ls-tree", "-r", "-z", revision],
     stdout: "piped",
     stderr: "piped",
   }).output();
   if (!result.success) {
     throw new Error("Unable to verify release documentation inputs");
   }
-  const tracked = new Set(new TextDecoder().decode(result.stdout).split("\0"));
+  const tracked = new Map(
+    new TextDecoder().decode(result.stdout).split("\0").filter(Boolean).map(
+      (entry) => {
+        const separator = entry.indexOf("\t");
+        const header = entry.slice(0, separator).split(" ");
+        return [entry.slice(separator + 1), header[2]!] as const;
+      },
+    ),
+  );
   // Validate the complete declared generation, including JSON/snippets not copied into
   // a content package. Otherwise a deleted reference can silently shrink a release.
   for (const [relative, expected] of generated) {
@@ -54,8 +62,19 @@ export async function releaseDocsInputs(
           `Generated documentation changed after generation: ${relative}`,
         );
       }
-    } else if (!tracked.has(relative)) {
-      throw new Error(`Untracked release documentation input: ${relative}`);
+    } else {
+      const blob = tracked.get(relative);
+      if (!blob) {
+        throw new Error(`Untracked release documentation input: ${relative}`);
+      }
+      const actual = createHash(blob.length === 64 ? "sha256" : "sha1").update(
+        `blob ${bytes.byteLength}\0`,
+      ).update(bytes).digest("hex");
+      if (actual !== blob) {
+        throw new Error(
+          `Committed documentation changed after source pinning: ${relative}`,
+        );
+      }
     }
   };
 }

@@ -71,8 +71,8 @@ details, see [API reference](../api-reference/index.md).
 | Know what a run stores as input and output | [Run input and output](./run-input-output.md)           |
 | Ingest documents into project knowledge    | [CLI knowledge ingestion](./cli-knowledge-ingestion.md) |
 | Run bounded workflow loops | [Workflow loops](./workflow-loops.md) |
-| Remove terminal workflow runs | [Workflow retention](./workflow-retention.md) |
 | Build workflow controls and progress UI | [Workflow UI](./workflow-ui.md) |
+| Remove terminal workflow runs | [Workflow retention](./workflow-retention.md) |
 
 ## Connect external systems
 

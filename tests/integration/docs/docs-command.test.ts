@@ -28,6 +28,14 @@ Deno.test("docs keeps global prefixes and router options available for validatio
     earlyDocsArguments(["agent", "create", "--name", "docs"]),
     undefined,
   );
+  for (const option of ["--project", "--project-dir", "--branch"]) {
+    assertEquals(earlyDocsArguments([option, "docs", "deploy"]), undefined);
+  }
+  assertEquals(earlyDocsArguments(["--output", "docs", "docs", "--json"]), [
+    "--output",
+    "docs",
+    "--json",
+  ]);
   for (
     const parsed of [{ _: ["docs"], json: true, output: true }, {
       _: ["docs"],

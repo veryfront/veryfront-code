@@ -19,6 +19,9 @@ Deno.test("generated release inputs require an exact fingerprint and cannot auth
       return new TextDecoder().decode(result.stdout).trim();
     };
     await git("init", "-q");
+    const committed = new TextEncoder().encode("Committed reference");
+    await Deno.writeFile(path.join(repository, "committed.md"), committed);
+    await git("add", "committed.md");
     await git(
       "-c",
       "user.name=Fixture",
@@ -46,6 +49,12 @@ Deno.test("generated release inputs require an exact fingerprint and cannot auth
       ]),
     );
     verify(path.join(repository, "docs/public/reference.md"), bytes);
+    verify(path.join(repository, "committed.md"), committed);
+    assertThrows(
+      () => verify(path.join(repository, "committed.md"), bytes),
+      Error,
+      "changed after source pinning",
+    );
     assertThrows(
       () => verify(path.join(repository, "docs/public/private.md"), bytes),
       Error,

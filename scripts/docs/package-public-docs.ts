@@ -43,8 +43,19 @@ async function git(root: string, args: string[], trim = true) {
 export async function docsSourceIdentity(
   repository: string,
   buildVersion?: string,
+  options: { allowLocal?: boolean } = {},
 ) {
   const root = await Deno.realPath(repository);
+  if (options.allowLocal) {
+    try {
+      await git(root, ["rev-parse", "HEAD"]);
+      publicRepositoryUrl(await git(root, ["remote", "get-url", "origin"]));
+    } catch {
+      // Local source archives/mirrors have no publishable provenance. Never
+      // copy their filesystem paths or private remote names into an artifact.
+      return { revision: "", dirty: true, repository: "" };
+    }
+  }
   const revision = await git(root, ["rev-parse", "HEAD"]);
   const status = await git(root, [
     "status",
@@ -383,7 +394,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
         version: options.version,
         ...(catalogRevision ? { catalogSourceRevision: catalogRevision } : {}),
       }],
-      files: records.sort((a, b) => a.path.localeCompare(b.path)),
+      files: records.toSorted((a, b) => a.path.localeCompare(b.path)),
     };
     await Deno.writeTextFile(
       path.join(contentRoot, "manifest.json"),
@@ -413,12 +424,18 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     );
     await Deno.rename(stage, output);
     return { output, pages, revision, dirty };
-  } finally {
+  } catch (error) {
     try {
       await Deno.remove(stage, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    } catch (cleanupError) {
+      if (!(cleanupError instanceof Deno.errors.NotFound)) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Documentation packaging and staging cleanup failed",
+        );
+      }
     }
+    throw error;
   }
 }
 

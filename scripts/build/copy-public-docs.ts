@@ -211,7 +211,7 @@ export async function copyPublicDocs(
             version,
             ...(identity ?? { repository: "", revision: "", dirty: true }),
           }],
-          files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          files: files.toSorted((a, b) => a.path.localeCompare(b.path)),
         },
         null,
         2,

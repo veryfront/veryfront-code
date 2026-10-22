@@ -19,3 +19,20 @@ Deno.test("repository link checks ignore fenced examples while retaining real li
     ]);
   }
 });
+
+Deno.test("repository link checks preserve CRLF prose around long fenced examples", () => {
+  const fence = "`".repeat(4096);
+  const source = [
+    "[Before](./before.md)",
+    fence + "md",
+    "[Example](./missing.md)",
+    fence,
+    "[After](./after.md)",
+  ].join("\r\n");
+  assertEquals(
+    markdownProse(source).split("\n").filter(Boolean).map((line) =>
+      line.trim()
+    ),
+    ["[Before](./before.md)", "[After](./after.md)"],
+  );
+});

@@ -287,3 +287,36 @@ Deno.test("release rejects ignored pages and assets absent from the pinned commi
     assertEquals((await packagePublicDocs(options)).pages, 1);
   });
 });
+
+Deno.test("local npm documentation supports archives and private mirrors without publishing their origins", async () => {
+  const directory = await makeTempDirWithOptions();
+  try {
+    assertEquals(await docsSourceIdentity(directory, undefined, { allowLocal: true }), {
+      revision: "",
+      repository: "",
+      dirty: true,
+    });
+    await assertRejects(() => docsSourceIdentity(directory), Error, "source identity");
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+  await fixture(async (_root, repository) => {
+    const result = await new Deno.Command("git", {
+      args: [
+        "-C",
+        repository,
+        "remote",
+        "set-url",
+        "origin",
+        "ssh://PRIVATE_CANARY@mirror.internal/product",
+      ],
+    }).output();
+    assertEquals(result.success, true);
+    assertEquals(await docsSourceIdentity(repository, undefined, { allowLocal: true }), {
+      revision: "",
+      repository: "",
+      dirty: true,
+    });
+    await assertRejects(() => docsSourceIdentity(repository), Error, "GitHub repository origin");
+  });
+});
