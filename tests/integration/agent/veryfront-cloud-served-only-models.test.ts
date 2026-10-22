@@ -376,6 +376,95 @@ describe("served-only models from a cold process", () => {
       await runtime.cleanup?.();
     });
   });
+
+  describe("with an expired ambient login", () => {
+    // The platform refuses every request, as it does for an expired session.
+    function installExpiredSession(): string[] {
+      const catalogRequests: string[] = [];
+      installMockFetch(
+        ((input: URL | Request | string, init?: RequestInit) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname === "/ai/models") catalogRequests.push(request.url);
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch,
+      );
+      return catalogRequests;
+    }
+
+    function resolveWith(model: string) {
+      const hostModel = { provider: "test", modelId: model } as ModelRuntime;
+      return resolveAgentModelTransport({
+        agentId: "agent-1",
+        config: {
+          model,
+          system: "You are concise.",
+          resolveModelTransport: () => ({ model: hostModel }),
+        },
+        context: undefined,
+        modelOverride: undefined,
+        mode: "generate",
+      });
+    }
+
+    beforeEach(() => {
+      setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+      setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+    });
+
+    afterEach(() => {
+      deleteEnv("OPENAI_API_KEY");
+    });
+
+    afterEach(() => {
+      deleteEnv("ANTHROPIC_API_KEY");
+    });
+
+    for (
+      const [model, resolved, keyName] of [
+        ["openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "OPENAI_API_KEY"],
+        ["sonnet", "anthropic/claude-sonnet-4-6", "ANTHROPIC_API_KEY"],
+      ] as const
+    ) {
+      it(`requests no catalog for ${model}, which a provider key serves`, async () => {
+        setEnv(keyName, "<API_KEY>");
+        const catalogRequests = installExpiredSession();
+
+        const transport = await resolveWith(model);
+
+        assertEquals(transport.resolvedModelString, resolved);
+        assertEquals(catalogRequests, []);
+      });
+    }
+
+    it("requests no catalog for a model the application serves itself", async () => {
+      registerModelProvider("acme-direct", () => ({}) as ModelRuntime);
+      const catalogRequests = installExpiredSession();
+
+      const transport = await resolveWith("acme-direct/m1");
+
+      assertEquals(transport.resolvedModelString, "acme-direct/m1");
+      assertEquals(catalogRequests, []);
+    });
+
+    it("still requests the catalog for a Veryfront Cloud model", async () => {
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      const catalogRequests = installExpiredSession();
+
+      await resolveWith("veryfront-cloud/openai/gpt-5.6-luna");
+
+      assertEquals(catalogRequests.length, 1);
+    });
+
+    it("still requests the catalog for a provider model with no provider key", async () => {
+      deleteEnv("OPENAI_API_KEY");
+      const catalogRequests = installExpiredSession();
+
+      const transport = await resolveWith("openai/gpt-5.6-luna");
+
+      assertEquals(transport.resolvedModelString, "veryfront-cloud/openai/gpt-5.6-luna");
+      assertEquals(catalogRequests.length, 1);
+    });
+  });
 });
 
 function localTool(description: string) {

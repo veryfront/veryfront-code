@@ -365,6 +365,25 @@ export function isVeryfrontCloudRuntimeModel(model?: string): boolean {
   }
 }
 
+/**
+ * Whether `model` routes to a direct provider whatever the served catalog
+ * says: an explicit `<provider>/<model>` (or a built-in alias for one) whose
+ * provider has a direct key or an application runtime. Its route never
+ * depends on the catalog, so loading it is no reason to send a login the run
+ * does not use.
+ */
+export function routesDirectWithoutCatalog(model?: string): boolean {
+  if (model === undefined) return false;
+  const normalized = normalizeAgentModelConfig(model);
+  const configured = normalized.includes("/") ? normalized : LEGACY_MODEL_ALIASES.get(normalized);
+  const slashIndex = configured?.indexOf("/") ?? -1;
+  if (!configured || slashIndex <= 0 || slashIndex === configured.length - 1) return false;
+  const provider = configured.slice(0, slashIndex);
+  if (provider === "veryfront-cloud") return false;
+  return findApplicationRuntimeProvider(provider) !== undefined ||
+    hasDirectProviderCredentials(provider);
+}
+
 /** The model ID and gateway wire surface the runtime converts tool schemas for. */
 export interface ProviderToolSchemaTarget {
   model?: string;
